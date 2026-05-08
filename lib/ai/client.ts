@@ -14,8 +14,7 @@ export function getAnthropicClient() {
       if (_client) return _client;
       const key = process.env.ANTHROPIC_API_KEY;
       if (!key || key.startsWith('BANNED')) {
-              throw new Error('ANTHROPIC_API_KEY not set. AI features are disabled until configured.');
-      }
+      return new Proxy({}, { get(){ return ()=>{ throw new Error('AI features unavailable: ANTHROPIC_API_KEY not configured'); }; } });      }
       _client = new Anthropic({ apiKey: key });
       return _client;
 }
