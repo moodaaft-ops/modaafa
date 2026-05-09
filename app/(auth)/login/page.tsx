@@ -17,8 +17,7 @@ export default function LoginPage() {
     setError('');
     const { error } = await supabase.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: `${window.location.origin}/dashboard` },
-    });
+      options: { emailRedirectTo: `${window.location.origin}/auth/callback?next=/dashboard` },    });
     setSending(false);
     if (error) setError(error.message);
     else setSent(true);
@@ -27,8 +26,7 @@ export default function LoginPage() {
   async function handleGoogleLogin() {
     await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: `${window.location.origin}/dashboard` },
-    });
+      options: { redirectTo: `${window.location.origin}/auth/callback?next=/dashboard` },    });
   }
 
   return (
