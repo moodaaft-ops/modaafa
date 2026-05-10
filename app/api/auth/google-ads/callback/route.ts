@@ -103,8 +103,24 @@ export async function GET(req: NextRequest) {
     );
     res.cookies.delete('gads_oauth_state');
     return res;
-  } catch (err) {
-    console.error('OAuth callback error', err);
-    return NextResponse.redirect(new URL('/onboarding/connect?error=oauth_failed', req.url));
+  } catch (err: any) {
+    // Log full details to Vercel function logs for diagnosis
+    console.error('[google-ads/callback] OAuth flow failed:', {
+      message: err?.message,
+      name: err?.name,
+      stack: err?.stack,
+      response: err?.response?.data,
+      code: err?.code,
+    });
+
+    // Pass a hint about what went wrong so the user sees a useful message
+    const msg = (err?.message ?? '').toLowerCase();
+    let key = 'oauth_failed';
+    if (msg.includes('refresh_token')) key = 'no_refresh_token';
+    else if (msg.includes('developer token') || msg.includes('developer_token')) key = 'developer_token';
+    else if (msg.includes('not approved') || msg.includes('pending')) key = 'developer_token';
+    else if (msg.includes('invalid_grant')) key = 'invalid_grant';
+
+    return NextResponse.redirect(new URL(`/onboarding/connect?error=${key}`, req.url));
   }
 }
