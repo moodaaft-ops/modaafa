@@ -77,10 +77,12 @@ export default async function ConnectGoogleAdsPage({
   }
 
   const errorKey = searchParams.error;
-  const errorInfo = errorKey ? ERROR_MESSAGES[errorKey] ?? {
-    title: 'حدث خطأ غير متوقع',
-    detail: `رمز الخطأ: ${errorKey}`,
-  } : null;
+  const errorInfo = errorKey
+    ? (ERROR_MESSAGES[errorKey] ?? {
+        title: 'حدث خطأ غير متوقع',
+        detail: `رمز الخطأ: ${errorKey}`,
+      })
+    : null;
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-ink-50 to-brand-50 p-4">
@@ -135,7 +137,7 @@ export default async function ConnectGoogleAdsPage({
         </a>
 
         <div className="mt-6 pt-6 border-t border-ink-100 text-center">
-          <Link �ref="/dashboard" className="text-sm text-ink-500 hover:text-ink-900">
+          <Link href="/dashboard" className="text-sm text-ink-500 hover:text-ink-900">
             تخطّي مؤقتاً
           </Link>
         </div>
