@@ -1,4 +1,5 @@
-import type { Customer } from 'google-ads-api';
+// Customer type — minimal shape used by this file. The actual implementation is in lib/google-ads/client.ts (getCustomer)
+type Customer = { query: <T = any>(gaql: string) => Promise<T[]> };
 
 /**
  * GAQL queries used by the Audit Agent to gather a complete snapshot
