@@ -1,3 +1,12 @@
+/**
+ * Unified Anthropic client + smart model selection.
+ *
+ * Backend resolution order:
+ *   1. ANTHROPIC_API_KEY  (direct API)
+ *   2. Vertex AI          (Google Cloud — preferred)
+ *   3. Stub               (throws on use, lets the build pass)
+ */
+
 import Anthropic from '@anthropic-ai/sdk';
 
 export type ModelTier = 'opus' | 'sonnet' | 'haiku';
@@ -17,7 +26,8 @@ export function getAnthropicClient(): any {
   if (_client) return _client;
 
   const key = process.env.ANTHROPIC_API_KEY;
-  const isRealAnthropicKey = key && !key.startsWith('sk-ant-dummy') && !key.startsWith('BANNED');
+  const isRealAnthropicKey =
+    key && !key.startsWith('sk-ant-dummy') && !key.startsWith('BANNED');
 
   if (isRealAnthropicKey) {
     _client = new Anthropic({ apiKey: key });
@@ -31,7 +41,9 @@ export function getAnthropicClient(): any {
 
   if (projectId && credBase64) {
     try {
-      const credentials = JSON.parse(Buffer.from(credBase64, 'base64').toString('utf-8'));
+      const credentials = JSON.parse(
+        Buffer.from(credBase64, 'base64').toString('utf-8')
+      );
       const { AnthropicVertex } = require('@anthropic-ai/vertex-sdk');
       const { GoogleAuth } = require('google-auth-library');
       const googleAuth = new GoogleAuth({
@@ -80,42 +92,4 @@ export function getModelForAgent(
     reporter: 'sonnet',
   };
   return getModelName(tierMap[agent]);
-}
-/**
- * Unified Anthropic client. Vertex AI temporarily disabled.
- * Until @anthropic-ai/vertex-sdk version conflict is fixed, only the direct
- * Anthropic API backend is wired. Set ANTHROPIC_API_KEY to enable AI features.
- */
-
-import Anthropic from '@anthropic-ai/sdk';
-
-export type ModelTier = 'opus' | 'sonnet' | 'haiku';
-
-let _client: any = null;
-
-export function getAnthropicClient() {
-      if (_client) return _client;
-      const key = process.env.ANTHROPIC_API_KEY;
-      if (!key || key.startsWith('BANNED')) {
-      return new Proxy({}, { get(){ return ()=>{ throw new Error('AI features unavailable: ANTHROPIC_API_KEY not configured'); }; } });      }
-      _client = new Anthropic({ apiKey: key });
-      return _client;
-}
-
-export function getModelName(tier: ModelTier = 'opus'): string {
-      return ({
-              opus: 'claude-opus-4-7',
-              sonnet: 'claude-sonnet-4-6',
-              haiku: 'claude-haiku-4-5-20251001',
-      } as const)[tier];
-}
-
-export function getModelForAgent(agent: 'audit' | 'builder' | 'optimizer' | 'reporter'): string {
-      const tierMap: Record<string, ModelTier> = {
-              audit: 'opus',
-              builder: 'opus',
-              optimizer: 'sonnet',
-              reporter: 'sonnet',
-      };
-      return getModelName(tierMap[agent]);
 }
