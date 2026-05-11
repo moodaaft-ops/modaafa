@@ -11,7 +11,9 @@
 
 import { refreshAccessToken } from './oauth';
 
-const API_VERSION = 'v17';
+// Bumped from v17 (deprecated, returns 404) to v22 — current stable per
+// Google Ads API release notes as of May 2026.
+const API_VERSION = 'v22';
 const API_BASE = `https://googleads.googleapis.com/${API_VERSION}`;
 
 function requireEnv(name: string): string {
