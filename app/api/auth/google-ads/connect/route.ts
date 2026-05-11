@@ -6,8 +6,9 @@ import { createServerClient } from '@/lib/supabase/server';
 /**
  * Step 1: User clicks "Connect Google Ads" → we redirect them to Google's consent screen.
  *
- * We store a CSRF state in an httpOnly cookie so the callback can verify
- * it matches.
+ * CSRF state is stored in the `oauth_state_tokens` table (NOT a cookie).
+ * Cookie-based state was unreliable across redirects/tabs and caused
+ * spurious `state_mismatch` errors on legitimate flows.
  */
 export async function GET(req: NextRequest) {
   const supabase = createServerClient();
@@ -17,17 +18,26 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL('/login?next=/onboarding/connect', req.url));
   }
 
-  // CSRF protection: tie state to the user's session
   const state = randomBytes(32).toString('hex');
-  const authUrl = buildAuthUrl(state);
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
 
-  const res = NextResponse.redirect(authUrl);
-  res.cookies.set('gads_oauth_state', state, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    maxAge: 600, // 10 minutes
-    path: '/',
+  const { error } = await supabase.from('oauth_state_tokens').insert({
+    state,
+    user_id: user.id,
+    expires_at: expiresAt,
   });
-  return res;
+
+  if (error) {
+    console.error('[google-ads/connect] failed to store state:', error);
+    return NextResponse.redirect(
+      new URL('/onboarding/connect?error=state_init_failed', req.url)
+    );
+  }
+
+  console.log('[google-ads/connect] state stored:', {
+    state: state.slice(0, 8) + '…',
+    user_id: user.id,
+  });
+
+  return NextResponse.redirect(buildAuthUrl(state));
 }
