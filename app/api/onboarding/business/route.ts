@@ -15,6 +15,30 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'اسم النشاط مطلوب' }, { status: 400 });
   }
 
+  // Ensure a record exists in public.users (businesses.user_id has a FK to it).
+  // Supabase Auth users live in auth.users; we mirror them into public.users
+  // on-demand. id matches the auth user id so RLS policies line up.
+  const { data: existingUser } = await supabase
+    .from('users')
+    .select('id')
+    .eq('id', user.id)
+    .maybeSingle();
+  if (!existingUser) {
+    const { error: userInsertError } = await supabase.from('users').insert({
+      id: user.id,
+      email: user.email ?? `${user.id}@placeholder.local`,
+      name: user.user_metadata?.full_name ?? user.user_metadata?.name ?? null,
+      avatar_url: user.user_metadata?.avatar_url ?? null,
+    });
+    if (userInsertError) {
+      console.error('[onboarding/business] user insert failed:', userInsertError);
+      return NextResponse.json(
+        { error: 'فشل إنشاء حساب المستخدم' },
+        { status: 500 }
+      );
+    }
+  }
+
   // Check for existing business first (no UNIQUE constraint on user_id in the
   // businesses table, so we can't use upsert with onConflict here).
   const { data: existing } = await supabase
