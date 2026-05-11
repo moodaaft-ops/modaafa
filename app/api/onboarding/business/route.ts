@@ -15,12 +15,32 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'اسم النشاط مطلوب' }, { status: 400 });
   }
 
-  const { error } = await supabase.from('businesses').upsert({
-    user_id: user.id,
-    name: name.trim(),
-    sector: sector ?? null,
-    website: website?.trim() || null,
-  }, { onConflict: 'user_id' });
+  // Check for existing business first (no UNIQUE constraint on user_id in the
+  // businesses table, so we can't use upsert with onConflict here).
+  const { data: existing } = await supabase
+    .from('businesses')
+    .select('id')
+    .eq('user_id', user.id)
+    .maybeSingle();
+
+  let error;
+  if (existing) {
+    ({ error } = await supabase
+      .from('businesses')
+      .update({
+        name: name.trim(),
+        sector: sector ?? null,
+        website: website?.trim() || null,
+      })
+      .eq('id', existing.id));
+  } else {
+    ({ error } = await supabase.from('businesses').insert({
+      user_id: user.id,
+      name: name.trim(),
+      sector: sector ?? null,
+      website: website?.trim() || null,
+    }));
+  }
 
   if (error) {
     console.error('[onboarding/business] insert failed:', error);
