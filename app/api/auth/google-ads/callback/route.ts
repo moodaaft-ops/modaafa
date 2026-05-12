@@ -26,18 +26,41 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(new URL('/onboarding/connect?error=missing_params', req.url));
   }
 
-  // Verify CSRF state
-  const cookieState = req.cookies.get('gads_oauth_state')?.value;
-  if (!cookieState || cookieState !== state) {
-    return NextResponse.redirect(new URL('/onboarding/connect?error=state_mismatch', req.url));
-  }
-
   // Auth check
   const supabase = createServerClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
     return NextResponse.redirect(new URL('/login', req.url));
   }
+
+  // Verify CSRF state from DB (replaces the old cookie-based check, which
+  // failed unreliably across browser redirects and tabs).
+  const { data: stateRow, error: stateLookupError } = await supabase
+    .from('oauth_state_tokens')
+    .select('user_id, expires_at')
+    .eq('state', state)
+    .maybeSingle();
+
+  console.log('[google-ads/callback] state check:', {
+    urlState: state.slice(0, 8) + '…',
+    foundRow: !!stateRow,
+    rowUser: stateRow?.user_id,
+    sessionUser: user.id,
+    lookupError: stateLookupError?.message,
+  });
+
+  if (!stateRow) {
+    return NextResponse.redirect(new URL('/onboarding/connect?error=state_mismatch', req.url));
+  }
+  if (stateRow.user_id !== user.id) {
+    return NextResponse.redirect(new URL('/onboarding/connect?error=state_mismatch', req.url));
+  }
+  if (new Date(stateRow.expires_at) < new Date()) {
+    return NextResponse.redirect(new URL('/onboarding/connect?error=state_mismatch', req.url));
+  }
+
+  // Single-use token: delete now that it's verified.
+  await supabase.from('oauth_state_tokens').delete().eq('state', state);
 
   try {
     // Exchange code → tokens
@@ -98,11 +121,9 @@ export async function GET(req: NextRequest) {
       expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     });
 
-    const res = NextResponse.redirect(
+    return NextResponse.redirect(
       new URL(`/onboarding/select-account?session=${sessionId}`, req.url)
     );
-    res.cookies.delete('gads_oauth_state');
-    return res;
   } catch (err: any) {
     // Log full details to Vercel function logs for diagnosis
     console.error('[google-ads/callback] OAuth flow failed:', {
