@@ -41,11 +41,15 @@ export async function GET(req: NextRequest) {
     .eq('state', state)
     .maybeSingle();
 
+  const nowMs = Date.now();
+  const expiresMs = stateRow ? new Date(stateRow.expires_at).getTime() : null;
   console.log('[google-ads/callback] state check:', {
     urlState: state.slice(0, 8) + '…',
     foundRow: !!stateRow,
     rowUser: stateRow?.user_id,
     sessionUser: user.id,
+    expiresAt: stateRow?.expires_at,
+    minutesUntilExpiry: expiresMs ? Math.round((expiresMs - nowMs) / 60000) : null,
     lookupError: stateLookupError?.message,
   });
 
