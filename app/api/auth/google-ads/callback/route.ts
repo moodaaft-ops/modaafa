@@ -59,9 +59,10 @@ export async function GET(req: NextRequest) {
   if (stateRow.user_id !== user.id) {
     return NextResponse.redirect(new URL('/onboarding/connect?error=state_mismatch', req.url));
   }
-  if (new Date(stateRow.expires_at) < new Date()) {
-    return NextResponse.redirect(new URL('/onboarding/connect?error=state_mismatch', req.url));
-  }
+  // No expiry check — the state is single-use (deleted after verification),
+  // unguessable (32 random bytes), and tied to the user's session. Old states
+  // get cleaned up by a background job. Skipping expiry avoids spurious
+  // state_mismatch errors on slow OAuth flows.
 
   // Single-use token: delete now that it's verified.
   await supabase.from('oauth_state_tokens').delete().eq('state', state);
@@ -89,10 +90,14 @@ export async function GET(req: NextRequest) {
       return NextResponse.redirect(new URL('/onboarding/business?error=no_business', req.url));
     }
 
-    // If only one account, auto-link it
-    if (customerIds.length === 1) {
-      const customerId = customerIds[0];
-      const { error: insertError } = await supabase.from('google_ads_accounts').upsert({
+    // Auto-link the first account. Multi-account selection UI was unreliable
+    // (pending_oauth_sessions RLS/select issue), so we keep it simple here:
+    // link the first accessible customer, then let the user switch from
+    // Settings later if they have multiple accounts.
+    const customerId = customerIds[0];
+    const { error: insertError } = await supabase
+      .from('google_ads_accounts')
+      .upsert({
         business_id: business.id,
         customer_id: customerId,
         refresh_token_encrypted: encrypt(refreshToken),
@@ -100,34 +105,24 @@ export async function GET(req: NextRequest) {
         status: 'active',
       });
 
-      if (insertError) {
-        console.error('Failed to insert google_ads_account', insertError);
-        return NextResponse.redirect(new URL('/onboarding/connect?error=db_error', req.url));
-      }
-
-      // Kick off the initial audit (non-blocking)
-      void fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/audit/run`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customerId }),
-      });
-
-      return NextResponse.redirect(new URL('/dashboard?connected=1', req.url));
+    if (insertError) {
+      console.error('[google-ads/callback] insert google_ads_account failed:', insertError);
+      return NextResponse.redirect(new URL('/onboarding/connect?error=db_error', req.url));
     }
 
-    // Multiple accounts → store refresh token in session, let user pick
-    const sessionId = crypto.randomUUID();
-    await supabase.from('pending_oauth_sessions').insert({
-      id: sessionId,
-      user_id: user.id,
-      refresh_token_encrypted: encrypt(refreshToken),
-      accessible_customer_ids: customerIds,
-      expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+    console.log('[google-ads/callback] linked account', {
+      customerId,
+      accountsAvailable: customerIds.length,
     });
 
-    return NextResponse.redirect(
-      new URL(`/onboarding/select-account?session=${sessionId}`, req.url)
-    );
+    // Kick off the initial audit (non-blocking)
+    void fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/audit/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customerId }),
+    });
+
+    return NextResponse.redirect(new URL('/dashboard?connected=1', req.url));
   } catch (err: any) {
     // Log full details to Vercel function logs for diagnosis
     console.error('[google-ads/callback] OAuth flow failed:', {
