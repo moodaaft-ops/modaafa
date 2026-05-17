@@ -19,7 +19,9 @@ export async function GET(req: NextRequest) {
   }
 
   const state = randomBytes(32).toString('hex');
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  // 60-min window: 10 min was too short — users often take time on Google's
+  // consent screen, especially when picking among multiple accounts.
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
 
   const { error } = await supabase.from('oauth_state_tokens').insert({
     state,
