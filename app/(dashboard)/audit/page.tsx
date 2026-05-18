@@ -1,5 +1,6 @@
 import { createServerClient } from '@/lib/supabase/server';
 import { formatSAR, timeAgoAr } from '@/lib/utils';
+import RunAuditButton from './run-audit-button';
 
 const SEVERITY_COLORS = {
   critical: 'bg-red-100 text-red-700',
@@ -30,17 +31,39 @@ export default async function AuditPage() {
     .order('severity', { ascending: true });
 
   if (!audit) {
+    // Check if user has a linked Google Ads account → if yes, offer to run
+    // the audit; otherwise prompt to connect.
+    const { data: linkedAccount } = await supabase
+      .from('google_ads_accounts')
+      .select('customer_id')
+      .eq('status', 'active')
+      .limit(1)
+      .maybeSingle();
+
     return (
       <div className="p-8">
         <div className="bg-white rounded-2xl p-12 border border-ink-100 text-center">
           <h2 className="text-xl font-bold mb-2">لم يتم تشغيل فحص بعد</h2>
-          <p className="text-ink-500 mb-6">اربط حسابك في Google Ads أولاً ليقوم الذكاء الاصطناعي بفحصه.</p>
-          <a
-            href="/api/auth/google-ads/connect"
-            className="inline-block px-6 py-3 rounded-xl bg-brand-600 text-white font-medium"
-          >
-            ربط حساب Google Ads
-          </a>
+          {linkedAccount ? (
+            <>
+              <p className="text-ink-500 mb-6">
+                حسابك في Google Ads مرتبط. اضغط الزر ليبدأ الذكاء الاصطناعي بفحص حسابك.
+              </p>
+              <RunAuditButton customerId={linkedAccount.customer_id} />
+            </>
+          ) : (
+            <>
+              <p className="text-ink-500 mb-6">
+                اربط حسابك في Google Ads أولاً ليقوم الذكاء الاصطناعي بفحصه.
+              </p>
+              <a
+                href="/api/auth/google-ads/connect"
+                className="inline-block px-6 py-3 rounded-xl bg-brand-600 text-white font-medium"
+              >
+                ربط حساب Google Ads
+              </a>
+            </>
+          )}
         </div>
       </div>
     );
