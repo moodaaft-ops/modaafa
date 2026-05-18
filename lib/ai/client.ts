@@ -43,7 +43,7 @@ export function getAnthropicClient(): any {
 
 export function getModelName(tier: ModelTier = 'opus'): string {
   return ({
-    opus: 'claude-opus-4-7',
+    opus: 'claude-opus-4-6',
     sonnet: 'claude-sonnet-4-6',
     haiku: 'claude-haiku-4-5-20251001',
   } as const)[tier];
