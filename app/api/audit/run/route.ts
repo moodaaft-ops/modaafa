@@ -92,10 +92,25 @@ export async function POST(req: NextRequest) {
       findings_count: result.findings.length,
       duration_ms: duration,
     });
-  } catch (err) {
-    console.error('Audit failed', err);
+  } catch (err: any) {
+    // Detailed logging: the wrapped Anthropic SDK "Connection error" hides
+    // the actual underlying cause (auth, network, model, etc.). Surface it.
+    console.error('Audit failed', {
+      message: err?.message,
+      name: err?.name,
+      status: err?.status,
+      cause: err?.cause?.message ?? err?.cause,
+      causeCode: err?.cause?.code,
+      causeName: err?.cause?.name,
+      anthropicKeyPrefix: process.env.ANTHROPIC_API_KEY?.slice(0, 12) + '…',
+      anthropicKeyLen: process.env.ANTHROPIC_API_KEY?.length,
+    });
     return NextResponse.json(
-      { error: 'audit_failed', message: err instanceof Error ? err.message : String(err) },
+      {
+        error: 'audit_failed',
+        message: err instanceof Error ? err.message : String(err),
+        cause: err?.cause?.message,
+      },
       { status: 500 }
     );
   }
