@@ -95,15 +95,35 @@ export async function GET(req: NextRequest) {
     // link the first accessible customer, then let the user switch from
     // Settings later if they have multiple accounts.
     const customerId = customerIds[0];
-    const { error: insertError } = await supabase
+    // Check if this customer is already linked (avoid 23505 unique_violation).
+    const { data: existingAccount } = await supabase
       .from('google_ads_accounts')
-      .upsert({
-        business_id: business.id,
-        customer_id: customerId,
-        refresh_token_encrypted: encrypt(refreshToken),
-        permissions_scope: ['adwords'],
-        status: 'active',
-      });
+      .select('id')
+      .eq('business_id', business.id)
+      .eq('customer_id', customerId)
+      .maybeSingle();
+
+    let insertError;
+    if (existingAccount) {
+      ({ error: insertError } = await supabase
+        .from('google_ads_accounts')
+        .update({
+          refresh_token_encrypted: encrypt(refreshToken),
+          permissions_scope: ['adwords'],
+          status: 'active',
+        })
+        .eq('id', existingAccount.id));
+    } else {
+      ({ error: insertError } = await supabase
+        .from('google_ads_accounts')
+        .insert({
+          business_id: business.id,
+          customer_id: customerId,
+          refresh_token_encrypted: encrypt(refreshToken),
+          permissions_scope: ['adwords'],
+          status: 'active',
+        }));
+    }
 
     if (insertError) {
       console.error('[google-ads/callback] insert google_ads_account failed:', insertError);
@@ -115,7 +135,17 @@ export async function GET(req: NextRequest) {
       accountsAvailable: customerIds.length,
     });
 
-    // Kick off the initial audit (non-blocking)
+    // If the email has multiple accessible accounts, send the user to the
+    // selection page so they can pick the right one. We've auto-linked the
+    // first as a sensible default; the selection page lets them switch.
+    if (customerIds.length > 1) {
+      return NextResponse.redirect(
+        new URL('/onboarding/select-account', req.url)
+      );
+    }
+
+    // Single account — kick off the initial audit (non-blocking) and
+    // head to the dashboard.
     void fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/audit/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
