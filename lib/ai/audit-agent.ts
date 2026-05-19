@@ -12,8 +12,8 @@ import type { AccountSnapshot } from '../google-ads/audit-queries';
  * terminology cleanly.
  */
 
-const anthropic = getAnthropicClient();
-const MODEL = getModelForAgent('audit'); // Opus 4.7 - highest quality
+// Defer client + model resolution until call time so env vars are guaranteed
+// loaded and we don't capture a stale client during cold-start init failures.
 
 const SYSTEM_PROMPT = `You are an expert Google Ads media buyer with 10+ years of experience auditing accounts in the MENA region. You are part of Modaafa, a SaaS platform that helps SMB advertisers optimize their Google Ads accounts.
 
@@ -101,28 +101,43 @@ export interface AuditResult {
 }
 
 export async function runAudit(snapshot: AccountSnapshot): Promise<AuditResult> {
+  const anthropic = getAnthropicClient();
+  const MODEL = getModelForAgent('audit'); // Sonnet 4.6 - fast + good quality
+
   // Compress snapshot to keep within token budget
   const compressed = compressSnapshot(snapshot);
 
-  const response = await anthropic.messages.create({
-    model: MODEL,
-    max_tokens: 8000,
-    system: SYSTEM_PROMPT,
-    messages: [
+  // 50s budget — Vercel Hobby caps functions at 60s, leave headroom for
+  // DB writes and JSON parsing afterwards.
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 50_000);
+
+  try {
+    const response = await anthropic.messages.create(
       {
-        role: 'user',
-        content: `Analyze this Google Ads account snapshot and produce the JSON audit report.\n\n<snapshot>\n${JSON.stringify(compressed, null, 2)}\n</snapshot>`,
+        model: MODEL,
+        max_tokens: 4000,
+        system: SYSTEM_PROMPT,
+        messages: [
+          {
+            role: 'user',
+            content: `Analyze this Google Ads account snapshot and produce the JSON audit report.\n\n<snapshot>\n${JSON.stringify(compressed, null, 2)}\n</snapshot>`,
+          },
+        ],
       },
-    ],
-  });
+      { signal: controller.signal }
+    );
 
-  const textBlock = response.content.find((b) => b.type === 'text');
-  if (!textBlock || textBlock.type !== 'text') {
-    throw new Error('No text response from Claude');
+    const textBlock = response.content.find((b: any) => b.type === 'text');
+    if (!textBlock || textBlock.type !== 'text') {
+      throw new Error('No text response from Claude');
+    }
+
+    const json = extractJson(textBlock.text);
+    return JSON.parse(json) as AuditResult;
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  const json = extractJson(textBlock.text);
-  return JSON.parse(json) as AuditResult;
 }
 
 /**
