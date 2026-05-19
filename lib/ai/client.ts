@@ -52,11 +52,15 @@ export function getModelName(tier: ModelTier = 'opus'): string {
 export function getModelForAgent(
   agent: 'audit' | 'builder' | 'optimizer' | 'reporter'
 ): string {
+  // NOTE: audit was previously 'opus', but Opus + max_tokens=8000 takes 60–120s
+  // which exceeds Vercel's Hobby function timeout (60s), causing the SDK to
+  // throw a generic "Connection error". Sonnet 4.6 is ~3x faster with similar
+  // quality for structured-JSON analysis tasks.
   const tierMap: Record<string, ModelTier> = {
-    audit: 'opus',
-    builder: 'opus',
-    optimizer: 'sonnet',
-    reporter: 'sonnet',
+    audit: 'sonnet',
+    builder: 'sonnet',
+    optimizer: 'haiku',
+    reporter: 'haiku',
   };
   return getModelName(tierMap[agent]);
 }
