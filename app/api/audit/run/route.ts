@@ -5,6 +5,11 @@ import { gatherAccountSnapshot } from '@/lib/google-ads/audit-queries';
 import { runAudit } from '@/lib/ai/audit-agent';
 import { decrypt } from '@/lib/crypto';
 
+// Hobby plan caps at 60s. The audit agent itself has a 50s AbortController
+// budget; this leaves 10s for snapshot fetching + DB writes.
+export const maxDuration = 60;
+export const dynamic = 'force-dynamic';
+
 /**
  * POST /api/audit/run
  * Body: { customerId: string }
