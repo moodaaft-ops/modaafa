@@ -7,15 +7,16 @@ import { decrypt } from '@/lib/crypto';
  * POST /api/onboarding/switch-account
  * Body: { customerId: string }
  *
- * Switches the user's "active" Google Ads account to the given customerId.
+ * Activates the chosen Google Ads customer.
  *
- * Flow:
- * 1. Verify the chosen customerId is in the list of customers accessible
- *    by the user's current refresh_token (security: prevent linking
- *    arbitrary customer_ids).
- * 2. Mark all of this business's google_ads_accounts rows as inactive.
- * 3. Upsert a row for the chosen customer_id with status='active',
- *    reusing the existing refresh_token.
+ * Two flows:
+ *  A. First-time linking: a 'pending' row exists (created by OAuth callback).
+ *     We verify the customerId is accessible, then flip the pending row
+ *     to active (and rename it to the chosen customer_id).
+ *  B. Switching: an 'active' row exists. We verify accessibility, mark
+ *     all current rows inactive, then upsert the chosen one as active.
+ *
+ * Both flows share the same refresh_token (one per Google account).
  */
 export async function POST(req: NextRequest) {
   const supabase = createServerClient();
@@ -39,7 +40,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'no_business' }, { status: 404 });
   }
 
-  // Pull the currently-active account to reuse its refresh_token
+  // Pull whichever row exists (pending or active) — we need the refresh_token
+  const { data: pendingAccount } = await supabase
+    .from('google_ads_accounts')
+    .select('id, customer_id, refresh_token_encrypted')
+    .eq('business_id', business.id)
+    .eq('status', 'pending')
+    .limit(1)
+    .maybeSingle();
+
   const { data: activeAccount } = await supabase
     .from('google_ads_accounts')
     .select('id, customer_id, refresh_token_encrypted')
@@ -48,19 +57,22 @@ export async function POST(req: NextRequest) {
     .limit(1)
     .maybeSingle();
 
-  if (!activeAccount) {
+  const baseAccount = pendingAccount ?? activeAccount;
+  if (!baseAccount) {
     return NextResponse.json({ error: 'no_linked_account' }, { status: 404 });
   }
 
-  // Same account → no-op
-  if (activeAccount.customer_id === customerId) {
+  const isFirstLink = !!pendingAccount;
+
+  // Switch mode + same active account → no-op
+  if (!isFirstLink && activeAccount?.customer_id === customerId) {
     return NextResponse.json({ success: true, unchanged: true });
   }
 
   // Security: verify the customerId is actually accessible by this token
   let accessible: string[] = [];
   try {
-    const refreshToken = decrypt(activeAccount.refresh_token_encrypted);
+    const refreshToken = decrypt(baseAccount.refresh_token_encrypted);
     accessible = await listAccessibleCustomers(refreshToken);
   } catch (err: any) {
     console.error('[switch-account] list customers failed:', err?.message);
@@ -77,51 +89,43 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Deactivate all current accounts for this business
-  const { error: deactivateErr } = await supabase
+  // Clear out any rows for this business — we'll insert exactly one active row.
+  const { error: deleteErr } = await supabase
     .from('google_ads_accounts')
-    .update({ status: 'inactive' })
+    .delete()
     .eq('business_id', business.id);
-  if (deactivateErr) {
-    console.error('[switch-account] deactivate failed:', deactivateErr);
-    return NextResponse.json({ error: 'deactivate_failed' }, { status: 500 });
+  if (deleteErr) {
+    console.error('[switch-account] delete old rows failed:', deleteErr);
+    return NextResponse.json({ error: 'delete_failed' }, { status: 500 });
   }
 
-  // Check if a row for the new customerId already exists; otherwise insert
-  const { data: existing } = await supabase
+  // Insert the chosen account as active, reusing the same refresh_token
+  const { error: insertErr } = await supabase
     .from('google_ads_accounts')
-    .select('id')
-    .eq('business_id', business.id)
-    .eq('customer_id', customerId)
-    .maybeSingle();
-
-  if (existing) {
-    const { error: updateErr } = await supabase
-      .from('google_ads_accounts')
-      .update({
-        refresh_token_encrypted: activeAccount.refresh_token_encrypted,
-        status: 'active',
-      })
-      .eq('id', existing.id);
-    if (updateErr) {
-      console.error('[switch-account] update failed:', updateErr);
-      return NextResponse.json({ error: 'update_failed' }, { status: 500 });
-    }
-  } else {
-    const { error: insertErr } = await supabase
-      .from('google_ads_accounts')
-      .insert({
-        business_id: business.id,
-        customer_id: customerId,
-        refresh_token_encrypted: activeAccount.refresh_token_encrypted,
-        permissions_scope: ['adwords'],
-        status: 'active',
-      });
-    if (insertErr) {
-      console.error('[switch-account] insert failed:', insertErr);
-      return NextResponse.json({ error: 'insert_failed' }, { status: 500 });
-    }
+    .insert({
+      business_id: business.id,
+      customer_id: customerId,
+      refresh_token_encrypted: baseAccount.refresh_token_encrypted,
+      permissions_scope: ['adwords'],
+      status: 'active',
+    });
+  if (insertErr) {
+    console.error('[switch-account] insert failed:', insertErr);
+    return NextResponse.json({ error: 'insert_failed' }, { status: 500 });
   }
 
-  return NextResponse.json({ success: true, customerId });
+  // Kick off an initial audit on first link (non-blocking)
+  if (isFirstLink && process.env.NEXT_PUBLIC_APP_URL) {
+    void fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/audit/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customerId }),
+    });
+  }
+
+  return NextResponse.json({
+    success: true,
+    customerId,
+    wasFirstLink: isFirstLink,
+  });
 }
