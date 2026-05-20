@@ -7,27 +7,37 @@ import SelectAccountForm from './select-form';
 /**
  * Account selection page.
  *
- * Reads the user's linked google_ads_accounts row, decrypts the refresh
- * token, re-lists accessible customers, and lets the user pick which one
- * should be the active linked account. Reachable from:
- *   - OAuth callback (when the email has multiple accessible accounts)
- *   - /settings (manual switch)
+ * Reads the user's google_ads_accounts row (pending or active), decrypts
+ * the refresh token, lists accessible customers, and lets the user pick
+ * which one to link. Reachable from:
+ *   - OAuth callback (initial linking — row is 'pending')
+ *   - /settings (manual switch — row is 'active')
  */
 export default async function SelectAccountPage() {
   const supabase = createServerClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/login');
 
-  // Get the user's currently linked account (RLS scopes to user)
-  const { data: account } = await supabase
+  // Look for any row — prefer 'pending' (fresh OAuth) over 'active' (existing link)
+  const { data: pendingAccount } = await supabase
+    .from('google_ads_accounts')
+    .select('id, customer_id, refresh_token_encrypted')
+    .eq('status', 'pending')
+    .limit(1)
+    .maybeSingle();
+
+  const { data: activeAccount } = await supabase
     .from('google_ads_accounts')
     .select('id, customer_id, refresh_token_encrypted')
     .eq('status', 'active')
     .limit(1)
     .maybeSingle();
 
+  const account = pendingAccount ?? activeAccount;
+  const isPending = !!pendingAccount;
+
   if (!account) {
-    // No account linked yet — send user to connect first
+    // Nothing in DB — user needs to OAuth first
     redirect('/onboarding/connect');
   }
 
@@ -42,6 +52,18 @@ export default async function SelectAccountPage() {
     listError = err?.message ?? 'فشل في جلب قائمة الحسابات';
   }
 
+  // currentCustomerId is only meaningful when we have an ACTIVE link.
+  // On first-time linking (pending), pass empty so nothing shows as "current".
+  const currentCustomerId = isPending ? '' : account.customer_id;
+
+  const subtitle = isPending
+    ? customerIds.length > 1
+      ? `وجدنا ${customerIds.length} حساب — اختر اللي تبي تربطه بـ مُضاعِف`
+      : 'تأكد من الحساب اللي تبي تربطه'
+    : customerIds.length > 0
+      ? `يمكنك تبديل الحساب المرتبط حالياً من القائمة`
+      : 'اختر الحساب الإعلاني';
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-ink-50 to-brand-50 p-4">
       <div className="w-full max-w-xl bg-white rounded-3xl shadow-xl p-8 md:p-10">
@@ -50,11 +72,7 @@ export default async function SelectAccountPage() {
             ×
           </div>
           <h1 className="text-2xl font-bold mb-1">اختر حساب Google Ads</h1>
-          <p className="text-ink-500 text-sm">
-            {customerIds.length > 0
-              ? `وجدنا ${customerIds.length} حساب مرتبط — اختر اللي تبي تربطه بـ مُضاعِف`
-              : 'اختر الحساب الإعلاني'}
-          </p>
+          <p className="text-ink-500 text-sm">{subtitle}</p>
         </div>
 
         {listError ? (
@@ -72,7 +90,8 @@ export default async function SelectAccountPage() {
         ) : (
           <SelectAccountForm
             customerIds={customerIds}
-            currentCustomerId={account.customer_id}
+            currentCustomerId={currentCustomerId}
+            isPending={isPending}
           />
         )}
       </div>
