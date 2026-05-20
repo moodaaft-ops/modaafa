@@ -90,17 +90,28 @@ export async function GET(req: NextRequest) {
       return NextResponse.redirect(new URL('/onboarding/business?error=no_business', req.url));
     }
 
-    // Auto-link the first account. Multi-account selection UI was unreliable
-    // (pending_oauth_sessions RLS/select issue), so we keep it simple here:
-    // link the first accessible customer, then let the user switch from
-    // Settings later if they have multiple accounts.
-    const customerId = customerIds[0];
-    // Check if this customer is already linked (avoid 23505 unique_violation).
+    // We DON'T auto-link any account. We save the refresh_token in a "pending"
+    // row using the first customerId as a placeholder, then send the user to
+    // /onboarding/select-account where THEY choose which account to link.
+    // The select page reuses this refresh_token to re-list customers.
+    const placeholderId = customerIds[0];
+
+    // Clean up any prior pending rows for this business so we don't accumulate
+    // stale tokens from abandoned OAuth attempts.
+    await supabase
+      .from('google_ads_accounts')
+      .delete()
+      .eq('business_id', business.id)
+      .eq('status', 'pending');
+
+    // Check if a row already exists for this placeholder (could be active from
+    // a previous successful link). If so, just refresh the token and bump
+    // status to pending so the user re-confirms; otherwise insert a new row.
     const { data: existingAccount } = await supabase
       .from('google_ads_accounts')
-      .select('id')
+      .select('id, status')
       .eq('business_id', business.id)
-      .eq('customer_id', customerId)
+      .eq('customer_id', placeholderId)
       .maybeSingle();
 
     let insertError;
@@ -110,7 +121,7 @@ export async function GET(req: NextRequest) {
         .update({
           refresh_token_encrypted: encrypt(refreshToken),
           permissions_scope: ['adwords'],
-          status: 'active',
+          status: 'pending',
         })
         .eq('id', existingAccount.id));
     } else {
@@ -118,10 +129,10 @@ export async function GET(req: NextRequest) {
         .from('google_ads_accounts')
         .insert({
           business_id: business.id,
-          customer_id: customerId,
+          customer_id: placeholderId,
           refresh_token_encrypted: encrypt(refreshToken),
           permissions_scope: ['adwords'],
-          status: 'active',
+          status: 'pending',
         }));
     }
 
@@ -130,29 +141,14 @@ export async function GET(req: NextRequest) {
       return NextResponse.redirect(new URL('/onboarding/connect?error=db_error', req.url));
     }
 
-    console.log('[google-ads/callback] linked account', {
-      customerId,
+    console.log('[google-ads/callback] stored pending token', {
       accountsAvailable: customerIds.length,
     });
 
-    // If the email has multiple accessible accounts, send the user to the
-    // selection page so they can pick the right one. We've auto-linked the
-    // first as a sensible default; the selection page lets them switch.
-    if (customerIds.length > 1) {
-      return NextResponse.redirect(
-        new URL('/onboarding/select-account', req.url)
-      );
-    }
-
-    // Single account — kick off the initial audit (non-blocking) and
-    // head to the dashboard.
-    void fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/audit/run`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ customerId }),
-    });
-
-    return NextResponse.redirect(new URL('/dashboard?connected=1', req.url));
+    // Always send the user to the selection page so they pick the account.
+    return NextResponse.redirect(
+      new URL('/onboarding/select-account', req.url)
+    );
   } catch (err: any) {
     // Log full details to Vercel function logs for diagnosis
     console.error('[google-ads/callback] OAuth flow failed:', {
