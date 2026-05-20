@@ -14,21 +14,26 @@ function formatCustomerId(id: string): string {
 export default function SelectAccountForm({
   customerIds,
   currentCustomerId,
+  isPending,
 }: {
   customerIds: string[];
   currentCustomerId: string;
+  isPending: boolean;
 }) {
   const router = useRouter();
+  // On pending (first-time linking) we don't pre-select anything so the user
+  // must make an explicit choice. On active (switch) we pre-select the
+  // currently-linked account.
   const [selected, setSelected] = useState<string>(
-    currentCustomerId ?? customerIds[0] ?? ''
+    isPending ? '' : currentCustomerId
   );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
   async function handleSubmit() {
     if (!selected) return;
-    if (selected === currentCustomerId) {
-      // Nothing to change — just go to dashboard
+    if (!isPending && selected === currentCustomerId) {
+      // Switch mode + same account → nothing to change
       router.push('/dashboard');
       return;
     }
@@ -54,7 +59,7 @@ export default function SelectAccountForm({
   return (
     <div className="space-y-3">
       {customerIds.map((id) => {
-        const isCurrent = id === currentCustomerId;
+        const isCurrent = !isPending && id === currentCustomerId;
         const isSelected = selected === id;
         return (
           <label
@@ -99,9 +104,11 @@ export default function SelectAccountForm({
       >
         {submitting
           ? 'جاري الربط...'
-          : selected === currentCustomerId
-            ? 'استمر بالحساب الحالي'
-            : 'تبديل للحساب المختار'}
+          : isPending
+            ? 'ربط الحساب المختار'
+            : selected === currentCustomerId
+              ? 'استمر بالحساب الحالي'
+              : 'تبديل للحساب المختار'}
       </button>
     </div>
   );
