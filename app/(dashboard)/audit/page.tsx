@@ -1,3 +1,4 @@
+import { redirect } from 'next/navigation';
 import { createServerClient } from '@/lib/supabase/server';
 import { formatSAR, timeAgoAr } from '@/lib/utils';
 import RunAuditButton from './run-audit-button';
@@ -39,6 +40,18 @@ export default async function AuditPage() {
       .eq('status', 'active')
       .limit(1)
       .maybeSingle();
+
+    // If no active link but a pending one exists, the user finished OAuth but
+    // hasn't picked an account yet — send them to the picker.
+    if (!linkedAccount) {
+      const { data: pendingAccount } = await supabase
+        .from('google_ads_accounts')
+        .select('id')
+        .eq('status', 'pending')
+        .limit(1)
+        .maybeSingle();
+      if (pendingAccount) redirect('/onboarding/select-account');
+    }
 
     return (
       <div className="p-8">
@@ -126,7 +139,7 @@ export default async function AuditPage() {
               {formatSAR(audit.estimated_monthly_waste ?? 0)}
             </div>
             <p className="text-sm opacity-90 mb-4">
-              يتم إنفاقها على كلمات وإعلانات غير منتجة. الـ AI قادر يوقف هذا التسريب فوراً.
+              يتم إنفاقها على كلمات وإعلانات غير منتجة. الـ AI قادر يوفف هذا التسريب فوراً.
             </p>
             <button className="w-full py-2.5 rounded-xl bg-white text-red-600 font-semibold text-sm">
               تطبيق كل التوصيات
@@ -164,7 +177,7 @@ export default async function AuditPage() {
                 </div>
                 <button className="px-4 py-2 rounded-xl bg-brand-600 text-white text-sm font-medium hover:bg-brand-700">
                   تطبيق
-                </button>
+              </button>
               </div>
             ))}
           </div>
