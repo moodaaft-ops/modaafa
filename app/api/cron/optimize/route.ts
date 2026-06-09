@@ -21,7 +21,7 @@ import {
  */
 export const maxDuration = 300; // 5 min
 
-export async function POST(req: NextRequest) {
+async function runOptimizerCron(req: NextRequest) {
   // Auth
   const authHeader = req.headers.get('authorization');
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -94,6 +94,14 @@ export async function POST(req: NextRequest) {
   }
 
   return NextResponse.json(results);
+}
+
+export async function GET(req: NextRequest) {
+  return runOptimizerCron(req);
+}
+
+export async function POST(req: NextRequest) {
+  return runOptimizerCron(req);
 }
 
 async function buildOptimizerSnapshot(

@@ -6,22 +6,24 @@ import Stripe from 'stripe';
  */
 
 export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2024-09-30.acacia',
+  apiVersion: '2025-02-24.acacia',
   typescript: true,
 });
 
-export const PLAN_PRICE_IDS: Record<string, Record<string, string>> = {
+const DEFAULT_PRICE_ID = process.env.STRIPE_PRICE_ID;
+
+export const PLAN_PRICE_IDS: Record<string, Record<string, string | undefined>> = {
   starter: {
-    monthly: process.env.STRIPE_PRICE_STARTER_MONTHLY!,
-    yearly: process.env.STRIPE_PRICE_STARTER_YEARLY!,
+    monthly: process.env.STRIPE_PRICE_STARTER_MONTHLY ?? DEFAULT_PRICE_ID,
+    yearly: process.env.STRIPE_PRICE_STARTER_YEARLY ?? DEFAULT_PRICE_ID,
   },
   growth: {
-    monthly: process.env.STRIPE_PRICE_GROWTH_MONTHLY!,
-    yearly: process.env.STRIPE_PRICE_GROWTH_YEARLY!,
+    monthly: process.env.STRIPE_PRICE_GROWTH_MONTHLY ?? DEFAULT_PRICE_ID,
+    yearly: process.env.STRIPE_PRICE_GROWTH_YEARLY ?? DEFAULT_PRICE_ID,
   },
   pro: {
-    monthly: process.env.STRIPE_PRICE_PRO_MONTHLY!,
-    yearly: process.env.STRIPE_PRICE_PRO_YEARLY!,
+    monthly: process.env.STRIPE_PRICE_PRO_MONTHLY ?? DEFAULT_PRICE_ID,
+    yearly: process.env.STRIPE_PRICE_PRO_YEARLY ?? DEFAULT_PRICE_ID,
   },
 };
 
@@ -37,7 +39,7 @@ export interface CheckoutParams {
 
 export async function createCheckoutSession(params: CheckoutParams) {
   const priceId = PLAN_PRICE_IDS[params.plan]?.[params.period];
-  if (!priceId) throw new Error(`Unknown plan/period: ${params.plan}/${params.period}`);
+  if (!priceId) throw new Error(`Missing Stripe price for plan/period: ${params.plan}/${params.period}`);
 
   return stripe.checkout.sessions.create({
     mode: 'subscription',

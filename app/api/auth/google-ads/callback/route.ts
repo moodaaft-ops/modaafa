@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { exchangeCodeForTokens } from '@/lib/google-ads/oauth';
-import { listAccessibleCustomers } from '@/lib/google-ads/client';
+import { discoverAccessibleCustomers } from '@/lib/google-ads/client';
 import { encrypt } from '@/lib/crypto';
 import { createServerClient } from '@/lib/supabase/server';
 
@@ -44,10 +44,10 @@ export async function GET(req: NextRequest) {
     const tokens = await exchangeCodeForTokens(code);
     const refreshToken = tokens.refresh_token!;
 
-    // Discover accessible accounts
-    const customerIds = await listAccessibleCustomers(refreshToken);
+    // Discover direct accounts and MCC children without pulling manager metrics.
+    const accounts = await discoverAccessibleCustomers(refreshToken);
 
-    if (customerIds.length === 0) {
+    if (accounts.length === 0) {
       return NextResponse.redirect(new URL('/onboarding/connect?error=no_accounts', req.url));
     }
 
@@ -62,45 +62,29 @@ export async function GET(req: NextRequest) {
       return NextResponse.redirect(new URL('/onboarding/business?error=no_business', req.url));
     }
 
-    // If only one account, auto-link it
-    if (customerIds.length === 1) {
-      const customerId = customerIds[0];
-      const { error: insertError } = await supabase.from('google_ads_accounts').upsert({
-        business_id: business.id,
-        customer_id: customerId,
-        refresh_token_encrypted: encrypt(refreshToken),
-        permissions_scope: ['adwords'],
-        status: 'active',
-      });
-
-      if (insertError) {
-        console.error('Failed to insert google_ads_account', insertError);
-        return NextResponse.redirect(new URL('/onboarding/connect?error=db_error', req.url));
-      }
-
-      // Kick off the initial audit (non-blocking)
-      void fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/audit/run`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customerId }),
-      });
-
-      return NextResponse.redirect(new URL('/dashboard?connected=1', req.url));
-    }
-
-    // Multiple accounts → store refresh token in session, let user pick
+    // Store the short-lived account chooser in an httpOnly cookie. This avoids
+    // requiring a DB migration before the first OAuth connection works.
     const sessionId = crypto.randomUUID();
-    await supabase.from('pending_oauth_sessions').insert({
-      id: sessionId,
-      user_id: user.id,
-      refresh_token_encrypted: encrypt(refreshToken),
-      accessible_customer_ids: customerIds,
-      expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-    });
+    const pendingPayload = Buffer.from(
+      JSON.stringify({
+        id: sessionId,
+        user_id: user.id,
+        refresh_token_encrypted: encrypt(refreshToken),
+        accessible_customers: accounts,
+        expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+      })
+    ).toString('base64url');
 
     const res = NextResponse.redirect(
       new URL(`/onboarding/select-account?session=${sessionId}`, req.url)
     );
+    res.cookies.set('gads_pending_session', pendingPayload, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 30 * 60,
+      path: '/',
+    });
     res.cookies.delete('gads_oauth_state');
     return res;
   } catch (err) {

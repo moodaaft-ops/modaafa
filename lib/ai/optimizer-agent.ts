@@ -104,7 +104,7 @@ export async function decideOptimizations(
     ],
   });
 
-  const textBlock = response.content.find((b) => b.type === 'text');
+  const textBlock = response.content.find((b: any) => b.type === 'text');
   if (!textBlock || textBlock.type !== 'text') return [];
 
   const json = textBlock.text.match(/```(?:json)?\s*([\s\S]*?)\s*```/)?.[1] ?? textBlock.text.trim();

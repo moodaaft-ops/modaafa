@@ -191,7 +191,8 @@ async function runTool(name: string, input: any, customer: Customer): Promise<an
           geo_target_constants: [`geoTargetConstants/2682`], // Saudi Arabia
           keyword_seed: { keywords: [input.seed] },
         } as any);
-        return result.slice(0, 30).map((r: any) => ({
+        const ideas = Array.isArray(result) ? result : ((result as any).results ?? []);
+        return ideas.slice(0, 30).map((r: any) => ({
           text: r.text,
           avg_monthly_searches: r.keyword_idea_metrics?.avg_monthly_searches,
           competition: r.keyword_idea_metrics?.competition,

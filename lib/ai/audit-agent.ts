@@ -116,7 +116,7 @@ export async function runAudit(snapshot: AccountSnapshot): Promise<AuditResult> 
     ],
   });
 
-  const textBlock = response.content.find((b) => b.type === 'text');
+  const textBlock = response.content.find((b: any) => b.type === 'text');
   if (!textBlock || textBlock.type !== 'text') {
     throw new Error('No text response from Claude');
   }

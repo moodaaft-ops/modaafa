@@ -66,6 +66,17 @@ CREATE TABLE IF NOT EXISTS google_ads_accounts (
 CREATE INDEX idx_gads_business ON google_ads_accounts(business_id);
 CREATE INDEX idx_gads_status ON google_ads_accounts(status);
 
+CREATE TABLE IF NOT EXISTS pending_oauth_sessions (
+  id UUID PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  refresh_token_encrypted TEXT NOT NULL,
+  accessible_customers JSONB NOT NULL DEFAULT '[]'::jsonb,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_pending_oauth_user ON pending_oauth_sessions(user_id, expires_at);
+
 -- =====================================================
 -- AUDITS & RECOMMENDATIONS
 -- =====================================================
@@ -238,6 +249,7 @@ CREATE INDEX idx_reports_account ON reports(account_id, generated_at DESC);
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE businesses ENABLE ROW LEVEL SECURITY;
 ALTER TABLE google_ads_accounts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE pending_oauth_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audits ENABLE ROW LEVEL SECURITY;
 ALTER TABLE recommendations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ai_actions ENABLE ROW LEVEL SECURITY;
@@ -259,6 +271,9 @@ CREATE POLICY businesses_owner_only ON businesses
 -- All other tables scoped via business → user
 CREATE POLICY gads_owner_only ON google_ads_accounts
   FOR ALL USING (business_id IN (SELECT id FROM businesses WHERE user_id = auth.uid()));
+
+CREATE POLICY pending_oauth_owner_only ON pending_oauth_sessions
+  FOR ALL USING (user_id = auth.uid());
 
 CREATE POLICY audits_owner_only ON audits
   FOR ALL USING (account_id IN (
@@ -322,3 +337,30 @@ CREATE TRIGGER update_businesses_updated_at BEFORE UPDATE ON businesses
 
 CREATE TRIGGER update_chat_sessions_updated_at BEFORE UPDATE ON chat_sessions
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Keep public.users aligned with Supabase Auth users.
+CREATE OR REPLACE FUNCTION public.handle_new_auth_user()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO public.users (id, email, name, avatar_url)
+  VALUES (
+    NEW.id,
+    NEW.email,
+    COALESCE(NEW.raw_user_meta_data->>'full_name', NEW.raw_user_meta_data->>'name'),
+    NEW.raw_user_meta_data->>'avatar_url'
+  )
+  ON CONFLICT (id) DO UPDATE SET
+    email = EXCLUDED.email,
+    name = COALESCE(EXCLUDED.name, public.users.name),
+    avatar_url = COALESCE(EXCLUDED.avatar_url, public.users.avatar_url),
+    last_login_at = NOW(),
+    updated_at = NOW();
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT OR UPDATE ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_auth_user();

@@ -14,12 +14,11 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
-import { AnthropicVertex } from '@anthropic-ai/vertex-sdk';
 
 export type ModelTier = 'opus' | 'sonnet' | 'haiku';
 
 let _client: any = null;
-let _backend: 'anthropic' | 'vertex' | null = null;
+let _backend: 'anthropic' | null = null;
 
 export function getAnthropicClient() {
   if (_client) return _client;
@@ -31,19 +30,7 @@ export function getAnthropicClient() {
     return _client;
   }
 
-  // Backend 2: Vertex AI
-  if (process.env.GOOGLE_CLOUD_PROJECT_ID || process.env.GCP_PROJECT_ID) {
-    _client = new AnthropicVertex({
-      projectId: process.env.GOOGLE_CLOUD_PROJECT_ID || process.env.GCP_PROJECT_ID,
-      region: process.env.VERTEX_AI_REGION || 'us-east5',
-    });
-    _backend = 'vertex';
-    return _client;
-  }
-
-  throw new Error(
-    'No AI backend configured. Set ANTHROPIC_API_KEY or GOOGLE_CLOUD_PROJECT_ID.'
-  );
+  throw new Error('No AI backend configured. Set ANTHROPIC_API_KEY.');
 }
 
 /**
@@ -63,12 +50,7 @@ export function getModelName(tier: ModelTier = 'opus'): string {
     }[tier];
   }
 
-  // Vertex AI model IDs (matches what's in Model Garden)
-  return {
-    opus: process.env.VERTEX_OPUS_MODEL || 'claude-opus-4-7',
-    sonnet: process.env.VERTEX_SONNET_MODEL || 'claude-sonnet-4-6',
-    haiku: process.env.VERTEX_HAIKU_MODEL || 'claude-haiku-4-5',
-  }[tier];
+  return 'claude-sonnet-4-6';
 }
 
 /**

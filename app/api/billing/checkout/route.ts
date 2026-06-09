@@ -13,7 +13,9 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 
-  const { plan, period } = await req.json();
+  const isForm = req.headers.get('content-type')?.includes('application/x-www-form-urlencoded');
+  const payload = isForm ? Object.fromEntries((await req.formData()).entries()) : await req.json();
+  const { plan, period } = payload;
   if (!['starter', 'growth', 'pro'].includes(plan)) {
     return NextResponse.json({ error: 'invalid_plan' }, { status: 400 });
   }
@@ -34,9 +36,16 @@ export async function POST(req: NextRequest) {
       trialDays: 14,
     });
 
+    if (isForm && session.url) {
+      return NextResponse.redirect(session.url, 303);
+    }
+
     return NextResponse.json({ url: session.url, session_id: session.id });
   } catch (err) {
     console.error('Checkout failed', err);
+    if (isForm) {
+      return NextResponse.redirect(new URL('/billing?error=checkout_failed', req.url), 303);
+    }
     return NextResponse.json({ error: 'checkout_failed' }, { status: 500 });
   }
 }
