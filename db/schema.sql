@@ -12,7 +12,9 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 -- =====================================================
 
 CREATE TABLE IF NOT EXISTS users (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  -- Mirrors auth.users. The FK guarantees an out-of-band auth deletion
+  -- cascades through the whole tenant tree (see 20260722 migration).
+  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   email TEXT UNIQUE NOT NULL,
   name TEXT,
   phone TEXT,
@@ -27,7 +29,10 @@ CREATE INDEX idx_users_email ON users(email);
 
 CREATE TABLE IF NOT EXISTS businesses (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  -- One workspace per user. Without this a double submit created a second
+  -- business row and every reader (which takes the newest) stopped seeing
+  -- the linked ad accounts — the "returning user sent back to onboarding" bug.
+  user_id UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   sector TEXT,
   website TEXT,
@@ -54,17 +59,25 @@ CREATE TABLE IF NOT EXISTS google_ads_accounts (
   customer_name TEXT,
   manager_id TEXT,
   refresh_token_encrypted TEXT NOT NULL,
+  -- `status` is the LINK state inside Modaafa. `google_status` is what
+  -- Google reports for the account itself (ENABLED / SUSPENDED / CLOSED …).
   status TEXT DEFAULT 'active' CHECK (status IN ('active', 'paused', 'revoked', 'invitation_pending')),
+  -- Manager (MCC) accounts must never receive a metrics query, otherwise
+  -- Google answers REQUESTED_METRICS_FOR_MANAGER.
+  is_manager BOOLEAN NOT NULL DEFAULT FALSE,
+  google_status TEXT,
+  name_repair_attempted_at TIMESTAMPTZ,
   permissions_scope TEXT[],
   currency_code TEXT,
   time_zone TEXT,
   linked_at TIMESTAMPTZ DEFAULT NOW(),
   last_synced_at TIMESTAMPTZ,
-  UNIQUE(customer_id)
+  UNIQUE(business_id, customer_id)
 );
 
 CREATE INDEX idx_gads_business ON google_ads_accounts(business_id);
 CREATE INDEX idx_gads_status ON google_ads_accounts(status);
+CREATE INDEX idx_gads_business_selectable ON google_ads_accounts(business_id, is_manager, status);
 
 CREATE TABLE IF NOT EXISTS pending_oauth_sessions (
   id UUID PRIMARY KEY,
@@ -105,7 +118,10 @@ CREATE TABLE IF NOT EXISTS recommendations (
   description TEXT,
   expected_impact JSONB,
   action_payload JSONB,
-  status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'applied', 'dismissed', 'failed')),
+  status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'executing', 'applied', 'dismissed', 'failed')),
+  fingerprint TEXT,
+  execution_key UUID UNIQUE,
+  execution_started_at TIMESTAMPTZ,
   applied_at TIMESTAMPTZ,
   applied_by TEXT,
   applied_result JSONB,
@@ -113,6 +129,7 @@ CREATE TABLE IF NOT EXISTS recommendations (
 );
 
 CREATE INDEX idx_recs_account_status ON recommendations(account_id, status);
+CREATE INDEX idx_recs_audit ON recommendations(audit_id, created_at DESC);
 
 -- =====================================================
 -- AI ACTIONS LOG
@@ -129,6 +146,13 @@ CREATE TABLE IF NOT EXISTS ai_actions (
   result JSONB,
   expected_impact JSONB,
   observed_impact JSONB,
+  recommendation_id UUID REFERENCES recommendations(id) ON DELETE SET NULL,
+  execution_key UUID UNIQUE,
+  rollback_payload JSONB,
+  rollback_status TEXT CHECK (rollback_status IS NULL OR rollback_status IN ('executing', 'reverted', 'failed')),
+  rollback_key UUID UNIQUE,
+  rollback_started_at TIMESTAMPTZ,
+  rollback_result JSONB,
   reverted_at TIMESTAMPTZ,
   reverted_by TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
@@ -158,6 +182,7 @@ CREATE TABLE IF NOT EXISTS campaigns_cache (
 );
 
 CREATE INDEX idx_campaigns_account ON campaigns_cache(account_id);
+CREATE INDEX idx_campaigns_account_synced ON campaigns_cache(account_id, last_synced_at DESC);
 
 -- =====================================================
 -- CHAT (Campaign Builder)
@@ -185,6 +210,8 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 );
 
 CREATE INDEX idx_chat_messages_session ON chat_messages(session_id, created_at);
+CREATE INDEX idx_chat_sessions_user ON chat_sessions(user_id, updated_at DESC);
+CREATE INDEX idx_chat_sessions_account ON chat_sessions(account_id);
 
 -- =====================================================
 -- SUBSCRIPTIONS & BILLING
@@ -201,13 +228,35 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   current_period_end TIMESTAMPTZ,
   stripe_subscription_id TEXT UNIQUE,
   stripe_customer_id TEXT,
+  -- moyasar_subscription_id: retained for existing rows; the Moyasar
+  -- integration was removed (dead code, never written to).
   moyasar_subscription_id TEXT,
+  -- Stripe does not guarantee webhook ordering. Every lifecycle write is
+  -- guarded on this so a late `updated` cannot resurrect a cancelled row.
+  last_event_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   canceled_at TIMESTAMPTZ
 );
 
 CREATE INDEX idx_subs_user ON subscriptions(user_id);
 CREATE INDEX idx_subs_status ON subscriptions(status);
+
+CREATE TABLE IF NOT EXISTS billing_trial_grants (
+  user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  stripe_subscription_id TEXT,
+  source TEXT NOT NULL CHECK (source IN ('checkout_complete', 'stripe_webhook')),
+  granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- billing_trial_grants cascades away when an account is deleted, which
+-- would let the same person re-register for unlimited free trials. This
+-- ledger is keyed on a hash of the email and is never deleted.
+-- Service role only: RLS enabled with no policy.
+CREATE TABLE IF NOT EXISTS billing_trial_ledger (
+  email_hash TEXT PRIMARY KEY,
+  granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  source TEXT
+);
 
 CREATE TABLE IF NOT EXISTS invoices (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -220,6 +269,11 @@ CREATE TABLE IF NOT EXISTS invoices (
   paid_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+CREATE INDEX idx_invoices_user ON invoices(user_id, created_at DESC);
+CREATE INDEX idx_invoices_subscription ON invoices(subscription_id);
+CREATE UNIQUE INDEX invoices_user_number_uniq ON invoices (user_id, invoice_number)
+  WHERE invoice_number IS NOT NULL;
 
 -- =====================================================
 -- REPORTS
@@ -243,6 +297,48 @@ CREATE TABLE IF NOT EXISTS reports (
 CREATE INDEX idx_reports_account ON reports(account_id, generated_at DESC);
 
 -- =====================================================
+-- USAGE METERING AND BACKGROUND JOBS
+-- =====================================================
+
+CREATE TABLE IF NOT EXISTS usage_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  account_id UUID REFERENCES google_ads_accounts(id) ON DELETE SET NULL,
+  feature TEXT NOT NULL CHECK (feature IN ('assistant', 'campaign_builder', 'audit', 'manual_sync', 'execute_action')),
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_usage_user_feature ON usage_events(user_id, feature, created_at DESC);
+CREATE INDEX idx_usage_account ON usage_events(account_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS job_runs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  job_name TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('running', 'success', 'partial', 'failed')),
+  started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  finished_at TIMESTAMPTZ,
+  duration_ms INTEGER,
+  processed INTEGER NOT NULL DEFAULT 0,
+  error_count INTEGER NOT NULL DEFAULT 0,
+  details JSONB NOT NULL DEFAULT '{}'::jsonb,
+  error_message TEXT
+);
+
+CREATE TABLE IF NOT EXISTS processed_webhook_events (
+  event_id TEXT PRIMARY KEY,
+  event_type TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'processing' CHECK (status IN ('processing', 'completed', 'failed')),
+  attempts INTEGER NOT NULL DEFAULT 1,
+  last_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  completed_at TIMESTAMPTZ,
+  error_message TEXT,
+  processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_job_runs_name ON job_runs(job_name, started_at DESC);
+
+-- =====================================================
 -- ROW LEVEL SECURITY (RLS)
 -- =====================================================
 
@@ -259,6 +355,10 @@ ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE subscriptions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE invoices ENABLE ROW LEVEL SECURITY;
 ALTER TABLE reports ENABLE ROW LEVEL SECURITY;
+ALTER TABLE usage_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE billing_trial_grants ENABLE ROW LEVEL SECURITY;
+ALTER TABLE job_runs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE processed_webhook_events ENABLE ROW LEVEL SECURITY;
 
 -- Users can only see their own row
 CREATE POLICY users_self_only ON users
@@ -305,17 +405,54 @@ CREATE POLICY chat_sessions_owner_only ON chat_sessions
 CREATE POLICY chat_messages_owner_only ON chat_messages
   FOR ALL USING (session_id IN (SELECT id FROM chat_sessions WHERE user_id = auth.uid()));
 
-CREATE POLICY subs_owner_only ON subscriptions
-  FOR ALL USING (user_id = auth.uid());
+-- Billing state is written exclusively by the Stripe webhook and the
+-- checkout-completion handler, both of which use the service role.
+-- A `FOR ALL` policy here would let any authenticated user INSERT their
+-- own `plan: 'pro', status: 'active'` row and unlock every paid feature.
+CREATE POLICY subs_owner_select ON subscriptions
+  FOR SELECT USING (user_id = (SELECT auth.uid()));
 
-CREATE POLICY invoices_owner_only ON invoices
-  FOR ALL USING (user_id = auth.uid());
+CREATE POLICY invoices_owner_select ON invoices
+  FOR SELECT USING (user_id = (SELECT auth.uid()));
 
 CREATE POLICY reports_owner_only ON reports
   FOR ALL USING (account_id IN (
     SELECT id FROM google_ads_accounts
     WHERE business_id IN (SELECT id FROM businesses WHERE user_id = auth.uid())
   ));
+
+CREATE POLICY usage_events_owner_select ON usage_events
+  FOR SELECT USING (user_id = auth.uid());
+
+CREATE POLICY usage_events_owner_insert ON usage_events
+  FOR INSERT WITH CHECK (user_id = auth.uid());
+
+CREATE POLICY billing_trial_grants_owner_select ON billing_trial_grants
+  FOR SELECT USING (user_id = (SELECT auth.uid()));
+
+ALTER TABLE billing_trial_ledger ENABLE ROW LEVEL SECURITY;
+
+-- =====================================================
+-- WRITE PRIVILEGES
+-- RLS decides *which rows*; these REVOKEs decide *which verbs*.
+-- Supabase grants ALL on public tables to anon/authenticated by default,
+-- so a table that is only ever written by the service role must say so.
+-- =====================================================
+
+REVOKE INSERT, UPDATE, DELETE ON subscriptions FROM anon, authenticated;
+REVOKE INSERT, UPDATE, DELETE ON invoices FROM anon, authenticated;
+REVOKE INSERT, UPDATE, DELETE ON billing_trial_grants FROM anon, authenticated;
+REVOKE ALL ON TABLE billing_trial_ledger FROM anon, authenticated;
+
+-- Metering rows are created through consume_feature_usage() only.
+REVOKE UPDATE, DELETE ON usage_events FROM anon, authenticated;
+
+-- Append-only execution history: the 24h cumulative budget guardrail is
+-- computed by summing ai_actions, so it must not be erasable.
+REVOKE DELETE ON ai_actions FROM anon, authenticated;
+REVOKE DELETE ON recommendations FROM anon, authenticated;
+REVOKE UPDATE, DELETE ON audits FROM anon, authenticated;
+REVOKE UPDATE, DELETE ON reports FROM anon, authenticated;
 
 -- =====================================================
 -- TRIGGERS
@@ -358,9 +495,174 @@ BEGIN
 
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT OR UPDATE ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_auth_user();
+
+-- ============================================================
+-- Server-side OAuth state storage (single-use, 60-min TTL).
+-- Service-role only: RLS enabled with no policies.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS public.oauth_states (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  state_hash TEXT NOT NULL UNIQUE,
+  user_id UUID NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
+  purpose TEXT NOT NULL DEFAULT 'google_ads_connect',
+  return_to TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS oauth_states_expires_at_idx ON public.oauth_states (expires_at);
+CREATE INDEX IF NOT EXISTS oauth_states_user_id_idx ON public.oauth_states (user_id);
+
+ALTER TABLE public.oauth_states ENABLE ROW LEVEL SECURITY;
+
+-- ============================================================
+-- Rate limiting (fixed windows). Service-role only:
+-- RLS enabled, privileges revoked, access via consume_rate_limit().
+-- (Kept in sync with db/migrations/20260721_rate_limits.sql.)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS public.rate_limit_windows (
+  key TEXT PRIMARY KEY,
+  window_start TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  request_count INTEGER NOT NULL DEFAULT 0 CHECK (request_count >= 0),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE public.rate_limit_windows ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.rate_limit_windows FROM anon, authenticated;
+
+CREATE INDEX IF NOT EXISTS rate_limit_windows_updated_idx
+  ON public.rate_limit_windows (updated_at);
+
+CREATE OR REPLACE FUNCTION public.consume_rate_limit(
+  p_key TEXT,
+  p_limit INTEGER,
+  p_window_seconds INTEGER
+)
+RETURNS TABLE (allowed BOOLEAN, remaining INTEGER, reset_at TIMESTAMPTZ)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_now TIMESTAMPTZ := NOW();
+  v_window_start TIMESTAMPTZ;
+  v_count INTEGER;
+BEGIN
+  IF p_limit < 1 OR p_window_seconds < 1 THEN
+    RAISE EXCEPTION 'invalid rate limit configuration';
+  END IF;
+
+  INSERT INTO public.rate_limit_windows AS limits (key, window_start, request_count, updated_at)
+  VALUES (p_key, v_now, 1, v_now)
+  ON CONFLICT (key) DO UPDATE
+    SET window_start = CASE
+          WHEN limits.window_start + MAKE_INTERVAL(secs => p_window_seconds) <= v_now THEN v_now
+          ELSE limits.window_start
+        END,
+        request_count = CASE
+          WHEN limits.window_start + MAKE_INTERVAL(secs => p_window_seconds) <= v_now THEN 1
+          ELSE limits.request_count + 1
+        END,
+        updated_at = v_now
+  RETURNING limits.window_start, limits.request_count
+    INTO v_window_start, v_count;
+
+  RETURN QUERY SELECT
+    v_count <= p_limit,
+    GREATEST(0, p_limit - v_count),
+    v_window_start + MAKE_INTERVAL(secs => p_window_seconds);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.consume_rate_limit(TEXT, INTEGER, INTEGER) FROM public, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.consume_rate_limit(TEXT, INTEGER, INTEGER) TO service_role;
+
+-- ============================================================
+-- Metered feature usage (assistant / audit / execute_action).
+-- Callable only by the authenticated user for their own id.
+-- (Kept in sync with db/migrations/20260721_billing_usage_safety.sql.)
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.consume_feature_usage(
+  p_user_id UUID,
+  p_feature TEXT,
+  p_account_id UUID,
+  p_limit INTEGER,
+  p_window_start TIMESTAMPTZ,
+  p_window_end TIMESTAMPTZ,
+  p_metadata JSONB DEFAULT '{}'::jsonb
+)
+RETURNS TABLE (allowed BOOLEAN, used INTEGER, event_id UUID)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_used INTEGER;
+  v_event_id UUID;
+BEGIN
+  IF auth.uid() IS DISTINCT FROM p_user_id THEN
+    RAISE EXCEPTION 'forbidden';
+  END IF;
+  IF p_limit < 1 OR p_window_end <= p_window_start THEN
+    RAISE EXCEPTION 'invalid usage window';
+  END IF;
+
+  PERFORM pg_advisory_xact_lock(
+    hashtextextended(p_user_id::text || ':' || p_feature || ':' || p_window_start::text, 0)
+  );
+
+  SELECT COUNT(*)::integer INTO v_used
+  FROM public.usage_events
+  WHERE user_id = p_user_id
+    AND feature = p_feature
+    AND created_at >= p_window_start
+    AND created_at < p_window_end;
+
+  IF v_used >= p_limit THEN
+    RETURN QUERY SELECT false, v_used, NULL::uuid;
+    RETURN;
+  END IF;
+
+  INSERT INTO public.usage_events (user_id, account_id, feature, metadata)
+  VALUES (p_user_id, p_account_id, p_feature, COALESCE(p_metadata, '{}'::jsonb))
+  RETURNING id INTO v_event_id;
+
+  RETURN QUERY SELECT true, v_used + 1, v_event_id;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.refund_feature_usage(
+  p_user_id UUID,
+  p_event_id UUID
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_deleted UUID;
+BEGIN
+  IF auth.uid() IS DISTINCT FROM p_user_id THEN
+    RAISE EXCEPTION 'forbidden';
+  END IF;
+
+  DELETE FROM public.usage_events
+  WHERE id = p_event_id AND user_id = p_user_id
+  RETURNING id INTO v_deleted;
+
+  RETURN v_deleted IS NOT NULL;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.consume_feature_usage(UUID, TEXT, UUID, INTEGER, TIMESTAMPTZ, TIMESTAMPTZ, JSONB) FROM public;
+GRANT EXECUTE ON FUNCTION public.consume_feature_usage(UUID, TEXT, UUID, INTEGER, TIMESTAMPTZ, TIMESTAMPTZ, JSONB) TO authenticated;
+REVOKE ALL ON FUNCTION public.refund_feature_usage(UUID, UUID) FROM public;
+GRANT EXECUTE ON FUNCTION public.refund_feature_usage(UUID, UUID) TO authenticated;

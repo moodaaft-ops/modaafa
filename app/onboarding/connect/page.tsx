@@ -1,73 +1,131 @@
+import { redirect } from 'next/navigation';
 import Link from 'next/link';
+import { CheckCircle2, Info, Layers, Link2, ShieldCheck } from 'lucide-react';
+import { getAccountWorkspace } from '@/lib/accounts/selection';
+import { formatGoogleAdsCustomerId, googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import { createServerClient } from '@/lib/supabase/server';
+import { Alert } from '@/lib/ui/alert';
+import { buttonClasses } from '@/lib/ui/button';
+import { OnboardingProgress } from '../onboarding-progress';
+import { ConnectGoogleAdsButton } from './connect-google-ads-button';
 
 const errors: Record<string, string> = {
-  no_accounts: 'لم نجد حسابات Google Ads على هذا المستخدم.',
+  no_accounts: 'لم نجد حسابات إعلانات Google على هذا المستخدم.',
   state_mismatch: 'انتهت جلسة الربط. أعد المحاولة.',
-  oauth_failed: 'فشل إكمال الربط من Google. أعد المحاولة.',
+  state_user_mismatch:
+    'بدأت عملية الربط بحساب مستخدم مختلف على هذا المتصفح. سجّل الدخول بالحساب الصحيح ثم أعد الربط من هذا الزر.',
+  missing_params: 'لم تصل بيانات الربط من Google بشكل كامل. أعد المحاولة من زر الربط.',
+  access_denied:
+    'تم رفض الوصول من Google. إذا ظهرت رسالة أن التطبيق قيد الاختبار، أضف هذا البريد ضمن Test users أو انتظر اكتمال تحقق Google.',
+  oauth_failed: 'فشل إكمال الربط من Google. غالباً السبب أن التطبيق لم يكتمل تحقق Google أو أن الصلاحية لم تُمنح.',
+  oauth_config_missing: 'إعدادات Google OAuth غير مكتملة في بيئة الإنتاج. راجع جاهزية الإطلاق في الإعدادات.',
+  no_client_accounts: 'وجدنا حسابات إدارية فقط. اربط بريداً يملك حساب عميل مباشر أو لديه عملاء تحت حساب إداري.',
+  db_error: 'تعذر حفظ حسابات Google Ads في المنصة. أعد المحاولة.',
   session_expired: 'انتهت جلسة اختيار الحسابات. أعد الربط.',
+  session_create_failed:
+    'تعذر تجهيز جلسة اختيار الحسابات. حدّث الصفحة وأعد الربط، وإذا تكرر الخطأ فالمشكلة في صلاحية حفظ الجلسات وليس في عدد الحسابات.',
+  too_many_requests: 'تم بدء الربط عدة مرات خلال فترة قصيرة. انتظر دقيقة ثم أعد المحاولة من هذا الزر.',
+  security_service_unavailable: 'تعذر التحقق الآمن من طلب الربط الآن. أعد المحاولة بعد قليل.',
 };
+
+const points = [
+  { icon: Link2, text: 'موافقة واحدة فقط — لا تحتاج ربط كل حساب على حدة.' },
+  { icon: Layers, text: 'نسحب الحساب المباشر وكل حساب عميل تحت أي حساب إداري (MCC).' },
+  { icon: ShieldCheck, text: 'الصلاحية للقراءة والإدارة فقط، وأي تعديل يمر عبر موافقتك داخل المنصة.' },
+];
 
 export default async function ConnectGoogleAdsPage({
   searchParams,
 }: {
-  searchParams?: { error?: string };
+  searchParams?: Promise<{ error?: string }>;
 }) {
-  const supabase = createServerClient();
-  const { data: accounts } = await supabase
-    .from('google_ads_accounts')
-    .select('customer_id, customer_name, status')
-    .order('linked_at', { ascending: false });
+  const params = await searchParams;
+  const supabase = await createServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect('/login?next=/onboarding/connect');
+  const { accounts } = await getAccountWorkspace(supabase, user.id);
+  const hasAccounts = (accounts?.length ?? 0) > 0;
 
   return (
-    <main className="min-h-screen bg-ink-50 px-6 py-8">
+    <main className="min-h-screen bg-background px-4 py-8 sm:px-6">
       <div className="mx-auto max-w-4xl">
-        <div className="mb-8">
-          <div className="text-sm font-semibold text-brand-700">مُضاعِف</div>
-          <h1 className="mt-2 text-3xl font-bold">اربط حساب Google Ads</h1>
-          <p className="mt-2 text-sm text-ink-500">
-            سيظهر لك كل حساب مباشر وكل حساب عميل تحت أي حساب إداري تملكه، ثم تختار الحسابات التي تريد إدارتها.
+        <OnboardingProgress active="connect" />
+
+        <div className="mb-6 mt-8">
+          <h2 className="text-2xl font-bold sm:text-3xl">اربط إعلانات Google</h2>
+          <p className="mt-2 max-w-2xl text-sm leading-7 text-muted-foreground">
+            موافقة واحدة تكفي لسحب كل حساباتك، ثم تختار الحساب الذي تعمل عليه من لوحة التحكم.
           </p>
         </div>
 
-        {searchParams?.error && (
-          <div className="mb-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {errors[searchParams.error] ?? 'حدث خطأ أثناء الربط.'}
+        {params?.error && (
+          <div className="mb-5">
+            <Alert tone="danger">{errors[params.error] ?? 'حدث خطأ أثناء الربط.'}</Alert>
           </div>
         )}
 
-        <section className="rounded-lg border border-ink-100 bg-white p-6 shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <h2 className="text-xl font-bold">صلاحية Google Ads</h2>
-              <p className="mt-1 text-sm text-ink-500">الصلاحية المطلوبة هي قراءة وإدارة Google Ads فقط، وكل تعديل يمر عبر موافقة داخل المنصة.</p>
-            </div>
-            <a
-              href="/api/auth/google-ads/connect"
-              className="rounded-lg bg-brand-600 px-6 py-3 text-sm font-semibold text-white hover:bg-brand-700"
-            >
-              بدء الربط
-            </a>
-          </div>
+        <section className="rounded-lg border border-border bg-card p-5 shadow-soft sm:p-6">
+          <h3 className="text-lg font-bold">ربط تلقائي لكل الحسابات</h3>
+          <ul className="mt-4 space-y-3">
+            {points.map((point) => {
+              const Icon = point.icon;
+              return (
+                <li key={point.text} className="flex items-start gap-3 text-sm leading-7 text-foreground">
+                  <span className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-brand-50 dark:bg-brand-500/15 text-brand-600">
+                    <Icon className="h-4 w-4" />
+                  </span>
+                  {point.text}
+                </li>
+              );
+            })}
+          </ul>
 
-          {(accounts?.length ?? 0) > 0 && (
-            <div className="mt-6 border-t border-ink-100 pt-5">
-              <div className="mb-3 text-sm font-semibold">حسابات مربوطة</div>
-              <div className="grid gap-3">
-                {(accounts ?? []).map((account) => (
-                  <div key={account.customer_id} className="rounded-lg border border-ink-100 px-4 py-3 text-sm">
-                    <span className="font-medium">{account.customer_name ?? 'حساب Google Ads'}</span>
-                    <span className="mx-2 text-ink-300">·</span>
-                    <span dir="ltr">{account.customer_id}</span>
-                  </div>
-                ))}
-              </div>
-              <Link href="/dashboard" className="mt-5 inline-block text-sm font-semibold text-brand-700">
-                الانتقال للوحة التحكم
+          <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-border pt-5">
+            <ConnectGoogleAdsButton />
+            {hasAccounts && (
+              <Link href="/dashboard" className={buttonClasses({ variant: 'ghost' })}>
+                لدي حسابات — انتقل للوحة التحكم
               </Link>
-            </div>
-          )}
+            )}
+          </div>
         </section>
+
+        {/* Explain Google's verification state before redirecting. */}
+        <div className="mt-5">
+          <Alert tone="info" title="حالة تحقق Google">
+            خلال الاختبار الداخلي يستطيع فقط المستخدمون المضافون كمختبرين إكمال الربط. أما الإطلاق العام فيبدأ بعد
+            موافقة Google على شاشة الصلاحيات؛ إذا منعتك Google فلا تكرر المحاولة وانتظر اكتمال المراجعة.
+          </Alert>
+        </div>
+
+        {hasAccounts && (
+          <section className="mt-6 rounded-lg border border-border bg-card p-5 shadow-soft sm:p-6">
+            <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
+              <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+              حسابات مربوطة ({accounts.length})
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {(accounts ?? []).map((account) => (
+                <div
+                  key={account.customer_id}
+                  className="flex items-center justify-between gap-2 rounded-lg border border-border bg-muted px-4 py-3 text-sm"
+                >
+                  <span className="min-w-0 truncate font-medium text-foreground">
+                    {googleAdsAccountDisplayName(account)}
+                  </span>
+                  <span className="flex-shrink-0 text-xs text-muted-foreground" dir="ltr">
+                    {formatGoogleAdsCustomerId(account.customer_id)}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <Link href="/dashboard" className={`${buttonClasses({ variant: 'primary' })} mt-5`}>
+              الانتقال للوحة التحكم
+            </Link>
+          </section>
+        )}
       </div>
     </main>
   );

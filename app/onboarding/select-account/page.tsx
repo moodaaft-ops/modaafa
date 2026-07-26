@@ -1,5 +1,21 @@
+import { redirect } from 'next/navigation';
+import { CircleAlert, Layers } from 'lucide-react';
 import { createServerClient } from '@/lib/supabase/server';
 import { cookies } from 'next/headers';
+import { OnboardingProgress } from '../onboarding-progress';
+import { readPendingSessionCookie } from '@/lib/auth/google-ads-pending-cookie';
+import { decrypt } from '@/lib/crypto';
+import { getCustomerMetadataWithFallback } from '@/lib/google-ads/client';
+import {
+  formatGoogleAdsCustomerId,
+  googleAdsAccountDisplayName,
+  googleAdsAccountNameMissing,
+} from '@/lib/accounts/display';
+import { PendingSubmitButton } from '@/lib/ui/pending-submit-button';
+import { Alert } from '@/lib/ui/alert';
+import { StatusBadge } from '@/lib/ui/status-badge';
+import { buttonClasses } from '@/lib/ui/button';
+import { cn } from '@/lib/utils';
 
 type PendingCustomer = {
   customer_id: string;
@@ -28,80 +44,130 @@ const errors: Record<string, string> = {
 export default async function SelectAccountPage({
   searchParams,
 }: {
-  searchParams?: { session?: string; error?: string };
+  searchParams?: Promise<{ session?: string; error?: string }>;
 }) {
-  const sessionId = searchParams?.session ?? '';
-  const supabase = createServerClient();
-  await supabase.auth.getUser();
-  const pending = parsePendingSession(cookies().get('gads_pending_session')?.value);
+  const params = await searchParams;
+  const sessionId = params?.session ?? '';
+  const supabase = await createServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect('/login?next=/onboarding/select-account');
+  const cookieStore = await cookies();
+  const pending =
+    (await loadPendingSession(supabase, user.id, sessionId)) ??
+    parsePendingSession(readPendingSessionCookie((name) => cookieStore.get(name)?.value));
   const validPending =
-    pending &&
-    pending.id === sessionId &&
-    new Date(pending.expires_at).getTime() > Date.now();
+    pending && pending.id === sessionId && new Date(pending.expires_at).getTime() > Date.now();
 
-  const customers = ((validPending ? pending?.accessible_customers : []) ?? []).map((customer) => ({
+  let customers = ((validPending ? pending?.accessible_customers : []) ?? []).map((customer) => ({
     ...customer,
     customer_id: String(customer.customer_id ?? '').replace(/-/g, ''),
   }));
+  if (validPending && pending?.refresh_token_encrypted && customers.some((customer) => !customer.customer_name)) {
+    customers = await enrichCustomerNames(customers, pending.refresh_token_encrypted);
+  }
   const linkableCount = customers.filter((customer) => !customer.is_manager).length;
 
   return (
-    <main className="min-h-screen bg-ink-50 px-6 py-8">
-      <div className="mx-auto max-w-5xl">
-        <div className="mb-8">
-          <div className="text-sm font-semibold text-brand-700">مُضاعِف</div>
-          <h1 className="mt-2 text-3xl font-bold">اختر الحسابات الإعلانية</h1>
-          <p className="mt-2 text-sm text-ink-500">اختر حسابات العملاء غير الإدارية التي تريد إدارتها داخل المنصة.</p>
+    <main className="min-h-screen bg-background px-4 py-8 sm:px-6">
+      <div className="mx-auto max-w-4xl">
+        <OnboardingProgress active="accounts" />
+
+        <div className="mb-6 mt-8">
+          <h2 className="text-2xl font-bold sm:text-3xl">اختر الحسابات الإعلانية</h2>
+          <p className="mt-2 max-w-2xl text-sm leading-7 text-muted-foreground">
+            اختر حسابات العملاء غير الإدارية التي تريد إدارتها. تقدر تبدّل بينها لاحقاً من القائمة الجانبية.
+          </p>
         </div>
 
-        {searchParams?.error && (
-          <div className="mb-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {errors[searchParams.error] ?? 'حدث خطأ أثناء اختيار الحساب.'}
+        {params?.error && (
+          <div className="mb-5">
+            <Alert tone="danger">{errors[params.error] ?? 'حدث خطأ أثناء اختيار الحساب.'}</Alert>
           </div>
         )}
 
         {!validPending ? (
-          <div className="rounded-lg border border-ink-100 bg-white p-8 text-center shadow-sm">
-            <h2 className="text-xl font-bold">انتهت جلسة الربط</h2>
-            <a href="/onboarding/connect" className="mt-5 inline-block rounded-lg bg-brand-600 px-6 py-3 text-sm font-semibold text-white">
+          <div className="rounded-lg border border-border bg-card p-8 text-center shadow-soft">
+            <span className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-lg bg-amber-50 dark:bg-amber-500/15 text-amber-600 dark:text-amber-400">
+              <CircleAlert className="h-7 w-7" />
+            </span>
+            <h3 className="text-xl font-bold">انتهت جلسة الربط</h3>
+            <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
+              جلسة اختيار الحسابات انتهت صلاحيتها. أعد الربط عبر Google لتظهر حساباتك مرة أخرى.
+            </p>
+            <a href="/onboarding/connect" className={`${buttonClasses({ variant: 'primary', size: 'lg' })} mt-5`}>
               أعد الربط
             </a>
           </div>
         ) : (
-          <form action="/api/auth/google-ads/select-account" method="post" className="rounded-lg border border-ink-100 bg-white shadow-sm">
+          <form
+            action="/api/auth/google-ads/select-account"
+            method="post"
+            className="overflow-hidden rounded-lg border border-border bg-card shadow-soft"
+          >
             <input type="hidden" name="session_id" value={sessionId} />
-            <div className="border-b border-ink-100 p-5 text-sm text-ink-500">
-              وجدنا {customers.length} حساباً، منها {linkableCount} حساب عميل قابل للإدارة.
+            <div className="flex flex-wrap items-center gap-2 border-b border-border p-5 text-sm text-muted-foreground">
+              <Layers className="h-4 w-4 text-muted-foreground" />
+              وجدنا <b className="text-foreground">{customers.length}</b> حساباً، منها
+              <b className="text-brand-700 dark:text-brand-300">{linkableCount}</b> حساب عميل قابل للإدارة.
             </div>
-            <div className="divide-y divide-ink-100">
-              {customers.map((customer) => (
-                <label
-                  key={customer.customer_id}
-                  className={`flex items-center gap-4 p-5 ${customer.is_manager ? 'bg-ink-50 text-ink-400' : 'cursor-pointer hover:bg-ink-50'}`}
-                >
-                  <input
-                    type="checkbox"
-                    name="customer_id"
-                    value={customer.customer_id}
-                    disabled={customer.is_manager}
-                    defaultChecked={!customer.is_manager && customers.length === 1}
-                    className="h-5 w-5"
-                  />
-                  <div className="flex-1">
-                    <div className="font-semibold text-ink-900">{customer.customer_name ?? 'حساب Google Ads'}</div>
-                    <div className="mt-1 flex flex-wrap gap-2 text-xs text-ink-500">
-                      <span dir="ltr">{customer.customer_id}</span>
-                      {customer.manager_id && <span>تحت مدير {customer.manager_id}</span>}
-                      {customer.is_manager && <span className="rounded bg-amber-100 px-2 py-0.5 text-amber-700">حساب إداري</span>}
+
+            {linkableCount === 0 && (
+              <div className="border-b border-amber-100 dark:border-amber-500/25 bg-amber-50 dark:bg-amber-500/15 p-4">
+                <Alert tone="warning" icon={false}>
+                  الحسابات الإدارية تظهر هنا للمعرفة فقط. اربط حساب عميل غير إداري أو ادخل ببريد يملك حساب إعلانات Google
+                  مباشر.
+                </Alert>
+              </div>
+            )}
+
+            <div className="divide-y divide-border">
+              {customers.map((customer) => {
+                const missing = googleAdsAccountNameMissing(customer);
+                return (
+                  <label
+                    key={customer.customer_id}
+                    className={cn(
+                      'flex items-start gap-4 p-5 transition',
+                      customer.is_manager
+                        ? 'bg-muted/60'
+                        : 'cursor-pointer hover:bg-muted has-[:checked]:bg-brand-50/50'
+                    )}
+                  >
+                    <input
+                      type="checkbox"
+                      name="customer_id"
+                      value={customer.customer_id}
+                      disabled={customer.is_manager}
+                      defaultChecked={!customer.is_manager && customers.length === 1}
+                      className="mt-1 h-5 w-5 accent-brand-600 disabled:opacity-40"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="font-semibold text-foreground">{googleAdsAccountDisplayName(customer)}</div>
+                      <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                        <span dir="ltr">{formatGoogleAdsCustomerId(customer.customer_id)}</span>
+                        {customer.manager_id && (
+                          <span className="text-muted-foreground">تحت مدير {customer.manager_id}</span>
+                        )}
+                        {customer.is_manager && <StatusBadge tone="warning">حساب إداري</StatusBadge>}
+                        {missing && <StatusBadge tone="neutral">Google لم ترجع اسماً</StatusBadge>}
+                      </div>
                     </div>
-                  </div>
-                </label>
-              ))}
+                  </label>
+                );
+              })}
             </div>
-            <div className="flex justify-end border-t border-ink-100 p-5">
-              <button className="rounded-lg bg-brand-600 px-6 py-3 text-sm font-semibold text-white hover:bg-brand-700">
+
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border bg-muted/60 p-5">
+              <p className="text-xs text-muted-foreground">لن ننفذ أي تعديل على حساباتك قبل موافقتك داخل المنصة.</p>
+              <PendingSubmitButton
+                disabled={linkableCount === 0}
+                pendingLabel="جاري ربط الحسابات..."
+                className={buttonClasses({ variant: 'primary', size: 'lg' })}
+              >
                 ربط الحسابات المختارة
-              </button>
+              </PendingSubmitButton>
             </div>
           </form>
         )}
@@ -117,4 +183,74 @@ function parsePendingSession(value?: string): PendingSession | null {
   } catch {
     return null;
   }
+}
+
+async function loadPendingSession(
+  supabase: any,
+  userId: string,
+  sessionId: string
+): Promise<PendingSession | null> {
+  if (!sessionId) return null;
+
+  const { data, error } = await supabase
+    .from('pending_oauth_sessions')
+    .select('id, user_id, refresh_token_encrypted, accessible_customers, expires_at')
+    .eq('id', sessionId)
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (error) {
+    console.error('Failed to load pending Google Ads OAuth session', error);
+    return null;
+  }
+
+  return (data as PendingSession | null) ?? null;
+}
+
+async function enrichCustomerNames(
+  customers: PendingCustomer[],
+  encryptedRefreshToken: string
+): Promise<PendingCustomer[]> {
+  let refreshToken: string;
+  try {
+    refreshToken = decrypt(encryptedRefreshToken);
+  } catch {
+    return customers;
+  }
+
+  const managerCandidates = customers
+    .flatMap((customer) => [customer.manager_id, customer.is_manager ? customer.customer_id : null])
+    .filter((value): value is string => Boolean(value))
+    .map((value) => value.replace(/\D/g, ''))
+    .filter((value, index, values) => value && values.indexOf(value) === index);
+
+  return Promise.all(
+    customers.map(async (customer) => {
+      if (customer.customer_name && customer.currency_code && customer.time_zone) return customer;
+
+      try {
+        const normalizedCustomerId = String(customer.customer_id ?? '').replace(/-/g, '');
+        const { metadata, loginCustomerId } = await getCustomerMetadataWithFallback(
+          refreshToken,
+          normalizedCustomerId,
+          [customer.manager_id, ...managerCandidates].filter((value): value is string => Boolean(value))
+        );
+
+        return {
+          ...customer,
+          customer_id: metadata.customer_id,
+          customer_name: customer.customer_name ?? metadata.customer_name,
+          manager_id:
+            customer.manager_id ??
+            (loginCustomerId && loginCustomerId !== normalizedCustomerId ? loginCustomerId : null),
+          is_manager: customer.is_manager ?? metadata.is_manager,
+          currency_code: customer.currency_code ?? metadata.currency_code,
+          time_zone: customer.time_zone ?? metadata.time_zone,
+        };
+      } catch (error) {
+        console.warn(`Failed to enrich pending Google Ads account ${customer.customer_id}`, error);
+        return customer;
+      }
+    })
+  );
 }

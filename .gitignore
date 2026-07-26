@@ -15,3 +15,6 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 .vercel
+
+# Local scratch area used by engineering sessions; never committed.
+_to_delete/

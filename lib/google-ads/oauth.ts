@@ -24,17 +24,23 @@ export function getOAuth2Client(): OAuth2Client {
 /**
  * Build the Google consent URL for the user to authorize Modaafa.
  * - access_type: offline → returns a refresh_token
- * - prompt: consent → forces consent screen even on repeat connects
- *   (necessary to always get a refresh_token)
+ * - prompt: 'consent select_account' → forces the consent screen on repeat
+ *   connects (needed to always get a refresh_token) AND offers the account
+ *   chooser. Without `select_account` Google silently used whichever Google
+ *   account was active in the browser, so a user signed in as owner@… whose
+ *   ad accounts live under ads@… landed on `?error=no_accounts` with no way
+ *   to pick the right identity, and every retry reproduced it identically.
+ * - include_granted_scopes is deliberately NOT set: it would merge the
+ *   identity scopes granted at login into this offline grant, so the stored
+ *   refresh token would carry more than `adwords`.
  */
 export function buildAuthUrl(state: string): string {
   const client = getOAuth2Client();
   return client.generateAuthUrl({
     access_type: 'offline',
-    prompt: 'consent',
+    prompt: 'consent select_account',
     scope: SCOPES,
     state,
-    include_granted_scopes: true,
   });
 }
 
@@ -65,4 +71,9 @@ export async function refreshAccessToken(refreshToken: string): Promise<string> 
     throw new Error('Failed to refresh access token. The refresh token may be revoked.');
   }
   return token;
+}
+
+export async function revokeRefreshToken(refreshToken: string) {
+  const client = getOAuth2Client();
+  await client.revokeToken(refreshToken);
 }

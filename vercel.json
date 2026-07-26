@@ -1,13 +1,44 @@
 {
   "crons": [
     {
+      "path": "/api/cron/sync-google-ads",
+      "schedule": "0 2 * * *"
+    },
+    {
       "path": "/api/cron/optimize",
       "schedule": "0 3 * * *"
     }
   ],
   "functions": {
-    "app/api/audit/run/route.ts": { "maxDuration": 300 },
-    "app/api/cron/optimize/route.ts": { "maxDuration": 300 },
-    "app/api/chat/builder/route.ts": { "maxDuration": 120 }
+    "app/api/audit/run/route.ts": {
+      "maxDuration": 300
+    },
+    "app/api/cron/sync-google-ads/route.ts": {
+      "maxDuration": 300
+    },
+    "app/api/cron/optimize/route.ts": {
+      "maxDuration": 300
+    },
+    "app/api/chat/builder/route.ts": {
+      "maxDuration": 120
+    },
+    "app/api/chat/assistant/route.ts": {
+      "maxDuration": 120
+    },
+    "app/api/webhooks/stripe/route.ts": {
+      "maxDuration": 60
+    },
+    "app/api/auth/google-ads/callback/route.ts": {
+      "maxDuration": 300
+    },
+    "app/api/auth/google-ads/select-account/route.ts": {
+      "maxDuration": 300
+    },
+    "app/api/accounts/sync/route.ts": {
+      "maxDuration": 300
+    },
+    "app/api/accounts/repair-names/route.ts": {
+      "maxDuration": 300
+    }
   }
 }

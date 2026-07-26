@@ -1,163 +1,377 @@
 import Link from 'next/link';
+import {
+  ArrowLeft,
+  CheckCircle2,
+  CircleDashed,
+  Megaphone,
+  MessageCircle,
+  Plus,
+  ShieldCheck,
+  TrendingUp,
+  Wallet,
+  Zap,
+} from 'lucide-react';
+import { getAccountWorkspace } from '@/lib/accounts/selection';
+import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import { createServerClient } from '@/lib/supabase/server';
-import { formatSAR, formatNumberAr } from '@/lib/utils';
+import { formatCurrency, formatNumberAr, timeAgoAr } from '@/lib/utils';
+import { moneyMetric } from '@/lib/google-ads/metrics';
+import { campaignStatusLabel } from '@/lib/ui/labels';
+import { PageHeader } from '@/lib/ui/page-header';
+import { MetricCard } from '@/lib/ui/metric-card';
+import { EmptyState } from '@/lib/ui/empty-state';
+import { StatusBadge, campaignStatusTone } from '@/lib/ui/status-badge';
+import { buttonClasses } from '@/lib/ui/button';
+import { PendingSubmitButton } from '@/lib/ui/pending-submit-button';
+import { Alert } from '@/lib/ui/alert';
+import { getSubscriptionAccess } from '@/lib/billing/entitlements';
+import { syncErrorMessage } from '@/lib/ui/sync-errors';
 
-export default async function DashboardPage() {
-  const supabase = createServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
+const starterSteps = [
+  {
+    key: 'accounts',
+    title: 'اربط حسابات Google Ads',
+    description: 'موافقة واحدة تسحب كل حساب مباشر وكل حساب عميل تحت أي MCC.',
+    href: '/onboarding/connect',
+    cta: 'ربط حساب',
+    icon: Plus,
+  },
+  {
+    key: 'campaigns',
+    title: 'حدّث بيانات الحساب',
+    description: 'المزامنة تجلب الحملات والصرف والتحويلات من إعلانات Google.',
+    href: '/campaigns',
+    cta: 'عرض الحملات',
+    icon: Megaphone,
+  },
+  {
+    key: 'audit',
+    title: 'شغّل أول فحص',
+    description: 'الفحص يحوّل البيانات إلى توصيات مرتبة حسب الأولوية.',
+    href: '/audit',
+    cta: 'تشغيل الفحص',
+    icon: ShieldCheck,
+  },
+  {
+    key: 'subscription',
+    title: 'اختر خطة أو ابدأ تجربة',
+    description: 'فعّل التجربة لتشغيل الفحص الدوري والمساعد الذكي بالكامل.',
+    href: '/billing',
+    cta: 'عرض الخطط',
+    icon: Zap,
+  },
+];
 
-  // Aggregate KPIs from latest campaigns_cache
-  const { data: campaigns } = await supabase
-    .from('campaigns_cache')
-    .select('*')
-    .order('last_synced_at', { ascending: false });
+export const metadata = {
+  title: 'لوحة التحكم',
+};
 
-  const { data: actionsToday } = await supabase
-    .from('ai_actions')
-    .select('id, expected_impact')
-    .gte('created_at', new Date(new Date().setHours(0, 0, 0, 0)).toISOString());
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{
+    sync_error?: string;
+    synced?: string;
+    subscribed?: string;
+    connected?: string;
+    accounts?: string;
+  }>;
+}) {
+  const params = await searchParams;
+  const supabase = await createServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const { business: workspaceBusiness, accounts, selectedAccount } = await getAccountWorkspace(supabase);
 
-  const { data: latestAudit } = await supabase
-    .from('audits')
-    .select('health_score, estimated_monthly_waste, ran_at')
-    .order('ran_at', { ascending: false })
-    .limit(1)
-    .single();
+  // Reuse the workspace lookup rather than issuing a second, unordered
+  // `.maybeSingle()` query — that variant threw PGRST116 the moment a user had
+  // more than one business row and silently degraded the greeting to a raw
+  // email address.
+  const business = workspaceBusiness;
 
-  const totalSpend = (campaigns ?? []).reduce(
-    (sum, c) => sum + (c.metrics_today?.cost_sar ?? 0),
-    0
-  );
-  const totalConversions = (campaigns ?? []).reduce(
-    (sum, c) => sum + (c.metrics_today?.conversions ?? 0),
-    0
-  );
+  const { data: campaigns } = selectedAccount
+    ? await supabase
+        .from('campaigns_cache')
+        .select('*')
+        .eq('account_id', selectedAccount.id)
+        .order('last_synced_at', { ascending: false })
+        .limit(500)
+    : { data: [] };
+
+  const { data: latestAudit } = selectedAccount
+    ? await supabase
+        .from('audits')
+        .select('health_score, estimated_monthly_waste, ran_at')
+        .eq('account_id', selectedAccount.id)
+        .order('ran_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+    : { data: null };
+
+  const subscription = await getSubscriptionAccess(supabase, user?.id);
+
+  const setupState: Record<string, boolean> = {
+    accounts: accounts.length > 0,
+    campaigns: (campaigns?.length ?? 0) > 0,
+    audit: Boolean(latestAudit),
+    subscription: subscription.active,
+  };
+  const completedCount = Object.values(setupState).filter(Boolean).length;
+  const setupComplete = completedCount === 4;
+
+  const sortedCampaigns = [...(campaigns ?? [])].sort((a, b) => {
+    const aEnabled = a.status === 'ENABLED' ? 1 : 0;
+    const bEnabled = b.status === 'ENABLED' ? 1 : 0;
+    if (aEnabled !== bEnabled) return bEnabled - aEnabled;
+    return moneyMetric(b.metrics_7d, 'cost') - moneyMetric(a.metrics_7d, 'cost');
+  });
+  const activeCampaigns = sortedCampaigns.filter((c) => c.status === 'ENABLED');
+  const totalSpend = activeCampaigns.reduce((sum, c) => sum + moneyMetric(c.metrics_7d, 'cost'), 0);
+  const totalConversions = activeCampaigns.reduce((sum, c) => sum + (c.metrics_7d?.conversions ?? 0), 0);
 
   return (
     <>
-      <header className="sticky top-0 z-30 bg-white/80 backdrop-blur-xl border-b border-ink-100 px-8 py-4 flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold">لوحة التحكم</h1>
-          <p className="text-sm text-ink-500">نظرة عامة على أداء حسابك</p>
-        </div>
-      </header>
+      <PageHeader
+        title={`أهلًا ${business?.name ?? user?.email ?? ''}`}
+        description={
+          selectedAccount
+            ? `تعمل الآن على ${googleAdsAccountDisplayName(selectedAccount)}`
+            : 'ابدأ بربط حساب إعلاني حتى تظهر بيانات العمل.'
+        }
+        account={
+          selectedAccount
+            ? { name: googleAdsAccountDisplayName(selectedAccount), customerId: selectedAccount.customer_id }
+            : null
+        }
+        actions={
+          <>
+            {selectedAccount && (
+              <form action="/api/accounts/sync" method="post">
+                <input type="hidden" name="customerId" value={selectedAccount.customer_id} />
+                <input type="hidden" name="next" value="/dashboard" />
+                <PendingSubmitButton pendingLabel="جاري التحديث..." className={buttonClasses({ variant: 'primary' })}>
+                  تحديث البيانات
+                </PendingSubmitButton>
+              </form>
+            )}
+            <Link href="/onboarding/connect" className={buttonClasses({ variant: 'outline' })}>
+              <Plus className="h-4 w-4" />
+              إضافة حساب
+            </Link>
+          </>
+        }
+      />
 
-      <div className="p-8">
-        {/* Hero alert */}
-        <div className="rounded-2xl bg-gradient-to-l from-brand-600 to-cyan-600 p-6 mb-6 text-white relative overflow-hidden">
-          <div className="absolute -left-12 -bottom-12 w-48 h-48 rounded-full bg-white/10"></div>
-          <div className="relative flex items-center justify-between flex-wrap gap-4">
-            <div>
-              <div className="flex items-center gap-2 mb-2">
-                <span className="w-2 h-2 rounded-full bg-emerald-300 animate-pulse"></span>
-                <span className="text-sm">الـ AI نشط الآن — يراقب حسابك</span>
+      <div className="space-y-6 p-4 sm:p-6 lg:p-8">
+        {/* Every success signal the API layer emits is rendered here. Paying
+            for a subscription, finishing the Google OAuth dance and syncing all
+            used to redirect back with a query param that no page ever read, so
+            the user got no confirmation at the three moments that matter most. */}
+        {params?.subscribed === '1' && (
+          <Alert tone="success">
+            تم تفعيل اشتراكك بنجاح. تجد تفاصيل الخطة والفواتير في صفحة الاشتراك.
+          </Alert>
+        )}
+        {params?.connected === '1' && (
+          <Alert tone="success">
+            {params.accounts && Number(params.accounts) > 0
+              ? `تم ربط إعلانات Google بنجاح — ${formatNumberAr(Number(params.accounts))} حساب إعلاني جاهز للعمل.`
+              : 'تم ربط إعلانات Google بنجاح.'}
+          </Alert>
+        )}
+        {params?.synced && <Alert tone="success">تم تحديث بيانات الحساب المختار.</Alert>}
+        {params?.sync_error && (
+          <Alert tone="danger">{syncErrorMessage(params.sync_error)}</Alert>
+        )}
+        {accounts.length === 0 ? (
+          <EmptyState
+            icon={Plus}
+            title="اربط أول حساب إعلاني لتبدأ"
+            description="مُضاعِف يعمل على حساب إعلاني واحد في كل مرة. اربط إعلانات Google بموافقة واحدة، ثم اختر الحساب وشغّل أول فحص."
+            action={
+              <Link href="/onboarding/connect" className={buttonClasses({ variant: 'primary', size: 'lg' })}>
+                ربط إعلانات Google
+              </Link>
+            }
+          />
+        ) : (
+          <>
+            {/* Setup progress */}
+            <section className="rounded-lg border border-border bg-card p-5 sm:p-6">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-bold">
+                    {setupComplete ? 'مساحة العمل جاهزة' : 'أكمل تجهيز مساحة العمل'}
+                  </h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {setupComplete
+                      ? 'كل الخطوات الأساسية مكتملة. حدّث البيانات وقتما تريد ثم راجع التوصيات.'
+                      : `أكملت ${formatNumberAr(completedCount)} من 4 خطوات. تابع من حيث توقفت.`}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 rounded-lg bg-muted px-3 py-2 text-sm font-semibold text-muted-foreground">
+                  <span className="text-brand-700 dark:text-brand-300">{formatNumberAr(completedCount)}</span>
+                  <span className="text-muted-foreground">/</span>
+                  <span>4</span>
+                </div>
               </div>
-              <h2 className="text-2xl font-bold mb-1">
-                قام مُضاعِف بـ {formatNumberAr(actionsToday?.length ?? 0)} تحسيناً اليوم
-              </h2>
-            </div>
-            <Link
-              href="/optimizer"
-              className="px-5 py-2.5 rounded-xl bg-white/20 backdrop-blur hover:bg-white/30 text-sm font-medium"
-            >
-              عرض التفاصيل ←
-            </Link>
-          </div>
-        </div>
 
-        {/* KPIs */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-          <KpiCard label="الإنفاق اليوم" value={formatSAR(totalSpend)} />
-          <KpiCard label="التحويلات" value={formatNumberAr(totalConversions)} />
-          <KpiCard
-            label="صحة الحساب"
-            value={`${latestAudit?.health_score ?? '—'}/100`}
-            href="/audit"
-          />
-          <KpiCard
-            label="تسريب الميزانية"
-            value={formatSAR(latestAudit?.estimated_monthly_waste ?? 0)}
-            tone="danger"
-          />
-        </div>
+              <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {starterSteps.map((step) => {
+                  const done = setupState[step.key];
+                  const Icon = step.icon;
+                  return (
+                    <Link
+                      key={step.key}
+                      href={step.href}
+                      className="group flex flex-col rounded-lg border border-border p-4 transition hover:border-brand-200 hover:bg-brand-50/40 dark:hover:border-brand-500/40 dark:hover:bg-brand-500/10"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span
+                          className={`flex h-9 w-9 items-center justify-center rounded-lg ${
+                            done ? 'bg-emerald-50 dark:bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' : 'bg-brand-50 dark:bg-brand-500/15 text-brand-600'
+                          }`}
+                        >
+                          <Icon className="h-4 w-4" />
+                        </span>
+                        {done ? (
+                          <StatusBadge tone="success">مكتمل</StatusBadge>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
+                            <CircleDashed className="h-3.5 w-3.5" />
+                            متبقٍ
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-3 font-semibold text-foreground">{step.title}</div>
+                      <p className="mt-1 flex-1 text-xs leading-6 text-muted-foreground">{step.description}</p>
+                      {!done && (
+                        <span className="mt-3 inline-flex items-center gap-1 text-sm font-semibold text-brand-700 dark:text-brand-300">
+                          {step.cta}
+                          <ArrowLeft className="h-3.5 w-3.5 transition group-hover:-translate-x-0.5" />
+                        </span>
+                      )}
+                    </Link>
+                  );
+                })}
+              </div>
+            </section>
 
-        {/* Active campaigns table */}
-        <div className="bg-white rounded-2xl border border-ink-100 overflow-hidden">
-          <div className="p-6 border-b border-ink-100 flex items-center justify-between">
-            <div>
-              <h3 className="font-bold">الحملات النشطة</h3>
-              <p className="text-xs text-ink-500">
-                {formatNumberAr(campaigns?.length ?? 0)} حملة قيد التشغيل
-              </p>
-            </div>
-            <Link
-              href="/campaigns/new"
-              className="px-4 py-2 rounded-xl bg-brand-600 text-white text-sm font-medium hover:bg-brand-700"
-            >
-              + حملة جديدة
-            </Link>
-          </div>
+            {/* KPIs */}
+            <section className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+              <MetricCard label="الإنفاق آخر 7 أيام" value={formatCurrency(totalSpend, selectedAccount?.currency_code)} icon={Wallet} />
+              <MetricCard label="التحويلات آخر 7 أيام" value={formatNumberAr(totalConversions)} icon={TrendingUp} />
+              <MetricCard
+                label="صحة الحساب"
+                value={`${latestAudit?.health_score ?? '—'}/100`}
+                helper={latestAudit?.ran_at ? `آخر فحص ${timeAgoAr(latestAudit.ran_at)}` : 'لم يتم الفحص بعد'}
+                icon={ShieldCheck}
+                href="/audit"
+              />
+              <MetricCard
+                label="تسريب الميزانية الشهري"
+                value={formatCurrency(latestAudit?.estimated_monthly_waste ?? 0, selectedAccount?.currency_code)}
+                helper={latestAudit ? 'تقدير محافظ قابل للتوفير' : 'يظهر بعد أول فحص'}
+                tone="danger"
+                icon={Wallet}
+                href="/audit"
+              />
+            </section>
 
-          {(campaigns?.length ?? 0) === 0 ? (
-            <div className="p-12 text-center text-ink-500">
-              لا توجد حملات بعد. ابدأ بربط حسابك أو إنشاء حملة جديدة.
-            </div>
-          ) : (
-            <table className="w-full text-sm">
-              <thead className="bg-ink-50 text-ink-500 text-xs">
-                <tr>
-                  <th className="text-right py-3 px-6 font-medium">اسم الحملة</th>
-                  <th className="text-right py-3 font-medium">الحالة</th>
-                  <th className="text-right py-3 font-medium">الإنفاق ٣٠ يوم</th>
-                  <th className="text-right py-3 font-medium">التحويلات</th>
-                  <th className="text-right py-3 font-medium">ROAS</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-ink-100">
-                {(campaigns ?? []).map((c: any) => (
-                  <tr key={c.id} className="hover:bg-ink-50">
-                    <td className="py-4 px-6 font-medium">{c.name}</td>
-                    <td>
-                      <span className="px-2 py-1 rounded-md bg-emerald-50 text-emerald-700 text-xs">
-                        {c.status}
-                      </span>
-                    </td>
-                    <td>{formatSAR(c.metrics_30d?.cost_sar ?? 0)}</td>
-                    <td>{formatNumberAr(c.metrics_30d?.conversions ?? 0)}</td>
-                    <td className="font-bold text-emerald-600">
-                      {(c.metrics_30d?.roas ?? 0).toFixed(1)}×
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
+            {/* Campaigns */}
+            <section className="overflow-hidden rounded-lg border border-border bg-card">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-5">
+                <div>
+                  <h3 className="font-bold">حملات الحساب المختار</h3>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {formatNumberAr(activeCampaigns.length)} حملة مفعلة من أصل {formatNumberAr(campaigns?.length ?? 0)}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Link href="/campaigns" className={buttonClasses({ variant: 'outline', size: 'sm' })}>
+                    كل الحملات
+                  </Link>
+                  <Link href="/optimizer" className={buttonClasses({ variant: 'primary', size: 'sm' })}>
+                    مركز الموافقات
+                  </Link>
+                </div>
+              </div>
+
+              {(campaigns?.length ?? 0) === 0 ? (
+                <EmptyState
+                  bare
+                  icon={Megaphone}
+                  tone="neutral"
+                  title="لا توجد حملات محفوظة بعد"
+                  description="حدّث بيانات الحساب أو شغّل الفحص لجلب الحملات من إعلانات Google."
+                  action={
+                    <>
+                      <form action="/api/accounts/sync" method="post">
+                        <input type="hidden" name="customerId" value={selectedAccount?.customer_id ?? ''} />
+                        <input type="hidden" name="next" value="/dashboard" />
+                        <PendingSubmitButton pendingLabel="جاري التحديث..." className={buttonClasses({ variant: 'primary' })}>
+                          تحديث البيانات الآن
+                        </PendingSubmitButton>
+                      </form>
+                      <Link href="/audit" className={buttonClasses({ variant: 'outline' })}>
+                        تشغيل الفحص
+                      </Link>
+                    </>
+                  }
+                />
+              ) : (
+                <div className="overflow-x-auto scrollbar-thin">
+                  <table className="w-full min-w-[640px] text-sm">
+                    <thead className="bg-muted text-xs text-muted-foreground">
+                      <tr>
+                        <th className="px-6 py-3 text-start font-medium">اسم الحملة</th>
+                        <th className="px-3 py-3 text-start font-medium">الحالة</th>
+                        <th className="px-3 py-3 text-start font-medium">الإنفاق 7 أيام</th>
+                        <th className="px-3 py-3 text-start font-medium">التحويلات</th>
+                        <th className="px-6 py-3 text-start font-medium">ROAS</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {sortedCampaigns.map((campaign: any) => (
+                        <tr key={campaign.id} className="hover:bg-muted/70">
+                          <td className="px-6 py-4 font-medium text-foreground">{campaign.name}</td>
+                          <td className="px-3 py-4">
+                            <StatusBadge tone={campaignStatusTone(campaign.status)}>
+                              {campaignStatusLabel(campaign.status)}
+                            </StatusBadge>
+                          </td>
+                          <td className="px-3 py-4 tabular-nums">{formatCurrency(moneyMetric(campaign.metrics_7d, 'cost'), selectedAccount?.currency_code)}</td>
+                          <td className="px-3 py-4 tabular-nums">{formatNumberAr(campaign.metrics_7d?.conversions ?? 0)}</td>
+                          <td className="px-6 py-4 font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+                            {(campaign.metrics_30d?.roas ?? 0).toFixed(1)}×
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+
+            {/* Quick help strip */}
+            <section className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-brand-100 dark:border-brand-500/20 bg-brand-50/50 dark:bg-brand-500/10 p-5">
+              <div className="flex items-center gap-3">
+                <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-card text-brand-600 shadow-soft">
+                  <MessageCircle className="h-5 w-5" />
+                </span>
+                <div>
+                  <div className="font-semibold text-foreground">مو متأكد من أين تبدأ؟</div>
+                  <p className="text-sm text-muted-foreground">اسأل المساعد عن أهم توصية أو حلل الصرف آخر 7 أيام.</p>
+                </div>
+              </div>
+              <Link href="/assistant" className={buttonClasses({ variant: 'primary' })}>
+                افتح المساعد
+              </Link>
+            </section>
+          </>
+        )}
       </div>
     </>
   );
-}
-
-function KpiCard({
-  label,
-  value,
-  href,
-  tone,
-}: {
-  label: string;
-  value: string;
-  href?: string;
-  tone?: 'danger' | 'success';
-}) {
-  const cls =
-    tone === 'danger'
-      ? 'bg-gradient-to-br from-red-500 to-pink-600 text-white'
-      : 'bg-white border border-ink-100';
-  const inner = (
-    <div className={`rounded-2xl p-5 ${cls}`}>
-      <div className={`text-sm mb-1 ${tone ? 'opacity-90' : 'text-ink-500'}`}>{label}</div>
-      <div className="text-2xl font-bold">{value}</div>
-    </div>
-  );
-  return href ? <Link href={href}>{inner}</Link> : inner;
 }

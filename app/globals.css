@@ -4,14 +4,39 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
+    /* Light — clean premium SaaS surfaces */
+    --background: 210 40% 98%;
     --foreground: 222 47% 11%;
-    --primary: 263 80% 59%;
-    --primary-foreground: 0 0% 100%;
-    --muted: 210 40% 96%;
-    --muted-foreground: 215 16% 47%;
+    --card: 0 0% 100%;
+    --surface: 210 40% 99%;
+    --elevated: 0 0% 100%;
+    --muted: 210 40% 95%;
+    --muted-foreground: 215 16% 42%;
     --border: 214 32% 91%;
-    --ring: 263 80% 59%;
+    --input: 214 32% 89%;
+    --primary: 161 88% 27%;
+    --primary-foreground: 0 0% 100%;
+    --ring: 160 84% 39%;
+    --sidebar: 210 40% 99%;
+    color-scheme: light;
+  }
+
+  .dark {
+    /* Dark — deep slate, emerald that pops */
+    --background: 222 47% 7%;
+    --foreground: 210 40% 98%;
+    --card: 222 33% 11%;
+    --surface: 222 30% 13%;
+    --elevated: 222 30% 15%;
+    --muted: 217 30% 17%;
+    --muted-foreground: 215 20% 66%;
+    --border: 217 28% 20%;
+    --input: 217 28% 24%;
+    --primary: 158 74% 39%;
+    --primary-foreground: 158 90% 6%;
+    --ring: 158 74% 45%;
+    --sidebar: 222 40% 9%;
+    color-scheme: dark;
   }
 
   * {
@@ -19,11 +44,30 @@
   }
 
   body {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
     background: hsl(var(--background));
     color: hsl(var(--foreground));
+    text-rendering: optimizeLegibility;
   }
 
-  /* Arabic numerals helper class */
+  html {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  ::selection {
+    background: hsl(158 84% 39% / 0.22);
+  }
+
   .arabic-numerals {
     font-feature-settings: 'lnum' 0;
   }
@@ -34,12 +78,34 @@
     text-wrap: balance;
   }
 
+  /* Emerald gradient text for premium headings */
+  .text-gradient-brand {
+    background: linear-gradient(135deg, hsl(158 84% 42%), hsl(161 88% 30%));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
   .scrollbar-thin::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: 7px;
+    height: 7px;
   }
   .scrollbar-thin::-webkit-scrollbar-thumb {
     background: hsl(var(--border));
-    border-radius: 4px;
+    border-radius: 8px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.5);
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
   }
 }

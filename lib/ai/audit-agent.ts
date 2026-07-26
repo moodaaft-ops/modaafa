@@ -1,4 +1,4 @@
-import { getAnthropicClient, getModelForAgent } from './client';
+import { createMessageForAgent } from './client';
 import type { AccountSnapshot } from '../google-ads/audit-queries';
 
 /**
@@ -11,9 +11,6 @@ import type { AccountSnapshot } from '../google-ads/audit-queries';
  * but the underlying analysis is in English so Claude can match the technical Google Ads
  * terminology cleanly.
  */
-
-const anthropic = getAnthropicClient();
-const MODEL = getModelForAgent('audit'); // Opus 4.7 - highest quality
 
 const SYSTEM_PROMPT = `You are an expert Google Ads media buyer with 10+ years of experience auditing accounts in the MENA region. You are part of Modaafa, a SaaS platform that helps SMB advertisers optimize their Google Ads accounts.
 
@@ -103,9 +100,7 @@ export interface AuditResult {
 export async function runAudit(snapshot: AccountSnapshot): Promise<AuditResult> {
   // Compress snapshot to keep within token budget
   const compressed = compressSnapshot(snapshot);
-
-  const response = await anthropic.messages.create({
-    model: MODEL,
+  const response = await createMessageForAgent('audit', {
     max_tokens: 8000,
     system: SYSTEM_PROMPT,
     messages: [

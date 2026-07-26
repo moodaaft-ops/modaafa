@@ -1,5 +1,5 @@
 import type Anthropic from '@anthropic-ai/sdk';
-import { getAnthropicClient, getModelForAgent } from './client';
+import { createMessageForAgent, hasAIBackend } from './client';
 import type { Customer } from 'google-ads-api';
 
 /**
@@ -14,9 +14,6 @@ import type { Customer } from 'google-ads-api';
  * 3. Generate Arabic ad copies
  * 4. Build a complete campaign draft (no API write yet — user must approve)
  */
-
-const anthropic = getAnthropicClient();
-const MODEL = getModelForAgent('builder'); // Opus 4.7 - creative campaign generation
 
 const SYSTEM_PROMPT = `You are a senior Google Ads strategist building campaigns for advertisers in the Saudi/Gulf market.
 
@@ -115,6 +112,10 @@ export async function buildCampaign(
   customer: Customer,
   context?: { business_name?: string; sector?: string; website?: string }
 ): Promise<BuilderResult> {
+  if (!hasAIBackend()) {
+    return buildFallbackCampaign(brief, context);
+  }
+
   const messages: Anthropic.MessageParam[] = [
     {
       role: 'user',
@@ -127,8 +128,7 @@ export async function buildCampaign(
 
   // Tool-use loop (max 10 turns)
   for (let i = 0; i < 10; i++) {
-    const response = await anthropic.messages.create({
-      model: MODEL,
+    const response = await createMessageForAgent('builder', {
       max_tokens: 4096,
       system: SYSTEM_PROMPT,
       tools: TOOLS as any,
@@ -176,6 +176,49 @@ export async function buildCampaign(
     summary_ar: finalDraft?.summary_ar ?? '',
     next_steps_ar: finalDraft?.next_steps_ar ?? [],
     tool_trace: toolTrace,
+  };
+}
+
+function buildFallbackCampaign(
+  brief: string,
+  context?: { business_name?: string; sector?: string; website?: string }
+): BuilderResult {
+  const safeName = `${context?.business_name ?? 'Campaign'} | ${brief.slice(0, 32)}`.trim();
+  const normalizedName = safeName.length > 72 ? safeName.slice(0, 72) : safeName;
+
+  return {
+    draft_campaign: {
+      name: normalizedName,
+      type: 'SEARCH',
+      daily_budget_sar: 100,
+      bidding_strategy: 'MAXIMIZE_CONVERSIONS',
+      geo_targets: [{ country: 'SA', regions: [] }],
+      language: 'ar',
+      ad_groups: [
+        {
+          name: 'مجموعة إعلانية أولى',
+          keywords: [],
+          headlines_ar: [],
+          descriptions_ar: [],
+        },
+      ],
+      forecast: {
+        expected_clicks: 0,
+        expected_conversions: 0,
+        expected_cpa_sar: 0,
+        expected_roas: 0,
+      },
+      approval_required: true,
+      needs_ai_enrichment: true,
+    },
+    summary_ar:
+      'جهزت مسودة أولية محافظة. لإنتاج كلمات وإعلانات وتوقعات دقيقة، أضف مفتاح الذكاء الاصطناعي ثم أعد توليد الحملة قبل الإطلاق.',
+    next_steps_ar: [
+      'راجع الهدف والميزانية اليومية',
+      'أضف صفحة الهبوط والمنتجات أو الخدمات الأساسية',
+      'لا تطلق الحملة قبل إكمال الكلمات والإعلانات والتوقعات',
+    ],
+    tool_trace: [],
   };
 }
 
