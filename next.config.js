@@ -1,21 +1,12 @@
 /** @type {import('next').NextConfig} */
+// Content-Security-Policy is deliberately NOT here. It now carries a
+// per-request nonce and is built in `middleware.ts` (see `lib/security/csp.ts`);
+// a policy emitted from this file is one fixed string baked at build time,
+// which is the one thing a nonce cannot be. Keeping a copy here as well would
+// send two CSP headers on every document, and browsers enforce the
+// intersection of both — a combination that is hard to reason about and
+// harder to debug when a script is blocked.
 const securityHeaders = [
-  {
-    key: 'Content-Security-Policy',
-    value: [
-      "default-src 'self'",
-      "base-uri 'self'",
-      "form-action 'self' https://accounts.google.com https://checkout.stripe.com",
-      "frame-ancestors 'none'",
-      "object-src 'none'",
-      "script-src 'self' 'unsafe-inline'",
-      "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data: blob: https://lh3.googleusercontent.com https://modaafa.com",
-      "font-src 'self' data:",
-      "connect-src 'self' https://*.supabase.co wss://*.supabase.co",
-      "upgrade-insecure-requests",
-    ].join('; '),
-  },
   {
     // `upgrade-insecure-requests` above only upgrades subresources of an
     // already-loaded document. Without HSTS the FIRST navigation to

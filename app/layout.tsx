@@ -1,5 +1,7 @@
 import type { Metadata, Viewport } from 'next';
+import { headers } from 'next/headers';
 import { IBM_Plex_Sans_Arabic } from 'next/font/google';
+import { NONCE_HEADER } from '@/lib/security/csp';
 import './globals.css';
 
 const arabic = IBM_Plex_Sans_Arabic({
@@ -74,11 +76,18 @@ const themeScript = `
 })();
 `;
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // Reading the nonce here is also what opts the whole tree out of static
+  // rendering. That is the accepted cost of a nonce CSP: a prerendered page is
+  // served from cache with whatever nonce it was built with, which no later
+  // response header would match, so the theme script would be blocked on every
+  // hit but the first.
+  const nonce = (await headers()).get(NONCE_HEADER) ?? undefined;
+
   return (
     <html lang="ar" dir="rtl" className={`${arabic.variable} dark w-full max-w-full overflow-x-hidden`} suppressHydrationWarning>
       <body className="w-full max-w-full overflow-x-hidden bg-background font-sans text-foreground antialiased">
-        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: themeScript }} />
         {children}
       </body>
     </html>

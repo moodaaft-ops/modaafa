@@ -30,7 +30,9 @@
 
 جلسة هندسية سابقة أصلحت 62 بنداً (سبع ثغرات P0 منها أن أي مستخدم مسجَّل كان يستطيع منح نفسه خطة مدفوعة مجاناً عبر مفتاح Supabase العام)، وأعادت بناء كل الواجهات على نظام تصميم داكن أولاً. التفاصيل الكاملة في **`docs/LAUNCH_READINESS.md`** — **اقرأه أولاً قبل أي شيء آخر**، ومعه `docs/LAUNCH-CHECKLIST.md` و`docs/OPERATIONS-RUNBOOK.md`.
 
-حالة الفحوصات عند تسليمك العمل: `tsc` ✅، `eslint --max-warnings=0` ✅، `tsx --test` ✅ 54/54، `next build` ✅.
+حالة الفحوصات عند تسليمك العمل: `tsc` ✅، `eslint --max-warnings=0` ✅، `tsx --test` ✅ 60/60، `next build` ✅.
+
+**اقرأ أيضاً `docs/GOOGLE-VERIFICATION.md`** — يحوي الحالة الفعلية لمراجعة Google (مفحوصة مباشرةً) وسكربت الفيديو المطلوب ومسودة الرد على Trust & Safety.
 
 **تحذير:** قد يفشل `pnpm test` على الجهاز بخطأ
 `esbuild: Host version "0.28.1" does not match binary version "0.28.0"`.
@@ -119,17 +121,16 @@ curl -H "Authorization: Bearer $CRON_SECRET" https://ai.modaafa.com/api/health
 
 ---
 
-### 4) تحقق من حالة مراجعة Google لشاشة الموافقة
+### 4) مراجعة Google — فُحصت بالفعل، لا تعِد فحصها
 
-**لم أستطع التحقق من هذا**: ثمانية متصفحات Chrome متصلة ولم أستطع تمييز بروفايل «مضاعفة» بينها، والتعليمات تمنع استخدام أي بروفايل آخر.
+الحالة موثّقة بالكامل في **`docs/GOOGLE-VERIFICATION.md`** (فحص مباشر 2026-07-26، مشروع `modaafa-prod`): ٤ من ٥ بنود مكتملة، والعائق الوحيد **App functionality** وسببه الفيديو التوضيحي ورد على إيميل Trust & Safety — لا علاقة له بالكود.
 
-من **بروفايل «مضاعفة» فقط**، افتح Google Cloud Console → APIs & Services → OAuth consent screen للمشروع المرتبط بـ `ai.modaafa.com`، وسجّل:
-- حالة النشر: Testing أم In production؟
-- حالة التحقق: هل النطاقات الحساسة (`https://www.googleapis.com/auth/adwords`) موافَق عليها؟
-- إن كان Testing: من المضاف في Test users؟
-- النطاقات المصرّح بها وعناوين redirect URI.
+**دورك هنا محدود:**
+- بعد النشر، **جرّب بنفسك** خطوات «HOW TO TEST THE OAUTH CONSENT FLOW» في ذلك الملف من نافذة تصفح خفي حتى شاشة الموافقة، وأبلغ إن تعثرت أي خطوة — لأن المراجع سيتعثر في نفس المكان.
+- تحقق أن `ai.modaafa.com/privacy` و`/terms` يرجعان 200 بعد النشر (هما الرابطان المسجّلان عند Google).
+- **لا تضبط `GOOGLE_OAUTH_APP_VERIFIED=true`** حتى تتحول البنود الخمسة كلها إلى ✅ في Verification Center. الكود يستخدمها ليقرر عرض تحذير «التطبيق قيد الاختبار» للمستخدم.
 
-**ثم:** اضبط `GOOGLE_OAUTH_APP_VERIFIED=true` في Vercel **فقط بعد موافقة Google الفعلية**. لا تضبطها تفاؤلاً — الكود يستخدمها لتحديد ما إن كان يعرض تحذير «التطبيق قيد الاختبار» للمستخدم.
+تسجيل الفيديو وإرسال الرد على إيميل Trust & Safety مهمة إنسان، لا مهمتك.
 
 ---
 
@@ -147,47 +148,33 @@ curl -H "Authorization: Bearer $CRON_SECRET" https://ai.modaafa.com/api/health
 
 ---
 
-### 6) أضف إعادة توجيه للنطاق الجذر: `modaafa.com/privacy` و`/terms`
+### 6) (P3) إعادة توجيه النطاق الجذر — تحسين، ليس عائقاً
 
-**السبب:** شاشة موافقة Google تعرض `modaafa.com` كنطاق التطبيق، وGoogle تطلب أن تكون سياسة الخصوصية وشروط الخدمة متاحتين على **ذلك** النطاق. الاثنتان **404 مؤكدة اليوم** — وهذا سبب رفض شائع في مراجعة OAuth.
+**تصحيح لافتراض شائع:** الروابط المسجّلة عند Google هي `https://ai.modaafa.com/privacy` و`/terms` وكلاهما يعمل، وبند «Homepage requirements» اجتاز المراجعة فعلاً. النطاق `modaafa.com` مسجَّل كـ **Authorized domain** فقط، وهذا ما تطلبه Google (النطاق الجذر لا الفرعي). فـ 404 على `modaafa.com/privacy` **ليست عائق مراجعة**.
 
-الصفحتان موجودتان وتعملان على `ai.modaafa.com/privacy` و`/terms`.
+تبقى مفيدة لمن يكتب `modaafa.com` مباشرة. إن نفّذتها: إعادة توجيه 301 من `modaafa.com/privacy` و`/terms` و`/data-deletion` إلى ما يقابلها على `ai.modaafa.com`، على مستوى DNS/Vercel للنطاق الجذر لا داخل تطبيق Next (التطبيق لا يخدم النطاق الجذر أصلاً).
 
-**المطلوب:** إعادة توجيه 301 دائمة من `modaafa.com/privacy` و`modaafa.com/terms` (و`/data-deletion` أيضاً) إلى ما يقابلها على `ai.modaafa.com`. نفّذها على مستوى DNS/Vercel للنطاق الجذر لا داخل تطبيق Next، لأن التطبيق لا يخدم النطاق الجذر أصلاً.
+---
 
-**معيار القبول:**
+### 7) CSP بالـ nonce — نُفِّذ بالفعل، دورك التحقق فقط
+
+`script-src` صار `'self' 'nonce-…' 'strict-dynamic'` بلا `'unsafe-inline'`. السياسة انتقلت من `next.config.js` إلى `middleware.ts` (`lib/security/csp.ts`)، وكل الصفحات صارت ديناميكية — وهي كلفة موافَق عليها من المالك بعد قياس TTFB (‎11ms → 37ms محلياً).
+
+**المطلوب منك بعد النشر فقط:**
 ```bash
-curl -sI https://modaafa.com/privacy | head -3   # 301 → ai.modaafa.com/privacy
-curl -sI https://modaafa.com/terms   | head -3   # 301 → ai.modaafa.com/terms
+curl -sI https://ai.modaafa.com/ | grep -i content-security-policy   # يجب أن تحوي nonce- وألا تحوي unsafe-inline في script-src
 ```
+ثم افتح `/` و`/login` و`/dashboard` في متصفح وتأكد أن **console خالٍ من انتهاكات CSP** وأن الصفحات تعمل تفاعلياً. **أي انتهاك يعني سكربتاً بلا nonce — أبلغ عنه ولا تُرجع `'unsafe-inline'` كحل سريع.**
 
 ---
 
-### 7) قرار CSP: nonce بدل `'unsafe-inline'`
+### 8) رسائل المحادثة — مُصلحة، لا تعمل عليها
 
-**لم أنفّذه عمداً** لأنه مقايضة معمارية لا يصح اتخاذها بلا موافقة المالك.
-
-الوضع الحالي: `script-src` يسمح بـ `'unsafe-inline'` (في `next.config.js`). لا توجد ثغرة XSS معروفة؛ هذا دفاع في العمق.
-
-الحل الصحيح: توليد nonce في `middleware.ts` لكل طلب، تمريره في ترويسة CSP وإلى `<script>`. **الثمن:** يُجبر الصفحات الثابتة اليوم — التعريفية، الدخول، القانونية، 404 — على التحوّل إلى تصيير ديناميكي، فتفقد الـ CDN cache وتزيد زمن الاستجابة (TTFB).
-
-**اسأل المالك أولاً**، ثم:
-- **إن وافق:** نفّذ الـ nonce، وقِس زمن الاستجابة قبل وبعد على الصفحة التعريفية، واذكر الرقمين.
-- **إن رفض:** وثّق القرار في `SECURITY.md` مع تاريخه وسببه، ولا تغيّر شيئاً.
+`loadPersistedChatHistory` ترتّب بـ `seq` لا `created_at`. لا شيء مطلوب.
 
 ---
 
-### 8) رتّب رسائل المحادثة بـ `seq` بدل `created_at`
-
-**العطل:** رسالتا المستخدم والمساعد تُدرجان في عبارة INSERT واحدة، فتحملان نفس `created_at` بالميلي ثانية، والترتيب بينهما غير محسوم — قد يظهر رد المساعد قبل سؤال المستخدم.
-
-العمود `chat_messages.seq BIGSERIAL` **موجود بالفعل** في الهجرة (خطوة 1)، لكن الاستعلامات ما زالت ترتّب بـ `created_at`.
-
-**المطلوب:** حوّل كل قراءة لسجل المحادثة إلى `ORDER BY seq ASC`. ابحث في `app/api/chat/` و`app/(dashboard)/assistant/`. أضف اختباراً يثبت أن رسالتين بنفس `created_at` ترجعان بالترتيب الصحيح.
-
----
-
-### 9) إصدار مفتاح للتشفير (`ENCRYPTION_KEY`)
+### 9) إصدار مفتاح للتشفير (`ENCRYPTION_KEY`) — العمل البرمجي الأساسي المتبقي
 
 **الوضع:** لا يوجد إصدار مفتاح داخل النص المشفّر، فتدوير `ENCRYPTION_KEY` باب ذو اتجاه واحد — كل refresh token مخزّن يصبح غير قابل للفك. الحذف النهائي يتوقف بأمان الآن إذا فشل فك التشفير (بدل أن يترك صلاحية Google معلّقة لا يستطيع أحد سحبها)، لكن التدوير نفسه ما زال مستحيلاً عملياً.
 
