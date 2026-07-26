@@ -60,19 +60,11 @@ QUALITY GUIDELINES
 - For Saudi market, default geo = SA + relevant cities`;
 
 const TOOLS = [
-  {
-    name: 'get_keyword_ideas',
-    description: 'Get keyword ideas with search volume and competition for a seed keyword.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        seed: { type: 'string', description: 'Seed keyword in Arabic or English' },
-        country_code: { type: 'string', description: 'ISO country, e.g. "SA"', default: 'SA' },
-        language: { type: 'string', enum: ['ar', 'en'], default: 'ar' },
-      },
-      required: ['seed'],
-    },
-  },
+  // `get_keyword_ideas` was removed. The REST wrapper exposes no
+  // `keywordPlanIdeas` service, so every call threw a TypeError that was
+  // swallowed and returned `{ error: 'keyword_planning_unavailable' }` to the
+  // model — which then invented keywords and search volumes for the draft.
+  // Advertising a tool that cannot work is worse than not having it.
   {
     name: 'forecast_campaign',
     description: 'Estimate clicks/conversions/cost for a campaign with these keywords and budget.',
@@ -168,7 +160,16 @@ export async function buildCampaign(
       messages.push({ role: 'user', content: toolResults });
 
       if (finalDraft) break;
+      continue;
     }
+
+    // Any other stop reason (notably `max_tokens`, very reachable at 4096 with
+    // tools attached) previously neither broke nor appended anything, so the
+    // identical `messages` array was re-sent up to 10 times — 10 full model
+    // calls for one request, and the rate limit allows 10 requests per 10
+    // minutes.
+    console.warn(`Campaign builder stopped early: ${response.stop_reason}`);
+    break;
   }
 
   return {
@@ -224,28 +225,6 @@ function buildFallbackCampaign(
 
 async function runTool(name: string, input: any, customer: Customer): Promise<any> {
   switch (name) {
-    case 'get_keyword_ideas': {
-      // Real implementation: KeywordPlanIdeaService
-      // For brevity, simplified call
-      try {
-        const result = await customer.keywordPlanIdeas.generateKeywordIdeas({
-          customer_id: (customer as any).credentials.customer_id,
-          language: 'languageConstants/1019', // Arabic
-          geo_target_constants: [`geoTargetConstants/2682`], // Saudi Arabia
-          keyword_seed: { keywords: [input.seed] },
-        } as any);
-        const ideas = Array.isArray(result) ? result : ((result as any).results ?? []);
-        return ideas.slice(0, 30).map((r: any) => ({
-          text: r.text,
-          avg_monthly_searches: r.keyword_idea_metrics?.avg_monthly_searches,
-          competition: r.keyword_idea_metrics?.competition,
-          low_top_of_page_bid: r.keyword_idea_metrics?.low_top_of_page_bid_micros,
-          high_top_of_page_bid: r.keyword_idea_metrics?.high_top_of_page_bid_micros,
-        }));
-      } catch (err) {
-        return { error: 'keyword_planning_unavailable', message: String(err) };
-      }
-    }
 
     case 'forecast_campaign': {
       // Simplified forecast - real impl uses KeywordPlanService.generateForecastMetrics

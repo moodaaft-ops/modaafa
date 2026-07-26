@@ -101,10 +101,10 @@ export default async function CampaignsPage({
             }
           />
         ) : (
-          <section className="overflow-hidden rounded-lg border border-border bg-card">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-5">
+          <section className="surface-card overflow-hidden">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
               <div>
-                <h2 className="font-bold">قائمة الحملات</h2>
+                <h2 className="text-[14px] font-semibold tracking-tight">قائمة الحملات</h2>
                 <p className="mt-1 text-xs text-muted-foreground">
                   {formatNumberAr(sortedCampaigns.filter((c) => c.status === 'ENABLED').length)} مفعلة من أصل{' '}
                   {formatNumberAr(campaigns?.length ?? 0)}
@@ -121,29 +121,29 @@ export default async function CampaignsPage({
             </div>
             <div className="overflow-x-auto scrollbar-thin">
               <table className="w-full min-w-[720px] text-sm">
-                <thead className="bg-muted text-xs text-muted-foreground">
+                <thead className="border-b border-border bg-background-elevated text-[11px] uppercase tracking-wide text-muted-foreground">
                   <tr>
-                    <th className="px-6 py-3 text-start font-medium">الحملة</th>
-                    <th className="px-3 py-3 text-start font-medium">الحالة</th>
-                    <th className="px-3 py-3 text-start font-medium">النوع</th>
-                    <th className="px-3 py-3 text-start font-medium">الميزانية</th>
-                    <th className="px-3 py-3 text-start font-medium">الصرف 30 يوم</th>
-                    <th className="px-6 py-3 text-start font-medium">التحويلات</th>
+                    <th className="px-5 py-2.5 text-start font-medium">الحملة</th>
+                    <th className="px-3 py-2.5 text-start font-medium">الحالة</th>
+                    <th className="px-3 py-2.5 text-start font-medium">النوع</th>
+                    <th className="px-3 py-2.5 text-start font-medium">الميزانية</th>
+                    <th className="px-3 py-2.5 text-start font-medium">الصرف 30 يوم</th>
+                    <th className="px-5 py-2.5 text-start font-medium">التحويلات</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
                   {sortedCampaigns.map((campaign: any) => (
-                    <tr key={campaign.id} className="hover:bg-muted/70">
-                      <td className="px-6 py-4 font-semibold text-foreground">{campaign.name}</td>
-                      <td className="px-3 py-4">
+                    <tr key={campaign.id} className="transition-colors duration-150 hover:bg-muted/50">
+                      <td className="px-5 py-3.5 font-medium text-foreground">{campaign.name}</td>
+                      <td className="px-3 py-3.5">
                         <StatusBadge tone={campaignStatusTone(campaign.status)}>
                           {campaignStatusLabel(campaign.status)}
                         </StatusBadge>
                       </td>
-                      <td className="px-3 py-4 text-muted-foreground">{campaignTypeLabel(campaign.type)}</td>
-                      <td className="px-3 py-4 tabular-nums">{formatCurrency(campaign.daily_budget ?? 0, selectedAccount?.currency_code)}</td>
-                      <td className="px-3 py-4 tabular-nums">{formatCurrency(moneyMetric(campaign.metrics_30d, 'cost'), selectedAccount?.currency_code)}</td>
-                      <td className="px-6 py-4 tabular-nums">{formatNumberAr(campaign.metrics_30d?.conversions ?? 0)}</td>
+                      <td className="px-3 py-3.5 text-muted-foreground">{campaignTypeLabel(campaign.type)}</td>
+                      <td className="px-3 py-3.5 numeric">{formatCurrency(campaign.daily_budget ?? 0, selectedAccount?.currency_code)}</td>
+                      <td className="px-3 py-3.5 numeric">{formatCurrency(moneyMetric(campaign.metrics_30d, 'cost'), selectedAccount?.currency_code)}</td>
+                      <td className="px-5 py-3.5 numeric">{formatNumberAr(campaign.metrics_30d?.conversions ?? 0)}</td>
                     </tr>
                   ))}
                 </tbody>

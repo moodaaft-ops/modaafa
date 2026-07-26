@@ -8,7 +8,8 @@ export function cn(...inputs: ClassValue[]) {
 export function formatCurrency(
   amount: number,
   currency: string | null | undefined = 'SAR',
-  locale = 'ar-SA'
+  // Latin digits, matching formatNumberAr — see the note there.
+  locale = 'ar-SA-u-nu-latn'
 ): string {
   const currencyCandidate = String(currency ?? 'SAR').toUpperCase();
   const normalizedCurrency = /^[A-Z]{3}$/.test(currencyCandidate) ? currencyCandidate : 'SAR';
@@ -29,8 +30,18 @@ export function formatSAR(amount: number): string {
   return formatCurrency(amount, 'SAR');
 }
 
+/**
+ * Numbers in the UI.
+ *
+ * Latin digits, not Eastern Arabic-Indic. The product previously mixed three
+ * conventions on one screen: `ar-EG` gave ١٬٢٣٤ for counts, `ar-SA` gave
+ * ٨٬٤٢٠ ر.س for money, and raw values like `74/100` printed as Latin — so a
+ * health score sat next to a conversion count in a different numeral system.
+ * Latin is also what Google Ads itself shows, which is what users compare
+ * against.
+ */
 export function formatNumberAr(n: number): string {
-  return new Intl.NumberFormat('ar-EG').format(n);
+  return new Intl.NumberFormat('ar-SA-u-nu-latn').format(n);
 }
 
 export function formatPercent(n: number): string {
@@ -51,4 +62,46 @@ export function timeAgoAr(date: Date | string): string {
   const months = Math.floor(days / 30);
   if (months < 12) return `قبل ${months} شهر`;
   return `قبل ${Math.floor(months / 12)} سنة`;
+}
+
+/**
+ * Date formatter for the UI.
+ *
+ * Pinned to the Gregorian calendar and Latin digits. `toLocaleDateString('ar-SA')`
+ * resolves its calendar from CLDR, and browsers have historically resolved
+ * ar-SA to islamic-umalqura while Node resolves it to gregory — so a client
+ * component that is also server-rendered produced a hydration warning AND a
+ * visible date flip (٩/٨/٢٠٢٦ → ٢٦/٢/١٤٤٨). Pinning both removes the ambiguity.
+ */
+export function formatDateAr(value: string | number | Date | null | undefined): string {
+  if (!value) return '—';
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+
+  try {
+    return new Intl.DateTimeFormat('ar-SA-u-ca-gregory-nu-latn', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    }).format(date);
+  } catch {
+    return date.toISOString().slice(0, 10);
+  }
+}
+
+/** Same, but short (numeric day/month/year) for dense contexts. */
+export function formatDateShortAr(value: string | number | Date | null | undefined): string {
+  if (!value) return '—';
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+
+  try {
+    return new Intl.DateTimeFormat('ar-SA-u-ca-gregory-nu-latn', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(date);
+  } catch {
+    return date.toISOString().slice(0, 10);
+  }
 }

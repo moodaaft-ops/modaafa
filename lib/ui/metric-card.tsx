@@ -4,43 +4,47 @@ import { cn } from '@/lib/utils';
 
 type Tone = 'default' | 'brand' | 'danger' | 'success' | 'dark';
 
-const toneStyles: Record<Tone, { card: string; label: string; helper: string; bubble: string }> = {
+/**
+ * KPI card.
+ *
+ * All tones share one surface. Colour is carried by the label, the icon and a
+ * hairline accent rule at the top — not by a pastel fill, which on a near-black
+ * canvas turns into an unreadable smudge and makes a row of KPIs look like a
+ * bag of sweets rather than an instrument panel.
+ */
+const toneStyles: Record<Tone, { accent: string; label: string; bubble: string; value: string }> = {
   default: {
-    card: 'border border-border bg-card',
+    accent: 'bg-border-strong',
     label: 'text-muted-foreground',
-    helper: 'text-muted-foreground',
     bubble: 'bg-muted text-muted-foreground',
+    value: 'text-foreground',
   },
   brand: {
-    card: 'border border-brand-100 bg-brand-50 dark:border-brand-500/20 dark:bg-brand-500/10',
-    label: 'text-brand-700 dark:text-brand-300',
-    helper: 'text-brand-600/80 dark:text-brand-400/80',
-    bubble: 'bg-brand-100 text-brand-700 dark:bg-brand-500/20 dark:text-brand-300',
+    accent: 'bg-primary',
+    label: 'text-primary',
+    bubble: 'bg-primary/12 text-primary ring-1 ring-inset ring-primary/25',
+    value: 'text-foreground',
   },
   success: {
-    card: 'border border-emerald-100 bg-emerald-50 dark:border-emerald-500/20 dark:bg-emerald-500/10',
-    label: 'text-emerald-700 dark:text-emerald-300',
-    helper: 'text-emerald-600/80 dark:text-emerald-400/80',
-    bubble: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300',
+    accent: 'bg-emerald-500',
+    label: 'text-emerald-600 dark:text-emerald-400',
+    bubble: 'bg-emerald-500/12 text-emerald-600 ring-1 ring-inset ring-emerald-500/25 dark:text-emerald-400',
+    value: 'text-foreground',
   },
   danger: {
-    card: 'border border-red-100 bg-red-50 dark:border-red-500/20 dark:bg-red-500/10',
-    label: 'text-red-700 dark:text-red-300',
-    helper: 'text-red-500 dark:text-red-400',
-    bubble: 'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-300',
+    accent: 'bg-red-500',
+    label: 'text-red-600 dark:text-red-400',
+    bubble: 'bg-red-500/12 text-red-600 ring-1 ring-inset ring-red-500/25 dark:text-red-400',
+    value: 'text-foreground',
   },
   dark: {
-    card: 'bg-gradient-to-br from-ink-900 to-ink-800 text-white border border-white/5',
-    label: 'text-white/70',
-    helper: 'text-white/60',
-    bubble: 'bg-white/10 text-white',
+    accent: 'bg-foreground/40',
+    label: 'text-muted-foreground',
+    bubble: 'bg-foreground/10 text-foreground',
+    value: 'text-foreground',
   },
 };
 
-/**
- * KPI / metric card: small label, large value, optional helper + icon bubble.
- * Becomes a link (with hover lift) when `href` is provided.
- */
 export function MetricCard({
   label,
   value,
@@ -62,25 +66,31 @@ export function MetricCard({
   const inner = (
     <div
       className={cn(
-        'relative flex h-full flex-col rounded-xl p-5 transition-all duration-200',
-        styles.card,
-        href && 'hover:-translate-y-0.5 hover:shadow-card',
+        'surface-card surface-interactive relative flex h-full flex-col overflow-hidden p-4 sm:p-5',
         className
       )}
     >
-      <div className="flex items-center justify-between gap-2">
-        <span className={cn('text-sm font-medium', styles.label)}>{label}</span>
+      <span className={cn('absolute inset-x-0 top-0 h-px', styles.accent)} aria-hidden />
+
+      <div className="flex items-start justify-between gap-2">
+        <span className={cn('text-[13px] font-medium', styles.label)}>{label}</span>
         {Icon && (
-          <span className={cn('flex h-8 w-8 items-center justify-center rounded-lg', styles.bubble)}>
-            <Icon className="h-4 w-4" />
+          <span className={cn('flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md', styles.bubble)}>
+            <Icon className="h-3.5 w-3.5" />
           </span>
         )}
       </div>
-      <div className="mt-3 text-2xl font-bold break-words tabular-nums">{value}</div>
-      {helper && <div className={cn('mt-1.5 text-xs', styles.helper)}>{helper}</div>}
+
+      <div className={cn('mt-3 break-words text-[1.75rem] font-bold leading-none numeric', styles.value)}>
+        {value}
+      </div>
+
+      {/* Reserve the helper line so a row of cards keeps a common baseline. */}
+      <div className="mt-2 min-h-[1.25rem] text-xs leading-5 text-muted-foreground">{helper}</div>
+
       {href && (
         <ArrowUpLeft
-          className={cn('absolute bottom-4 end-4 h-4 w-4 opacity-0 transition group-hover:opacity-100', styles.helper)}
+          className="absolute bottom-4 end-4 h-4 w-4 text-muted-foreground opacity-0 transition-opacity duration-150 group-hover:opacity-100"
           aria-hidden
         />
       )}
@@ -95,4 +105,27 @@ export function MetricCard({
     );
   }
   return inner;
+}
+
+/**
+ * Compact figure used inside panels where a full KPI card would be too heavy.
+ */
+export function Stat({
+  label,
+  value,
+  hint,
+  className,
+}: {
+  label: string;
+  value: React.ReactNode;
+  hint?: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={cn('min-w-0', className)}>
+      <div className="text-xs font-medium text-muted-foreground">{label}</div>
+      <div className="mt-1 truncate text-lg font-bold leading-tight numeric">{value}</div>
+      {hint && <div className="mt-0.5 truncate text-[11px] text-muted-foreground">{hint}</div>}
+    </div>
+  );
 }

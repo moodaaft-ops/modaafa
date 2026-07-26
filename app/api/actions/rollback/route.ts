@@ -8,10 +8,16 @@ import { consumeFeatureUsage, refundFeatureUsage } from '@/lib/billing/entitleme
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 import { safeLocalPath } from '@/lib/security/redirect';
 import { sendOpsAlert } from '@/lib/notifications/email';
+import { isSameOriginRequest } from '@/lib/security/origin';
 
 const ROLLBACK_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
 export async function POST(req: NextRequest) {
+
+  // Defence in depth against cross-site POSTs; see lib/security/origin.ts.
+  if (!isSameOriginRequest(req)) {
+    return NextResponse.redirect(new URL('/optimizer?error=invalid_origin', req.url), 303);
+  }
   const supabase = await createServerClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.redirect(new URL('/login', req.url), 303);

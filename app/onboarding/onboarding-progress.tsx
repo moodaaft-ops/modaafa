@@ -1,78 +1,113 @@
 import Link from 'next/link';
-import { Check } from 'lucide-react';
+import { Check, LayoutDashboard } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
+/**
+ * Onboarding is TWO steps, not four.
+ *
+ * The previous bar listed "اختيار الحساب" and "أول فحص" as steps 3 and 4, but
+ * neither is part of onboarding — they are destinations inside the product,
+ * reached after setup is already finished. Showing them here meant the bar
+ * could never read "complete": a user who had finished everything onboarding
+ * asks for still saw "الخطوة 2 من 4" and concluded they were halfway done.
+ *
+ * Only `business` and `connect` are real gates, so those are the only steps.
+ */
 const steps = [
-  { id: 'business', href: '/onboarding/business', label: 'بيانات النشاط' },
-  { id: 'connect', href: '/onboarding/connect', label: 'ربط الحسابات' },
-  { id: 'accounts', href: '/dashboard', label: 'اختيار الحساب' },
-  { id: 'audit', href: '/audit', label: 'أول فحص' },
+  { id: 'business', href: '/onboarding/business', label: 'بيانات النشاط', caption: 'دقيقة واحدة' },
+  { id: 'connect', href: '/onboarding/connect', label: 'ربط إعلانات Google', caption: 'موافقة واحدة' },
 ] as const;
 
 type StepId = (typeof steps)[number]['id'];
 
-export function OnboardingProgress({ active }: { active: StepId }) {
+export function OnboardingProgress({
+  active,
+  /** Shown once the user already has data to go back to. */
+  showDashboardLink = false,
+}: {
+  active: StepId;
+  showDashboardLink?: boolean;
+}) {
   const activeIndex = steps.findIndex((step) => step.id === active);
 
   return (
-    <div className="rounded-lg border border-border bg-card p-4 shadow-soft sm:p-5">
-      <div className="mb-4 flex items-end justify-between gap-4">
-        <div>
-          <div className="text-xs font-semibold text-brand-700 dark:text-brand-300">تجهيز مُضاعِف</div>
-          <h1 className="mt-1 text-lg font-bold sm:text-xl">خطوات الإعداد</h1>
+    <div className="surface-card overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
+        <div className="flex items-center gap-2.5">
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-[15px] font-bold text-primary-foreground">
+            م
+          </span>
+          <div>
+            <div className="text-[13px] font-semibold leading-tight tracking-tight">تجهيز مُضاعِف</div>
+            <div className="text-[11px] leading-tight text-muted-foreground">
+              الخطوة {activeIndex + 1} من {steps.length}
+            </div>
+          </div>
         </div>
-        <span className="whitespace-nowrap text-sm font-medium text-muted-foreground">
-          الخطوة {activeIndex + 1} من {steps.length}
-        </span>
+
+        {showDashboardLink && (
+          <Link
+            href="/dashboard"
+            className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground"
+          >
+            <LayoutDashboard className="h-3.5 w-3.5" />
+            تخطي إلى لوحة التحكم
+          </Link>
+        )}
       </div>
 
-      <ol className="flex items-center">
+      <ol className="flex items-stretch">
         {steps.map((step, index) => {
           const done = index < activeIndex;
           const current = index === activeIndex;
-          const isLast = index === steps.length - 1;
 
-          const circle = (
-            <span
-              className={cn(
-                'flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border text-sm font-bold transition',
-                done && 'border-brand-600 bg-brand-600 text-white',
-                current && 'border-brand-600 bg-brand-50 dark:bg-brand-500/15 text-brand-700 dark:text-brand-300 ring-4 ring-brand-100 dark:ring-brand-500/25',
-                !done && !current && 'border-border bg-card text-muted-foreground'
-              )}
-            >
-              {done ? <Check className="h-4 w-4" /> : index + 1}
-            </span>
-          );
-
-          const label = (
-            <span
-              className={cn(
-                'hidden text-sm font-medium sm:block',
-                current ? 'text-foreground' : done ? 'text-muted-foreground' : 'text-muted-foreground'
-              )}
-            >
-              {step.label}
-            </span>
+          const body = (
+            <>
+              <span
+                className={cn(
+                  'flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full border text-xs font-bold transition-colors duration-150',
+                  done && 'border-primary bg-primary text-primary-foreground',
+                  current && 'border-primary bg-primary/10 text-primary',
+                  !done && !current && 'border-border bg-background-elevated text-foreground-subtle'
+                )}
+              >
+                {done ? <Check className="h-3.5 w-3.5" /> : index + 1}
+              </span>
+              <span className="min-w-0">
+                <span
+                  className={cn(
+                    'block truncate text-[13px] font-semibold',
+                    current ? 'text-foreground' : 'text-muted-foreground'
+                  )}
+                >
+                  {step.label}
+                </span>
+                <span className="block truncate text-[11px] text-foreground-subtle">{step.caption}</span>
+              </span>
+            </>
           );
 
           return (
-            <li key={step.id} className={cn('flex items-center', !isLast && 'flex-1')}>
+            <li
+              key={step.id}
+              className={cn(
+                'relative flex-1 border-border',
+                index > 0 && 'border-s',
+                current && 'bg-primary/[0.04]'
+              )}
+            >
+              {/* The active step gets a top rule — the one place in the shell
+                  where colour marks position, so it reads at a glance. */}
+              {current && <span className="absolute inset-x-0 top-0 h-px bg-primary" aria-hidden />}
               {done ? (
-                <Link href={step.href} className="flex items-center gap-2 rounded-lg p-1 hover:bg-muted">
-                  {circle}
-                  {label}
+                <Link
+                  href={step.href}
+                  className="flex items-center gap-2.5 px-5 py-3.5 transition-colors duration-150 hover:bg-muted/60"
+                >
+                  {body}
                 </Link>
               ) : (
-                <div className="flex items-center gap-2 p-1">
-                  {circle}
-                  {label}
-                </div>
-              )}
-              {!isLast && (
-                <span className="mx-2 h-0.5 flex-1 overflow-hidden rounded-full bg-muted" aria-hidden>
-                  <span className={cn('block h-full rounded-full bg-brand-500 transition-all', done ? 'w-full' : 'w-0')} />
-                </span>
+                <div className="flex items-center gap-2.5 px-5 py-3.5">{body}</div>
               )}
             </li>
           );

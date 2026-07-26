@@ -218,6 +218,7 @@ export async function POST(req: NextRequest) {
               subscription_id: sub.id,
               user_id: sub.user_id,
               amount_sar: minorUnitsToAmount(invoice.amount_paid ?? 0, invoice.currency),
+              currency: (invoice.currency ?? 'sar').toUpperCase(),
               status: 'paid',
               invoice_number: invoiceKey,
               invoice_url: invoice.hosted_invoice_url,

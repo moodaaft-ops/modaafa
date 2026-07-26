@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase/server';
 import { clearModaafaCookies } from '@/lib/auth/session-cookies';
+import { isSameOriginRequest } from '@/lib/security/origin';
 
 export async function POST(req: NextRequest) {
+
+  // Defence in depth against cross-site POSTs; see lib/security/origin.ts.
+  if (!isSameOriginRequest(req)) {
+    return NextResponse.redirect(new URL('/login?error=invalid_origin', req.url), 303);
+  }
   const supabase = await createServerClient();
   await supabase.auth.signOut();
 

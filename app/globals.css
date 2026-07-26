@@ -2,45 +2,92 @@
 @tailwind components;
 @tailwind utilities;
 
+/* =====================================================================
+   مُضاعِف — design tokens
+   Dark-first, in the Linear/Vercel register: near-black canvas, surfaces
+   separated by a hairline border plus a 1px inner highlight rather than a
+   drop shadow, one accent colour used sparingly, and tight typography.
+   Light mode is a full peer, not an afterthought.
+   ===================================================================== */
+
 @layer base {
+  /* Light tokens live on :root so every `dark:` utility in the codebase keeps
+     working. Dark is the DEFAULT THEME, applied by the boot script in
+     app/layout.tsx unless the user has explicitly chosen light. */
   :root {
-    /* Light — clean premium SaaS surfaces */
-    --background: 210 40% 98%;
-    --foreground: 222 47% 11%;
+    --background: 220 20% 98%;
+    --background-elevated: 0 0% 100%;
+    --canvas-glow: 158 70% 40%;
+
     --card: 0 0% 100%;
-    --surface: 210 40% 99%;
+    --surface: 220 25% 99%;
     --elevated: 0 0% 100%;
-    --muted: 210 40% 95%;
-    --muted-foreground: 215 16% 42%;
-    --border: 214 32% 91%;
-    --input: 214 32% 89%;
-    --primary: 161 88% 27%;
+    --muted: 220 16% 95%;
+    --muted-foreground: 220 9% 44%;
+
+    --foreground: 222 40% 9%;
+    --foreground-subtle: 220 12% 34%;
+
+    --border: 220 15% 90%;
+    --border-strong: 220 14% 82%;
+    --input: 220 14% 86%;
+
+    --primary: 161 88% 24%;
     --primary-foreground: 0 0% 100%;
-    --ring: 160 84% 39%;
-    --sidebar: 210 40% 99%;
+    --ring: 158 78% 34%;
+
+    --sidebar: 220 24% 99%;
+
+    /* In light mode the "inner highlight" is simply white. */
+    --edge-highlight: 0 0% 100% / 0.9;
+    --edge-highlight-strong: 0 0% 100% / 1;
+
+    --radius: 0.625rem;
+
     color-scheme: light;
   }
 
+  /* The default theme. Near-black canvas, surfaces lifted by a hairline
+     border plus a 1px inner highlight rather than a drop shadow. */
   .dark {
-    /* Dark — deep slate, emerald that pops */
-    --background: 222 47% 7%;
-    --foreground: 210 40% 98%;
-    --card: 222 33% 11%;
-    --surface: 222 30% 13%;
-    --elevated: 222 30% 15%;
-    --muted: 217 30% 17%;
-    --muted-foreground: 215 20% 66%;
-    --border: 217 28% 20%;
-    --input: 217 28% 24%;
-    --primary: 158 74% 39%;
+    --background: 222 24% 5%;
+    --background-elevated: 222 20% 7%;
+    --canvas-glow: 158 84% 45%;
+
+    --card: 222 18% 8%;
+    --surface: 222 16% 10%;
+    --elevated: 222 15% 13%;
+    --muted: 222 14% 14%;
+    --muted-foreground: 218 12% 62%;
+
+    --foreground: 210 20% 96%;
+    --foreground-subtle: 215 14% 74%;
+
+    --border: 220 12% 18%;
+    --border-strong: 220 12% 26%;
+    --input: 220 12% 22%;
+
+    --primary: 158 72% 45%;
     --primary-foreground: 158 90% 6%;
-    --ring: 158 74% 45%;
-    --sidebar: 222 40% 9%;
+    --ring: 158 72% 52%;
+
+    --sidebar: 222 22% 6%;
+
+    --edge-highlight: 0 0% 100% / 0.055;
+    --edge-highlight-strong: 0 0% 100% / 0.09;
+
     color-scheme: dark;
   }
 
   * {
     border-color: hsl(var(--border));
+  }
+
+  html {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+    -webkit-tap-highlight-color: transparent;
   }
 
   body {
@@ -50,12 +97,16 @@
     background: hsl(var(--background));
     color: hsl(var(--foreground));
     text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
-  html {
-    width: 100%;
-    max-width: 100%;
-    overflow-x: hidden;
+  /* Arabic headings read heavy at large sizes; pull the tracking in so they
+     hold together the way a Latin display face would. */
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.018em;
   }
 
   :focus-visible {
@@ -65,11 +116,65 @@
   }
 
   ::selection {
-    background: hsl(158 84% 39% / 0.22);
+    background: hsl(var(--primary) / 0.28);
+    color: hsl(var(--foreground));
   }
 
-  .arabic-numerals {
-    font-feature-settings: 'lnum' 0;
+  /* Legal pages render plain markup through LegalPage; give it real rhythm. */
+  .legal-content p,
+  .legal-content ul,
+  .legal-content ol {
+    margin-block: 0.75rem;
+    line-height: 2;
+    color: hsl(var(--foreground-subtle));
+  }
+  .legal-content h2 {
+    margin-top: 2rem;
+    font-size: 1.125rem;
+    font-weight: 700;
+    color: hsl(var(--foreground));
+  }
+}
+
+@layer components {
+  /* The core surface treatment. A hairline border carries the shape and a 1px
+     inset highlight along the top edge carries the elevation — the same trick
+     Linear and Vercel use, and it survives dark mode where drop shadows die. */
+  .surface-card {
+    background-color: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius);
+    box-shadow:
+      inset 0 1px 0 0 hsl(var(--edge-highlight)),
+      0 1px 2px 0 hsl(222 40% 2% / 0.4);
+  }
+
+  .surface-raised {
+    background-color: hsl(var(--elevated));
+    border: 1px solid hsl(var(--border-strong));
+    border-radius: var(--radius);
+    box-shadow:
+      inset 0 1px 0 0 hsl(var(--edge-highlight-strong)),
+      0 8px 24px -12px hsl(222 60% 2% / 0.7),
+      0 2px 6px -2px hsl(222 60% 2% / 0.5);
+  }
+
+  .surface-sunken {
+    background-color: hsl(var(--background-elevated));
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius);
+  }
+
+  /* Interactive rows/cards: the border brightens rather than the fill. */
+  .surface-interactive {
+    transition:
+      border-color 150ms ease,
+      background-color 150ms ease,
+      box-shadow 150ms ease;
+  }
+  .surface-interactive:hover {
+    border-color: hsl(var(--border-strong));
+    background-color: hsl(var(--surface));
   }
 }
 
@@ -78,24 +183,58 @@
     text-wrap: balance;
   }
 
-  /* Emerald gradient text for premium headings */
   .text-gradient-brand {
-    background: linear-gradient(135deg, hsl(158 84% 42%), hsl(161 88% 30%));
+    background: linear-gradient(
+      160deg,
+      hsl(var(--foreground)) 0%,
+      hsl(var(--foreground)) 35%,
+      hsl(var(--primary)) 110%
+    );
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
   }
 
+  /* Ambient light behind the hero and empty states. */
+  .canvas-glow {
+    background-image:
+      radial-gradient(60rem 32rem at 50% -10%, hsl(var(--canvas-glow) / 0.16), transparent 70%),
+      radial-gradient(40rem 24rem at 85% 10%, hsl(var(--canvas-glow) / 0.08), transparent 70%);
+  }
+
+  .canvas-grid {
+    background-image:
+      linear-gradient(to right, hsl(var(--border) / 0.55) 1px, transparent 1px),
+      linear-gradient(to bottom, hsl(var(--border) / 0.55) 1px, transparent 1px);
+    background-size: 56px 56px;
+    -webkit-mask-image: radial-gradient(closest-side at 50% 30%, #000 40%, transparent 100%);
+    mask-image: radial-gradient(closest-side at 50% 30%, #000 40%, transparent 100%);
+  }
+
+  /* Hairline that fades at both ends — used under sticky headers. */
+  .rule-fade {
+    background: linear-gradient(
+      to left,
+      transparent,
+      hsl(var(--border-strong)) 18%,
+      hsl(var(--border-strong)) 82%,
+      transparent
+    );
+  }
+
   .scrollbar-thin::-webkit-scrollbar {
-    width: 7px;
-    height: 7px;
+    width: 8px;
+    height: 8px;
   }
   .scrollbar-thin::-webkit-scrollbar-thumb {
-    background: hsl(var(--border));
+    background: hsl(var(--border-strong));
     border-radius: 8px;
+    border: 2px solid transparent;
+    background-clip: content-box;
   }
   .scrollbar-thin::-webkit-scrollbar-thumb:hover {
     background: hsl(var(--muted-foreground) / 0.5);
+    background-clip: content-box;
   }
   .scrollbar-thin::-webkit-scrollbar-track {
     background: transparent;
@@ -107,5 +246,21 @@
   .no-scrollbar {
     -ms-overflow-style: none;
     scrollbar-width: none;
+  }
+
+  /* Latin numerals inside Arabic copy — used for IDs and metrics. */
+  .numeric {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum';
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

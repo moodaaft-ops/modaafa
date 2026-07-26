@@ -1,4 +1,4 @@
-import { ShieldCheck, Link2 } from 'lucide-react';
+import { ClipboardCheck, ShieldCheck, Link2 } from 'lucide-react';
 import { createServerClient } from '@/lib/supabase/server';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
@@ -10,6 +10,7 @@ import { EmptyState } from '@/lib/ui/empty-state';
 import { Alert } from '@/lib/ui/alert';
 import { StatusBadge, severityTone } from '@/lib/ui/status-badge';
 import { buttonClasses } from '@/lib/ui/button';
+import { selectClasses } from '@/lib/ui/field';
 import { cn } from '@/lib/utils';
 import { getSubscriptionAccess, featureAccessMessage } from '@/lib/billing/entitlements';
 import { SubscriptionGate } from '@/lib/ui/subscription-gate';
@@ -27,8 +28,11 @@ export default async function AuditPage({
 }) {
   const params = await searchParams;
   const supabase = await createServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   const { accounts, selectedAccount, selectedCustomerId } = await getAccountWorkspace(supabase);
-  const subscription = await getSubscriptionAccess(supabase);
+  const subscription = await getSubscriptionAccess(supabase, user?.id);
 
   const { data: audit } = selectedAccount
     ? await supabase
@@ -122,9 +126,9 @@ export default async function AuditPage({
         {params?.error && <Alert tone="danger">{auditErrorMessage(params.error)}</Alert>}
 
         <div className="grid gap-5 lg:grid-cols-3">
-          <section className="rounded-lg border border-border bg-card p-6 lg:col-span-2">
+          <section className="surface-card p-6 lg:col-span-2">
             <div className="mb-6">
-              <h3 className="text-lg font-bold">تقرير صحة الحساب</h3>
+              <h3 className="text-[15px] font-semibold tracking-tight">تقرير صحة الحساب</h3>
               <p className="mt-1 text-sm leading-7 text-muted-foreground">
                 {latestReport?.summary_ar ?? 'ملخص الفحص الأخير وتوزيع المخاطر حسب بيانات الحساب.'}
               </p>
@@ -142,33 +146,44 @@ export default async function AuditPage({
             </div>
           </section>
 
-          <section className="relative flex flex-col overflow-hidden rounded-xl border border-white/10 bg-gradient-to-br from-ink-900 to-ink-800 p-6 text-white shadow-card">
+          <section className="surface-raised relative flex flex-col overflow-hidden p-6">
             <div className="pointer-events-none absolute -end-10 -top-10 h-32 w-32 rounded-full bg-red-500/20 blur-3xl" aria-hidden />
-            <div className="relative text-sm text-white/70">تسريب الميزانية الشهري</div>
-            <div className="relative mt-2 text-4xl font-bold tabular-nums">{formatCurrency(audit.estimated_monthly_waste ?? 0, selectedAccount?.currency_code)}</div>
-            <p className="relative mt-3 flex-1 text-sm leading-7 text-white/70">
+            <div className="relative text-[13px] text-muted-foreground">تسريب الميزانية الشهري</div>
+            <div className="relative mt-2 text-[2.25rem] font-bold leading-none text-red-500 numeric dark:text-red-400">{formatCurrency(audit.estimated_monthly_waste ?? 0, selectedAccount?.currency_code)}</div>
+            <p className="relative mt-3 flex-1 text-[13px] leading-7 text-muted-foreground">
               تقدير محافظ لما يمكن توفيره أو إعادة توزيعه بناءً على آخر بيانات محفوظة من إعلانات Google.
             </p>
             <a
               href="#recommendations"
-              className="relative mt-4 inline-flex h-11 items-center justify-center rounded-lg bg-white px-5 text-sm font-semibold text-ink-900 transition hover:bg-white/90"
+              className="relative mt-4 inline-flex h-10 items-center justify-center rounded-lg border border-border bg-card px-4 text-[13px] font-semibold text-foreground shadow-soft transition-colors duration-150 hover:border-border-strong hover:bg-surface"
             >
               مراجعة التوصيات
             </a>
           </section>
         </div>
 
-        <section id="recommendations" className="overflow-hidden rounded-lg border border-border bg-card">
+        <section id="recommendations" className="surface-card overflow-hidden">
           <div className="flex items-center justify-between gap-3 border-b border-border p-5">
             <div>
-              <h3 className="font-bold">التوصيات</h3>
+              <h3 className="text-[14px] font-semibold tracking-tight">التوصيات</h3>
               <p className="mt-1 text-xs text-muted-foreground">مرتبة من الأحدث، وكل قرار يبقى تحت موافقتك.</p>
             </div>
             <span className="rounded-lg bg-muted px-3 py-1.5 text-sm font-semibold text-muted-foreground">{recs.length}</span>
           </div>
 
           {recs.length === 0 ? (
-            <div className="p-8 text-sm text-muted-foreground">لا توجد توصيات محفوظة لهذا الفحص.</div>
+            <EmptyState
+              bare
+              tone="neutral"
+              icon={ClipboardCheck}
+              title="لا توجد توصيات محفوظة لهذا الفحص"
+              description="الفحص اكتمل ولم يجد فرصة تستحق تعديلاً على الحساب. أعد الفحص بعد تجميع بيانات أداء أحدث."
+              action={
+                <a href="/campaigns" className={buttonClasses({ variant: 'outline' })}>
+                  استعراض الحملات
+                </a>
+              }
+            />
           ) : (
             <div className="divide-y divide-border">
               {recs.map((r: any, idx: number) => (
@@ -236,7 +251,7 @@ function HealthGauge({ score }: { score: number }) {
         />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <div className={cn('text-5xl font-bold tabular-nums', tone.text)}>{score}</div>
+        <div className={cn('text-5xl font-bold numeric', tone.text)}>{score}</div>
         <div className="text-xs text-muted-foreground">من 100</div>
       </div>
     </div>
@@ -253,7 +268,7 @@ function CategoryScore({ label, value }: { label: string; value: number }) {
   return (
     <div className={cn('rounded-lg p-3', tone)}>
       <div className="text-xs">{label}</div>
-      <div className="mt-0.5 text-xl font-bold tabular-nums">{value}</div>
+      <div className="mt-0.5 text-xl font-bold numeric">{value}</div>
     </div>
   );
 }
@@ -281,7 +296,7 @@ function RunAuditForm({
         <select
           name="customerId"
           defaultValue={selectedCustomerId ?? accounts[0].customer_id}
-          className="h-10 max-w-[160px] rounded-lg border border-border bg-card px-2.5 text-sm outline-none focus:border-brand-500"
+          className={cn(selectClasses, 'h-10 max-w-[180px]')}
           aria-label="اختر الحساب للفحص"
         >
           {accounts.map((account) => (

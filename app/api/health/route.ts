@@ -124,7 +124,11 @@ async function checkDatabase() {
     const tables = [
       { table: 'businesses', column: 'id' },
       { table: 'google_ads_accounts', column: 'id' },
-      { table: 'pending_oauth_sessions', column: 'id' },
+      // `pending_oauth_sessions` is no longer checked: the two-step
+      // "pick which accounts to link" flow that wrote it was removed, and the
+      // OAuth callback now links every reachable client account in one pass.
+      // The table itself is left in place — dropping it is a separate,
+      // irreversible migration decision.
       { table: 'oauth_states', column: 'id' },
       { table: 'usage_events', column: 'id' },
       { table: 'job_runs', column: 'id' },

@@ -11,7 +11,8 @@ import { cn } from '@/lib/utils';
  */
 export function ThemeToggle({ className, showLabel = false }: { className?: string; showLabel?: boolean }) {
   const [mounted, setMounted] = useState(false);
-  const [isDark, setIsDark] = useState(false);
+  // Dark is the default theme, so this matches what the boot script applied.
+  const [isDark, setIsDark] = useState(true);
 
   useEffect(() => {
     setMounted(true);
@@ -36,7 +37,7 @@ export function ThemeToggle({ className, showLabel = false }: { className?: stri
       aria-label={label}
       title={label}
       className={cn(
-        'inline-flex items-center gap-2 rounded-lg border border-border bg-card text-muted-foreground transition hover:text-foreground hover:bg-muted',
+        'inline-flex items-center gap-2 surface-card text-muted-foreground transition-colors duration-150 hover:border-border-strong hover:bg-surface hover:text-foreground',
         showLabel ? 'px-3 py-2 text-sm font-medium' : 'h-10 w-10 justify-center',
         className
       )}

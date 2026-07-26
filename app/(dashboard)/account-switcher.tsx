@@ -20,7 +20,7 @@ import {
   googleAdsAccountNameMissing,
 } from '@/lib/accounts/display';
 import { StatusBadge } from '@/lib/ui/status-badge';
-import { cn } from '@/lib/utils';
+import { cn, formatDateShortAr } from '@/lib/utils';
 
 export function AccountSwitcher({
   accounts,
@@ -267,7 +267,7 @@ export function AccountSwitcher({
         </p>
         <Link
           href="/onboarding/connect"
-          className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-amber-600 px-3 py-2 text-xs font-semibold text-white hover:bg-amber-700"
+          className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/12 px-3 py-2 text-[11.5px] font-semibold text-amber-600 transition-colors hover:bg-amber-500/20 dark:text-amber-300"
         >
           <Plus className="h-4 w-4" />
           ربط حساب
@@ -284,7 +284,7 @@ export function AccountSwitcher({
         <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">الحساب الإعلاني</span>
         <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
           {busy ? (
-            <RefreshCw className="h-3 w-3 animate-spin text-brand-600" />
+            <RefreshCw className="h-3 w-3 animate-spin text-primary" />
           ) : (
             <CheckCircle2 className="h-3 w-3 text-emerald-500" />
           )}
@@ -298,9 +298,9 @@ export function AccountSwitcher({
           onClick={() => setOpen((current) => !current)}
           aria-haspopup="listbox"
           aria-expanded={open}
-          className="flex w-full items-center gap-2.5 rounded-lg border border-border bg-card px-2.5 py-2 text-start transition hover:border-brand-300"
+          className="flex w-full items-center gap-2.5 surface-card px-2.5 py-2 text-start transition hover:border-primary/50"
         >
-          <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-brand-50 dark:bg-brand-500/15 text-brand-600">
+          <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary ring-1 ring-inset ring-primary/25">
             <Building2 className="h-4 w-4" />
           </span>
           <span className="min-w-0 flex-1">
@@ -315,7 +315,7 @@ export function AccountSwitcher({
         </button>
 
         {open && (
-          <div className="absolute left-0 right-0 top-full z-50 mt-2 rounded-lg border border-border bg-card p-2 shadow-pop">
+          <div className="absolute left-0 right-0 top-full z-50 mt-2 surface-card p-2 shadow-pop">
           <label className="flex items-center gap-2 rounded-lg border border-border bg-muted px-2.5 py-2">
             <Search className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
             <input
@@ -342,14 +342,14 @@ export function AccountSwitcher({
                   disabled={selecting}
                   className={cn(
                     'flex w-full items-start gap-2 rounded-lg px-2 py-2 text-start transition disabled:cursor-wait disabled:opacity-70',
-                    active ? 'bg-brand-50 dark:bg-brand-500/15' : 'hover:bg-muted'
+                    active ? 'bg-primary/10' : 'hover:bg-muted'
                   )}
                 >
                   <span className="mt-0.5 flex h-4 w-4 flex-shrink-0 items-center justify-center">
-                    {active && <Check className="h-4 w-4 text-brand-600" />}
+                    {active && <Check className="h-4 w-4 text-primary" />}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className={cn('block truncate text-xs font-semibold', active ? 'text-brand-800 dark:text-brand-300' : 'text-foreground')}>
+                    <span className={cn('block truncate text-xs font-semibold', active ? 'text-primary' : 'text-foreground')}>
                       {googleAdsAccountDisplayName(account)}
                     </span>
                     <span className="mt-0.5 block text-[11px] text-muted-foreground" dir="ltr">
@@ -371,7 +371,7 @@ export function AccountSwitcher({
           </div>
 
           <div className="mt-2 flex items-center justify-between gap-2 border-t border-border pt-2">
-            <Link href="/onboarding/connect" className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-semibold text-brand-700 dark:text-brand-300 hover:bg-brand-50 dark:hover:bg-brand-500/15">
+            <Link href="/onboarding/connect" className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-semibold text-primary hover:bg-primary/10">
               <Plus className="h-3.5 w-3.5" />
               إضافة حساب
             </Link>
@@ -410,7 +410,7 @@ export function AccountSwitcher({
         type="button"
         onClick={syncAccount}
         disabled={!value || syncing}
-        className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+        className="mt-3 inline-flex w-full items-center justify-center gap-2 surface-card px-3 py-2 text-xs font-semibold text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
       >
         <RefreshCw className={cn('h-3.5 w-3.5', syncing && 'animate-spin')} />
         {syncing ? 'جاري تحديث البيانات...' : 'تحديث بيانات الحساب'}
@@ -424,7 +424,7 @@ export function AccountSwitcher({
           </span>
         ) : selected?.last_synced_at ? (
           <span className="text-muted-foreground">
-            آخر تحديث: {new Date(selected.last_synced_at).toLocaleDateString('ar-SA')}
+            آخر تحديث: {formatDateShortAr(selected.last_synced_at)}
           </span>
         ) : (
           <span className="text-muted-foreground">الاختيار يطبّق على كل الصفحات</span>
@@ -440,7 +440,7 @@ export function AccountSwitcher({
       {reconnectRequired && (
         <Link
           href="/onboarding/connect"
-          className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-brand-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-brand-700"
+          className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-[11.5px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
         >
           <RefreshCw className="h-3.5 w-3.5" />
           إعادة ربط Google Ads
@@ -449,7 +449,7 @@ export function AccountSwitcher({
       {billingRequired && (
         <Link
           href="/billing"
-          className="mt-2 inline-flex w-full items-center justify-center rounded-lg border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground transition hover:bg-muted"
+          className="mt-2 inline-flex w-full items-center justify-center surface-card px-3 py-2 text-xs font-semibold text-foreground transition hover:bg-muted"
         >
           عرض الخطط والتجربة المجانية
         </Link>

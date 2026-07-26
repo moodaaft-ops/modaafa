@@ -14,6 +14,7 @@ import {
   refundFeatureUsage,
 } from '@/lib/billing/entitlements';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
+import { isSameOriginRequest } from '@/lib/security/origin';
 
 // The assistant makes an Anthropic call (45s SDK timeout, up to 2 retries)
 // plus several Supabase reads. It was the only AI route with no maxDuration,
@@ -106,6 +107,11 @@ function mergeConsecutiveTurns(turns: ChatTurn[]): ChatTurn[] {
 }
 
 export async function POST(req: NextRequest) {
+
+  // Defence in depth against cross-site POSTs; see lib/security/origin.ts.
+  if (!isSameOriginRequest(req)) {
+    return NextResponse.json({ error: 'invalid_origin' }, { status: 403 });
+  }
   const supabase = await createServerClient();
   const {
     data: { user },
@@ -335,7 +341,10 @@ async function loadPersistedChatHistory(supabase: any, sessionId: string): Promi
     .select('role, content, created_at')
     .eq('session_id', sessionId)
     .in('role', ['user', 'assistant'])
-    .order('created_at', { ascending: false })
+    // Ordered by the monotonic `seq`, not created_at: both turns of an
+    // exchange share the same transaction timestamp, so created_at made every
+    // turn a tie and an answer could be replayed before its question.
+    .order('seq', { ascending: false })
     .limit(12);
 
   if (error) {
@@ -468,7 +477,7 @@ async function buildReply({
   });
 
   return {
-    reply_ar: aiResult.text ?? fallbackReply,
+    reply_ar: aiResult.text ?? withQuestionEcho(message, fallbackReply),
     ai_backend: aiResult.text ? ('model' as const) : ('fallback' as const),
     ai_warning: aiResult.warning,
     cards: strictOnly
@@ -632,6 +641,31 @@ function buildDeterministicReply({
   }
 
   return [accountLine, scoreLine, topCampaignLine, recommendationLine].join('\n');
+}
+
+/**
+ * Opens a deterministic reply by restating what was asked.
+ *
+ * The fallback text is what the user sees whenever the model is unavailable,
+ * and it opened with the same account summary no matter what was asked — a
+ * specific question came back with a paragraph that never referred to it, and
+ * the answer read as if nobody had listened. The same facts land very
+ * differently once the reply names the question first.
+ *
+ * Applied only on the user-facing path, never to the copy handed to the model:
+ * that one goes inside `<account_data>`, which the system prompt declares is
+ * data and never instructions, so it stays free of unsanitized user text.
+ *
+ * The message is the user's own, echoed back to the same user and rendered as
+ * a plain React text node, but it is still untrusted input — line breaks are
+ * collapsed (they would let it forge extra reply lines) and the length is
+ * hard-capped.
+ */
+function withQuestionEcho(message: string, reply: string) {
+  const cleaned = message.replace(/\s+/g, ' ').trim();
+  if (!cleaned) return reply;
+  const short = cleaned.length > 90 ? `${cleaned.slice(0, 90)}…` : cleaned;
+  return `سؤالك: «${short}»\n${reply}`;
 }
 
 async function generateAssistantReply({

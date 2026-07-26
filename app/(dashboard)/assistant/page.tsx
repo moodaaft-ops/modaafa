@@ -13,8 +13,11 @@ export const metadata = {
 
 export default async function AssistantPage() {
   const supabase = await createServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   const { accounts, selectedAccount, selectedCustomerId } = await getAccountWorkspace(supabase);
-  const subscription = await getSubscriptionAccess(supabase);
+  const subscription = await getSubscriptionAccess(supabase, user?.id);
 
   return (
     <>

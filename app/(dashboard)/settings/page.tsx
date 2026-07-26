@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Building2, LogOut, Pencil, Settings as SettingsIcon } from 'lucide-react';
+import { Building2, Link2, LogOut, Pencil, Settings as SettingsIcon } from 'lucide-react';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import {
   formatGoogleAdsCustomerId,
@@ -12,9 +12,12 @@ import { PendingSubmitButton } from '@/lib/ui/pending-submit-button';
 import { PageHeader } from '@/lib/ui/page-header';
 import { Alert } from '@/lib/ui/alert';
 import { StatusBadge } from '@/lib/ui/status-badge';
+import { EmptyState } from '@/lib/ui/empty-state';
 import { buttonClasses } from '@/lib/ui/button';
+import { inputClasses } from '@/lib/ui/field';
 
 const deleteErrors: Record<string, string> = {
+  invalid_origin: 'تعذر التحقق من مصدر الطلب. أعد المحاولة من داخل المنصة.',
   confirmation_required: 'اكتب عبارة التأكيد كما هي: حذف حسابي',
   service_role_missing: 'الحذف النهائي يحتاج مفتاح Supabase الإداري في بيئة الإنتاج.',
   billing_check_failed: 'تعذر التأكد من حالة الفوترة، لذلك لم نحذف الحساب حمايةً لك.',
@@ -77,10 +80,10 @@ export default async function SettingsPage({
 
         {/* Readiness — operators only */}
         {isOperator && (
-        <section className="rounded-lg border border-border bg-card p-6">
+        <section className="surface-card p-6">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <h2 className="text-lg font-bold">جاهزية الإطلاق</h2>
+              <h2 className="text-[15px] font-semibold tracking-tight">جاهزية الإطلاق</h2>
               <p className="mt-1 text-sm text-muted-foreground">فحص آمن للإعدادات الحرجة بدون عرض أي مفاتيح أو أسرار.</p>
             </div>
             <StatusBadge tone={summary.ok ? 'success' : 'danger'}>
@@ -89,7 +92,7 @@ export default async function SettingsPage({
           </div>
           <div className="mt-5 grid gap-3 md:grid-cols-2">
             {readiness.map((item) => (
-              <div key={item.id} className="rounded-lg border border-border p-4">
+              <div key={item.id} className="surface-card p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0">
                     <div className="font-semibold text-foreground">{item.label_ar}</div>
@@ -110,10 +113,10 @@ export default async function SettingsPage({
 
         <div className="grid gap-6 lg:grid-cols-2">
           {/* Business profile */}
-          <section className="rounded-lg border border-border bg-card p-6">
+          <section className="surface-card p-6">
             <div className="flex items-center justify-between gap-4">
-              <h2 className="text-lg font-bold">النشاط</h2>
-              <Link href="/onboarding/business" className="inline-flex items-center gap-1 text-sm font-semibold text-brand-700 dark:text-brand-300 hover:underline">
+              <h2 className="text-[15px] font-semibold tracking-tight">النشاط</h2>
+              <Link href="/onboarding/business" className="inline-flex items-center gap-1 text-sm font-semibold text-primary hover:underline">
                 <Pencil className="h-3.5 w-3.5" />
                 تعديل
               </Link>
@@ -127,8 +130,8 @@ export default async function SettingsPage({
           </section>
 
           {/* Session */}
-          <section className="flex flex-col rounded-lg border border-border bg-card p-6">
-            <h2 className="text-lg font-bold">الجلسة</h2>
+          <section className="flex flex-col surface-card p-6">
+            <h2 className="text-[15px] font-semibold tracking-tight">الجلسة</h2>
             <p className="mt-1 flex-1 text-sm leading-7 text-muted-foreground">
               أنت مسجّل الدخول بالبريد <span dir="ltr" className="font-medium text-foreground"><span className="break-all">{user?.email}</span></span>. يمكنك
               تسجيل الخروج في أي وقت والعودة بنفس الحساب.
@@ -143,10 +146,10 @@ export default async function SettingsPage({
         </div>
 
         {/* Linked accounts + rename */}
-        <section className="rounded-lg border border-border bg-card p-6">
+        <section className="surface-card p-6">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <h2 className="text-lg font-bold">حسابات إعلانات Google</h2>
+              <h2 className="text-[15px] font-semibold tracking-tight">حسابات إعلانات Google</h2>
               <p className="mt-1 text-sm text-muted-foreground">
                 سمِّ أي حساب باسم يسهل عليك تمييزه، خاصة الحسابات التي لم ترجع Google اسماً لها.
               </p>
@@ -157,15 +160,26 @@ export default async function SettingsPage({
           </div>
 
           {(accounts ?? []).length === 0 ? (
-            <div className="mt-5 rounded-lg border border-border bg-muted p-6 text-center text-sm text-muted-foreground">
-              لا توجد حسابات مربوطة بعد.
+            <div className="mt-5">
+              <EmptyState
+                bare
+                icon={Link2}
+                title="لا توجد حسابات مربوطة"
+                description="اربط إعلانات Google بموافقة واحدة، ونسحب حسابك المباشر وكل حساب عميل تحت أي حساب إداري."
+                className="rounded-lg border border-border bg-background-elevated py-10"
+                action={
+                  <Link href="/onboarding/connect" className={buttonClasses({ variant: 'primary' })}>
+                    ربط إعلانات Google
+                  </Link>
+                }
+              />
             </div>
           ) : (
             <div className="mt-5 space-y-3">
               {(accounts ?? []).map((account: any) => {
                 const missing = googleAdsAccountNameMissing(account);
                 return (
-                  <div key={account.customer_id} className="rounded-lg border border-border p-4">
+                  <div key={account.customer_id} className="surface-card p-4">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div className="flex min-w-0 items-center gap-3">
                         <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
@@ -192,7 +206,7 @@ export default async function SettingsPage({
                       <input
                         name="customer_name"
                         defaultValue={missing ? '' : account.customer_name ?? ''}
-                        className="h-10 w-full rounded-lg border border-border px-3 text-sm outline-none focus:border-brand-500"
+                        className={inputClasses}
                         placeholder={missing ? 'اكتب اسم عرض لهذا الحساب' : 'اسم الحساب'}
                         aria-label={`اسم العرض للحساب ${account.customer_id}`}
                       />
@@ -211,9 +225,11 @@ export default async function SettingsPage({
         </section>
 
         {/* Danger zone */}
-        <section className="rounded-lg border border-red-200 dark:border-red-500/25 bg-card p-6">
-          <h2 className="text-lg font-bold text-red-700 dark:text-red-300">حذف الحساب نهائياً</h2>
-          <p className="mt-2 max-w-3xl text-sm leading-7 text-muted-foreground">
+        <section className="rounded-xl border border-red-500/25 bg-red-500/[0.04] p-6">
+          <h2 className="text-[15px] font-semibold tracking-tight text-red-700 dark:text-red-300">
+            حذف الحساب نهائياً
+          </h2>
+          <p className="mt-2 max-w-3xl text-[13px] leading-7 text-muted-foreground">
             هذا الإجراء يحذف حسابك من مُضاعِف، بيانات النشاط، الحسابات الإعلانية المربوطة، المحادثات، التقارير،
             والتوصيات. إذا كان لديك اشتراك Stripe نشط فسيتم إلغاؤه أولاً، ولن نحذف الحساب إذا تعذر الإلغاء.
           </p>
@@ -224,10 +240,10 @@ export default async function SettingsPage({
           )}
           <form action="/api/account/delete" method="post" className="mt-5 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
             <label className="text-sm">
-              <span className="mb-2 block font-semibold text-foreground">للتأكيد اكتب: حذف حسابي</span>
+              <span className="mb-2 block text-[13px] font-medium text-foreground">للتأكيد اكتب: حذف حسابي</span>
               <input
                 name="confirmation"
-                className="h-12 w-full rounded-lg border border-red-200 dark:border-red-500/25 px-4 text-sm outline-none focus:border-red-500"
+                className="h-11 w-full rounded-lg border border-red-500/30 bg-background-elevated px-3.5 text-sm text-foreground outline-none transition-[border-color,box-shadow] duration-150 placeholder:text-foreground-subtle focus:border-red-500/70 focus:ring-4 focus:ring-red-500/15"
                 placeholder="حذف حسابي"
                 aria-label="اكتب عبارة التأكيد: حذف حسابي"
                 autoComplete="off"

@@ -56,23 +56,27 @@ export const viewport: Viewport = {
   initialScale: 1,
   themeColor: [
     { media: '(prefers-color-scheme: light)', color: '#f8fafc' },
-    { media: '(prefers-color-scheme: dark)', color: '#0b1220' },
+    { media: '(prefers-color-scheme: dark)', color: '#0a0c11' },
   ],
 };
 
+// Dark is the product's default, so <html> ships with the `dark` class from
+// the server and there is no first-paint flash. This script only REMOVES it
+// for a user who has explicitly chosen light — adding it here instead would
+// mean the server-rendered HTML was light for one frame on every load.
 const themeScript = `
 (function(){
   try {
-    var t = localStorage.getItem('modaafa-theme');
-    var m = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    if (t === 'dark' || (!t && m)) document.documentElement.classList.add('dark');
+    if (localStorage.getItem('modaafa-theme') === 'light') {
+      document.documentElement.classList.remove('dark');
+    }
   } catch (e) {}
 })();
 `;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="ar" dir="rtl" className={`${arabic.variable} w-full max-w-full overflow-x-hidden`} suppressHydrationWarning>
+    <html lang="ar" dir="rtl" className={`${arabic.variable} dark w-full max-w-full overflow-x-hidden`} suppressHydrationWarning>
       <body className="w-full max-w-full overflow-x-hidden bg-background font-sans text-foreground antialiased">
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
         {children}

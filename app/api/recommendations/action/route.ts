@@ -12,8 +12,14 @@ import { consumeFeatureUsage, refundFeatureUsage } from '@/lib/billing/entitleme
 import { safeLocalPath } from '@/lib/security/redirect';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 import { sendOpsAlert } from '@/lib/notifications/email';
+import { isSameOriginRequest } from '@/lib/security/origin';
 
 export async function POST(req: NextRequest) {
+
+  // Defence in depth against cross-site POSTs; see lib/security/origin.ts.
+  if (!isSameOriginRequest(req)) {
+    return NextResponse.redirect(new URL('/optimizer?error=invalid_origin', req.url), 303);
+  }
   const supabase = await createServerClient();
   const {
     data: { user },

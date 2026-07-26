@@ -25,7 +25,7 @@ export function SectionPanel({
 }) {
   const hasHeader = title || description || actions;
   return (
-    <section className={cn('overflow-hidden rounded-lg border border-border bg-card', className)}>
+    <section className={cn('surface-card overflow-hidden', className)}>
       {hasHeader && (
         <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border p-5">
           <div className="flex min-w-0 items-start gap-3">

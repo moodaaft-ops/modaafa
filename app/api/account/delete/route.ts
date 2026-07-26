@@ -5,10 +5,16 @@ import { decrypt } from '@/lib/crypto';
 import { revokeRefreshToken } from '@/lib/google-ads/oauth';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 import { clearModaafaCookies } from '@/lib/auth/session-cookies';
+import { isSameOriginRequest } from '@/lib/security/origin';
 
 const REQUIRED_CONFIRMATION = 'حذف حسابي';
 
 export async function POST(req: NextRequest) {
+
+  // Defence in depth against cross-site POSTs; see lib/security/origin.ts.
+  if (!isSameOriginRequest(req)) {
+    return NextResponse.redirect(new URL('/settings?error=invalid_origin', req.url), 303);
+  }
   const supabase = await createServerClient();
   const {
     data: { user },

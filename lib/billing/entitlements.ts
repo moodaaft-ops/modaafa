@@ -64,7 +64,18 @@ export const PLAN_LIMITS: Record<BillingPlan, Record<MeteredFeature, FeatureLimi
 /** Rank used to pick the most privileged live subscription. */
 const PLAN_RANK: Record<BillingPlan, number> = { starter: 1, growth: 2, pro: 3 };
 
-export async function getSubscriptionAccess(supabase: any, userId?: string): Promise<SubscriptionAccess> {
+/**
+ * `userId` is REQUIRED. It used to be optional, which meant three dashboard
+ * pages called this with RLS as the only thing scoping the query. That works,
+ * but it leaves no second line of defence: swapping in the admin client, or
+ * disabling RLS during an incident, would silently turn an entitlement check
+ * into a cross-tenant read.
+ */
+export async function getSubscriptionAccess(supabase: any, userId: string | null | undefined): Promise<SubscriptionAccess> {
+  if (!userId) {
+    return { active: false, plan: null, status: null, trialEndsAt: null, currentPeriodEnd: null };
+  }
+
   // Select by ENTITLEMENT, not by recency. Taking "the newest row" meant that
   // a user with more than one subscription row got the wrong answer: cancel a
   // duplicate and the cancelled row is the newest, so a still-paying customer
@@ -75,7 +86,7 @@ export async function getSubscriptionAccess(supabase: any, userId?: string): Pro
     .order('created_at', { ascending: false })
     .limit(10);
 
-  if (userId) query = query.eq('user_id', userId);
+  query = query.eq('user_id', userId);
 
   const { data: rows, error } = await query;
   if (error) console.error('Failed to read subscription access', error);

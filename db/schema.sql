@@ -201,6 +201,10 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 
 CREATE TABLE IF NOT EXISTS chat_messages (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  -- Monotonic ordering. Both turns of an exchange are inserted in one
+  -- statement and therefore share the same transaction now(), so created_at
+  -- cannot order them.
+  seq BIGSERIAL,
   session_id UUID NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
   role TEXT CHECK (role IN ('user', 'assistant', 'system', 'tool')),
   content TEXT,
@@ -210,6 +214,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 );
 
 CREATE INDEX idx_chat_messages_session ON chat_messages(session_id, created_at);
+CREATE INDEX idx_chat_messages_session_seq ON chat_messages(session_id, seq);
 CREATE INDEX idx_chat_sessions_user ON chat_sessions(user_id, updated_at DESC);
 CREATE INDEX idx_chat_sessions_account ON chat_sessions(account_id);
 
@@ -263,6 +268,9 @@ CREATE TABLE IF NOT EXISTS invoices (
   subscription_id UUID REFERENCES subscriptions(id) ON DELETE SET NULL,
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   amount_sar NUMERIC(10,2) NOT NULL,
+  -- What Stripe actually billed. `amount_sar` is kept for history; new rows
+  -- carry the real currency so a USD invoice is not rendered as riyals.
+  currency TEXT NOT NULL DEFAULT 'SAR',
   status TEXT CHECK (status IN ('draft', 'pending', 'paid', 'failed', 'refunded')),
   invoice_number TEXT,
   invoice_url TEXT,

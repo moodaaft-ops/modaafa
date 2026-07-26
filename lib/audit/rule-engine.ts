@@ -1,7 +1,43 @@
-import type { AuditResult } from '@/lib/ai/audit-agent';
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import { moneyMetric } from '@/lib/google-ads/metrics';
 import { formatCurrency } from '@/lib/utils';
+
+/**
+ * Shape of a completed audit.
+ *
+ * This type used to live in `lib/ai/audit-agent.ts` alongside an LLM-driven
+ * `runAudit()` that asked the model to grade a full account snapshot. Nothing
+ * ever called it: the shipping audit is `runRuleBasedAudit` below, which
+ * derives every score and finding from cached metrics with no model in the
+ * loop. Keeping the unused path around meant a 12-query gRPC snapshot
+ * gatherer and an 8k-token model call sat one import away from production
+ * while being covered by no test and no guardrail, so both were removed and
+ * the type — the only part with a live consumer — moved here.
+ */
+export interface AuditResult {
+  health_score: number;
+  category_scores: Record<string, number>;
+  estimated_monthly_waste_sar: number;
+  summary_ar: string;
+  summary_en: string;
+  findings: Array<{
+    category: string;
+    severity: 'critical' | 'medium' | 'growth';
+    title_ar: string;
+    title_en: string;
+    description_ar: string;
+    description_en: string;
+    expected_impact: {
+      metric: string;
+      delta_pct: number;
+      delta_sar_per_month: number;
+    };
+    action_payload: {
+      operation: string;
+      details: Record<string, unknown>;
+    };
+  }>;
+}
 
 type CachedCampaign = {
   id: string;
@@ -279,5 +315,7 @@ function round(value: number, digits = 2) {
 }
 
 function formatPercent(value: number) {
-  return `${round(value * 100, 1).toLocaleString('ar-SA')}%`;
+  // Latin digits: this string is embedded in findings that are also read
+  // by the model and shown next to other Latin-numeral metrics.
+  return `${round(value * 100, 1)}%`;
 }

@@ -3,8 +3,14 @@ import { createServerClient } from '@/lib/supabase/server';
 import { createBillingPortalSession } from '@/lib/billing/stripe';
 import { checkRateLimit } from '@/lib/security/rate-limit';
 import { requireAppUrl } from '@/lib/platform/env';
+import { isSameOriginRequest } from '@/lib/security/origin';
 
 export async function POST(req: NextRequest) {
+
+  // Defence in depth against cross-site POSTs; see lib/security/origin.ts.
+  if (!isSameOriginRequest(req)) {
+    return NextResponse.redirect(new URL('/billing?error=invalid_origin', req.url), 303);
+  }
   const supabase = await createServerClient();
   const {
     data: { user },

@@ -44,11 +44,11 @@ export function RouteProgress() {
 
   return (
     <div className="pointer-events-none fixed inset-x-0 top-0 z-[80]" dir="rtl">
-      <div className="h-1 w-full overflow-hidden bg-brand-100 dark:bg-brand-500/25">
-        <div className="h-full w-1/2 animate-loading-bar rounded-full bg-brand-600" />
+      <div className="h-1 w-full overflow-hidden bg-primary/20">
+        <div className="h-full w-1/2 animate-loading-bar rounded-full bg-primary" />
       </div>
-      <div className="mx-auto mt-3 flex w-fit items-center gap-2 rounded-lg border border-border bg-card px-4 py-2 text-xs font-semibold text-foreground shadow-soft">
-        <Loader2 className="h-4 w-4 animate-spin text-brand-600" />
+      <div className="mx-auto mt-3 flex w-fit items-center gap-2 surface-card px-4 py-2 text-xs font-semibold text-foreground shadow-soft">
+        <Loader2 className="h-4 w-4 animate-spin text-primary" />
         جاري تحميل الصفحة...
       </div>
     </div>

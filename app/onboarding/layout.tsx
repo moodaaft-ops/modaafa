@@ -9,22 +9,27 @@ export const metadata: Metadata = {
 
 export default function OnboardingLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b border-border bg-card">
+    // A faint radial wash behind the setup flow so the panels read as floating
+    // on a canvas rather than sitting on flat paint — same treatment as the
+    // landing hero, at lower intensity.
+    <div className="relative min-h-screen bg-background">
+      <div className="canvas-glow pointer-events-none absolute inset-x-0 top-0 h-[420px] opacity-70" aria-hidden />
+
+      <header className="sticky top-0 z-30 border-b border-border bg-background/80 backdrop-blur-xl">
         <div className="mx-auto flex max-w-4xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
-          <Link href="/" className="flex items-center gap-3">
-            <Image src="/logo-mark.svg" alt="مُضاعِف" width={34} height={34} className="h-9 w-9 rounded-lg" />
-            <span className="font-bold text-foreground">مُضاعِف</span>
+          <Link href="/" className="flex items-center gap-2.5">
+            <Image src="/logo-mark.svg" alt="" width={32} height={32} className="h-8 w-8 rounded-lg" aria-hidden />
+            <span className="text-[15px] font-bold tracking-tight text-foreground">مُضاعِف</span>
           </Link>
-          <div className="flex items-center gap-3">
-            <ThemeToggle />
-            <Link href="/dashboard" className="text-sm font-semibold text-brand-700 hover:underline dark:text-brand-300">
-              لوحة التحكم
-            </Link>
-          </div>
+          {/* The "لوحة التحكم" link used to live here unconditionally, which
+              sent brand-new users into a dashboard with nothing in it. The
+              escape hatch now lives in the progress bar and only appears once
+              the user actually has an account to go back to. */}
+          <ThemeToggle />
         </div>
       </header>
-      {children}
+
+      <div className="relative">{children}</div>
     </div>
   );
 }

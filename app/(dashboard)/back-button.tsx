@@ -12,7 +12,7 @@ export function BackButton() {
       <button
         type="button"
         onClick={() => router.back()}
-        className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground hover:bg-muted"
+        className="inline-flex items-center gap-2 surface-card px-3 py-2 text-xs font-semibold text-foreground hover:bg-muted"
       >
         <ArrowRight className="h-4 w-4" />
         رجوع

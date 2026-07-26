@@ -6,8 +6,14 @@ import {
   SELECTED_ADS_ACCOUNT_COOKIE,
 } from '@/lib/accounts/selection';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
+import { isSameOriginRequest } from '@/lib/security/origin';
 
 export async function POST(req: NextRequest) {
+
+  // Defence in depth against cross-site POSTs; see lib/security/origin.ts.
+  if (!isSameOriginRequest(req)) {
+    return NextResponse.json({ error: 'invalid_origin' }, { status: 403 });
+  }
   const supabase = await createServerClient();
   const {
     data: { user },

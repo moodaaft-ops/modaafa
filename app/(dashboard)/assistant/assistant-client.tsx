@@ -8,6 +8,7 @@ import { biddingLabel, campaignTypeLabel } from '@/lib/ui/labels';
 import { EmptyState } from '@/lib/ui/empty-state';
 import { Alert } from '@/lib/ui/alert';
 import { buttonClasses } from '@/lib/ui/button';
+import { inputClasses, selectClasses } from '@/lib/ui/field';
 import { cn } from '@/lib/utils';
 
 type Account = {
@@ -205,29 +206,30 @@ export function AssistantClient({
   }
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[1fr_300px]">
-      <section className="flex h-[calc(100dvh-14rem)] min-h-[520px] flex-col overflow-hidden rounded-lg border border-border bg-card">
+    <div className="grid gap-5 lg:grid-cols-[1fr_290px]">
+      <section className="flex h-[calc(100dvh-13rem)] min-h-[520px] flex-col surface-card overflow-hidden">
         {/* Header with account context */}
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-4">
-          <div className="flex items-center gap-2.5">
-            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-50 dark:bg-brand-500/15 text-brand-600">
-              <Sparkles className="h-5 w-5" />
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg border border-primary/25 bg-primary/10 text-primary">
+              <Sparkles className="h-4 w-4" />
             </span>
-            <div>
-              <div className="font-bold leading-tight">المساعد الذكي</div>
-              <div className="text-xs text-muted-foreground">
+            <div className="min-w-0">
+              <div className="text-[13px] font-semibold leading-tight tracking-tight">المساعد الذكي</div>
+              <div className="truncate text-[11px] leading-tight text-muted-foreground">
                 {selectedAccount ? googleAdsAccountDisplayName(selectedAccount) : customerId}
               </div>
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {(isSwitching || switching) && <span className="text-xs text-muted-foreground">جاري التبديل...</span>}
             {accounts.length > 1 && (
               <select
                 value={customerId}
                 onChange={(event) => handleAccountChange(event.target.value)}
                 disabled={isSwitching || switching}
                 aria-busy={isSwitching || switching}
-                className="h-9 max-w-[180px] rounded-lg border border-border bg-card px-2.5 text-sm outline-none focus:border-brand-500 disabled:cursor-wait disabled:opacity-60"
+                className={cn(selectClasses, 'h-9 max-w-[180px] text-[13px] disabled:cursor-wait disabled:opacity-60')}
                 aria-label="اختر الحساب"
               >
                 {accounts.map((account) => (
@@ -237,28 +239,28 @@ export function AssistantClient({
                 ))}
               </select>
             )}
-            {(isSwitching || switching) && (
-              <span className="text-xs text-muted-foreground">جاري التبديل...</span>
-            )}
           </div>
         </div>
 
         {/* Messages */}
-        <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto bg-muted p-4 scrollbar-thin sm:p-5">
+        <div
+          ref={scrollRef}
+          className="surface-sunken flex-1 overflow-y-auto rounded-none border-0 p-4 scrollbar-thin sm:p-5"
+        >
           {!started ? (
             <div className="flex h-full flex-col items-center justify-center px-4 py-8 text-center">
-              <span className="flex h-14 w-14 items-center justify-center rounded-lg bg-brand-50 dark:bg-brand-500/15 text-brand-600">
-                <Sparkles className="h-7 w-7" />
+              <span className="flex h-12 w-12 items-center justify-center rounded-xl border border-primary/25 bg-primary/10 text-primary">
+                <Sparkles className="h-5 w-5" />
               </span>
-              <h3 className="mt-4 text-lg font-bold">اسألني عن حسابك</h3>
-              <p className="mt-2 max-w-sm text-sm leading-7 text-muted-foreground">{SEED_MESSAGE}</p>
-              <div className="mt-5 flex flex-wrap justify-center gap-2">
+              <h3 className="mt-5 text-base font-semibold tracking-tight">اسألني عن حسابك</h3>
+              <p className="mt-2 max-w-sm text-[13px] leading-7 text-muted-foreground">{SEED_MESSAGE}</p>
+              <div className="mt-6 flex flex-wrap justify-center gap-2">
                 {SUGGESTED_PROMPTS.slice(0, 4).map((prompt) => (
                   <button
                     key={prompt}
                     type="button"
                     onClick={() => sendMessage(prompt)}
-                    className="rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground transition hover:border-brand-300 hover:bg-brand-50 dark:hover:bg-brand-500/15 hover:text-brand-700 dark:hover:text-brand-300"
+                    className="rounded-full border border-border bg-background-elevated px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors duration-150 hover:border-primary/50 hover:bg-primary/10 hover:text-primary"
                   >
                     {prompt}
                   </button>
@@ -266,7 +268,7 @@ export function AssistantClient({
               </div>
             </div>
           ) : (
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-3">
               {chat.map((item, index) => (
                 <ChatBubble key={`${item.role}-${index}`} item={item} />
               ))}
@@ -293,57 +295,60 @@ export function AssistantClient({
               type="button"
               onClick={startVoiceInput}
               className={cn(
-                'flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg border transition',
-                listening ? 'border-brand-300 bg-brand-50 dark:bg-brand-500/15 text-brand-700 dark:text-brand-300' : 'border-border bg-card text-muted-foreground hover:bg-muted'
+                'flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg border transition-colors duration-150',
+                listening
+                  ? 'border-primary/50 bg-primary/10 text-primary'
+                  : 'border-border bg-background-elevated text-muted-foreground hover:border-border-strong hover:text-foreground'
               )}
               aria-label="إملاء صوتي"
               title="إملاء صوتي"
             >
-              <Mic className="h-5 w-5" />
+              <Mic className="h-4 w-4" />
             </button>
             <input
               value={message}
               onChange={(event) => setMessage(event.target.value)}
               placeholder="اسأل عن الأداء أو اطلب مسودة حملة..."
-              className="h-11 min-w-0 flex-1 rounded-lg border border-border px-4 text-sm outline-none focus:border-brand-500"
+              className={cn(inputClasses, 'min-w-0 flex-1')}
               aria-label="رسالتك"
             />
             <button
               type="submit"
               disabled={loading || !message.trim()}
-              className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg bg-brand-600 text-white transition hover:bg-brand-700 disabled:opacity-50"
+              className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground transition-colors duration-150 hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40"
               aria-label="إرسال"
               title="إرسال"
             >
-              <Send className="h-5 w-5" />
+              <Send className="h-4 w-4" />
             </button>
           </div>
         </form>
       </section>
 
       {/* Side panel */}
-      <aside className="space-y-4">
-        <section className="rounded-lg border border-border bg-card p-5">
-          <div className="flex items-center gap-2 font-bold">
-            <TrendingUp className="h-4 w-4 text-brand-600" />
+      <aside className="space-y-3">
+        <section className="surface-card overflow-hidden">
+          <div className="flex items-center gap-2 border-b border-border px-4 py-3 text-[13px] font-semibold tracking-tight">
+            <TrendingUp className="h-3.5 w-3.5 text-primary" />
             أوامر جاهزة
           </div>
-          <div className="mt-4 grid gap-2">
+          <div className="grid gap-1.5 p-3">
             {SUGGESTED_PROMPTS.map((prompt) => (
               <button
                 key={prompt}
                 type="button"
                 onClick={() => sendMessage(prompt)}
                 disabled={loading}
-                className="rounded-lg border border-border px-3 py-2 text-start text-sm text-foreground transition hover:border-brand-200 hover:bg-brand-50/50 dark:hover:border-brand-500/40 dark:hover:bg-brand-500/10 disabled:opacity-60"
+                className="rounded-lg border border-transparent px-3 py-2.5 text-start text-[13px] leading-6 text-muted-foreground transition-colors duration-150 hover:border-border hover:bg-background-elevated hover:text-foreground disabled:opacity-50"
               >
                 {prompt}
               </button>
             ))}
           </div>
         </section>
-        <section className="rounded-lg border border-brand-100 dark:border-brand-500/20 bg-brand-50/50 dark:bg-brand-500/10 p-5 text-sm leading-7 text-muted-foreground">
-          كل إجراء تنفيذي يبقى في <b className="text-foreground">مركز الموافقات</b> قبل أي تعديل مباشر على إعلانات Google.
+        <section className="rounded-xl border border-primary/25 bg-primary/[0.06] p-4 text-[13px] leading-7 text-muted-foreground">
+          كل إجراء تنفيذي يبقى في <b className="font-semibold text-foreground">مركز الموافقات</b> قبل أي تعديل مباشر على
+          إعلانات Google.
         </section>
       </aside>
     </div>
@@ -353,16 +358,23 @@ export function AssistantClient({
 function ChatBubble({ item }: { item: ChatItem }) {
   const isUser = item.role === 'user';
   return (
+    // Alignment follows the universal chat convention rather than the raw
+    // logical properties: INCOMING (the assistant) sits at the reading start —
+    // the right edge in RTL — and the user's OWN messages sit at the end. The
+    // previous version had these swapped, so the user's messages appeared where
+    // an Arabic speaker expects the other party's.
     <article
       className={cn(
-        'max-w-[85%] break-words animate-fade-in rounded-lg px-4 py-3 text-sm leading-7',
-        isUser ? 'self-start bg-brand-600 text-white' : 'self-end border border-border bg-card text-foreground'
+        'max-w-[85%] animate-fade-in break-words rounded-xl px-4 py-3 text-[13px] leading-7',
+        isUser
+          ? 'self-end bg-primary text-primary-foreground'
+          : 'self-start border border-border bg-card text-foreground'
       )}
     >
       <div className="whitespace-pre-line">{item.content}</div>
 
       {item.role === 'assistant' && item.aiBackend === 'fallback' && (
-        <div className="mt-3 rounded-lg bg-amber-50 dark:bg-amber-500/15 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+        <div className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/[0.08] px-3 py-2 text-xs leading-6 text-amber-700 dark:text-amber-300">
           {item.aiWarning ?? 'عرضنا تحليلاً احتياطياً لهذه الرسالة لأن المحرك الذكي لم يستجب.'}
         </div>
       )}
@@ -370,9 +382,12 @@ function ChatBubble({ item }: { item: ChatItem }) {
       {item.cards && item.cards.length > 0 && (
         <div className="mt-3 grid gap-2 sm:grid-cols-3">
           {item.cards.map((card) => (
-            <div key={card.label} className="rounded-lg bg-muted px-3 py-2 text-foreground">
+            <div
+              key={card.label}
+              className="rounded-lg border border-border bg-background-elevated px-3 py-2 text-foreground"
+            >
               <div className="text-[11px] text-muted-foreground">{card.label}</div>
-              <div className="mt-0.5 font-bold tabular-nums">{card.value}</div>
+              <div className="mt-0.5 text-[15px] font-semibold tracking-tight numeric">{card.value}</div>
             </div>
           ))}
         </div>
@@ -381,23 +396,32 @@ function ChatBubble({ item }: { item: ChatItem }) {
       {item.recommendations && item.recommendations.length > 0 && (
         <div className="mt-3 space-y-2">
           {item.recommendations.slice(0, 3).map((recommendation) => (
-            <div key={recommendation.title} className="rounded-lg border border-border bg-card px-3 py-2">
-              <div className="font-semibold text-foreground">{recommendation.title}</div>
+            <div
+              key={recommendation.title}
+              className="rounded-lg border border-border bg-background-elevated px-3 py-2.5"
+            >
+              <div className="text-[13px] font-semibold text-foreground">{recommendation.title}</div>
               {recommendation.description && (
-                <div className="mt-1 text-xs text-muted-foreground">{recommendation.description}</div>
+                <div className="mt-1 text-xs leading-6 text-muted-foreground">{recommendation.description}</div>
               )}
             </div>
           ))}
+          <a
+            href="/optimizer"
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline"
+          >
+            فتح مركز الموافقات
+          </a>
         </div>
       )}
 
       {item.draft && (
-        <div className="mt-3 rounded-lg border border-brand-100 dark:border-brand-500/20 bg-brand-50 dark:bg-brand-500/15 p-3 text-foreground">
-          <div className="font-bold">{item.draft.name}</div>
-          <div className="mt-2 grid gap-2 text-xs sm:grid-cols-3">
-            <span>النوع: {campaignTypeLabel(item.draft.type)}</span>
-            <span>الميزانية: {item.draft.daily_budget_sar} ر.س/يوم</span>
-            <span>المزايدة: {biddingLabel(item.draft.bidding_strategy)}</span>
+        <div className="mt-3 rounded-lg border border-primary/25 bg-primary/[0.08] p-3 text-foreground">
+          <div className="text-[13px] font-semibold tracking-tight">{item.draft.name}</div>
+          <div className="mt-2 grid gap-1.5 text-xs sm:grid-cols-3">
+            <span className="text-muted-foreground">النوع: {campaignTypeLabel(item.draft.type)}</span>
+            <span className="text-muted-foreground">الميزانية: {item.draft.daily_budget_sar} ر.س/يوم</span>
+            <span className="text-muted-foreground">المزايدة: {biddingLabel(item.draft.bidding_strategy)}</span>
           </div>
         </div>
       )}
@@ -407,13 +431,13 @@ function ChatBubble({ item }: { item: ChatItem }) {
 
 function TypingIndicator() {
   return (
-    <div className="flex items-center gap-2 self-end rounded-lg border border-border bg-card px-4 py-3">
+    <div className="flex items-center gap-2 self-start rounded-xl border border-border bg-card px-4 py-3">
       <span className="text-xs text-muted-foreground">المساعد يحلّل الحساب</span>
       <span className="flex gap-1">
         {[0, 1, 2].map((i) => (
           <span
             key={i}
-            className="h-1.5 w-1.5 rounded-full bg-brand-500 animate-typing-dot"
+            className="h-1.5 w-1.5 animate-typing-dot rounded-full bg-primary"
             style={{ animationDelay: `${i * 0.15}s` }}
           />
         ))}

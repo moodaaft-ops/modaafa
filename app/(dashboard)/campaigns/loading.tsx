@@ -8,7 +8,7 @@ export default function CampaignsLoading() {
         <Skeleton className="mt-2 h-4 w-72" />
       </div>
       <div className="p-4 sm:p-6 lg:p-8">
-        <div className="overflow-hidden rounded-lg border border-border bg-card">
+        <div className="surface-card overflow-hidden">
           <div className="flex items-center justify-between border-b border-border p-5">
             <Skeleton className="h-5 w-44" />
             <Skeleton className="h-9 w-32 rounded-lg" />

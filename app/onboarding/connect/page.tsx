@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
-import { CheckCircle2, Info, Layers, Link2, ShieldCheck } from 'lucide-react';
+import { ArrowUpLeft, CheckCircle2, Layers, Link2, ShieldCheck, TriangleAlert } from 'lucide-react';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { formatGoogleAdsCustomerId, googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import { createServerClient } from '@/lib/supabase/server';
@@ -10,6 +10,7 @@ import { OnboardingProgress } from '../onboarding-progress';
 import { ConnectGoogleAdsButton } from './connect-google-ads-button';
 
 const errors: Record<string, string> = {
+  invalid_origin: 'تعذر التحقق من مصدر الطلب. أعد المحاولة من داخل المنصة.',
   no_accounts: 'لم نجد حسابات إعلانات Google على هذا المستخدم.',
   state_mismatch: 'انتهت جلسة الربط. أعد المحاولة.',
   state_user_mismatch:
@@ -19,7 +20,6 @@ const errors: Record<string, string> = {
     'تم رفض الوصول من Google. إذا ظهرت رسالة أن التطبيق قيد الاختبار، أضف هذا البريد ضمن Test users أو انتظر اكتمال تحقق Google.',
   oauth_failed: 'فشل إكمال الربط من Google. غالباً السبب أن التطبيق لم يكتمل تحقق Google أو أن الصلاحية لم تُمنح.',
   oauth_config_missing: 'إعدادات Google OAuth غير مكتملة في بيئة الإنتاج. راجع جاهزية الإطلاق في الإعدادات.',
-  no_client_accounts: 'وجدنا حسابات إدارية فقط. اربط بريداً يملك حساب عميل مباشر أو لديه عملاء تحت حساب إداري.',
   db_error: 'تعذر حفظ حسابات Google Ads في المنصة. أعد المحاولة.',
   session_expired: 'انتهت جلسة اختيار الحسابات. أعد الربط.',
   session_create_failed:
@@ -47,34 +47,40 @@ export default async function ConnectGoogleAdsPage({
   if (!user) redirect('/login?next=/onboarding/connect');
   const { accounts } = await getAccountWorkspace(supabase, user.id);
   const hasAccounts = (accounts?.length ?? 0) > 0;
+  // `no_client_accounts` is not an error the user can fix by retrying the same
+  // thing, so it gets its own recovery block instead of a red bar above an
+  // unchanged page. See ManagerOnlyRecovery below.
+  const managerOnly = params?.error === 'no_client_accounts';
 
   return (
-    <main className="min-h-screen bg-background px-4 py-8 sm:px-6">
+    <main className="px-4 py-8 sm:px-6">
       <div className="mx-auto max-w-4xl">
-        <OnboardingProgress active="connect" />
+        <OnboardingProgress active="connect" showDashboardLink={hasAccounts} />
 
         <div className="mb-6 mt-8">
-          <h2 className="text-2xl font-bold sm:text-3xl">اربط إعلانات Google</h2>
+          <h2 className="text-[26px] font-bold leading-tight tracking-tight sm:text-3xl">اربط إعلانات Google</h2>
           <p className="mt-2 max-w-2xl text-sm leading-7 text-muted-foreground">
             موافقة واحدة تكفي لسحب كل حساباتك، ثم تختار الحساب الذي تعمل عليه من لوحة التحكم.
           </p>
         </div>
 
-        {params?.error && (
+        {params?.error && !managerOnly && (
           <div className="mb-5">
             <Alert tone="danger">{errors[params.error] ?? 'حدث خطأ أثناء الربط.'}</Alert>
           </div>
         )}
 
-        <section className="rounded-lg border border-border bg-card p-5 shadow-soft sm:p-6">
-          <h3 className="text-lg font-bold">ربط تلقائي لكل الحسابات</h3>
+        {managerOnly && <ManagerOnlyRecovery />}
+
+        <section className="surface-card p-5 sm:p-6">
+          <h3 className="text-[15px] font-semibold tracking-tight">ربط تلقائي لكل الحسابات</h3>
           <ul className="mt-4 space-y-3">
             {points.map((point) => {
               const Icon = point.icon;
               return (
-                <li key={point.text} className="flex items-start gap-3 text-sm leading-7 text-foreground">
-                  <span className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-brand-50 dark:bg-brand-500/15 text-brand-600">
-                    <Icon className="h-4 w-4" />
+                <li key={point.text} className="flex items-start gap-3 text-[13px] leading-7 text-foreground">
+                  <span className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg border border-primary/25 bg-primary/10 text-primary">
+                    <Icon className="h-3.5 w-3.5" />
                   </span>
                   {point.text}
                 </li>
@@ -101,21 +107,21 @@ export default async function ConnectGoogleAdsPage({
         </div>
 
         {hasAccounts && (
-          <section className="mt-6 rounded-lg border border-border bg-card p-5 shadow-soft sm:p-6">
-            <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
-              <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+          <section className="mt-5 surface-card p-5 sm:p-6">
+            <div className="mb-4 flex items-center gap-2 text-[13px] font-semibold text-foreground">
+              <CheckCircle2 className="h-4 w-4 text-emerald-500" />
               حسابات مربوطة ({accounts.length})
             </div>
             <div className="grid gap-2 sm:grid-cols-2">
               {(accounts ?? []).map((account) => (
                 <div
                   key={account.customer_id}
-                  className="flex items-center justify-between gap-2 rounded-lg border border-border bg-muted px-4 py-3 text-sm"
+                  className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background-elevated px-4 py-3 text-[13px]"
                 >
                   <span className="min-w-0 truncate font-medium text-foreground">
                     {googleAdsAccountDisplayName(account)}
                   </span>
-                  <span className="flex-shrink-0 text-xs text-muted-foreground" dir="ltr">
+                  <span className="flex-shrink-0 text-xs text-muted-foreground numeric" dir="ltr">
                     {formatGoogleAdsCustomerId(account.customer_id)}
                   </span>
                 </div>
@@ -128,5 +134,77 @@ export default async function ConnectGoogleAdsPage({
         )}
       </div>
     </main>
+  );
+}
+
+/**
+ * The one onboarding failure with no way forward.
+ *
+ * `no_client_accounts` means the Google account that just authorised owns only
+ * manager (MCC) accounts and no client account under them. Retrying the same
+ * button with the same Google account produces the same error forever, and the
+ * old page said so in a single red line with no action — a genuine dead end at
+ * the last step of setup.
+ *
+ * Each option below is something the user can actually do: switch Google
+ * account (the consent screen already forces `select_account`, so the button
+ * really does offer the chooser again), create a client account in Google Ads,
+ * or leave setup entirely.
+ */
+function ManagerOnlyRecovery() {
+  const options = [
+    {
+      title: 'جرّب بريد Google آخر',
+      body: 'اضغط زر الربط بالأسفل واختر حساب Google الذي يملك الحساب الإعلاني نفسه، لا حساب الإدارة فقط.',
+    },
+    {
+      title: 'أنشئ حساب عميل تحت حسابك الإداري',
+      body: 'من داخل Google Ads: الحسابات ← إنشاء حساب جديد. بعدها ارجع هنا وأعد الربط بنفس البريد.',
+      href: 'https://ads.google.com/aw/accounts/managed',
+      cta: 'فتح إدارة الحسابات في Google Ads',
+    },
+    {
+      title: 'اطلب دعوة من مالك الحساب',
+      body: 'إذا كان الحساب الإعلاني عند عميلك أو زميلك، اطلب منه دعوتك كمدير على الحساب ثم أعد الربط.',
+    },
+  ];
+
+  return (
+    <section className="mb-5 overflow-hidden rounded-xl border border-amber-500/25 bg-amber-500/[0.06]">
+      <div className="flex items-start gap-3 border-b border-amber-500/20 px-5 py-4">
+        <span className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-500">
+          <TriangleAlert className="h-4 w-4" />
+        </span>
+        <div className="min-w-0">
+          <h3 className="text-[14px] font-semibold tracking-tight text-amber-900 dark:text-amber-100">
+            وجدنا حسابات إدارية فقط (MCC)
+          </h3>
+          <p className="mt-1 text-[13px] leading-7 text-amber-900/80 dark:text-amber-100/80">
+            الحسابات الإدارية لا تحتوي على حملات أو بيانات أداء، ولا يمكن قراءة المقاييس منها. نحتاج حساب عميل واحداً
+            على الأقل تحت الحساب الإداري، أو حساباً إعلانياً مباشراً.
+          </p>
+        </div>
+      </div>
+
+      <div className="grid gap-px bg-amber-500/15 sm:grid-cols-3">
+        {options.map((option) => (
+          <div key={option.title} className="flex flex-col bg-background p-5">
+            <div className="text-[13px] font-semibold text-foreground">{option.title}</div>
+            <p className="mt-2 flex-1 text-xs leading-6 text-muted-foreground">{option.body}</p>
+            {option.href && (
+              <a
+                href={option.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline"
+              >
+                {option.cta}
+                <ArrowUpLeft className="h-3.5 w-3.5" />
+              </a>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }

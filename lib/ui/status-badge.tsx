@@ -5,17 +5,20 @@ import { cn } from '@/lib/utils';
  * Status pill. Always pairs colour with a dot/text label so colour is never the
  * only signal (accessibility requirement).
  */
+// Tinted fill + a hairline ring of the same hue. On a near-black canvas a
+// flat pastel fill disappears; the ring is what makes the chip read as an
+// object rather than a smudge.
 const badge = cva(
-  'inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-xs font-semibold leading-5 whitespace-nowrap',
+  'inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[11px] font-semibold leading-5 whitespace-nowrap ring-1 ring-inset',
   {
     variants: {
       tone: {
-        neutral: 'bg-muted text-muted-foreground',
-        success: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300',
-        warning: 'bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300',
-        danger: 'bg-red-50 text-red-700 dark:bg-red-500/15 dark:text-red-300',
-        info: 'bg-blue-50 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300',
-        brand: 'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-300',
+        neutral: 'bg-muted text-muted-foreground ring-border-strong',
+        success: 'bg-emerald-500/12 text-emerald-700 ring-emerald-500/25 dark:text-emerald-300',
+        warning: 'bg-amber-500/12 text-amber-700 ring-amber-500/25 dark:text-amber-300',
+        danger: 'bg-red-500/12 text-red-700 ring-red-500/25 dark:text-red-300',
+        info: 'bg-blue-500/12 text-blue-700 ring-blue-500/25 dark:text-blue-300',
+        brand: 'bg-primary/12 text-primary ring-primary/30',
       },
     },
     defaultVariants: { tone: 'neutral' },
@@ -23,12 +26,12 @@ const badge = cva(
 );
 
 const dotColor: Record<NonNullable<VariantProps<typeof badge>['tone']>, string> = {
-  neutral: 'bg-ink-400',
+  neutral: 'bg-muted-foreground',
   success: 'bg-emerald-500',
   warning: 'bg-amber-500',
   danger: 'bg-red-500',
   info: 'bg-blue-500',
-  brand: 'bg-brand-500',
+  brand: 'bg-primary',
 };
 
 export type StatusTone = NonNullable<VariantProps<typeof badge>['tone']>;

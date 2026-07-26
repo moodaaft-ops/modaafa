@@ -71,7 +71,7 @@ export default function TermsPage() {
         <p>
           يمكنك إلغاء الاشتراك أو حذف الحساب من المنصة. قد نحتفظ بقدر محدود من السجلات إذا أوجب النظام ذلك. للاستفسارات
           حول الشروط أو الفوترة تواصل عبر{' '}
-          <a href="mailto:moodaaft@gmail.com" className="font-semibold text-brand-700 hover:underline dark:text-brand-300">
+          <a href="mailto:moodaaft@gmail.com" className="font-semibold text-primary hover:underline dark:text-primary">
             moodaaft@gmail.com
           </a>.
         </p>

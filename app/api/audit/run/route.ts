@@ -15,6 +15,7 @@ import {
   refundFeatureUsage,
 } from '@/lib/billing/entitlements';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
+import { isSameOriginRequest } from '@/lib/security/origin';
 
 /**
  * POST /api/audit/run
@@ -28,6 +29,11 @@ import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
+
+  // Defence in depth against cross-site POSTs; see lib/security/origin.ts.
+  if (!isSameOriginRequest(req)) {
+    return NextResponse.redirect(new URL('/audit?error=invalid_origin', req.url), 303);
+  }
   const supabase = await createServerClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
@@ -112,7 +118,10 @@ export async function POST(req: NextRequest) {
       .from('campaigns_cache')
       .select('*')
       .eq('account_id', account.id)
-      .order('last_synced_at', { ascending: false });
+      .order('last_synced_at', { ascending: false })
+      // Bounded: PostgREST otherwise truncates at its 1000-row default with no
+      // signal, and the whole set is held in memory for the rule engine.
+      .limit(1000);
     if (campaignErr) throw campaignErr;
 
     const result = runRuleBasedAudit({

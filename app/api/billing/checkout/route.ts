@@ -5,6 +5,7 @@ import { createCheckoutSession, ensureStripeCustomer } from '@/lib/billing/strip
 import { requireAppUrl } from '@/lib/platform/env';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 import { getBillingCheckoutContext } from '@/lib/billing/checkout-policy';
+import { isSameOriginRequest } from '@/lib/security/origin';
 
 /**
  * POST /api/billing/checkout
@@ -13,6 +14,11 @@ import { getBillingCheckoutContext } from '@/lib/billing/checkout-policy';
  * Creates a Stripe Checkout session and returns the URL to redirect to.
  */
 export async function POST(req: NextRequest) {
+
+  // Defence in depth against cross-site POSTs; see lib/security/origin.ts.
+  if (!isSameOriginRequest(req)) {
+    return NextResponse.json({ error: 'invalid_origin' }, { status: 403 });
+  }
   const supabase = await createServerClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });

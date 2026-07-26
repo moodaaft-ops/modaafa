@@ -23,7 +23,7 @@ export default function DataDeletionPage() {
           والتوصيات وسجل المستخدم. إذا تعذر إلغاء الاشتراك فلن تكمل الحذف حمايةً لك من بقاء فوترة غير مرتبطة بحساب.
         </p>
         <p>
-          <Link href="/settings" className="font-semibold text-brand-700 hover:underline dark:text-brand-300">
+          <Link href="/settings" className="font-semibold text-primary hover:underline dark:text-primary">
             الانتقال إلى الإعدادات
           </Link>
         </p>
@@ -32,7 +32,7 @@ export default function DataDeletionPage() {
       <LegalSection title="إذا لم تستطع تسجيل الدخول">
         <p>
           أرسل طلباً من البريد المرتبط بالحساب إلى{' '}
-          <a href="mailto:moodaaft@gmail.com?subject=طلب حذف حساب مُضاعِف" className="font-semibold text-brand-700 hover:underline dark:text-brand-300">
+          <a href="mailto:moodaaft@gmail.com?subject=طلب حذف حساب مُضاعِف" className="font-semibold text-primary hover:underline dark:text-primary">
             moodaaft@gmail.com
           </a>{' '}
           بعنوان «طلب حذف حساب مُضاعِف». قد نطلب خطوة تحقق لحماية الحساب قبل تنفيذ الطلب.
@@ -46,7 +46,7 @@ export default function DataDeletionPage() {
             href="https://myaccount.google.com/connections"
             target="_blank"
             rel="noreferrer"
-            className="font-semibold text-brand-700 hover:underline dark:text-brand-300"
+            className="font-semibold text-primary hover:underline dark:text-primary"
           >
             صفحة اتصالات حساب Google
           </a>{' '}

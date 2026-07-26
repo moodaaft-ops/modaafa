@@ -1,4 +1,4 @@
-import { Link2, Zap } from 'lucide-react';
+import { History, Link2, ShieldCheck, Zap } from 'lucide-react';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import { createServerClient } from '@/lib/supabase/server';
@@ -21,8 +21,11 @@ export const metadata = {
 export default async function OptimizerPage({ searchParams }: { searchParams?: Promise<{ error?: string; executed?: string; approved?: string; reverted?: string; updated?: string }> }) {
   const params = await searchParams;
   const supabase = await createServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   const { accounts, selectedAccount } = await getAccountWorkspace(supabase);
-  const subscription = await getSubscriptionAccess(supabase);
+  const subscription = await getSubscriptionAccess(supabase, user?.id);
   const { data: recommendations } = selectedAccount
     ? await supabase
         .from('recommendations')
@@ -88,15 +91,25 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
             </section>
 
             <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
-              <section className="overflow-hidden rounded-lg border border-border bg-card">
-                <div className="border-b border-border p-5">
-                  <div className="font-bold">التوصيات</div>
+              <section className="surface-card overflow-hidden">
+                <div className="border-b border-border px-5 py-4">
+                  <div className="text-[14px] font-semibold tracking-tight">التوصيات</div>
                   <p className="mt-1 text-xs leading-6 text-muted-foreground">
                     أي تعديل على إعلانات Google يبدأ هنا ولا يُنفّذ مباشرة بدون موافقة واضحة.
                   </p>
                 </div>
                 {recs.length === 0 ? (
-                  <div className="p-8 text-sm text-muted-foreground">لا توجد توصيات بعد. شغّل فحص الحساب أولاً من صفحة الفحص.</div>
+                  <EmptyState
+                    bare
+                    icon={ShieldCheck}
+                    title="لا توجد توصيات بعد"
+                    description="التوصيات تُولَّد من فحص الحساب. شغّل الفحص مرة واحدة وسيمتلئ هذا المركز بقرارات جاهزة للاعتماد."
+                    action={
+                      <a href="/audit" className={buttonClasses({ variant: 'primary' })}>
+                        تشغيل فحص الحساب
+                      </a>
+                    }
+                  />
                 ) : (
                   <div className="divide-y divide-border">
                     {recs.map((item: any) => (
@@ -144,13 +157,19 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
                 )}
               </section>
 
-              <section className="overflow-hidden rounded-lg border border-border bg-card">
-                <div className="border-b border-border p-5">
-                  <div className="font-bold">سجل التنفيذ</div>
+              <section className="surface-card overflow-hidden">
+                <div className="border-b border-border px-5 py-4">
+                  <div className="text-[14px] font-semibold tracking-tight">سجل التنفيذ</div>
                   <p className="mt-1 text-xs leading-6 text-muted-foreground">أثر واضح لكل قرار اعتمدته أو نفّذته المنصة لاحقاً.</p>
                 </div>
                 {(actions ?? []).length === 0 ? (
-                  <div className="p-8 text-sm text-muted-foreground">لا توجد إجراءات منفذة بعد.</div>
+                  <EmptyState
+                    bare
+                    tone="neutral"
+                    icon={History}
+                    title="لا توجد إجراءات منفذة بعد"
+                    description="كل تعديل تعتمده ثم تنفّذه يُسجَّل هنا مع تأثيره المتوقع وإمكانية التراجع خلال 30 يوماً."
+                  />
                 ) : (
                   <div className="divide-y divide-border">
                     {(actions ?? []).map((action: any) => (

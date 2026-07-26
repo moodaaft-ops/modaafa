@@ -239,3 +239,29 @@ BEGIN
     EXECUTE 'REVOKE ALL ON TABLE public._modaafa_migrations FROM anon, authenticated';
   END IF;
 END $$;
+
+-- ---------------------------------------------------------------------
+-- 9) Invoice currency
+--
+-- `amount_sar` was written as `amount_paid / 100` regardless of the
+-- invoice's actual currency and rendered with a SAR formatter, so a USD
+-- invoice was shown to the customer as riyals. Store what Stripe reports.
+-- ---------------------------------------------------------------------
+
+ALTER TABLE public.invoices
+  ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'SAR';
+
+-- ---------------------------------------------------------------------
+-- 10) Deterministic chat message ordering
+--
+-- The user turn and the assistant turn are inserted in one statement, so
+-- both carry the same transaction `now()`. Ordering by created_at made
+-- every turn a tie, and replaying history could put an answer before its
+-- question (or cut a turn in half at the LIMIT boundary).
+-- ---------------------------------------------------------------------
+
+ALTER TABLE public.chat_messages
+  ADD COLUMN IF NOT EXISTS seq BIGSERIAL;
+
+CREATE INDEX IF NOT EXISTS idx_chat_messages_session_seq
+  ON public.chat_messages(session_id, seq);

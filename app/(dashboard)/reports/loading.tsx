@@ -13,8 +13,8 @@ export default function ReportsLoading() {
             <SkeletonCard key={item} className="h-28" />
           ))}
         </div>
-        <div className="overflow-hidden rounded-lg border border-border bg-card">
-          <div className="border-b border-border p-5">
+        <div className="surface-card overflow-hidden">
+          <div className="border-b border-border px-5 py-4">
             <Skeleton className="h-5 w-44" />
           </div>
           <SkeletonRows rows={6} />

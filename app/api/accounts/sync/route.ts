@@ -16,10 +16,16 @@ import {
 } from '@/lib/billing/entitlements';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 import { safeLocalPath } from '@/lib/security/redirect';
+import { isSameOriginRequest } from '@/lib/security/origin';
 
 export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
+
+  // Defence in depth against cross-site POSTs; see lib/security/origin.ts.
+  if (!isSameOriginRequest(req)) {
+    return NextResponse.redirect(new URL('/dashboard?error=invalid_origin', req.url), 303);
+  }
   const supabase = await createServerClient();
   const {
     data: { user },

@@ -1,11 +1,12 @@
-import { Check, CreditCard } from 'lucide-react';
+import { Check, CreditCard, ReceiptText } from 'lucide-react';
 import { createServerClient } from '@/lib/supabase/server';
-import { formatSAR } from '@/lib/utils';
+import { formatCurrency, formatDateAr, formatSAR } from '@/lib/utils';
 import { planLabel, subscriptionStatusLabel } from '@/lib/ui/labels';
 import { PendingSubmitButton } from '@/lib/ui/pending-submit-button';
 import { PageHeader } from '@/lib/ui/page-header';
 import { Alert } from '@/lib/ui/alert';
 import { StatusBadge } from '@/lib/ui/status-badge';
+import { EmptyState } from '@/lib/ui/empty-state';
 import { buttonClasses } from '@/lib/ui/button';
 import { cn } from '@/lib/utils';
 
@@ -60,26 +61,48 @@ export default async function BillingPage({
 }) {
   const params = await searchParams;
   const supabase = await createServerClient();
-  const { data: subscription } = await supabase
-    .from('subscriptions')
-    .select('*')
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  const [{ data: trialGrant, error: trialGrantError }, { data: priorTrial, error: priorTrialError }] =
-    await Promise.all([
-      supabase.from('billing_trial_grants').select('user_id').limit(1).maybeSingle(),
-      supabase.from('subscriptions').select('id').not('trial_ends_at', 'is', null).limit(1).maybeSingle(),
-    ]);
+  // Every query below is scoped to `user.id` explicitly. RLS already does this,
+  // but billing is the wrong place to have exactly one line of defence: a
+  // future switch to the admin client, or RLS disabled during an incident,
+  // would turn each of these into a cross-tenant read with no second check.
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const userId = user?.id ?? null;
+
+  const { data: subscription } = userId
+    ? await supabase
+        .from('subscriptions')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+    : { data: null };
+  const [{ data: trialGrant, error: trialGrantError }, { data: priorTrial, error: priorTrialError }] = userId
+    ? await Promise.all([
+        supabase.from('billing_trial_grants').select('user_id').eq('user_id', userId).limit(1).maybeSingle(),
+        supabase
+          .from('subscriptions')
+          .select('id')
+          .eq('user_id', userId)
+          .not('trial_ends_at', 'is', null)
+          .limit(1)
+          .maybeSingle(),
+      ])
+    : [{ data: null, error: null }, { data: null, error: null }];
   const trialEligible = !trialGrantError && !priorTrialError && !trialGrant && !priorTrial;
   const hasLiveSubscription = Boolean(
     subscription && ['trialing', 'active', 'past_due', 'paused'].includes(subscription.status)
   );
-  const { data: invoices } = await supabase
-    .from('invoices')
-    .select('invoice_number, amount_sar, status, invoice_url, created_at')
-    .order('created_at', { ascending: false })
-    .limit(5);
+  const { data: invoices } = userId
+    ? await supabase
+        .from('invoices')
+        .select('invoice_number, amount_sar, currency, status, invoice_url, created_at')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(5)
+    : { data: [] };
 
   return (
     <>
@@ -94,11 +117,14 @@ export default async function BillingPage({
         {params?.canceled && <Alert tone="warning">تم إلغاء عملية الدفع ولم يتغيّر اشتراكك.</Alert>}
 
         {/* Current plan */}
-        <section className="rounded-lg border border-border bg-card p-6">
-          <div className="flex flex-wrap items-center justify-between gap-4">
+        <section className="surface-raised relative overflow-hidden p-6">
+          <div className="canvas-glow pointer-events-none absolute inset-0 opacity-50" aria-hidden />
+          <div className="relative flex flex-wrap items-center justify-between gap-4">
             <div>
-              <div className="text-sm text-muted-foreground">الخطة الحالية</div>
-              <div className="mt-1 flex flex-wrap items-center gap-2 text-2xl font-bold">
+              <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-foreground-subtle">
+                الخطة الحالية
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-2.5 text-[26px] font-bold leading-none tracking-tight">
                 {subscription ? planLabel(subscription.plan) : 'لا يوجد اشتراك نشط'}
                 {subscription && (
                   <StatusBadge tone={subscription.status === 'active' ? 'success' : 'warning'}>
@@ -106,11 +132,13 @@ export default async function BillingPage({
                   </StatusBadge>
                 )}
               </div>
-              {subscription?.trial_ends_at && (
-                <p className="mt-1 text-sm text-muted-foreground">
-                  تنتهي التجربة في {new Date(subscription.trial_ends_at).toLocaleDateString('ar-SA')}
-                </p>
-              )}
+              <p className="mt-2 text-[13px] text-muted-foreground">
+                {subscription?.trial_ends_at
+                  ? `تنتهي التجربة في ${formatDateAr(subscription.trial_ends_at)}`
+                  : subscription?.current_period_end
+                    ? `تجديد الاشتراك في ${formatDateAr(subscription.current_period_end)}`
+                    : 'اختر خطة بالأسفل لتفعيل الفحص والتنفيذ والمساعد الذكي.'}
+              </p>
             </div>
             {hasLiveSubscription && subscription?.stripe_customer_id ? (
               <form action="/api/billing/portal" method="post">
@@ -132,62 +160,104 @@ export default async function BillingPage({
 
         {/* Plans */}
         <div className="grid gap-4 lg:grid-cols-3">
-          {plans.map((plan) => (
-            <section
-              key={plan.id}
-              className={cn(
-                'flex flex-col rounded-lg border bg-card p-6',
-                plan.highlighted ? 'border-brand-500 shadow-card ring-1 ring-brand-100 dark:ring-brand-500/30' : 'border-border'
-              )}
-            >
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <h2 className="text-xl font-bold">{plan.name}</h2>
-                  <p className="text-xs font-medium text-muted-foreground" dir="ltr">
-                    {plan.nameEn}
-                  </p>
-                  <p className="mt-1 text-sm text-muted-foreground">{plan.limit}</p>
+          {plans.map((plan) => {
+            const isCurrent = subscription?.plan === plan.id && hasLiveSubscription;
+            return (
+              <section
+                key={plan.id}
+                className={cn(
+                  'relative flex flex-col overflow-hidden p-6',
+                  plan.highlighted ? 'surface-raised border-primary/35' : 'surface-card'
+                )}
+              >
+                {/* One hairline of colour marks the recommended plan — no
+                    glow, no double ring. */}
+                {plan.highlighted && <span className="absolute inset-x-0 top-0 h-px bg-primary" aria-hidden />}
+
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h2 className="text-[17px] font-semibold tracking-tight">{plan.name}</h2>
+                    <p className="mt-0.5 text-[11px] font-medium uppercase tracking-wide text-foreground-subtle" dir="ltr">
+                      {plan.nameEn}
+                    </p>
+                  </div>
+                  {isCurrent ? (
+                    <StatusBadge tone="success">خطتك الحالية</StatusBadge>
+                  ) : plan.highlighted ? (
+                    <StatusBadge tone="brand">الأنسب</StatusBadge>
+                  ) : null}
                 </div>
-                {plan.highlighted && <StatusBadge tone="brand">الأنسب</StatusBadge>}
-              </div>
-              <div className="mt-5 text-3xl font-bold tabular-nums">
-                {formatSAR(plan.price)}
-                <span className="text-sm font-normal text-muted-foreground"> / شهر</span>
-              </div>
-              <ul className="mt-5 flex-1 space-y-2.5 text-sm text-muted-foreground">
-                {plan.features.map((feature) => (
-                  <li key={feature} className="flex items-center gap-2">
-                    <Check className="h-4 w-4 flex-shrink-0 text-emerald-500" />
-                    {feature}
-                  </li>
-                ))}
-              </ul>
-              <div className="mt-6 grid gap-2">
-                <form action="/api/billing/checkout" method="post">
-                  <input type="hidden" name="plan" value={plan.id} />
-                  <input type="hidden" name="period" value="monthly" />
-                  <PendingSubmitButton
-                    pendingLabel="جاري فتح الدفع..."
-                    className={buttonClasses({ variant: 'primary', block: true })}
-                  >
-                    {trialEligible ? 'ابدأ تجربة 14 يوم' : 'اشترك الآن'}
-                  </PendingSubmitButton>
-                </form>
-                <p className="text-center text-xs leading-6 text-muted-foreground">
-                  {trialEligible
-                    ? 'لن يتم الخصم خلال فترة التجربة. إدارة البطاقة والفواتير تتم بأمان عبر Stripe.'
-                    : 'تبدأ الفوترة عند تأكيد الاشتراك. إدارة البطاقة والفواتير تتم بأمان عبر Stripe.'}
-                </p>
-              </div>
-            </section>
-          ))}
+
+                <p className="mt-2 text-[13px] leading-6 text-muted-foreground">{plan.limit}</p>
+
+                <div className="mt-5 flex items-baseline gap-1.5">
+                  <span className="text-[2rem] font-bold leading-none tracking-tight numeric">
+                    {formatSAR(plan.price)}
+                  </span>
+                  <span className="text-[13px] text-muted-foreground">/ شهر</span>
+                </div>
+
+                <div className="rule-fade my-5 h-px" aria-hidden />
+
+                <ul className="flex-1 space-y-2.5 text-[13px] text-muted-foreground">
+                  {plan.features.map((feature) => (
+                    <li key={feature} className="flex items-start gap-2.5 leading-6">
+                      <Check className="mt-1 h-3.5 w-3.5 flex-shrink-0 text-emerald-500" />
+                      {feature}
+                    </li>
+                  ))}
+                </ul>
+
+                <div className="mt-6 grid gap-2.5">
+                  {isCurrent ? (
+                    <form action="/api/billing/portal" method="post">
+                      <PendingSubmitButton
+                        pendingLabel="جاري فتح Stripe..."
+                        className={buttonClasses({ variant: 'outline', block: true })}
+                      >
+                        إدارة هذه الخطة
+                      </PendingSubmitButton>
+                    </form>
+                  ) : (
+                    <form action="/api/billing/checkout" method="post">
+                      <input type="hidden" name="plan" value={plan.id} />
+                      <input type="hidden" name="period" value="monthly" />
+                      <PendingSubmitButton
+                        pendingLabel="جاري فتح الدفع..."
+                        className={buttonClasses({
+                          variant: plan.highlighted ? 'primary' : 'secondary',
+                          block: true,
+                        })}
+                      >
+                        {hasLiveSubscription ? 'التبديل لهذه الخطة' : trialEligible ? 'ابدأ تجربة 14 يوم' : 'اشترك الآن'}
+                      </PendingSubmitButton>
+                    </form>
+                  )}
+                  <p className="text-center text-[11px] leading-5 text-foreground-subtle">
+                    {trialEligible
+                      ? 'لن يتم الخصم خلال فترة التجربة. البطاقة والفواتير تُدار بأمان عبر Stripe.'
+                      : 'تبدأ الفوترة عند التأكيد. البطاقة والفواتير تُدار بأمان عبر Stripe.'}
+                  </p>
+                </div>
+              </section>
+            );
+          })}
         </div>
 
         {/* Invoices */}
-        <section className="overflow-hidden rounded-lg border border-border bg-card">
-          <div className="border-b border-border p-5 font-bold">آخر الفواتير</div>
+        <section className="surface-card overflow-hidden">
+          <div className="border-b border-border px-5 py-4">
+            <h2 className="text-[14px] font-semibold tracking-tight">آخر الفواتير</h2>
+            <p className="mt-1 text-xs text-muted-foreground">آخر 5 فواتير صادرة على هذا الحساب.</p>
+          </div>
           {(invoices ?? []).length === 0 ? (
-            <div className="p-6 text-sm text-muted-foreground">لا توجد فواتير محفوظة بعد.</div>
+            <EmptyState
+              bare
+              tone="neutral"
+              icon={ReceiptText}
+              title="لا توجد فواتير بعد"
+              description="أول فاتورة تظهر هنا بعد انتهاء التجربة وبدء أول دورة فوترة. الفواتير تُصدَر وتُحفظ عبر Stripe."
+            />
           ) : (
             <div className="divide-y divide-border">
               {(invoices ?? []).map((invoice: any) => (
@@ -200,9 +270,11 @@ export default async function BillingPage({
                     <div className="mt-1 text-xs text-muted-foreground">{subscriptionStatusLabel(invoice.status)}</div>
                   </div>
                   <div className="flex items-center gap-4">
-                    <span className="font-bold tabular-nums">{formatSAR(invoice.amount_sar ?? 0)}</span>
+                    <span className="font-bold numeric">
+                      {formatCurrency(invoice.amount_sar ?? 0, invoice.currency ?? 'SAR')}
+                    </span>
                     {invoice.invoice_url && (
-                      <a href={invoice.invoice_url} className="font-semibold text-brand-700 dark:text-brand-300 hover:underline" target="_blank">
+                      <a href={invoice.invoice_url} className="font-semibold text-primary hover:underline" target="_blank">
                         عرض
                       </a>
                     )}

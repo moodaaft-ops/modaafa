@@ -4,6 +4,9 @@ import { cn } from '@/lib/utils';
  * Actionable empty state: icon + specific title + explanation + a clear next
  * action. Renders its own panel by default; pass `bare` to drop into an
  * existing panel.
+ *
+ * The icon sits in a bordered tile over a faint radial glow so the block has
+ * presence on a dark canvas without needing a heavy fill.
  */
 export function EmptyState({
   icon: Icon,
@@ -22,31 +25,37 @@ export function EmptyState({
   bare?: boolean;
   className?: string;
 }) {
-  const bubble =
+  const tile =
     tone === 'warning'
-      ? 'bg-amber-50 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400'
+      ? 'border-amber-500/25 bg-amber-500/10 text-amber-500'
       : tone === 'neutral'
-        ? 'bg-muted text-muted-foreground'
-        : 'bg-brand-50 text-brand-600 dark:bg-brand-500/15 dark:text-brand-400';
+        ? 'border-border-strong bg-muted text-muted-foreground'
+        : 'border-primary/25 bg-primary/10 text-primary';
 
   return (
     <div
       className={cn(
-        'flex flex-col items-center px-6 py-12 text-center',
-        !bare && 'rounded-lg border border-border bg-card',
+        'relative flex flex-col items-center overflow-hidden px-6 py-14 text-center',
+        !bare && 'surface-card',
         className
       )}
     >
-      {Icon && (
-        <span className={cn('mb-4 flex h-14 w-14 items-center justify-center rounded-lg', bubble)}>
-          <Icon className="h-7 w-7" />
-        </span>
-      )}
-      <h3 className="text-lg font-bold text-foreground">{title}</h3>
-      {description && (
-        <p className="mt-2 max-w-md text-sm leading-7 text-muted-foreground">{description}</p>
-      )}
-      {action && <div className="mt-6 flex flex-wrap items-center justify-center gap-2">{action}</div>}
+      {!bare && <div className="canvas-glow pointer-events-none absolute inset-0 opacity-60" aria-hidden />}
+
+      <div className="relative">
+        {Icon && (
+          <span className={cn('mx-auto mb-5 flex h-12 w-12 items-center justify-center rounded-xl border', tile)}>
+            <Icon className="h-5 w-5" />
+          </span>
+        )}
+        <h3 className="text-base font-semibold tracking-tight text-foreground">{title}</h3>
+        {description && (
+          <p className="mx-auto mt-2 max-w-md text-[13px] leading-7 text-muted-foreground">{description}</p>
+        )}
+        {action && (
+          <div className="mt-6 flex flex-wrap items-center justify-center gap-2">{action}</div>
+        )}
+      </div>
     </div>
   );
 }

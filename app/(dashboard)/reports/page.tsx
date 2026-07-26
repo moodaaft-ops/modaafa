@@ -57,12 +57,12 @@ export default async function ReportsPage() {
             }
           />
         ) : (
-          <section className="overflow-hidden rounded-lg border border-border bg-card">
+          <section className="surface-card overflow-hidden">
             <div className="divide-y divide-border">
               {(reports ?? []).map((report: any) => (
                 <article key={report.id} className="p-5">
                   <div className="flex items-center justify-between gap-4">
-                    <h2 className="font-bold">{periodLabel(report.period_type)}</h2>
+                    <h2 className="text-[14px] font-semibold tracking-tight">{periodLabel(report.period_type)}</h2>
                     <span className="text-xs text-muted-foreground">{timeAgoAr(report.generated_at)}</span>
                   </div>
                   <p className="mt-2 text-sm leading-7 text-muted-foreground">
@@ -98,9 +98,9 @@ export default async function ReportsPage() {
 
 function ReportMetric({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="rounded-lg bg-muted px-4 py-3">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="mt-1 font-bold tabular-nums">{value}</div>
+    <div className="rounded-lg border border-border bg-background-elevated px-4 py-3">
+      <div className="text-[11px] font-medium uppercase tracking-wide text-foreground-subtle">{label}</div>
+      <div className="mt-1.5 text-[17px] font-semibold tracking-tight numeric">{value}</div>
     </div>
   );
 }

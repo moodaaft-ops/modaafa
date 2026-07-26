@@ -42,7 +42,7 @@ export default function PrivacyPage() {
             href="https://developers.google.com/terms/api-services-user-data-policy"
             target="_blank"
             rel="noreferrer"
-            className="font-semibold text-brand-700 hover:underline dark:text-brand-300"
+            className="font-semibold text-primary hover:underline dark:text-primary"
           >
             Google API Services User Data Policy
           </a>{' '}
@@ -76,7 +76,7 @@ export default function PrivacyPage() {
       <LegalSection title="خياراتك وحذف بياناتك">
         <p>
           يمكنك سحب صلاحية مُضاعِف من صفحة أذونات حساب Google في أي وقت، وإدارة اشتراكك من صفحة الفوترة، وحذف حسابك
-          وبياناته نهائياً من الإعدادات. يوضح <Link href="/data-deletion" className="font-semibold text-brand-700 hover:underline dark:text-brand-300">دليل حذف البيانات</Link> الخطوات والتفاصيل.
+          وبياناته نهائياً من الإعدادات. يوضح <Link href="/data-deletion" className="font-semibold text-primary hover:underline dark:text-primary">دليل حذف البيانات</Link> الخطوات والتفاصيل.
         </p>
       </LegalSection>
 
@@ -84,7 +84,7 @@ export default function PrivacyPage() {
         <p>
           قد نحدث هذه السياسة عند تغير الخدمة أو المتطلبات النظامية، وسننشر تاريخ التحديث هنا. للاستفسارات أو طلبات
           الخصوصية تواصل عبر{' '}
-          <a href="mailto:moodaaft@gmail.com" className="font-semibold text-brand-700 hover:underline dark:text-brand-300">
+          <a href="mailto:moodaaft@gmail.com" className="font-semibold text-primary hover:underline dark:text-primary">
             moodaaft@gmail.com
           </a>.
         </p>

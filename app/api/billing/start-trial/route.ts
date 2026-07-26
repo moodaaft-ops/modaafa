@@ -5,10 +5,16 @@ import { createCheckoutSession, ensureStripeCustomer } from '@/lib/billing/strip
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 import { getBillingCheckoutContext } from '@/lib/billing/checkout-policy';
 import { requireAppUrl } from '@/lib/platform/env';
+import { isSameOriginRequest } from '@/lib/security/origin';
 
 const plans = ['starter', 'growth', 'pro'];
 
 export async function POST(req: NextRequest) {
+
+  // Defence in depth against cross-site POSTs; see lib/security/origin.ts.
+  if (!isSameOriginRequest(req)) {
+    return NextResponse.redirect(new URL('/billing?error=invalid_origin', req.url), 303);
+  }
   const supabase = await createServerClient();
   const {
     data: { user },

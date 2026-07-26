@@ -197,66 +197,82 @@ export default async function DashboardPage({
           />
         ) : (
           <>
-            {/* Setup progress */}
-            <section className="rounded-lg border border-border bg-card p-5 sm:p-6">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-lg font-bold">
-                    {setupComplete ? 'مساحة العمل جاهزة' : 'أكمل تجهيز مساحة العمل'}
-                  </h2>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {setupComplete
-                      ? 'كل الخطوات الأساسية مكتملة. حدّث البيانات وقتما تريد ثم راجع التوصيات.'
-                      : `أكملت ${formatNumberAr(completedCount)} من 4 خطوات. تابع من حيث توقفت.`}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2 rounded-lg bg-muted px-3 py-2 text-sm font-semibold text-muted-foreground">
-                  <span className="text-brand-700 dark:text-brand-300">{formatNumberAr(completedCount)}</span>
-                  <span className="text-muted-foreground">/</span>
-                  <span>4</span>
-                </div>
+            {/* Setup progress.
+                Was a bordered card containing four more bordered cards, pinned
+                above the KPIs forever — the clearest "cards inside cards" case
+                in the product, and it kept the most valuable screen real estate
+                even after every step was done. Now: one quiet line when
+                complete, a compact checklist strip while it isn't. */}
+            {setupComplete ? (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-border bg-card/60 px-4 py-2.5 text-[12.5px]">
+                <CheckCircle2 className="h-3.5 w-3.5 flex-shrink-0 text-primary" aria-hidden />
+                <span className="font-medium text-foreground">مساحة العمل جاهزة</span>
+                <span className="text-muted-foreground">
+                  حدّث البيانات وقتما تريد ثم راجع التوصيات في مركز الموافقات.
+                </span>
               </div>
+            ) : (
+              <section className="surface-card overflow-hidden">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-3.5">
+                  <div>
+                    <h2 className="text-[13.5px] font-semibold tracking-tight">أكمل تجهيز مساحة العمل</h2>
+                    <p className="mt-0.5 text-[12px] text-muted-foreground">
+                      {`أكملت ${formatNumberAr(completedCount)} من 4 خطوات. تابع من حيث توقفت.`}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="h-1 w-24 overflow-hidden rounded-full bg-muted" aria-hidden>
+                      <div
+                        className="h-full rounded-full bg-primary transition-[width] duration-300"
+                        style={{ width: `${(completedCount / 4) * 100}%` }}
+                      />
+                    </div>
+                    <span className="text-[12px] font-semibold text-muted-foreground numeric">
+                      {formatNumberAr(completedCount)}/4
+                    </span>
+                  </div>
+                </div>
 
-              <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                {starterSteps.map((step) => {
-                  const done = setupState[step.key];
-                  const Icon = step.icon;
-                  return (
-                    <Link
-                      key={step.key}
-                      href={step.href}
-                      className="group flex flex-col rounded-lg border border-border p-4 transition hover:border-brand-200 hover:bg-brand-50/40 dark:hover:border-brand-500/40 dark:hover:bg-brand-500/10"
-                    >
-                      <div className="flex items-center justify-between">
-                        <span
-                          className={`flex h-9 w-9 items-center justify-center rounded-lg ${
-                            done ? 'bg-emerald-50 dark:bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' : 'bg-brand-50 dark:bg-brand-500/15 text-brand-600'
-                          }`}
+                <ol className="grid gap-px bg-border sm:grid-cols-2 lg:grid-cols-4">
+                  {starterSteps.map((step) => {
+                    const done = setupState[step.key];
+                    const Icon = step.icon;
+                    return (
+                      <li key={step.key} className="bg-card">
+                        <Link
+                          href={step.href}
+                          className="group flex h-full flex-col p-4 transition-colors duration-150 hover:bg-surface"
                         >
-                          <Icon className="h-4 w-4" />
-                        </span>
-                        {done ? (
-                          <StatusBadge tone="success">مكتمل</StatusBadge>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
-                            <CircleDashed className="h-3.5 w-3.5" />
-                            متبقٍ
-                          </span>
-                        )}
-                      </div>
-                      <div className="mt-3 font-semibold text-foreground">{step.title}</div>
-                      <p className="mt-1 flex-1 text-xs leading-6 text-muted-foreground">{step.description}</p>
-                      {!done && (
-                        <span className="mt-3 inline-flex items-center gap-1 text-sm font-semibold text-brand-700 dark:text-brand-300">
-                          {step.cta}
-                          <ArrowLeft className="h-3.5 w-3.5 transition group-hover:-translate-x-0.5" />
-                        </span>
-                      )}
-                    </Link>
-                  );
-                })}
-              </div>
-            </section>
+                          <div className="flex items-center gap-2">
+                            {done ? (
+                              <CheckCircle2 className="h-4 w-4 flex-shrink-0 text-primary" aria-hidden />
+                            ) : (
+                              <Icon className="h-4 w-4 flex-shrink-0 text-muted-foreground" aria-hidden />
+                            )}
+                            <span
+                              className={`text-[13px] font-medium ${
+                                done ? 'text-muted-foreground line-through decoration-1' : 'text-foreground'
+                              }`}
+                            >
+                              {step.title}
+                            </span>
+                          </div>
+                          <p className="mt-1.5 flex-1 text-[11.5px] leading-6 text-muted-foreground">
+                            {step.description}
+                          </p>
+                          {!done && (
+                            <span className="mt-2 inline-flex items-center gap-1 text-[12px] font-medium text-primary">
+                              {step.cta}
+                              <ArrowLeft className="h-3 w-3" aria-hidden />
+                            </span>
+                          )}
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ol>
+              </section>
+            )}
 
             {/* KPIs */}
             <section className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
@@ -280,10 +296,10 @@ export default async function DashboardPage({
             </section>
 
             {/* Campaigns */}
-            <section className="overflow-hidden rounded-lg border border-border bg-card">
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-5">
+            <section className="surface-card overflow-hidden">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
                 <div>
-                  <h3 className="font-bold">حملات الحساب المختار</h3>
+                  <h3 className="text-[14px] font-semibold tracking-tight">حملات الحساب المختار</h3>
                   <p className="mt-1 text-xs text-muted-foreground">
                     {formatNumberAr(activeCampaigns.length)} حملة مفعلة من أصل {formatNumberAr(campaigns?.length ?? 0)}
                   </p>
@@ -323,27 +339,27 @@ export default async function DashboardPage({
               ) : (
                 <div className="overflow-x-auto scrollbar-thin">
                   <table className="w-full min-w-[640px] text-sm">
-                    <thead className="bg-muted text-xs text-muted-foreground">
+                    <thead className="border-b border-border bg-background-elevated text-[11px] uppercase tracking-wide text-muted-foreground">
                       <tr>
-                        <th className="px-6 py-3 text-start font-medium">اسم الحملة</th>
-                        <th className="px-3 py-3 text-start font-medium">الحالة</th>
-                        <th className="px-3 py-3 text-start font-medium">الإنفاق 7 أيام</th>
-                        <th className="px-3 py-3 text-start font-medium">التحويلات</th>
-                        <th className="px-6 py-3 text-start font-medium">ROAS</th>
+                        <th className="px-5 py-2.5 text-start font-medium">اسم الحملة</th>
+                        <th className="px-3 py-2.5 text-start font-medium">الحالة</th>
+                        <th className="px-3 py-2.5 text-start font-medium">الإنفاق 7 أيام</th>
+                        <th className="px-3 py-2.5 text-start font-medium">التحويلات</th>
+                        <th className="px-5 py-2.5 text-start font-medium">ROAS</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
                       {sortedCampaigns.map((campaign: any) => (
-                        <tr key={campaign.id} className="hover:bg-muted/70">
+                        <tr key={campaign.id} className="transition-colors duration-150 hover:bg-muted/50">
                           <td className="px-6 py-4 font-medium text-foreground">{campaign.name}</td>
-                          <td className="px-3 py-4">
+                          <td className="px-3 py-3.5">
                             <StatusBadge tone={campaignStatusTone(campaign.status)}>
                               {campaignStatusLabel(campaign.status)}
                             </StatusBadge>
                           </td>
-                          <td className="px-3 py-4 tabular-nums">{formatCurrency(moneyMetric(campaign.metrics_7d, 'cost'), selectedAccount?.currency_code)}</td>
-                          <td className="px-3 py-4 tabular-nums">{formatNumberAr(campaign.metrics_7d?.conversions ?? 0)}</td>
-                          <td className="px-6 py-4 font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+                          <td className="px-3 py-3.5 numeric">{formatCurrency(moneyMetric(campaign.metrics_7d, 'cost'), selectedAccount?.currency_code)}</td>
+                          <td className="px-3 py-3.5 numeric">{formatNumberAr(campaign.metrics_7d?.conversions ?? 0)}</td>
+                          <td className="px-6 py-4 font-bold numeric text-emerald-600 dark:text-emerald-400">
                             {(campaign.metrics_30d?.roas ?? 0).toFixed(1)}×
                           </td>
                         </tr>
@@ -355,9 +371,9 @@ export default async function DashboardPage({
             </section>
 
             {/* Quick help strip */}
-            <section className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-brand-100 dark:border-brand-500/20 bg-brand-50/50 dark:bg-brand-500/10 p-5">
+            <section className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-primary/25 bg-primary/[0.06] p-5">
               <div className="flex items-center gap-3">
-                <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-card text-brand-600 shadow-soft">
+                <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-card text-primary shadow-soft">
                   <MessageCircle className="h-5 w-5" />
                 </span>
                 <div>

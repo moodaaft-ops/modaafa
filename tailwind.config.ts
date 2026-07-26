@@ -28,25 +28,46 @@ const config: Config = {
       },
       animation: {
         'loading-bar': 'loading-bar 1.1s ease-in-out infinite',
+        'fade-in-fast': 'fade-in 0.15s ease-out both',
         'fade-in': 'fade-in 0.25s ease-out both',
         'fade-up': 'fade-up 0.5s cubic-bezier(0.16,1,0.3,1) both',
         'typing-dot': 'typing-dot 1.2s ease-in-out infinite',
       },
       boxShadow: {
-        soft: '0 1px 2px 0 hsl(222 47% 11% / 0.04), 0 1px 3px 0 hsl(222 47% 11% / 0.06)',
-        card: '0 1px 2px hsl(222 47% 11% / 0.04), 0 12px 28px -14px hsl(222 47% 11% / 0.16)',
-        pop: '0 10px 34px -10px hsl(222 47% 11% / 0.22)',
-        'glow-brand': '0 8px 30px -8px hsl(161 84% 30% / 0.45)',
+        // Elevation in a dark UI comes from an inner top highlight plus a very
+        // soft ambient shadow — a plain drop shadow is invisible on near-black.
+        soft: 'inset 0 1px 0 0 hsl(var(--edge-highlight)), 0 1px 2px 0 hsl(222 40% 2% / 0.35)',
+        card: 'inset 0 1px 0 0 hsl(var(--edge-highlight)), 0 1px 2px 0 hsl(222 40% 2% / 0.4), 0 8px 24px -16px hsl(222 60% 2% / 0.6)',
+        pop: 'inset 0 1px 0 0 hsl(var(--edge-highlight-strong)), 0 12px 32px -12px hsl(222 60% 2% / 0.75), 0 2px 8px -3px hsl(222 60% 2% / 0.55)',
+        'glow-brand': '0 0 0 1px hsl(var(--primary) / 0.35), 0 10px 40px -12px hsl(var(--primary) / 0.5)',
+        'focus-ring': '0 0 0 2px hsl(var(--background)), 0 0 0 4px hsl(var(--ring))',
+      },
+      fontSize: {
+        // Display sizes get tighter tracking and leading than Tailwind's
+        // defaults; Arabic at 48px+ otherwise reads loose and unconfident.
+        'display-sm': ['2rem', { lineHeight: '1.2', letterSpacing: '-0.02em' }],
+        'display-md': ['2.75rem', { lineHeight: '1.12', letterSpacing: '-0.028em' }],
+        'display-lg': ['3.5rem', { lineHeight: '1.06', letterSpacing: '-0.032em' }],
+        'display-xl': ['4.25rem', { lineHeight: '1.02', letterSpacing: '-0.036em' }],
       },
       fontFamily: {
         sans: ['var(--font-arabic)', 'sans-serif'],
       },
       colors: {
-        border: 'hsl(var(--border) / <alpha-value>)',
+        border: {
+          DEFAULT: 'hsl(var(--border) / <alpha-value>)',
+          strong: 'hsl(var(--border-strong) / <alpha-value>)',
+        },
         input: 'hsl(var(--input) / <alpha-value>)',
         ring: 'hsl(var(--ring) / <alpha-value>)',
-        background: 'hsl(var(--background) / <alpha-value>)',
-        foreground: 'hsl(var(--foreground) / <alpha-value>)',
+        background: {
+          DEFAULT: 'hsl(var(--background) / <alpha-value>)',
+          elevated: 'hsl(var(--background-elevated) / <alpha-value>)',
+        },
+        foreground: {
+          DEFAULT: 'hsl(var(--foreground) / <alpha-value>)',
+          subtle: 'hsl(var(--foreground-subtle) / <alpha-value>)',
+        },
         card: 'hsl(var(--card) / <alpha-value>)',
         surface: 'hsl(var(--surface) / <alpha-value>)',
         elevated: 'hsl(var(--elevated) / <alpha-value>)',
@@ -76,12 +97,15 @@ const config: Config = {
         },
       },
       backgroundImage: {
-        // Darkened from 39%/27%: white text on the old light stop measured ~2.6:1,
-        // failing WCAG AA 4.5:1 on the app's primary button everywhere.
-        'brand-gradient': 'linear-gradient(135deg, hsl(158 88% 26%) 0%, hsl(161 90% 19%) 100%)',
-        'brand-soft': 'linear-gradient(135deg, hsl(158 84% 39% / 0.12) 0%, hsl(161 88% 27% / 0.06) 100%)',
-        'surface-grid':
-          'radial-gradient(hsl(var(--border) / 0.6) 1px, transparent 1px)',
+        // The primary button is a solid accent, not a gradient: gradients on
+        // small controls read cheap, and a solid lets contrast be verified.
+        'brand-gradient': 'linear-gradient(180deg, hsl(var(--primary)) 0%, hsl(var(--primary) / 0.88) 100%)',
+        'brand-soft': 'linear-gradient(135deg, hsl(var(--primary) / 0.14) 0%, hsl(var(--primary) / 0.05) 100%)',
+        'surface-grid': 'radial-gradient(hsl(var(--border) / 0.6) 1px, transparent 1px)',
+      },
+      transitionTimingFunction: {
+        // Linear's easing: fast out, settled.
+        snap: 'cubic-bezier(0.16, 1, 0.3, 1)',
       },
     },
   },

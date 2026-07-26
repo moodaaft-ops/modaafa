@@ -20,11 +20,11 @@ export function LegalPage({
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
           <Link href="/" className="flex items-center gap-3">
             <Image src="/logo-mark.svg" alt="مُضاعِف" width={38} height={38} className="h-10 w-10 rounded-lg" />
-            <span className="font-bold">مُضاعِف</span>
+            <span className="text-[14px] font-semibold tracking-tight">مُضاعِف</span>
           </Link>
           <div className="flex items-center gap-3">
             <ThemeToggle />
-            <Link href="/login" className="text-sm font-semibold text-brand-700 hover:underline dark:text-brand-300">
+            <Link href="/login" className="text-sm font-semibold text-primary hover:underline dark:text-primary">
               تسجيل الدخول
             </Link>
           </div>

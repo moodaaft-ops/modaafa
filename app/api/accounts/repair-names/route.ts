@@ -3,10 +3,16 @@ import { createServerClient } from '@/lib/supabase/server';
 import { getUserBusiness } from '@/lib/accounts/selection';
 import { repairMissingGoogleAdsMetadata } from '@/lib/accounts/metadata-repair';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
+import { isSameOriginRequest } from '@/lib/security/origin';
 
 export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
+
+  // Defence in depth against cross-site POSTs; see lib/security/origin.ts.
+  if (!isSameOriginRequest(req)) {
+    return NextResponse.json({ error: 'invalid_origin' }, { status: 403 });
+  }
   const supabase = await createServerClient();
   const {
     data: { user },

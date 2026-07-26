@@ -16,6 +16,7 @@ const authErrors: Record<string, string> = {
   too_many_requests: 'حاولت الدخول عدة مرات خلال فترة قصيرة. انتظر دقيقة ثم أعد المحاولة.',
   security_service_unavailable: 'تعذر التحقق الآمن من طلب الدخول الآن. أعد المحاولة بعد قليل.',
   missing_config: 'إعدادات المنصة غير مكتملة في هذه البيئة. تواصل معنا حتى نعالجها.',
+  invalid_origin: 'تعذر التحقق من مصدر الطلب. أعد المحاولة من داخل المنصة.',
 };
 
 /**
@@ -81,33 +82,44 @@ export default function LoginPage() {
 
   return (
     <main className="min-h-screen bg-background p-4 lg:p-6">
-      <div className="mx-auto grid min-h-[calc(100dvh-3rem)] max-w-6xl overflow-hidden rounded-lg border border-border bg-card shadow-card lg:grid-cols-[1.05fr_460px]">
-        {/* Brand panel */}
-        <section className="hidden flex-col justify-between overflow-hidden bg-ink-900 p-10 text-white lg:flex">
-          <div>
-            <Link href="/" className="flex items-center gap-3">
-              <Image src="/logo-mark.svg" alt="مُضاعِف" width={44} height={44} className="h-11 w-11 rounded-xl shadow-soft" />
+      <div className="mx-auto grid min-h-[calc(100dvh-3rem)] max-w-6xl overflow-hidden surface-card lg:grid-cols-[1.05fr_460px]">
+        {/* Brand panel. On the near-black canvas a flat ink fill was almost
+            indistinguishable from the card, so the split read as one dead
+            rectangle; the ambient glow and grid give it depth instead. */}
+        <section className="relative hidden flex-col justify-between overflow-hidden border-e border-border bg-background-elevated p-10 lg:flex">
+          <div className="canvas-glow pointer-events-none absolute inset-0" aria-hidden />
+          <div className="canvas-grid pointer-events-none absolute inset-0" aria-hidden />
+          <div className="relative">
+            <Link href="/" className="flex items-center gap-2.5">
+              <Image
+                src="/logo-mark.svg"
+                alt="مُضاعِف"
+                width={32}
+                height={32}
+                className="h-8 w-8 rounded-lg ring-1 ring-border"
+              />
               <span>
-                <span className="block text-xl font-bold">مُضاعِف</span>
-                <span className="block text-xs text-white/60" dir="ltr">
+                <span className="block text-[13px] font-semibold leading-tight tracking-tight">مُضاعِف</span>
+                <span className="block text-[10px] leading-tight text-muted-foreground" dir="ltr">
                   Modaafa Ads AI
                 </span>
               </span>
             </Link>
-            <h1 className="mt-16 max-w-xl text-4xl font-bold leading-tight">
-              اربط حساب إعلانات Google، وخلّي المنصة تطلع لك الفحص والتوصيات ومركز الموافقات.
+            <h1 className="mt-14 max-w-lg text-display-sm font-bold text-balance">
+              اربط حساب إعلانات <span dir="ltr">Google</span>، وخلّي المنصة تطلع لك الفحص والتوصيات ومركز الموافقات.
             </h1>
-            <p className="mt-4 max-w-md text-sm leading-7 text-white/70">
+            <p className="mt-4 max-w-md text-[13.5px] leading-8 text-muted-foreground">
               كل تعديل يبقى تحت موافقتك. لا ينفّذ المساعد أي تغيير على حسابك قبل أن تعتمده.
             </p>
           </div>
-          <ul className="grid gap-1 divide-y divide-white/10 border-y border-white/10">
+
+          <ul className="relative space-y-px overflow-hidden rounded-lg border border-border bg-border">
             {['سجّل دخولك بحساب Google', 'اربط كل حساباتك بموافقة واحدة', 'راجع التوصيات واعتمدها'].map((s, i) => (
-              <li key={s} className="flex items-center gap-3 px-1 py-3 text-sm">
-                <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-white/10 text-xs font-bold">
+              <li key={s} className="flex items-center gap-3 bg-card px-4 py-3 text-[13px]">
+                <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md border border-border bg-muted text-[10px] font-bold text-muted-foreground numeric">
                   {i + 1}
                 </span>
-                {s}
+                <span className="text-foreground-subtle">{s}</span>
               </li>
             ))}
           </ul>
@@ -121,7 +133,7 @@ export default function LoginPage() {
           <div className="w-full">
             <Link href="/" className="mb-8 flex items-center gap-3 lg:hidden">
               <Image src="/logo-mark.svg" alt="مُضاعِف" width={40} height={40} className="h-10 w-10 rounded-xl" />
-              <span className="text-lg font-bold">مُضاعِف</span>
+              <span className="text-[15px] font-semibold tracking-tight">مُضاعِف</span>
             </Link>
 
             <div className="mb-7">
@@ -147,7 +159,7 @@ export default function LoginPage() {
               onClick={handleGoogleLogin}
               disabled={googleLoading}
               aria-busy={googleLoading}
-              className="mb-4 flex h-12 w-full items-center justify-center gap-3 rounded-lg border border-border bg-card text-sm font-semibold transition hover:bg-muted disabled:cursor-wait disabled:opacity-70"
+              className="mb-4 flex h-12 w-full items-center justify-center gap-3 surface-card text-sm font-semibold transition hover:bg-muted disabled:cursor-wait disabled:opacity-70"
             >
               {googleLoading ? (
                 <Loader2 className="h-5 w-5 animate-spin" />
@@ -190,14 +202,14 @@ export default function LoginPage() {
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="you@example.com"
                     dir="ltr"
-                    className="h-12 w-full rounded-lg border border-input bg-card px-4 text-sm outline-none transition focus:border-brand-500"
+                    className="h-12 w-full rounded-lg border border-input bg-card px-4 text-sm outline-none transition focus:border-primary/60"
                   />
                 </label>
                 <button
                   type="submit"
                   disabled={sending}
                   aria-busy={sending}
-                  className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-brand-gradient font-semibold text-white shadow-soft transition hover:brightness-105 hover:shadow-glow-brand disabled:opacity-60"
+                  className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-primary text-[0.9375rem] font-semibold text-primary-foreground shadow-[inset_0_1px_0_0_hsl(0_0%_100%/0.18)] transition-[background-color,box-shadow] duration-150 hover:bg-primary/90 hover:shadow-glow-brand disabled:opacity-50"
                 >
                   {sending ? <Loader2 className="h-5 w-5 animate-spin" /> : <ArrowLeft className="h-4 w-4" />}
                   {sending ? 'جاري الإرسال...' : 'إرسال رابط الدخول'}
@@ -213,15 +225,15 @@ export default function LoginPage() {
 
             <p className="mt-6 text-center text-xs text-muted-foreground">
               بدخولك توافق على{' '}
-              <a href="/terms" className="font-medium text-brand-700 hover:underline dark:text-brand-400">
+              <a href="/terms" className="font-medium text-primary hover:underline dark:text-primary">
                 شروط الاستخدام
               </a>{' '}
               و{' '}
-              <a href="/privacy" className="font-medium text-brand-700 hover:underline dark:text-brand-400">
+              <a href="/privacy" className="font-medium text-primary hover:underline dark:text-primary">
                 سياسة الخصوصية
               </a>
               . ويمكنك مراجعة{' '}
-              <a href="/data-deletion" className="font-medium text-brand-700 hover:underline dark:text-brand-400">
+              <a href="/data-deletion" className="font-medium text-primary hover:underline dark:text-primary">
                 حذف البيانات
               </a>
             </p>
