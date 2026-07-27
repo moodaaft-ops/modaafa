@@ -15,6 +15,7 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 .vercel
+.modaafa-reencrypt-progress.json
 
 # Quarantine for files removed through the Cowork device bridge, which cannot
 # unlink — deletions are staged here as a move and you remove the folder

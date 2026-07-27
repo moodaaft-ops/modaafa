@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/**/*.test.ts",
     "check": "pnpm run typecheck && pnpm run lint && pnpm test && pnpm run build",
-    "db:migrate": "node scripts/migrate.mjs"
+    "db:migrate": "node scripts/migrate.mjs",
+    "crypto:rotate": "tsx scripts/reencrypt-refresh-tokens.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
