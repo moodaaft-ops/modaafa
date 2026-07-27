@@ -3,12 +3,12 @@ import { createServerClient } from '@/lib/supabase/server';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import { formatCurrency, timeAgoAr } from '@/lib/utils';
-import { severityLabel } from '@/lib/ui/labels';
+import { recommendationStatusLabel, severityLabel } from '@/lib/ui/labels';
 import { PendingSubmitButton } from '@/lib/ui/pending-submit-button';
 import { PageHeader } from '@/lib/ui/page-header';
 import { EmptyState } from '@/lib/ui/empty-state';
 import { Alert } from '@/lib/ui/alert';
-import { StatusBadge, severityTone } from '@/lib/ui/status-badge';
+import { StatusBadge, recommendationStatusTone, severityTone } from '@/lib/ui/status-badge';
 import { buttonClasses } from '@/lib/ui/button';
 import { selectClasses } from '@/lib/ui/field';
 import { cn } from '@/lib/utils';
@@ -24,7 +24,7 @@ export const metadata = {
 export default async function AuditPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ ran?: string; error?: string }>;
+  searchParams?: Promise<{ ran?: string; error?: string; approved?: string }>;
 }) {
   const params = await searchParams;
   const supabase = await createServerClient();
@@ -122,6 +122,9 @@ export default async function AuditPage({
 
       <div className="space-y-6 p-4 sm:p-6 lg:p-8">
         {params?.ran && <Alert tone="success">تم تشغيل الفحص وتحديث التوصيات.</Alert>}
+        {params?.approved && (
+          <Alert tone="success">تم اعتماد التوصية دون تنفيذ أي تعديل. راجع تفاصيلها في مركز الموافقات.</Alert>
+        )}
         {!subscription.active && <SubscriptionGate compact />}
         {params?.error && <Alert tone="danger">{auditErrorMessage(params.error)}</Alert>}
 
@@ -195,6 +198,9 @@ export default async function AuditPage({
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-semibold text-foreground">{r.title}</span>
                       <StatusBadge tone={severityTone(r.severity)}>{severityLabel(r.severity)}</StatusBadge>
+                      <StatusBadge tone={recommendationStatusTone(r.status)}>
+                        {recommendationStatusLabel(r.status)}
+                      </StatusBadge>
                     </div>
                     <p className="mt-1.5 text-sm leading-7 text-muted-foreground">{r.description}</p>
                     {r.expected_impact?.delta_sar_per_month && (
@@ -204,8 +210,17 @@ export default async function AuditPage({
                     )}
                   </div>
                   <div className="flex flex-shrink-0 gap-2">
-                    <RecommendationAction id={r.id} intent="approve" label="اعتماد" next="/audit" />
-                    <RecommendationAction id={r.id} intent="dismiss" label="تجاهل" next="/audit" secondary />
+                    {['pending', 'failed'].includes(r.status) && (
+                      <>
+                        <RecommendationAction id={r.id} intent="approve" label="اعتماد" next="/audit" />
+                        <RecommendationAction id={r.id} intent="dismiss" label="تجاهل" next="/audit" secondary />
+                      </>
+                    )}
+                    {r.status === 'approved' && (
+                      <a href="/optimizer" className={buttonClasses({ variant: 'outline', size: 'sm' })}>
+                        مراجعة التنفيذ
+                      </a>
+                    )}
                   </div>
                 </div>
               ))}
