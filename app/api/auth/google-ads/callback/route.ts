@@ -5,7 +5,7 @@ import { encrypt } from '@/lib/crypto';
 import { createAdminClient, createServerClient } from '@/lib/supabase/server';
 import {
   normalizeCustomerId,
-  pickPreferredGoogleAdsAccount,
+  pickPersistedOrPreferredGoogleAdsAccount,
   SELECTED_ADS_ACCOUNT_COOKIE,
 } from '@/lib/accounts/selection';
 import { syncCampaignCacheWithLoginFallback } from '@/lib/google-ads/sync';
@@ -168,10 +168,14 @@ export async function GET(req: NextRequest) {
       return NextResponse.redirect(new URL('/onboarding/connect?error=db_error', req.url));
     }
 
-    const firstAccount = pickPreferredGoogleAdsAccount(savedAccounts, linkableAccounts);
-    if (firstAccount) {
+    const selectedAccount = pickPersistedOrPreferredGoogleAdsAccount(
+      savedAccounts,
+      business.selected_google_ads_customer_id,
+      linkableAccounts
+    );
+    if (selectedAccount) {
       if (!business.selected_google_ads_customer_id) {
-        const selectedCustomerId = normalizeCustomerId(firstAccount.customer_id);
+        const selectedCustomerId = normalizeCustomerId(selectedAccount.customer_id);
         const { error: preferenceError } = await supabase
           .from('businesses')
           .update({ selected_google_ads_customer_id: selectedCustomerId })
@@ -187,20 +191,20 @@ export async function GET(req: NextRequest) {
       try {
         const syncResult = await syncCampaignCacheWithLoginFallback({
           supabase,
-          customerId: firstAccount.customer_id,
+          customerId: selectedAccount.customer_id,
           refreshToken,
-          accountId: firstAccount.id,
-          currencyCode: firstAccount.currency_code,
-          loginCustomerIds: [firstAccount.manager_id],
+          accountId: selectedAccount.id,
+          currencyCode: selectedAccount.currency_code,
+          loginCustomerIds: [selectedAccount.manager_id],
         });
         if (syncResult.loginCustomerId) {
           await supabase
             .from('google_ads_accounts')
             .update({ manager_id: syncResult.loginCustomerId })
-            .eq('id', firstAccount.id);
+            .eq('id', selectedAccount.id);
         }
       } catch (syncError) {
-        console.warn(`Initial campaign sync failed for ${firstAccount.customer_id}`, syncError);
+        console.warn(`Initial campaign sync failed for ${selectedAccount.customer_id}`, syncError);
       }
     }
 
@@ -208,8 +212,8 @@ export async function GET(req: NextRequest) {
       new URL(`/dashboard?connected=1&accounts=${savedAccounts?.length ?? linkableAccounts.length}`, req.url)
     );
     res.cookies.delete(GOOGLE_ADS_OAUTH_STATE_COOKIE);
-    if (firstAccount?.customer_id) {
-      res.cookies.set(SELECTED_ADS_ACCOUNT_COOKIE, normalizeCustomerId(firstAccount.customer_id), {
+    if (selectedAccount?.customer_id) {
+      res.cookies.set(SELECTED_ADS_ACCOUNT_COOKIE, normalizeCustomerId(selectedAccount.customer_id), {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
         sameSite: 'lax',

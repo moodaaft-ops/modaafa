@@ -8,6 +8,7 @@ import {
 } from '../lib/accounts/display';
 import {
   normalizeCustomerId,
+  pickPersistedOrPreferredGoogleAdsAccount,
   pickPreferredGoogleAdsAccount,
   pickSelectedAdsAccount,
 } from '../lib/accounts/selection';
@@ -75,6 +76,38 @@ test('pickPreferredGoogleAdsAccount tolerates missing discovery data', () => {
   assert.equal(pickPreferredGoogleAdsAccount([]), null);
   const onlySaved = [{ customer_id: '9999999999' }];
   assert.equal(pickPreferredGoogleAdsAccount(onlySaved)?.customer_id, '9999999999');
+});
+
+test('OAuth relinking preserves the persisted account selection', () => {
+  const saved = [
+    { customer_id: '1111111111', customer_name: 'Preferred by score' },
+    { customer_id: '2222222222', customer_name: 'Persisted account' },
+  ];
+  const discovered = [
+    { customer_id: '1111111111', customer_name: 'Preferred by score', status: 'ENABLED' },
+    { customer_id: '2222222222', customer_name: null, status: 'SUSPENDED' },
+  ];
+
+  assert.equal(
+    pickPersistedOrPreferredGoogleAdsAccount(saved, '222-222-2222', discovered)?.customer_id,
+    '2222222222'
+  );
+});
+
+test('OAuth relinking falls back when the persisted account is no longer accessible', () => {
+  const saved = [
+    { customer_id: '1111111111', customer_name: 'Named account' },
+    { customer_id: '2222222222', customer_name: null },
+  ];
+  const discovered = [
+    { customer_id: '1111111111', customer_name: 'Named account', status: 'ENABLED' },
+    { customer_id: '2222222222', customer_name: null, status: 'SUSPENDED' },
+  ];
+
+  assert.equal(
+    pickPersistedOrPreferredGoogleAdsAccount(saved, '9999999999', discovered)?.customer_id,
+    '1111111111'
+  );
 });
 
 test('selected account uses a valid cookie before the persisted preference', () => {

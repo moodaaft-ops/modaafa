@@ -212,6 +212,25 @@ export function pickPreferredGoogleAdsAccount<T extends { customer_id?: string |
   })[0] ?? null;
 }
 
+export function pickPersistedOrPreferredGoogleAdsAccount<
+  T extends { customer_id?: string | null },
+>(
+  savedAccounts: T[] | null | undefined,
+  persistedCustomerId?: string | null,
+  sourceAccounts: GoogleAdsSelectableAccount[] = []
+): T | null {
+  const accounts = savedAccounts ?? [];
+  const normalizedPersistedId = normalizeCustomerId(persistedCustomerId ?? '');
+  const persistedAccount = normalizedPersistedId
+    ? accounts.find(
+        (account) =>
+          normalizeCustomerId(account.customer_id ?? '') === normalizedPersistedId
+      )
+    : null;
+
+  return persistedAccount ?? pickPreferredGoogleAdsAccount(accounts, sourceAccounts);
+}
+
 function accountSelectionScore(account: GoogleAdsSelectableAccount) {
   if (configuredManagerCustomerIdSet().has(normalizeCustomerId(account.customer_id ?? ''))) return -1;
 
