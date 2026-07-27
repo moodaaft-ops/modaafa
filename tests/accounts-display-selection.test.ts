@@ -6,7 +6,11 @@ import {
   googleAdsAccountNameMissing,
   isGeneratedFallbackName,
 } from '../lib/accounts/display';
-import { normalizeCustomerId, pickPreferredGoogleAdsAccount } from '../lib/accounts/selection';
+import {
+  normalizeCustomerId,
+  pickPreferredGoogleAdsAccount,
+  pickSelectedAdsAccount,
+} from '../lib/accounts/selection';
 
 test('customer IDs are formatted for display without ever becoming the account name', () => {
   assert.equal(formatGoogleAdsCustomerId('7561141000'), '756-114-1000');
@@ -71,4 +75,38 @@ test('pickPreferredGoogleAdsAccount tolerates missing discovery data', () => {
   assert.equal(pickPreferredGoogleAdsAccount([]), null);
   const onlySaved = [{ customer_id: '9999999999' }];
   assert.equal(pickPreferredGoogleAdsAccount(onlySaved)?.customer_id, '9999999999');
+});
+
+test('selected account uses a valid cookie before the persisted preference', () => {
+  const accounts = [
+    { customer_id: '1111111111' },
+    { customer_id: '2222222222' },
+  ];
+
+  assert.equal(
+    pickSelectedAdsAccount(accounts, '222-222-2222', '1111111111')?.customer_id,
+    '2222222222'
+  );
+});
+
+test('selected account survives sign-out through its persisted user preference', () => {
+  const accounts = [
+    { customer_id: '1111111111' },
+    { customer_id: '2222222222' },
+  ];
+
+  assert.equal(
+    pickSelectedAdsAccount(accounts, null, '222-222-2222')?.customer_id,
+    '2222222222'
+  );
+});
+
+test('stale selection safely falls back to the first linked account', () => {
+  const accounts = [{ customer_id: '1111111111' }];
+
+  assert.equal(
+    pickSelectedAdsAccount(accounts, '9999999999', '8888888888')?.customer_id,
+    '1111111111'
+  );
+  assert.equal(pickSelectedAdsAccount([], null, null), null);
 });

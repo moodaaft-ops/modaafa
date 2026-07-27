@@ -26,6 +26,7 @@ export type AdsAccountSummary = {
 export type BusinessSummary = {
   id: string;
   name?: string | null;
+  selected_google_ads_customer_id?: string | null;
 };
 
 export type GoogleAdsSelectableAccount = {
@@ -50,7 +51,7 @@ export async function getUserBusiness(
 
   const { data, error } = await supabase
     .from('businesses')
-    .select('id, name')
+    .select('id, name, selected_google_ads_customer_id')
     .eq('user_id', resolvedUserId)
     .order('created_at', { ascending: false })
     .limit(1)
@@ -107,8 +108,11 @@ export async function getAccountWorkspace(supabase: any, userId?: string | null)
     }))
     .filter((account) => !managerIds.has(account.customer_id) && account.is_manager !== true);
 
-  const selectedAccount =
-    accounts.find((account) => account.customer_id === selectedFromCookie) ?? accounts[0] ?? null;
+  const selectedAccount = pickSelectedAdsAccount(
+    accounts,
+    selectedFromCookie,
+    business.selected_google_ads_customer_id
+  );
 
   return {
     business,
@@ -116,6 +120,24 @@ export async function getAccountWorkspace(supabase: any, userId?: string | null)
     selectedAccount,
     selectedCustomerId: selectedAccount?.customer_id ?? null,
   };
+}
+
+export function pickSelectedAdsAccount<T extends { customer_id?: string | null }>(
+  accounts: T[],
+  cookieCustomerId?: string | null,
+  persistedCustomerId?: string | null
+): T | null {
+  const normalizedCookieId = normalizeCustomerId(cookieCustomerId ?? '');
+  const normalizedPersistedId = normalizeCustomerId(persistedCustomerId ?? '');
+
+  return (
+    accounts.find((account) => normalizeCustomerId(account.customer_id ?? '') === normalizedCookieId) ??
+    accounts.find(
+      (account) => normalizeCustomerId(account.customer_id ?? '') === normalizedPersistedId
+    ) ??
+    accounts[0] ??
+    null
+  );
 }
 
 export async function getLinkedGoogleAdsAccount({

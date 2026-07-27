@@ -170,6 +170,20 @@ export async function GET(req: NextRequest) {
 
     const firstAccount = pickPreferredGoogleAdsAccount(savedAccounts, linkableAccounts);
     if (firstAccount) {
+      if (!business.selected_google_ads_customer_id) {
+        const selectedCustomerId = normalizeCustomerId(firstAccount.customer_id);
+        const { error: preferenceError } = await supabase
+          .from('businesses')
+          .update({ selected_google_ads_customer_id: selectedCustomerId })
+          .eq('id', business.id)
+          .eq('user_id', user.id);
+        if (preferenceError) {
+          console.warn('Unable to persist initial Google Ads account selection', preferenceError);
+        } else {
+          business.selected_google_ads_customer_id = selectedCustomerId;
+        }
+      }
+
       try {
         const syncResult = await syncCampaignCacheWithLoginFallback({
           supabase,
@@ -216,7 +230,7 @@ async function getOrCreateUserBusiness(
 ) {
   const { data: existing, error: lookupError } = await supabase
     .from('businesses')
-    .select('id')
+    .select('id, selected_google_ads_customer_id')
     .eq('user_id', user.id)
     .order('created_at', { ascending: false })
     .limit(1)
@@ -251,7 +265,7 @@ async function getOrCreateUserBusiness(
       },
       { onConflict: 'user_id', ignoreDuplicates: true }
     )
-    .select('id')
+    .select('id, selected_google_ads_customer_id')
     .maybeSingle();
 
   if (createError) {
@@ -264,7 +278,7 @@ async function getOrCreateUserBusiness(
   // ignoreDuplicates returns no row when the business already existed.
   const { data: reread } = await supabase
     .from('businesses')
-    .select('id')
+    .select('id, selected_google_ads_customer_id')
     .eq('user_id', user.id)
     .order('created_at', { ascending: false })
     .limit(1)

@@ -42,6 +42,10 @@ CREATE TABLE IF NOT EXISTS businesses (
   context_summary TEXT,
   scraped_products JSONB,
   brand_voice JSONB,
+  -- Server-validated per-user preference. The browser cookie is still
+  -- cleared on sign-out, while this value restores the same account after
+  -- the owner signs in again or moves to another device.
+  selected_google_ads_customer_id TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );

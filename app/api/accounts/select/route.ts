@@ -42,18 +42,29 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'customer_required' }, { status: 400 });
   }
 
-  const { account, error } = await getLinkedGoogleAdsAccount({
+  const { business, account, error } = await getLinkedGoogleAdsAccount({
     supabase,
     userId: user.id,
     customerId,
     select: 'customer_id',
   });
 
-  if (error || !account) {
+  if (error || !business || !account) {
     return NextResponse.json({ error: 'account_not_found' }, { status: 404 });
   }
 
   const selectedCustomerId = normalizeCustomerId(account.customer_id);
+  const { error: preferenceError } = await supabase
+    .from('businesses')
+    .update({ selected_google_ads_customer_id: selectedCustomerId })
+    .eq('id', business.id)
+    .eq('user_id', user.id);
+
+  if (preferenceError) {
+    console.error('Failed to persist selected Google Ads account', preferenceError);
+    return NextResponse.json({ error: 'selection_persistence_failed' }, { status: 503 });
+  }
+
   const res = NextResponse.json({ ok: true, customerId: selectedCustomerId });
   res.cookies.set(SELECTED_ADS_ACCOUNT_COOKIE, selectedCustomerId, {
     httpOnly: true,
