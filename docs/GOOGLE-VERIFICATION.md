@@ -3,29 +3,35 @@
 - المشروع: `modaafa-prod` — Google Auth Platform
 - الحساب: `moodaaft@gmail.com` (بروفايل «مُضاعفة»)
 - تاريخ آخر مراجعة من Google: **18 يوليو 2026**
-- تاريخ الفحص المباشر: **26 يوليو 2026**
+- تاريخ الفحص المباشر للبريد: **28 يوليو 2026**
 
 ---
 
-## 1) الحالة الفعلية — ٤ من ٥ مكتملة
+## 1) الحالة الفعلية — الطلب يحتاج استكمالاً قبل إعادة الإرسال
 
 | # | البند | الحالة |
 |---|---|---|
 | 1 | Homepage requirements | ✅ مكتمل |
 | 2 | Branding guidelines | ✅ مكتمل |
 | 3 | Request minimum scopes | ✅ مكتمل |
-| 4 | **App functionality** | ❌ **مرفوض — ٣ ملاحظات** |
-| 5 | Privacy policy requirements | 🔄 ما زال تحت المراجعة |
+| 4 | **App functionality** | ❌ **فيديو جديد + إظهار أثر التعديل في Google Ads** |
+| 5 | Privacy policy requirements | ❌ **طُلب إفصاح صريح عن مشاركة بيانات Google** |
 
 **حالة النشر:** In production · **نوع المستخدم:** External · **سقف المستخدمين:** 3 من 100
 
-**الملاحظات الثلاث حرفياً:**
+**أحدث رسالة فعلية في Gmail** من
+`api-oauth-dev-verification-reply+23188ncljqpol1d@google.com` بتاريخ 18 يوليو، ولم يوجد رد مُرسل عليها حتى فحص
+28 يوليو. طلبت الرسالة:
 
-1. *Your demo video does not show the OAuth consent flow.*
-2. *Your demo video does not sufficiently demonstrate the functionality of your app.*
-3. *The Trust and Safety team are unable to access the OAuth consent process without first providing additional information.* — «Reply to the email you received from the Trust and Safety team with instructions for how to test the OAuth consent flow.»
+1. فيديو شامل يعرض شاشة الموافقة وكل النطاقات بعد توسيعها.
+2. عرض أقصى وظائف النطاق `https://www.googleapis.com/auth/adwords`.
+3. لأن النطاق يسمح بالكتابة: عرض تعديل معتمد من المنصة ثم ظهوره فعلياً داخل واجهة Google Ads للحساب المصدر.
+4. خطوات اختبار واضحة، مع بيانات اختبار إن وُجدت عوائق دخول.
+5. تحديث سياسة الخصوصية لتذكر صراحةً مع من تُشارك أو تُنقل أو يُفصح عن بيانات مستخدم Google.
+6. الرد على نفس الرسالة بعد تحديث الفيديو والسياسة وإعادة إرسال الطلب من Google Cloud Console.
 
-**لا شيء من هذا متعلق بالكود.** المطلوب: فيديو جديد + رد على إيميل Trust & Safety.
+تم تحديث سياسة الخصوصية في الكود بتاريخ 28 يوليو. المتبقي إجراء بشري/إنتاجي: تسجيل الفيديو على حساب إعلاني
+تجريبي أو بموافقة صريحة على تعديل آمن، رفعه Unlisted، إعادة الإرسال، ثم الرد على نفس سلسلة البريد.
 
 ### تصحيح افتراض سابق
 
@@ -65,9 +71,10 @@
 | 6 | 2:00–2:20 | العودة للمنصة وظهور الحسابات المربوطة بأسمائها وأرقامها. | "After consent we read the account list, including client accounts under a manager account." |
 | 7 | 2:20–2:50 | لوحة التحكم ثم `/campaigns` — الحملات والصرف والتحويلات. | "This is what we do with the adwords scope: we read campaigns and performance metrics and show them to the account owner in Arabic." |
 | 8 | 2:50–3:20 | `/audit` — شغّل الفحص وأظهر درجة الصحة والتوصيات. | "We analyse the account and produce recommendations." |
-| 9 | 3:20–3:50 | `/optimizer` — أظهر بطاقة «التعديل الفعلي عند التنفيذ»، اعتمد توصية، **ولا تنفّذها**. | "Every change requires explicit approval, and we show the exact API operation before it runs. Nothing is modified without the owner's consent." |
-| 10 | 3:50–4:10 | `/settings` — «حذف الحساب نهائياً»، واقرأ النص الذي يشرح إبطال صلاحية Google. | "The user can revoke access and delete all their data at any time." |
-| 11 | 4:10–4:25 | `/privacy` على `ai.modaafa.com`. | "This is our privacy policy, linked from the consent screen." |
+| 9 | 3:20–3:50 | `/optimizer` — أظهر بطاقة «التعديل الفعلي عند التنفيذ» واعتمد توصية على **حساب اختباري فقط**. | "Every change requires explicit approval, and we show the exact API operation before it runs." |
+| 10 | 3:50–4:15 | نفّذ التعديل الآمن على الحساب الاختباري، ثم افتح Google Ads وأظهر أن القيمة تغيّرت في المورد نفسه. | "After the owner explicitly approves and executes the action, the requested change is applied to the selected Google Ads account. Here is the same resource in Google Ads reflecting that change." |
+| 11 | 4:15–4:35 | `/settings` — «حذف الحساب نهائياً»، واقرأ النص الذي يشرح إبطال صلاحية Google. | "The user can revoke access and delete all their data at any time." |
+| 12 | 4:35–4:55 | `/privacy` على `ai.modaafa.com`، ومرّر على قسم مشاركة بيانات Google باللغتين. | "The privacy policy names every processor that receives Google user data, its purpose, and the prohibited uses." |
 
 ### أخطاء ترفض الفيديو — تجنّبها
 
@@ -75,6 +82,8 @@
 - إخفاء شريط العنوان أو تشغيل ملء الشاشة أثناء الموافقة.
 - عرض الشعار والاسم فقط دون **نص النطاق** `auth/adwords`.
 - الاكتفاء بإظهار الربط دون إظهار **ماذا تفعل بالبيانات** → البند الثاني المرفوض.
+- عرض الاعتماد داخل مُضاعِف دون إظهار أثر التعديل نفسه داخل واجهة Google Ads → مخالف لطلب Source Account Impact.
+- تنفيذ التعديل على حساب عميل حقيقي دون موافقة صريحة؛ استخدم حساباً اختبارياً أو اطلب موافقة المالك على تعديل آمن.
 - رفع الفيديو Private، أو تركه بلا ترجمة إنجليزية.
 
 ---
@@ -98,7 +107,8 @@ Thank you for the review. I have addressed the three points raised under
    account chooser, the app name and logo, the full scope text
    (https://www.googleapis.com/auth/adwords), the client ID visible in the
    address bar, and the grant itself. It then shows what the granted data is
-   used for, screen by screen.
+   used for, screen by screen, including one explicitly approved test change
+   and the same change reflected in the source Google Ads test account.
 
 2. HOW TO TEST THE OAUTH CONSENT FLOW YOURSELVES
 
@@ -137,6 +147,13 @@ Thank you for the review. I have addressed the three points raised under
    There is no narrower Google Ads scope; the API does not offer a read-only
    variant. We never request Gmail, Drive, contacts, or any other scope.
 
+4. PRIVACY POLICY
+
+   We updated https://ai.modaafa.com/privacy to explicitly identify every
+   service provider that receives Google user data, the limited processing
+   purpose for each provider, and the prohibited uses. The policy now includes
+   the disclosure in both Arabic and English.
+
 Please let me know if anything else is needed.
 
 Best regards,
@@ -155,7 +172,8 @@ moodaaft@gmail.com
 - [ ] تعليق أو ترجمة إنجليزية طوال الفيديو.
 - [ ] الفيديو **Unlisted** على YouTube، وتحققت من فتحه في نافذة تصفح خفي.
 - [ ] الرد أُرسل على **نفس سلسلة الإيميل** الأصلية.
+- [ ] أُعيد إرسال الطلب من Google Cloud Console بعد تحديث رابط الفيديو والسياسة.
 - [ ] جرّبت خطوات «HOW TO TEST» بنفسك من نافذة خفية حتى النهاية — فإن تعثرت عندك ستتعثر عندهم.
 - [ ] المنصة منشورة بآخر كود قبل التصوير (الهجرة ثم النشر — راجع `LAUNCH_READINESS.md` §8).
 
-> **مهم:** لا تضبط `GOOGLE_OAUTH_APP_VERIFIED=true` حتى تتحول كل البنود الخمسة إلى ✅ في Verification Center. البند الخامس (Privacy policy requirements) ما زال تحت المراجعة حتى الآن.
+> **مهم:** لا تضبط `GOOGLE_OAUTH_APP_VERIFIED=true` حتى تتحول كل البنود الخمسة إلى ✅ في Verification Center.

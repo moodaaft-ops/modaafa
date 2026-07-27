@@ -10,7 +10,7 @@ export default function PrivacyPage() {
     <LegalPage
       title="سياسة الخصوصية"
       description="توضح هذه السياسة البيانات التي تعالجها منصة مُضاعِف، ولماذا نحتاجها، وكيف يمكنك التحكم بها أو حذفها."
-      updatedAt="21 يوليو 2026"
+      updatedAt="28 يوليو 2026"
     >
       <LegalSection title="من نحن">
         <p>
@@ -57,11 +57,62 @@ export default function PrivacyPage() {
         </p>
       </LegalSection>
 
-      <LegalSection title="مزودو الخدمة">
+      <LegalSection title="مشاركة بيانات Google والإفصاح عنها">
         <p>
-          نستخدم مزودي خدمة ضروريين للتشغيل، منهم Google لخدمات الدخول وGoogle Ads، وSupabase للمصادقة وقاعدة البيانات،
-          وAnthropic لتوليد الردود والتحليلات، وStripe للفوترة، وVercel للاستضافة، وResend للبريد التشغيلي. يحصل كل مزود
-          على الحد اللازم لأداء خدمته وفق اتفاقياته وسياساته.
+          لا نشارك بيانات مستخدم Google إلا بالحد الضروري لتقديم وظائف مُضاعِف التي يطلبها المستخدم. الجهات التي قد
+          تعالج هذه البيانات نيابة عنا هي:
+        </p>
+        <ul className="list-disc space-y-2 ps-5">
+          <li>
+            <strong>Google:</strong> لإتمام تفويض OAuth وقراءة حسابات Google Ads وتنفيذ التعديلات التي يعتمدها المستخدم
+            صراحة.
+          </li>
+          <li>
+            <strong>Supabase:</strong> للمصادقة وتخزين معرّفات الحسابات وبيانات الحملات والأداء وسجلات الموافقة، مع حفظ
+            رموز ربط Google بصورة مشفرة.
+          </li>
+          <li>
+            <strong>Vercel:</strong> لاستضافة التطبيق ومعالجة طلباته وتشغيل وظائفه الخلفية؛ وقد تتضمن السجلات التشغيلية
+            المحدودة معرّفات تقنية لازمة للأمان وتشخيص الأعطال.
+          </li>
+          <li>
+            <strong>Anthropic API:</strong> لمعالجة الحد الأدنى من سياق الحملات والأداء مع سؤال المستخدم كي يولد
+            المساعد التحليل أو التوصية المطلوبة. لا نرسل إلى Anthropic رموز Google أو بيانات اعتماد OAuth، ولا نسمح
+            باستخدام بيانات Google لتدريب نماذج ذكاء اصطناعي عامة.
+          </li>
+        </ul>
+        <p>
+          يعمل هؤلاء المزودون كمعالجي بيانات لتقديم وظائف المنصة، ولا يحق لهم استخدام بيانات Google لأغراضهم التسويقية
+          المستقلة. وقد نفصح عن الحد الأدنى اللازم لجهة نظامية مختصة إذا أوجب القانون ذلك، أو لمزود دعم أمني تحت التزام
+          بالسرية لمعالجة حادثة محددة.
+        </p>
+        <p>
+          لا نبيع بيانات Google، ولا ننقلها إلى وسطاء بيانات أو بائعي معلومات، ولا نستخدمها أو نشاركها للإعلانات
+          المستهدفة أو المخصصة أو إعادة الاستهداف، أو لتحديد الجدارة الائتمانية أو الإقراض، أو لتطوير أو تحسين أو تدريب
+          نماذج ذكاء اصطناعي أو تعلم آلي عامة غير مخصصة للمستخدم.
+        </p>
+        <div lang="en" dir="ltr" className="space-y-3 text-start">
+          <p className="font-semibold text-foreground">Google user data sharing and disclosure</p>
+          <p>
+            Modaafa shares Google user data only with service providers acting on our behalf and only to deliver
+            user-requested product functionality: Google for OAuth and Google Ads operations; Supabase for
+            authentication and secure storage; Vercel for hosting and request processing; and the Anthropic API for
+            generating the requested analysis from the minimum necessary campaign and performance context. Google
+            OAuth tokens and credentials are never sent to Anthropic.
+          </p>
+          <p>
+            We do not sell Google user data or share it with data brokers or information resellers. We do not use or
+            disclose it for targeted, personalized, retargeted, or interest-based advertising, creditworthiness,
+            lending, or training generalized AI or machine-learning models. We may disclose only the minimum required
+            by law or to a confidential security provider responding to a specific incident.
+          </p>
+        </div>
+      </LegalSection>
+
+      <LegalSection title="مزودو الخدمة الآخرون">
+        <p>
+          نستخدم Stripe للفوترة وResend للبريد التشغيلي. لا نرسل إليهما بيانات حملات Google Ads أو رموز ربط Google.
+          يحصل كل مزود على الحد اللازم لأداء خدمته وفق اتفاقياته وسياساته.
         </p>
       </LegalSection>
 
