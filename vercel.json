@@ -31,9 +31,6 @@
     "app/api/auth/google-ads/callback/route.ts": {
       "maxDuration": 300
     },
-    "app/api/auth/google-ads/select-account/route.ts": {
-      "maxDuration": 300
-    },
     "app/api/accounts/sync/route.ts": {
       "maxDuration": 300
     },
