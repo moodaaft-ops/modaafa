@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { useFormStatus } from 'react-dom';
 
@@ -35,6 +35,24 @@ export function PendingSubmitButton({
 }) {
   const { pending } = useFormStatus();
   const [submitted, setSubmitted] = useState(false);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    const form = buttonRef.current?.form;
+    if (!form) return;
+
+    // Wait until the native submit event has finished before disabling the
+    // submitter. Disabling it inside `onClick` can cancel a normal string-URL
+    // form submission in Chromium, leaving the UI stuck on the pending label
+    // without ever sending the request.
+    const markSubmitted = (event: SubmitEvent) => {
+      if (event.defaultPrevented) return;
+      window.setTimeout(() => setSubmitted(true), 0);
+    };
+
+    form.addEventListener('submit', markSubmitted);
+    return () => form.removeEventListener('submit', markSubmitted);
+  }, []);
 
   useEffect(() => {
     if (!submitted) return;
@@ -55,8 +73,8 @@ export function PendingSubmitButton({
 
   return (
     <button
+      ref={buttonRef}
       type="submit"
-      onClick={() => setSubmitted(true)}
       disabled={busy || disabled}
       aria-busy={busy}
       className={`${className} inline-flex items-center justify-center gap-2 disabled:cursor-wait disabled:opacity-70`}
