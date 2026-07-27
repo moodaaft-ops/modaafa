@@ -8,7 +8,7 @@
 ## 1. الكود
 
 - [x] `pnpm check` ناجح محلياً: TypeScript وESLint و69/69 اختباراً وNext build.
-- [ ] GitHub Actions ناجح على آخر commit (يُتحقق بعد دفع تحديث الأمان الحالي).
+- [x] GitHub Actions ناجح على تحديث الأمان `f27e7a2` ببيئة Node.js 22.
 - [x] لا توجد ثغرات معروفة في `pnpm audit --prod --audit-level=high`.
 - [x] النشر الإنتاجي مبني من فرع وcommit معروفين ويمكن الرجوع إليه.
 
