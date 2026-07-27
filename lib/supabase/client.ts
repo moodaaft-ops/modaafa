@@ -1,4 +1,5 @@
 import { createBrowserClient } from '@supabase/ssr';
+import { SUPABASE_COOKIE_OPTIONS } from '@/lib/supabase/cookie-options';
 
 /**
  * Browser-side Supabase client for Client Components.
@@ -7,6 +8,7 @@ import { createBrowserClient } from '@supabase/ssr';
 export function createClient() {
   return createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { cookieOptions: SUPABASE_COOKIE_OPTIONS }
   );
 }
