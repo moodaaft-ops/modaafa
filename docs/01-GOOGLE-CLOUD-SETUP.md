@@ -101,8 +101,13 @@
    - **Authorized JavaScript origins**:
      - `http://localhost:3000` (للتطوير)
      - `https://modaafa.com` (للإنتاج)
+     - `https://ai.modaafa.com` (تطبيق المنصة الحالي)
    - **Authorized redirect URIs**:
+     - `http://localhost:3000/api/auth/google/callback`
      - `http://localhost:3000/api/auth/google-ads/callback`
+     - `https://ai.modaafa.com/api/auth/google/callback`
+     - `https://ai.modaafa.com/api/auth/google-ads/callback`
+     - `https://modaafa.com/api/auth/google/callback`
      - `https://modaafa.com/api/auth/google-ads/callback`
 ٥. اضغط **CREATE**
 

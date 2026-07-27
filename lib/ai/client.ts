@@ -1,66 +1,232 @@
-/**
- * Unified Anthropic client + smart model selection.
- *
- * Note: Vertex AI is intentionally NOT imported here because the
- * @anthropic-ai/vertex-sdk package has broken `exports` in its package.json
- * that fails Next.js builds. Re-enable it only after pinning a working version.
- *
- * For now: uses ANTHROPIC_API_KEY directly. If unset/dummy, returns a stub
- * that throws on use so the build still succeeds.
- */
-
 import Anthropic from '@anthropic-ai/sdk';
+import { isConfiguredEnv } from '@/lib/platform/env';
 
 export type ModelTier = 'opus' | 'sonnet' | 'haiku';
+export type AgentRole = 'audit' | 'builder' | 'optimizer' | 'reporter';
 
-let _client: any = null;
+export type AvailableModel = {
+  id: string;
+  createdAt: string | null;
+};
 
-function makeStub(message: string): any {
-  return new Proxy({}, {
-    get() {
-      return () => { throw new Error(message); };
-    },
-  });
-}
+type AIConfigurationCheck = {
+  ok: boolean;
+  configured: boolean;
+  backend: 'anthropic' | null;
+  status: 'ready' | 'api_key_missing' | 'no_models' | 'request_failed';
+  modelsAvailable: number;
+  preferredReporterModel: string | null;
+};
 
-export function getAnthropicClient(): any {
-  if (_client) return _client;
+const MODEL_CACHE_TTL_MS = 15 * 60 * 1000;
 
-  const key = process.env.ANTHROPIC_API_KEY;
-  const isReal =
-    key && !key.startsWith('sk-ant-dummy') && !key.startsWith('BANNED');
+let client: Anthropic | null = null;
+let availableModels: AvailableModel[] | null = null;
+let modelsFetchedAt = 0;
+let modelDiscovery: Promise<AvailableModel[]> | null = null;
 
-  if (isReal) {
-    _client = new Anthropic({ apiKey: key });
-    return _client;
+export function getAnthropicClient() {
+  if (client) return client;
+  if (!hasAIBackend()) {
+    throw new Error('No AI backend configured. Set ANTHROPIC_API_KEY.');
   }
 
-  _client = makeStub(
-    'AI features unavailable: configure a real ANTHROPIC_API_KEY in env vars.'
+  client = new Anthropic({
+    apiKey: process.env.ANTHROPIC_API_KEY!.trim(),
+    timeout: 45_000,
+    maxRetries: 2,
+  });
+  return client;
+}
+
+export function hasAIBackend() {
+  return (
+    isConfiguredEnv(process.env.ANTHROPIC_API_KEY) &&
+    !process.env.ANTHROPIC_API_KEY!.trim().startsWith('BANNED')
   );
-  return _client;
 }
 
 export function getModelName(tier: ModelTier = 'opus'): string {
-  return ({
-    opus: 'claude-opus-4-6',
-    sonnet: 'claude-sonnet-4-6',
-    haiku: 'claude-haiku-4-5-20251001',
-  } as const)[tier];
+  const configured = {
+    opus:
+      process.env.ANTHROPIC_MODEL_OPUS ??
+      process.env.ANTHROPIC_MODEL_AUDIT ??
+      process.env.ANTHROPIC_MODEL_BUILDER,
+    sonnet:
+      process.env.ANTHROPIC_MODEL_SONNET ??
+      process.env.ANTHROPIC_MODEL_OPTIMIZER ??
+      process.env.ANTHROPIC_MODEL_REPORTER,
+    haiku: process.env.ANTHROPIC_MODEL_HAIKU,
+  }[tier];
+
+  if (isConfiguredEnv(configured)) return configured.trim();
+
+  // These exact IDs are last-resort compatibility fallbacks. Normal requests
+  // first discover the models actually enabled for the production API key.
+  return {
+    opus: 'claude-opus-4-1-20250805',
+    sonnet: 'claude-sonnet-4-20250514',
+    haiku: 'claude-3-5-haiku-20241022',
+  }[tier];
 }
 
-export function getModelForAgent(
-  agent: 'audit' | 'builder' | 'optimizer' | 'reporter'
-): string {
-  // NOTE: audit was previously 'opus', but Opus + max_tokens=8000 takes 60–120s
-  // which exceeds Vercel's Hobby function timeout (60s), causing the SDK to
-  // throw a generic "Connection error". Sonnet 4.6 is ~3x faster with similar
-  // quality for structured-JSON analysis tasks.
-  const tierMap: Record<string, ModelTier> = {
-    audit: 'sonnet',
-    builder: 'sonnet',
-    optimizer: 'haiku',
-    reporter: 'haiku',
-  };
-  return getModelName(tierMap[agent]);
+export function getModelForAgent(agent: AgentRole): string {
+  return getModelName(tierForAgent(agent));
+}
+
+export async function createMessageForAgent(
+  agent: AgentRole,
+  params: Omit<Anthropic.MessageCreateParamsNonStreaming, 'model'>
+) {
+  const anthropic = getAnthropicClient();
+  let lastError: unknown;
+  const discoveredModels = await getAvailableModelCandidates(agent);
+  const candidates = Array.from(new Set([...discoveredModels, ...modelCandidatesForAgent(agent)]));
+
+  for (const model of candidates) {
+    try {
+      return await anthropic.messages.create({ ...params, model });
+    } catch (error) {
+      lastError = error;
+      if (!isUnavailableModelError(error)) throw error;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('No supported Anthropic model is available.');
+}
+
+export async function checkAIConfiguration(): Promise<AIConfigurationCheck> {
+  if (!hasAIBackend()) {
+    return {
+      ok: false,
+      configured: false,
+      backend: null,
+      status: 'api_key_missing',
+      modelsAvailable: 0,
+      preferredReporterModel: null,
+    };
+  }
+
+  try {
+    const models = await discoverAvailableModels(true);
+    const preferredReporterModel = rankModelCandidates(models, tierForAgent('reporter'))[0] ?? null;
+    return {
+      ok: models.length > 0,
+      configured: true,
+      backend: 'anthropic',
+      status: models.length > 0 ? 'ready' : 'no_models',
+      modelsAvailable: models.length,
+      preferredReporterModel,
+    };
+  } catch {
+    return {
+      ok: false,
+      configured: true,
+      backend: 'anthropic',
+      status: 'request_failed',
+      modelsAvailable: 0,
+      preferredReporterModel: null,
+    };
+  }
+}
+
+export function rankModelCandidates(models: AvailableModel[], tier: ModelTier) {
+  const preferredFamilies =
+    tier === 'opus' ? ['opus', 'sonnet', 'haiku'] : tier === 'sonnet' ? ['sonnet', 'haiku', 'opus'] : ['haiku', 'sonnet', 'opus'];
+
+  return [...models]
+    .filter((model) => model.id.startsWith('claude-'))
+    .sort((left, right) => {
+      const familyRank = (model: AvailableModel) => {
+        const rank = preferredFamilies.findIndex((family) => model.id.includes(family));
+        return rank === -1 ? preferredFamilies.length : rank;
+      };
+      const familyDifference = familyRank(left) - familyRank(right);
+      if (familyDifference) return familyDifference;
+
+      const createdDifference = modelTimestamp(right) - modelTimestamp(left);
+      return createdDifference || right.id.localeCompare(left.id);
+    })
+    .map((model) => model.id);
+}
+
+async function getAvailableModelCandidates(agent: AgentRole) {
+  try {
+    const models = await discoverAvailableModels();
+    return rankModelCandidates(models, tierForAgent(agent));
+  } catch {
+    return [];
+  }
+}
+
+async function discoverAvailableModels(force = false) {
+  const fresh = availableModels && Date.now() - modelsFetchedAt < MODEL_CACHE_TTL_MS;
+  if (!force && fresh) return availableModels!;
+  if (!force && modelDiscovery) return modelDiscovery;
+
+  const discovery = (async () => {
+    const response = await fetch('https://api.anthropic.com/v1/models?limit=100', {
+      headers: {
+        'anthropic-version': '2023-06-01',
+        'x-api-key': process.env.ANTHROPIC_API_KEY!.trim(),
+      },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(12_000),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Anthropic model discovery failed with HTTP ${response.status}.`);
+    }
+
+    const payload = (await response.json()) as {
+      data?: Array<{ id?: string; created_at?: string }>;
+    };
+    const models = (payload.data ?? [])
+      .map((model) => ({
+        id: model.id?.trim() ?? '',
+        createdAt: model.created_at?.trim() || null,
+      }))
+      .filter((model): model is AvailableModel => Boolean(model.id));
+
+    availableModels = models;
+    modelsFetchedAt = Date.now();
+    return models;
+  })();
+
+  if (!force) modelDiscovery = discovery;
+  try {
+    return await discovery;
+  } finally {
+    if (!force) modelDiscovery = null;
+  }
+}
+
+function tierForAgent(agent: AgentRole): ModelTier {
+  return agent === 'audit' || agent === 'builder' ? 'opus' : 'sonnet';
+}
+
+function modelCandidatesForAgent(agent: AgentRole) {
+  const primary = getModelForAgent(agent);
+  const compatibilityFallbacks =
+    agent === 'audit' || agent === 'builder'
+      ? ['claude-opus-4-1-20250805', 'claude-sonnet-4-20250514']
+      : ['claude-sonnet-4-20250514', 'claude-opus-4-1-20250805'];
+
+  return Array.from(new Set([primary, ...compatibilityFallbacks]));
+}
+
+function modelTimestamp(model: AvailableModel) {
+  if (model.createdAt) {
+    const timestamp = Date.parse(model.createdAt);
+    if (Number.isFinite(timestamp)) return timestamp;
+  }
+  const date = model.id.match(/(20\d{6})$/)?.[1];
+  if (!date) return 0;
+  return Date.parse(`${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}T00:00:00Z`);
+}
+
+function isUnavailableModelError(error: unknown) {
+  const status = Number((error as { status?: number })?.status ?? 0);
+  const message = String((error as { message?: string })?.message ?? '');
+  return [400, 403, 404].includes(status) && /model|not[_ -]?found|permission/i.test(message);
 }

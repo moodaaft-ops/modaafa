@@ -1,0 +1,24 @@
+.DS_Store
+node_modules/
+.next/
+out/
+dist/
+coverage/
+tsconfig.tsbuildinfo
+
+.env
+.env.*
+!.env.example
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.vercel
+.modaafa-reencrypt-progress.json
+
+# Quarantine for files removed through the Cowork device bridge, which cannot
+# unlink — deletions are staged here as a move and you remove the folder
+# yourself. Never commit it.
+_to_delete/
+_sync/
