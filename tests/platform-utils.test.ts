@@ -44,3 +44,14 @@ test('rate-limit migrations return values through the insert alias', () => {
     assert.doesNotMatch(sql, /returning rate_limit_windows\.window_start/);
   }
 });
+
+test('rollback remains available after a subscription ends', () => {
+  const route = readFileSync(
+    new URL('../app/api/actions/rollback/route.ts', import.meta.url),
+    'utf8'
+  );
+
+  assert.doesNotMatch(route, /consumeFeatureUsage|refundFeatureUsage/);
+  assert.match(route, /Rollback is a compensating safety operation/);
+  assert.match(route, /executeRollback\(rollback, customer, \{ validateOnly: true \}\)/);
+});
