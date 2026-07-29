@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient, createServerClient } from '@/lib/supabase/server';
 import {
   getGoogleLoginClient,
+  getGoogleLoginVerificationType,
   getSafeNextPath,
   GOOGLE_LOGIN_NEXT_COOKIE,
   GOOGLE_LOGIN_STATE_COOKIE,
@@ -76,7 +77,7 @@ export async function handleGoogleLoginCallback(req: NextRequest) {
     const supabase = await createServerClient();
     const { error: verifyError } = await supabase.auth.verifyOtp({
       token_hash: linkData.properties.hashed_token,
-      type: 'magiclink',
+      type: getGoogleLoginVerificationType(linkData.properties.verification_type),
     });
 
     if (verifyError) throw verifyError;

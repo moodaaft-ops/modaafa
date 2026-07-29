@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { safeLocalPath } from '../lib/security/redirect';
-import { getSafeNextPath } from '../lib/auth/google-login';
+import { getGoogleLoginVerificationType, getSafeNextPath } from '../lib/auth/google-login';
 import {
   appendOAuthStateToCookie,
   cookieHasOAuthState,
@@ -39,6 +39,19 @@ test('getSafeNextPath and safeLocalPath agree', () => {
   for (const candidate of ['/\\evil.com', '//evil.com', '/dashboard', 'https://x.test']) {
     assert.equal(getSafeNextPath(candidate), safeLocalPath(candidate, '/dashboard'));
   }
+});
+
+test('a new Google login verifies the Supabase token as signup', () => {
+  assert.equal(getGoogleLoginVerificationType('signup'), 'signup');
+});
+
+test('a returning Google login verifies the Supabase token as magiclink', () => {
+  assert.equal(getGoogleLoginVerificationType('magiclink'), 'magiclink');
+});
+
+test('Google login rejects unexpected Supabase verification types', () => {
+  assert.throws(() => getGoogleLoginVerificationType('recovery'), /Unexpected Supabase/);
+  assert.throws(() => getGoogleLoginVerificationType(undefined), /Unexpected Supabase/);
 });
 
 // ---------------------------------------------------------------------------
