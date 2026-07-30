@@ -13,6 +13,7 @@ import {
   trialEndingEmail,
 } from '@/lib/notifications/email';
 import { recordTrialGrant } from '@/lib/billing/checkout-policy';
+import { applySubscriptionEvent } from '@/lib/billing/subscription-events';
 
 /**
  * POST /api/webhooks/stripe
@@ -79,40 +80,34 @@ export async function POST(req: NextRequest) {
           typeof session.subscription === 'string'
             ? session.subscription
             : session.subscription?.id;
-        const stripeSubscription = subscriptionId
-          ? await retrieveStripeSubscription(subscriptionId).catch((error) => {
-              console.error('Failed to retrieve completed Stripe subscription', error);
-              return null;
-            })
-          : null;
+        if (!subscriptionId) throw new Error('Completed checkout is missing its Stripe subscription');
+        // Always retrieve the current Stripe object. Webhooks can arrive out of
+        // order, so the event payload may describe a state that is already old.
+        const stripeSubscription = await retrieveStripeSubscription(subscriptionId);
 
         // Derive the plan from the price actually billed, not from metadata:
         // metadata is a snapshot written once at creation and Stripe never
         // updates it when the price changes.
-        const resolved = stripeSubscription
-          ? planFromSubscription(stripeSubscription)
-          : { plan: session.metadata?.plan ?? 'starter', period: session.metadata?.period ?? 'monthly' };
+        const resolved = planFromSubscription(stripeSubscription);
 
-        const { error } = await supabase.from('subscriptions').upsert(
-          {
+        const writeResult = await applySubscriptionEvent(supabase, {
             user_id: userId,
             plan: resolved.plan,
             billing_period: resolved.period,
-            status: normalizeSubscriptionStatus(stripeSubscription?.status ?? 'trialing'),
+            status: normalizeSubscriptionStatus(stripeSubscription.status),
             last_event_at: eventCreatedAt,
             stripe_subscription_id: subscriptionId,
             stripe_customer_id:
               typeof session.customer === 'string' ? session.customer : session.customer?.id,
-            trial_ends_at: stripeTimestamp(stripeSubscription?.trial_end),
-            current_period_start: stripeTimestamp(stripeSubscription?.current_period_start),
-            current_period_end: stripeTimestamp(stripeSubscription?.current_period_end),
-          },
-          {
-            onConflict: 'stripe_subscription_id',
-          },
-        );
-        throwOnSupabaseError('upsert checkout subscription', error);
-        if (stripeSubscription?.trial_end) {
+            trial_ends_at: stripeTimestamp(stripeSubscription.trial_end),
+            current_period_start: stripeTimestamp(stripeSubscription.current_period_start),
+            current_period_end: stripeTimestamp(stripeSubscription.current_period_end),
+            canceled_at:
+              normalizeSubscriptionStatus(stripeSubscription.status) === 'canceled'
+                ? stripeTimestamp(stripeSubscription.canceled_at) ?? eventCreatedAt
+                : null,
+        });
+        if (writeResult !== 'stale_or_missing' && stripeSubscription.trial_end) {
           await recordTrialGrant({
             supabase,
             userId,
@@ -120,14 +115,20 @@ export async function POST(req: NextRequest) {
             source: 'stripe_webhook',
           });
         }
-        await safeUserEmail(supabase, userId, subscriptionWelcomeEmail());
+        if (writeResult !== 'stale_or_missing') {
+          await safeUserEmail(supabase, userId, subscriptionWelcomeEmail());
+        }
         break;
       }
 
       case 'customer.subscription.created':
-      case 'customer.subscription.updated': {
-        const sub = event.data.object as any;
-        const userId = sub.metadata?.userId;
+      case 'customer.subscription.updated':
+      case 'customer.subscription.deleted': {
+        const eventSubscription = event.data.object as any;
+        // Reading the live object prevents an old event delivered late from
+        // resurrecting a subscription that Stripe has since cancelled.
+        const sub = await retrieveStripeSubscription(eventSubscription.id);
+        const userId = sub.metadata?.userId ?? eventSubscription.metadata?.userId;
         const resolved = planFromSubscription(sub);
         const row = {
           ...(userId ? { user_id: userId } : {}),
@@ -140,32 +141,20 @@ export async function POST(req: NextRequest) {
           current_period_start: stripeTimestamp(sub.current_period_start),
           current_period_end: stripeTimestamp(sub.current_period_end),
           last_event_at: eventCreatedAt,
+          canceled_at:
+            normalizeSubscriptionStatus(sub.status) === 'canceled'
+              ? stripeTimestamp(sub.canceled_at) ?? eventCreatedAt
+              : null,
         };
 
-        if (userId) {
-          const { error } = await supabase
-            .from('subscriptions')
-            .upsert(row, { onConflict: 'stripe_subscription_id' });
-          throwOnSupabaseError('upsert Stripe subscription', error);
-          if (sub.trial_end) {
-            await recordTrialGrant({
-              supabase,
-              userId,
-              stripeSubscriptionId: sub.id,
-              source: 'stripe_webhook',
-            });
-          }
-        } else {
-          // Stripe does not guarantee event ordering. Without this guard a
-          // slightly older `updated` (whose payload still reads `active`)
-          // arriving after `deleted` wrote `active` back over a cancelled row,
-          // restoring access to a customer who had cancelled.
-          const { error } = await supabase
-            .from('subscriptions')
-            .update(row)
-            .eq('stripe_subscription_id', sub.id)
-            .or(`last_event_at.is.null,last_event_at.lt.${eventCreatedAt}`);
-          throwOnSupabaseError('update Stripe subscription', error);
+        const writeResult = await applySubscriptionEvent(supabase, row);
+        if (writeResult !== 'stale_or_missing' && userId && sub.trial_end) {
+          await recordTrialGrant({
+            supabase,
+            userId,
+            stripeSubscriptionId: sub.id,
+            source: 'stripe_webhook',
+          });
         }
         break;
       }
@@ -183,24 +172,15 @@ export async function POST(req: NextRequest) {
         break;
       }
 
-      case 'customer.subscription.deleted': {
-        const sub = event.data.object as any;
-        const { error } = await supabase
-          .from('subscriptions')
-          .update({
-            status: 'canceled',
-            canceled_at: new Date().toISOString(),
-            last_event_at: eventCreatedAt,
-          })
-          .eq('stripe_subscription_id', sub.id);
-        throwOnSupabaseError('cancel Stripe subscription', error);
-        break;
-      }
-
       case 'invoice.payment_succeeded': {
         const invoice = event.data.object as any;
         const invoiceSubscriptionId = stripeObjectId(invoice.subscription);
         if (!invoiceSubscriptionId) break;
+        const stripeSubscription = await retrieveStripeSubscription(invoiceSubscriptionId);
+        await applySubscriptionEvent(
+          supabase,
+          subscriptionSnapshotRow(stripeSubscription, eventCreatedAt),
+        );
         const { data: sub, error: subscriptionError } = await supabase
           .from('subscriptions')
           .select('id, user_id')
@@ -227,16 +207,6 @@ export async function POST(req: NextRequest) {
             { onConflict: 'user_id,invoice_number', ignoreDuplicates: true }
           );
           throwOnSupabaseError('record Stripe invoice', invoiceError);
-
-          // A successful payment must clear `past_due`. Without this, recovery
-          // depended entirely on a `customer.subscription.updated` arriving,
-          // and a paying customer stayed locked out if it did not.
-          const { error: reactivateError } = await supabase
-            .from('subscriptions')
-            .update({ status: 'active' })
-            .eq('stripe_subscription_id', invoiceSubscriptionId)
-            .eq('status', 'past_due');
-          throwOnSupabaseError('reactivate subscription after payment', reactivateError);
         }
         break;
       }
@@ -245,15 +215,15 @@ export async function POST(req: NextRequest) {
         const invoice = event.data.object as any;
         const invoiceSubscriptionId = stripeObjectId(invoice.subscription);
         if (!invoiceSubscriptionId) break;
-        const { data: affectedSubscription, error } = await supabase
-          .from('subscriptions')
-          .update({ status: 'past_due' })
-          .eq('stripe_subscription_id', invoiceSubscriptionId)
-          .select('user_id')
-          .maybeSingle();
-        throwOnSupabaseError('mark Stripe subscription past due', error);
-        if (affectedSubscription?.user_id) {
-          await safeUserEmail(supabase, affectedSubscription.user_id, paymentFailedEmail());
+        const stripeSubscription = await retrieveStripeSubscription(invoiceSubscriptionId);
+        const writeResult = await applySubscriptionEvent(
+          supabase,
+          subscriptionSnapshotRow(stripeSubscription, eventCreatedAt),
+        );
+        const status = normalizeSubscriptionStatus(stripeSubscription.status);
+        const userId = stripeSubscription.metadata?.userId;
+        if (writeResult !== 'stale_or_missing' && status === 'past_due' && userId) {
+          await safeUserEmail(supabase, userId, paymentFailedEmail());
         }
         break;
       }
@@ -422,6 +392,31 @@ function stripeObjectId(value: unknown) {
   if (typeof value === 'string') return value;
   if (value && typeof value === 'object' && 'id' in value) return String(value.id);
   return null;
+}
+
+function subscriptionSnapshotRow(subscription: any, eventCreatedAt: string) {
+  const resolved = planFromSubscription(subscription);
+  const userId = subscription.metadata?.userId;
+  const status = normalizeSubscriptionStatus(subscription.status);
+  return {
+    ...(userId ? { user_id: userId } : {}),
+    plan: resolved.plan,
+    billing_period: resolved.period,
+    status,
+    stripe_subscription_id: subscription.id,
+    stripe_customer_id:
+      typeof subscription.customer === 'string'
+        ? subscription.customer
+        : subscription.customer?.id,
+    trial_ends_at: stripeTimestamp(subscription.trial_end),
+    current_period_start: stripeTimestamp(subscription.current_period_start),
+    current_period_end: stripeTimestamp(subscription.current_period_end),
+    canceled_at:
+      status === 'canceled'
+        ? stripeTimestamp(subscription.canceled_at) ?? eventCreatedAt
+        : null,
+    last_event_at: eventCreatedAt,
+  };
 }
 
 function errorText(error: unknown) {
