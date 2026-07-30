@@ -1,3 +1,5 @@
+import { isSubscriptionEntitled } from '@/lib/billing/entitlements';
+
 export async function startJobRun(supabase: any, jobName: string) {
   const startedAt = new Date();
   const { data, error } = await supabase
@@ -44,20 +46,17 @@ export async function finishJobRun({
 }
 
 export async function getBillableBusinessIds(supabase: any) {
-  const now = new Date().toISOString();
+  const now = Date.now();
   const { data: subscriptions, error: subscriptionError } = await supabase
     .from('subscriptions')
     .select('user_id, status, trial_ends_at, current_period_end')
-    .in('status', ['trialing', 'active']);
+    .in('status', ['trialing', 'active', 'past_due']);
   if (subscriptionError) throw subscriptionError;
 
   const userIds = Array.from(
     new Set(
       (subscriptions ?? [])
-        .filter((item: any) => {
-          if (item.status === 'trialing') return !item.trial_ends_at || item.trial_ends_at > now;
-          return !item.current_period_end || item.current_period_end > now;
-        })
+        .filter((item: any) => isSubscriptionEntitled(item, now))
         .map((item: any) => item.user_id)
         .filter(Boolean)
     )

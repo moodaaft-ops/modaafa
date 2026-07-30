@@ -92,7 +92,7 @@ export async function getSubscriptionAccess(supabase: any, userId: string | null
   if (error) console.error('Failed to read subscription access', error);
 
   const subscriptions = (rows ?? []) as Array<Record<string, any>>;
-  const live = subscriptions.filter((row) => isEntitled(row));
+  const live = subscriptions.filter((row) => isSubscriptionEntitled(row));
   const subscription =
     live.sort((a, b) => {
       const rank = (PLAN_RANK[b.plan as BillingPlan] ?? 0) - (PLAN_RANK[a.plan as BillingPlan] ?? 0);
@@ -112,7 +112,7 @@ export async function getSubscriptionAccess(supabase: any, userId: string | null
 
   const plan = isBillingPlan(subscription.plan) ? subscription.plan : null;
   return {
-    active: Boolean(plan && isEntitled(subscription)),
+    active: Boolean(plan && isSubscriptionEntitled(subscription)),
     plan,
     status: subscription.status ?? null,
     trialEndsAt: subscription.trial_ends_at ?? null,
@@ -128,7 +128,7 @@ export async function getSubscriptionAccess(supabase: any, userId: string | null
  * assistant, audits and sync on the very first retry locked out customers who
  * were still paying and still recoverable.
  */
-function isEntitled(subscription: Record<string, any>) {
+export function isSubscriptionEntitled(subscription: Record<string, any>, now = Date.now()) {
   const status = subscription.status;
   const periodEnd = subscription.current_period_end
     ? new Date(subscription.current_period_end).getTime()
@@ -136,15 +136,15 @@ function isEntitled(subscription: Record<string, any>) {
 
   if (status === 'trialing') {
     const trialEnd = subscription.trial_ends_at ? new Date(subscription.trial_ends_at).getTime() : null;
-    return !trialEnd || trialEnd > Date.now();
+    return !trialEnd || trialEnd > now;
   }
 
   if (status === 'active') {
-    return !periodEnd || periodEnd > Date.now();
+    return !periodEnd || periodEnd > now;
   }
 
   if (status === 'past_due') {
-    return Boolean(periodEnd && periodEnd > Date.now());
+    return Boolean(periodEnd && periodEnd > now);
   }
 
   return false;
