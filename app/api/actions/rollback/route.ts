@@ -4,7 +4,6 @@ import { createServerClient } from '@/lib/supabase/server';
 import { decrypt } from '@/lib/crypto';
 import { getCustomer } from '@/lib/google-ads/client';
 import { executeRollback } from '@/lib/ai/optimizer-agent';
-import { consumeFeatureUsage, refundFeatureUsage } from '@/lib/billing/entitlements';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 import { safeLocalPath } from '@/lib/security/redirect';
 import { sendOpsAlert } from '@/lib/notifications/email';
@@ -13,7 +12,6 @@ import { isSameOriginRequest } from '@/lib/security/origin';
 const ROLLBACK_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
 export async function POST(req: NextRequest) {
-
   // Defence in depth against cross-site POSTs; see lib/security/origin.ts.
   if (!isSameOriginRequest(req)) {
     return NextResponse.redirect(new URL('/optimizer?error=invalid_origin', req.url), 303);
@@ -79,18 +77,8 @@ export async function POST(req: NextRequest) {
     .maybeSingle();
   if (!claimed) return NextResponse.redirect(new URL(`${next}?error=rollback_unavailable`, req.url), 303);
 
-  const usage = await consumeFeatureUsage({
-    supabase,
-    userId: user.id,
-    feature: 'execute_action',
-    accountId: account.id,
-    metadata: { rollback_action_id: action.id, customer_id: account.customer_id },
-  });
-  if (!usage.ok) {
-    await supabase.from('ai_actions').update({ rollback_status: null, rollback_key: null, rollback_started_at: null }).eq('id', action.id).eq('rollback_key', rollbackKey);
-    return NextResponse.redirect(new URL(`${next}?error=${usage.reason}`, req.url), 303);
-  }
-
+  // Rollback is a compensating safety operation. It must remain available after
+  // a trial or subscription ends and must never consume an execution quota.
   try {
     const customer = getCustomer(
       account.customer_id,
@@ -139,7 +127,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.redirect(new URL(`${next}?error=rollback_recording_failed`, req.url), 303);
     }
 
-    await refundFeatureUsage({ supabase, userId: user.id, usageEventId: usage.usageEventId });
     await supabase
       .from('ai_actions')
       .update({

@@ -114,7 +114,11 @@ export default function LoginPage() {
           </div>
 
           <ul className="relative space-y-px overflow-hidden rounded-lg border border-border bg-border">
-            {['سجّل دخولك بحساب Google', 'اربط كل حساباتك بموافقة واحدة', 'راجع التوصيات واعتمدها'].map((s, i) => (
+            {[
+              'سجّل هويتك بحساب Google',
+              'امنح صلاحية Google Ads بموافقة منفصلة',
+              'راجع التوصيات واعتمدها',
+            ].map((s, i) => (
               <li key={s} className="flex items-center gap-3 bg-card px-4 py-3 text-[13px]">
                 <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md border border-border bg-muted text-[10px] font-bold text-muted-foreground numeric">
                   {i + 1}
@@ -139,7 +143,7 @@ export default function LoginPage() {
             <div className="mb-7">
               <h2 className="text-2xl font-bold">تسجيل الدخول</h2>
               <p className="mt-2 text-sm text-muted-foreground">
-                ادخل بنفس حساب Google الذي يملك أو يدير حساباتك الإعلانية للرجوع لمساحتك.
+                هذه الخطوة لتسجيل هويتك فقط، ولا تمنح المنصة صلاحية الوصول إلى إعلاناتك.
               </p>
             </div>
 
@@ -173,6 +177,10 @@ export default function LoginPage() {
               )}
               {googleLoading ? 'جاري فتح Google...' : 'الدخول بـ Google'}
             </button>
+            <p className="-mt-1 mb-5 text-xs leading-6 text-muted-foreground">
+              بعد حفظ بيانات نشاطك، ستطلب Google موافقة مستقلة على صلاحية Google Ads. ويمكنك اختيار بريد إعلاني
+              مختلف عن بريد تسجيل الدخول.
+            </p>
 
             <div className="relative my-6">
               <div className="absolute inset-0 flex items-center">

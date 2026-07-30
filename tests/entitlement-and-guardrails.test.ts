@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { getSubscriptionAccess } from '../lib/billing/entitlements';
+import {
+  getSubscriptionAccess,
+  isSubscriptionEntitled,
+} from '../lib/billing/entitlements';
 import { checkGuardrails, type OptimizerAction } from '../lib/ai/optimizer-agent';
 
 /**
@@ -78,6 +81,23 @@ test('past_due keeps access until the paid period actually ends', async () => {
     'user-1'
   );
   assert.equal(after.active, false);
+});
+
+test('scheduled jobs use the same entitlement rule for past_due subscriptions', () => {
+  assert.equal(
+    isSubscriptionEntitled(
+      { status: 'past_due', current_period_end: '2026-08-01T00:00:00.000Z' },
+      new Date('2026-07-30T00:00:00.000Z').getTime()
+    ),
+    true
+  );
+  assert.equal(
+    isSubscriptionEntitled(
+      { status: 'past_due', current_period_end: '2026-07-29T00:00:00.000Z' },
+      new Date('2026-07-30T00:00:00.000Z').getTime()
+    ),
+    false
+  );
 });
 
 test('an expired trial and a cancelled subscription both deny access', async () => {

@@ -47,6 +47,16 @@ export function getSafeNextPath(next: string | null) {
   return safeLocalPath(next, '/dashboard');
 }
 
+/**
+ * Supabase may return `signup` after `generateLink({ type: 'magiclink' })`
+ * when the email belongs to a brand-new user. Verifying that token as a
+ * `magiclink` makes the first login fail immediately with `otp_expired`.
+ */
+export function getGoogleLoginVerificationType(value: unknown): 'signup' | 'magiclink' {
+  if (value === 'signup' || value === 'magiclink') return value;
+  throw new Error(`Unexpected Supabase email verification type: ${String(value)}`);
+}
+
 function normalizedEnv(value?: string | null) {
   const normalized = value?.trim();
   if (!normalized || normalized === '""' || normalized === "''") return null;

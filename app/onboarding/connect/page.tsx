@@ -47,6 +47,7 @@ export default async function ConnectGoogleAdsPage({
   if (!user) redirect('/login?next=/onboarding/connect');
   const { accounts } = await getAccountWorkspace(supabase, user.id);
   const hasAccounts = (accounts?.length ?? 0) > 0;
+  const googleVerified = process.env.GOOGLE_OAUTH_APP_VERIFIED === 'true';
   // `no_client_accounts` is not an error the user can fix by retrying the same
   // thing, so it gets its own recovery block instead of a red bar above an
   // unchanged page. See ManagerOnlyRecovery below.
@@ -62,6 +63,20 @@ export default async function ConnectGoogleAdsPage({
           <p className="mt-2 max-w-2xl text-sm leading-7 text-muted-foreground">
             موافقة واحدة تكفي لسحب كل حساباتك، ثم تختار الحساب الذي تعمل عليه من لوحة التحكم.
           </p>
+        </div>
+
+        <div className="mb-5">
+          <Alert tone="info" title="هذه ليست إعادة تسجيل الدخول">
+            أنت مسجّل في مُضاعِف بالفعل
+            {user.email ? (
+              <>
+                {' '}
+                بالبريد <span dir="ltr">{user.email}</span>
+              </>
+            ) : null}
+            . تسجيل الدخول منحنا اسمك وبريدك فقط؛ أما هذه الخطوة فتطلب من Google صلاحية Google Ads حتى تستطيع
+            المنصة قراءة حساباتك ومزامنتها.
+          </Alert>
         </div>
 
         {params?.error && !managerOnly && (
@@ -98,12 +113,18 @@ export default async function ConnectGoogleAdsPage({
           </div>
         </section>
 
-        {/* Explain Google's verification state before redirecting. */}
         <div className="mt-5">
-          <Alert tone="info" title="حالة تحقق Google">
-            خلال الاختبار الداخلي يستطيع فقط المستخدمون المضافون كمختبرين إكمال الربط. أما الإطلاق العام فيبدأ بعد
-            موافقة Google على شاشة الصلاحيات؛ إذا منعتك Google فلا تكرر المحاولة وانتظر اكتمال المراجعة.
-          </Alert>
+          {googleVerified ? (
+            <Alert tone="success" title="مُضاعِف موثّق لدى Google">
+              ستفتح شاشة Google الرسمية لعرض صلاحية Google Ads المطلوبة. اختر البريد الذي يملك أو يدير حساباتك
+              الإعلانية؛ ويمكن أن يكون مختلفاً عن بريد تسجيل الدخول.
+            </Alert>
+          ) : (
+            <Alert tone="info" title="حالة تحقق Google">
+              خلال الاختبار الداخلي يستطيع فقط المستخدمون المضافون كمختبرين إكمال الربط. أما الإطلاق العام فيبدأ بعد
+              موافقة Google على شاشة الصلاحيات؛ إذا منعتك Google فلا تكرر المحاولة وانتظر اكتمال المراجعة.
+            </Alert>
+          )}
         </div>
 
         {hasAccounts && (
