@@ -12,7 +12,7 @@ import { cn } from '@/lib/utils';
  * fill by one step rather than repainting the control.
  */
 export const buttonClasses = cva(
-  'inline-flex items-center justify-center gap-2 rounded-lg font-semibold tracking-tight select-none transition-[background-color,border-color,color,box-shadow,transform] duration-150 ease-snap active:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-busy:cursor-wait',
+  'inline-flex items-center justify-center gap-2 rounded-lg font-semibold select-none transition-[background-color,border-color,color,box-shadow,transform] duration-150 ease-snap active:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-busy:cursor-wait',
   {
     variants: {
       variant: {

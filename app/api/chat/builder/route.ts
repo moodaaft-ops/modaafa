@@ -58,6 +58,24 @@ export async function POST(req: NextRequest) {
 
   if (!account) return NextResponse.json({ error: 'account_not_found' }, { status: 404 });
 
+  // A client-supplied sessionId must belong to THIS user. The sibling assistant
+  // route already validates ownership; here the id was taken verbatim and used
+  // as the target of chat_messages inserts and a chat_sessions update. RLS is
+  // the only thing stopping a cross-tenant write today, and the update would
+  // silently match zero rows — a latent hole the moment any of this moved to
+  // the service role. Validate before spending a metered request.
+  if (sessionId) {
+    const { data: ownedSession } = await supabase
+      .from('chat_sessions')
+      .select('id')
+      .eq('id', String(sessionId))
+      .eq('user_id', user.id)
+      .maybeSingle();
+    if (!ownedSession) {
+      return NextResponse.json({ error: 'session_not_found' }, { status: 404 });
+    }
+  }
+
   const usage = await consumeFeatureUsage({
     supabase,
     userId: user.id,

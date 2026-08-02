@@ -1,9 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 128" role="img" aria-label="Modaafa">
-  <rect width="128" height="128" rx="28" fill="#064e3b"/>
-  <path d="M35 80c0-23 13-37 32-37 16 0 27 10 27 25 0 16-12 28-30 28H35V80Z" fill="#ffffff"/>
-  <path d="M51 80h13c9 0 15-5 15-12 0-7-5-11-13-11-10 0-15 8-15 23Z" fill="#10b981"/>
-  <circle cx="93" cy="35" r="11" fill="#f59e0b"/>
-  <path d="M30 35h35" stroke="#ffffff" stroke-width="10" stroke-linecap="round"/>
-  <text x="154" y="76" fill="#0f172a" font-family="Arial, sans-serif" font-size="42" font-weight="800">Modaafa</text>
-  <text x="154" y="104" fill="#64748b" font-family="Arial, sans-serif" font-size="20" font-weight="600">AI Google Ads manager</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 128" role="img" aria-label="مُضاعِف — Modaafa Ads AI">
+  <g transform="translate(432 0)">
+    <rect x="4" y="4" width="120" height="120" rx="27" fill="#064E3B"/>
+    <rect x="4.75" y="4.75" width="118.5" height="118.5" rx="26.25" fill="none" stroke="#0D7257" stroke-width="1.5"/>
+    <path d="M27 101V82C27 56 44 40 69 40H76C96 40 108 52 108 71C108 90 94 102 72 102H27V101Z" fill="#FFFFFF"/>
+    <path d="M48 84V80C48 66 56 58 69 58H73C82 58 87 63 87 71C87 80 80 84 70 84H48Z" fill="#10B981"/>
+    <path d="M29 32H67" stroke="#FFFFFF" stroke-width="11" stroke-linecap="round"/>
+    <circle cx="97" cy="32" r="10" fill="#F5A524"/>
+  </g>
+  <text x="402" y="65" fill="#0F172A" font-family="'IBM Plex Sans Arabic','Geeza Pro','Tahoma',sans-serif" font-size="46" font-weight="700" text-anchor="end">مُضاعِف</text>
+  <text x="402" y="96" fill="#64748B" font-family="'IBM Plex Sans Arabic','Segoe UI',sans-serif" font-size="18" font-weight="600" text-anchor="end" direction="ltr" letter-spacing="0">MODAAFA ADS AI</text>
 </svg>

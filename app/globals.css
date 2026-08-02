@@ -30,7 +30,8 @@
 
     --border: 220 15% 90%;
     --border-strong: 220 14% 82%;
-    --input: 220 14% 86%;
+    /* Darker than the decorative border so form fields clear 3:1 (1.4.11). */
+    --input: 220 14% 72%;
 
     --primary: 161 88% 24%;
     --primary-foreground: 0 0% 100%;
@@ -65,7 +66,9 @@
 
     --border: 220 12% 18%;
     --border-strong: 220 12% 26%;
-    --input: 220 12% 22%;
+    /* Form-control boundary must clear WCAG 1.4.11 (3:1) against the field
+       fill; 22% read at ~1.6:1 and fields looked borderless until focus. */
+    --input: 220 12% 34%;
 
     --primary: 158 72% 45%;
     --primary-foreground: 158 90% 6%;
@@ -101,12 +104,27 @@
     -moz-osx-font-smoothing: grayscale;
   }
 
-  /* Arabic headings read heavy at large sizes; pull the tracking in so they
-     hold together the way a Latin display face would. */
+  /* Arabic is a CONNECTED script: negative letter-spacing pulls joined glyphs
+     into each other and thickens the baseline, which is exactly what made the
+     Arabic read "off". Headings therefore use normal tracking and a slightly
+     tightened leading for weight instead. Latin runs (customer IDs, URLs) can
+     opt back into tight tracking with `.tracking-latin` where it helps. */
   h1,
   h2,
-  h3 {
-    letter-spacing: -0.018em;
+  h3,
+  h4 {
+    letter-spacing: normal;
+    line-height: 1.25;
+  }
+
+  /* Arabic body copy wants more leading than Latin at the same size. */
+  p {
+    line-height: 1.75;
+  }
+
+  /* The one place negative tracking is legitimate: Latin-only inline spans. */
+  .tracking-latin {
+    letter-spacing: -0.01em;
   }
 
   :focus-visible {

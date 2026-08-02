@@ -32,6 +32,7 @@ const config: Config = {
         'fade-in': 'fade-in 0.25s ease-out both',
         'fade-up': 'fade-up 0.5s cubic-bezier(0.16,1,0.3,1) both',
         'typing-dot': 'typing-dot 1.2s ease-in-out infinite',
+        shimmer: 'shimmer 1.6s ease-in-out infinite',
       },
       boxShadow: {
         // Elevation in a dark UI comes from an inner top highlight plus a very
@@ -43,15 +44,17 @@ const config: Config = {
         'focus-ring': '0 0 0 2px hsl(var(--background)), 0 0 0 4px hsl(var(--ring))',
       },
       fontSize: {
-        // Display sizes get tighter tracking and leading than Tailwind's
-        // defaults; Arabic at 48px+ otherwise reads loose and unconfident.
-        'display-sm': ['2rem', { lineHeight: '1.2', letterSpacing: '-0.02em' }],
-        'display-md': ['2.75rem', { lineHeight: '1.12', letterSpacing: '-0.028em' }],
-        'display-lg': ['3.5rem', { lineHeight: '1.06', letterSpacing: '-0.032em' }],
-        'display-xl': ['4.25rem', { lineHeight: '1.02', letterSpacing: '-0.036em' }],
+        // Display sizes: NO negative tracking. Arabic is a connected script and
+        // negative letter-spacing collides the joined glyphs; the confident look
+        // comes from weight + tight leading, not from pulling letters together.
+        'display-sm': ['2rem', { lineHeight: '1.22', letterSpacing: 'normal' }],
+        'display-md': ['2.75rem', { lineHeight: '1.16', letterSpacing: 'normal' }],
+        'display-lg': ['3.5rem', { lineHeight: '1.1', letterSpacing: 'normal' }],
+        'display-xl': ['4.25rem', { lineHeight: '1.06', letterSpacing: 'normal' }],
       },
       fontFamily: {
-        sans: ['var(--font-arabic)', 'sans-serif'],
+        sans: ['var(--font-arabic)', 'system-ui', 'sans-serif'],
+        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
       },
       colors: {
         border: {

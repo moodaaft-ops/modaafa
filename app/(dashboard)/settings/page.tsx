@@ -83,7 +83,7 @@ export default async function SettingsPage({
         <section className="surface-card p-6">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <h2 className="text-[15px] font-semibold tracking-tight">جاهزية الإطلاق</h2>
+              <h2 className="text-[15px] font-semibold">جاهزية الإطلاق</h2>
               <p className="mt-1 text-sm text-muted-foreground">فحص آمن للإعدادات الحرجة بدون عرض أي مفاتيح أو أسرار.</p>
             </div>
             <StatusBadge tone={summary.ok ? 'success' : 'danger'}>
@@ -115,7 +115,7 @@ export default async function SettingsPage({
           {/* Business profile */}
           <section className="surface-card p-6">
             <div className="flex items-center justify-between gap-4">
-              <h2 className="text-[15px] font-semibold tracking-tight">النشاط</h2>
+              <h2 className="text-[15px] font-semibold">النشاط</h2>
               <Link href="/onboarding/business" className="inline-flex items-center gap-1 text-sm font-semibold text-primary hover:underline">
                 <Pencil className="h-3.5 w-3.5" />
                 تعديل
@@ -131,7 +131,7 @@ export default async function SettingsPage({
 
           {/* Session */}
           <section className="flex flex-col surface-card p-6">
-            <h2 className="text-[15px] font-semibold tracking-tight">الجلسة</h2>
+            <h2 className="text-[15px] font-semibold">الجلسة</h2>
             <p className="mt-1 flex-1 text-sm leading-7 text-muted-foreground">
               أنت مسجّل الدخول بالبريد <span dir="ltr" className="font-medium text-foreground"><span className="break-all">{user?.email}</span></span>. يمكنك
               تسجيل الخروج في أي وقت والعودة بنفس الحساب.
@@ -149,7 +149,7 @@ export default async function SettingsPage({
         <section className="surface-card p-6">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <h2 className="text-[15px] font-semibold tracking-tight">حسابات إعلانات Google</h2>
+              <h2 className="text-[15px] font-semibold">حسابات إعلانات Google</h2>
               <p className="mt-1 text-sm text-muted-foreground">
                 سمِّ أي حساب باسم يسهل عليك تمييزه، خاصة الحسابات التي لم ترجع Google اسماً لها.
               </p>
@@ -226,7 +226,7 @@ export default async function SettingsPage({
 
         {/* Danger zone */}
         <section className="rounded-xl border border-red-500/25 bg-red-500/[0.04] p-6">
-          <h2 className="text-[15px] font-semibold tracking-tight text-red-700 dark:text-red-300">
+          <h2 className="text-[15px] font-semibold text-red-700 dark:text-red-300">
             حذف الحساب نهائياً
           </h2>
           <p className="mt-2 max-w-3xl text-[13px] leading-7 text-muted-foreground">

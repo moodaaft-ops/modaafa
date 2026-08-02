@@ -6,6 +6,8 @@ import { createClient } from '@supabase/supabase-js';
 
 import { decryptForRotation, encrypt } from '../lib/crypto';
 
+// Keep the legacy session table in the rotation set while it exists. It is
+// browser-inaccessible but may still contain credentials from older flows.
 const TABLES = ['google_ads_accounts', 'pending_oauth_sessions'] as const;
 const DEFAULT_BATCH_SIZE = 100;
 const CHECKPOINT_VERSION = 1;

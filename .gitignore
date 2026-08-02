@@ -4,6 +4,8 @@ node_modules/
 out/
 dist/
 coverage/
+playwright-report/
+test-results/
 tsconfig.tsbuildinfo
 
 .env
@@ -22,3 +24,8 @@ pnpm-debug.log*
 # yourself. Never commit it.
 _to_delete/
 _sync/
+
+# Local exports, verification videos, and generated brand bundles. These can
+# exceed a gigabyte and must never enter the application repository or a
+# Vercel upload.
+artifacts/

@@ -37,7 +37,7 @@ export function PageHeader({
             <Icon className="hidden h-[18px] w-[18px] flex-shrink-0 text-muted-foreground sm:block" aria-hidden />
           )}
           <div className="min-w-0">
-            <h1 className="truncate text-[1.0625rem] font-semibold tracking-tight text-foreground sm:text-lg">
+            <h1 className="truncate text-[1.0625rem] font-semibold text-foreground sm:text-lg">
               {title}
             </h1>
             {description && (
@@ -94,7 +94,7 @@ export function SectionHeading({
   return (
     <div className={cn('flex flex-wrap items-end justify-between gap-3', className)}>
       <div className="min-w-0">
-        <h2 className="text-[15px] font-semibold tracking-tight text-foreground">{title}</h2>
+        <h2 className="text-[15px] font-semibold text-foreground">{title}</h2>
         {description && (
           <p className="mt-1 text-[13px] leading-6 text-muted-foreground">{description}</p>
         )}

@@ -2,11 +2,11 @@
   "crons": [
     {
       "path": "/api/cron/sync-google-ads",
-      "schedule": "0 2 * * *"
+      "schedule": "17 * * * *"
     },
     {
       "path": "/api/cron/optimize",
-      "schedule": "0 3 * * *"
+      "schedule": "47 * * * *"
     }
   ],
   "functions": {

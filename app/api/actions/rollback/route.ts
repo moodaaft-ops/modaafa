@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerClient } from '@/lib/supabase/server';
+import { createAdminClient, createServerClient } from '@/lib/supabase/server';
 import { decrypt } from '@/lib/crypto';
 import { getCustomer } from '@/lib/google-ads/client';
 import { executeRollback } from '@/lib/ai/optimizer-agent';
@@ -10,6 +10,24 @@ import { sendOpsAlert } from '@/lib/notifications/email';
 import { isSameOriginRequest } from '@/lib/security/origin';
 
 const ROLLBACK_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * Every resource named in a rollback payload must live under the SELECTED
+ * account's customer id. Defence in depth: `ai_actions` writes are now
+ * service-role only, but if a crafted `rollback_payload` ever reached this
+ * path it would otherwise be executed verbatim as a live Google Ads mutation
+ * against whatever `customers/<id>/…` it named.
+ */
+function rollbackResourcesScoped(rollback: Record<string, any>, customerId: string): boolean {
+  const cid = String(customerId ?? '').replace(/\D/g, '');
+  if (!cid) return false;
+  const prefix = `customers/${cid}/`;
+  const resources = [rollback.budget_resource, rollback.resource_name, rollback.ad_group_resource].filter(
+    (value): value is string => typeof value === 'string' && value.length > 0
+  );
+  if (resources.length === 0) return false;
+  return resources.every((value) => value.startsWith(prefix));
+}
 
 export async function POST(req: NextRequest) {
   // Defence in depth against cross-site POSTs; see lib/security/origin.ts.
@@ -66,8 +84,18 @@ export async function POST(req: NextRequest) {
     .maybeSingle();
   if (!account) return NextResponse.redirect(new URL(`${next}?error=account_not_found`, req.url), 303);
 
+  // Reject a payload that names a resource outside this account before any
+  // claim or mutation.
+  if (!rollbackResourcesScoped(rollback, account.customer_id)) {
+    return NextResponse.redirect(new URL(`${next}?error=rollback_unavailable`, req.url), 303);
+  }
+
+  // Rollback state transitions are written with the service role: ai_actions is
+  // no longer client-writable (its rollback_payload is executed verbatim).
+  const admin = createAdminClient();
+
   const rollbackKey = randomUUID();
-  const { data: claimed } = await supabase
+  const { data: claimed } = await admin
     .from('ai_actions')
     .update({ rollback_status: 'executing', rollback_key: rollbackKey, rollback_started_at: new Date().toISOString() })
     .eq('id', action.id)
@@ -88,7 +116,7 @@ export async function POST(req: NextRequest) {
     await executeRollback(rollback, customer, { validateOnly: true });
     const result = await executeRollback(rollback, customer);
     mutationApplied = true;
-    const { data: recordedRollback, error: recordError } = await supabase
+    const { data: recordedRollback, error: recordError } = await admin
       .from('ai_actions')
       .update({
         rollback_status: 'reverted',
@@ -127,7 +155,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.redirect(new URL(`${next}?error=rollback_recording_failed`, req.url), 303);
     }
 
-    await supabase
+    await admin
       .from('ai_actions')
       .update({
         rollback_status: 'failed',

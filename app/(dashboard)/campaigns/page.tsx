@@ -104,7 +104,7 @@ export default async function CampaignsPage({
           <section className="surface-card overflow-hidden">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
               <div>
-                <h2 className="text-[14px] font-semibold tracking-tight">قائمة الحملات</h2>
+                <h2 className="text-[14px] font-semibold">قائمة الحملات</h2>
                 <p className="mt-1 text-xs text-muted-foreground">
                   {formatNumberAr(sortedCampaigns.filter((c) => c.status === 'ENABLED').length)} مفعلة من أصل{' '}
                   {formatNumberAr(campaigns?.length ?? 0)}
@@ -121,7 +121,7 @@ export default async function CampaignsPage({
             </div>
             <div className="overflow-x-auto scrollbar-thin">
               <table className="w-full min-w-[720px] text-sm">
-                <thead className="border-b border-border bg-background-elevated text-[11px] uppercase tracking-wide text-muted-foreground">
+                <thead className="border-b border-border bg-background-elevated text-[11px] uppercase text-muted-foreground">
                   <tr>
                     <th className="px-5 py-2.5 text-start font-medium">الحملة</th>
                     <th className="px-3 py-2.5 text-start font-medium">الحالة</th>

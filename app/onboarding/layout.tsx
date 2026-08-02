@@ -19,7 +19,7 @@ export default function OnboardingLayout({ children }: { children: React.ReactNo
         <div className="mx-auto flex max-w-4xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
           <Link href="/" className="flex items-center gap-2.5">
             <Image src="/logo-mark.svg" alt="" width={32} height={32} className="h-8 w-8 rounded-lg" aria-hidden />
-            <span className="text-[15px] font-bold tracking-tight text-foreground">مُضاعِف</span>
+            <span className="text-[15px] font-bold text-foreground">مُضاعِف</span>
           </Link>
           {/* The "لوحة التحكم" link used to live here unconditionally, which
               sent brand-new users into a dashboard with nothing in it. The

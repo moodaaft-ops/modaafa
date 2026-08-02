@@ -147,7 +147,7 @@ export async function syncCampaignCache({
     if (error) throw error;
   }
 
-  await removeStaleCampaigns(supabase, accountId, rows.map((row) => row.google_campaign_id));
+  await removeStaleCampaigns(supabase, accountId, rows.map((row) => row.google_campaign_id), syncedAt);
 
   return {
     updated: rows.length,
@@ -334,12 +334,20 @@ function toMetrics(metrics: any, currencyCode: string): CampaignMetrics {
 async function removeStaleCampaigns(
   supabase: SupabaseClient,
   accountId: string,
-  currentCampaignIds: number[]
+  currentCampaignIds: number[],
+  syncedAt: string
 ) {
+  // Only consider rows this run did NOT just write. A manual sync and the
+  // nightly cron can overlap on one account with no lock between them; a run
+  // holding an older snapshot would otherwise delete by primary key a campaign
+  // the concurrent run had just inserted. Every upsert in this run stamps
+  // last_synced_at = syncedAt, and a concurrent later run stamps a strictly
+  // greater timestamp, so `< syncedAt` scopes deletion to genuinely stale rows.
   const { data: cached, error } = await supabase
     .from('campaigns_cache')
     .select('id, google_campaign_id')
-    .eq('account_id', accountId);
+    .eq('account_id', accountId)
+    .lt('last_synced_at', syncedAt);
   if (error) throw error;
 
   const current = new Set(currentCampaignIds.map(String));

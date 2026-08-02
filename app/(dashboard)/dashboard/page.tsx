@@ -19,6 +19,7 @@ import { moneyMetric } from '@/lib/google-ads/metrics';
 import { campaignStatusLabel } from '@/lib/ui/labels';
 import { PageHeader } from '@/lib/ui/page-header';
 import { MetricCard } from '@/lib/ui/metric-card';
+import { CampaignSpendChart } from './spend-chart';
 import { EmptyState } from '@/lib/ui/empty-state';
 import { StatusBadge, campaignStatusTone } from '@/lib/ui/status-badge';
 import { buttonClasses } from '@/lib/ui/button';
@@ -215,7 +216,7 @@ export default async function DashboardPage({
               <section className="surface-card overflow-hidden">
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-3.5">
                   <div>
-                    <h2 className="text-[13.5px] font-semibold tracking-tight">أكمل تجهيز مساحة العمل</h2>
+                    <h2 className="text-[13.5px] font-semibold">أكمل تجهيز مساحة العمل</h2>
                     <p className="mt-0.5 text-[12px] text-muted-foreground">
                       {`أكملت ${formatNumberAr(completedCount)} من 4 خطوات. تابع من حيث توقفت.`}
                     </p>
@@ -295,11 +296,23 @@ export default async function DashboardPage({
               />
             </section>
 
+            {/* Spend distribution chart — only meaningful once there is spend. */}
+            {activeCampaigns.length > 0 && totalSpend > 0 && (
+              <CampaignSpendChart
+                currencyCode={selectedAccount?.currency_code}
+                campaigns={activeCampaigns.map((c) => ({
+                  name: c.name ?? 'حملة',
+                  spend: moneyMetric(c.metrics_7d, 'cost'),
+                  roas: c.metrics_30d?.roas ?? 0,
+                }))}
+              />
+            )}
+
             {/* Campaigns */}
             <section className="surface-card overflow-hidden">
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
                 <div>
-                  <h3 className="text-[14px] font-semibold tracking-tight">حملات الحساب المختار</h3>
+                  <h3 className="text-[14px] font-semibold">حملات الحساب المختار</h3>
                   <p className="mt-1 text-xs text-muted-foreground">
                     {formatNumberAr(activeCampaigns.length)} حملة مفعلة من أصل {formatNumberAr(campaigns?.length ?? 0)}
                   </p>
@@ -339,7 +352,7 @@ export default async function DashboardPage({
               ) : (
                 <div className="overflow-x-auto scrollbar-thin">
                   <table className="w-full min-w-[640px] text-sm">
-                    <thead className="border-b border-border bg-background-elevated text-[11px] uppercase tracking-wide text-muted-foreground">
+                    <thead className="border-b border-border bg-background-elevated text-[11px] uppercase text-muted-foreground">
                       <tr>
                         <th className="px-5 py-2.5 text-start font-medium">اسم الحملة</th>
                         <th className="px-3 py-2.5 text-start font-medium">الحالة</th>
@@ -351,7 +364,7 @@ export default async function DashboardPage({
                     <tbody className="divide-y divide-border">
                       {sortedCampaigns.map((campaign: any) => (
                         <tr key={campaign.id} className="transition-colors duration-150 hover:bg-muted/50">
-                          <td className="px-6 py-4 font-medium text-foreground">{campaign.name}</td>
+                          <td className="px-5 py-3.5 font-medium text-foreground">{campaign.name}</td>
                           <td className="px-3 py-3.5">
                             <StatusBadge tone={campaignStatusTone(campaign.status)}>
                               {campaignStatusLabel(campaign.status)}
@@ -359,7 +372,7 @@ export default async function DashboardPage({
                           </td>
                           <td className="px-3 py-3.5 numeric">{formatCurrency(moneyMetric(campaign.metrics_7d, 'cost'), selectedAccount?.currency_code)}</td>
                           <td className="px-3 py-3.5 numeric">{formatNumberAr(campaign.metrics_7d?.conversions ?? 0)}</td>
-                          <td className="px-6 py-4 font-bold numeric text-emerald-600 dark:text-emerald-400">
+                          <td className="px-5 py-3.5 font-bold numeric text-emerald-600 dark:text-emerald-400">
                             {(campaign.metrics_30d?.roas ?? 0).toFixed(1)}×
                           </td>
                         </tr>

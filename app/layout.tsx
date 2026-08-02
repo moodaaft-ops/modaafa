@@ -5,10 +5,14 @@ import { NONCE_HEADER } from '@/lib/security/csp';
 import './globals.css';
 
 const arabic = IBM_Plex_Sans_Arabic({
-  subsets: ['arabic'],
-  weight: ['300', '400', '500', '600', '700'],
+  // Load the Latin subset too: customer IDs, emails, URLs and plan names are
+  // LTR and were swapping in late (and reflowing) because only Arabic was
+  // preloaded. Weight 300 is dropped — nothing in the app uses it.
+  subsets: ['arabic', 'latin'],
+  weight: ['400', '500', '600', '700'],
   variable: '--font-arabic',
   display: 'swap',
+  fallback: ['system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
 });
 
 export const metadata: Metadata = {
@@ -41,7 +45,7 @@ export const metadata: Metadata = {
         url: '/og-image.png',
         width: 1200,
         height: 630,
-        alt: 'Modaafa Ads AI',
+        alt: 'مُضاعِف - Modaafa Ads AI',
       },
     ],
   },
@@ -63,13 +67,16 @@ export const viewport: Viewport = {
 };
 
 // Dark is the product's default, so <html> ships with the `dark` class from
-// the server and there is no first-paint flash. This script only REMOVES it
-// for a user who has explicitly chosen light — adding it here instead would
-// mean the server-rendered HTML was light for one frame on every load.
+// the server and there is no first-paint flash. This script only REMOVES it —
+// for a user who explicitly chose light, OR (when they have made no choice) for
+// one whose operating system is set to light. Running before paint means the
+// OS-light user never sees the dark frame.
 const themeScript = `
 (function(){
   try {
-    if (localStorage.getItem('modaafa-theme') === 'light') {
+    var stored = localStorage.getItem('modaafa-theme');
+    var prefersLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+    if (stored === 'light' || (!stored && prefersLight)) {
       document.documentElement.classList.remove('dark');
     }
   } catch (e) {}

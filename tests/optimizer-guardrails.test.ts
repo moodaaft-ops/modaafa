@@ -67,3 +67,73 @@ test('SAR business budget cap blocks daily budget above the monthly limit', asyn
   });
   assert.equal(await checkGuardrails(budgetAction(), 'account-1', supabase), null);
 });
+
+test('a SAR-denominated business cap is not compared 1:1 with a non-SAR account', async () => {
+  // The onboarding budget field is denominated in SAR. Treating 300 SAR as
+  // 300 USD would apply a fictitious 1:1 exchange rate and block valid actions.
+  const action = budgetAction();
+  const supabase = mockSupabase({
+    ai_actions: { data: [], error: null },
+    google_ads_accounts: { data: { business_id: 'business-1', currency_code: 'USD' }, error: null },
+    businesses: { data: { monthly_budget: 300 }, error: null },
+  });
+  assert.equal(await checkGuardrails(action, 'account-1', supabase), action);
+});
+
+test('two +25% changes on the same budget compound past 50% and block the second', async () => {
+  // Summing linearly, 25 + 25 = 50 read as "not over 50" and passed. The true
+  // compounded rise is 1.25 × 1.25 = 56.25%.
+  const resource = 'customers/123/campaignBudgets/456';
+  const supabase = mockSupabase({
+    ai_actions: {
+      data: [{ payload: { action: { params: { delta_pct: 25, budget_resource: resource } } } }],
+      error: null,
+    },
+    google_ads_accounts: { data: { business_id: null }, error: null },
+  });
+  const action = budgetAction({ delta_pct: 25, budget_resource: resource });
+  assert.equal(await checkGuardrails(action, 'account-1', supabase), null);
+});
+
+test('a prior increase on an UNRELATED budget does not block this one', async () => {
+  // The old cumulative sum was account-wide, so a +25% on campaign A wrongly
+  // blocked a legitimate change on campaign B. Scoping to the resource fixes it.
+  const supabase = mockSupabase({
+    ai_actions: {
+      data: [
+        { payload: { action: { params: { delta_pct: 25, budget_resource: 'customers/123/campaignBudgets/999' } } } },
+      ],
+      error: null,
+    },
+    google_ads_accounts: { data: { business_id: null }, error: null },
+  });
+  const action = budgetAction({ delta_pct: 20, budget_resource: 'customers/123/campaignBudgets/456' });
+  assert.equal(await checkGuardrails(action, 'account-1', supabase), action);
+});
+
+test('a budget action without absolute micros still queues (cap is an execution-time check)', async () => {
+  // The nightly cron only knows delta_pct, not current/new micros. Requiring
+  // them here used to block every queued budget recommendation silently.
+  const supabase = mockSupabase({ ai_actions: { data: [], error: null } });
+  const action = budgetAction({
+    current_amount_micros: undefined,
+    new_amount_micros: undefined,
+    delta_pct: 20,
+  });
+  assert.notEqual(await checkGuardrails(action, 'account-1', supabase), null);
+});
+
+test('a bid action mixing CPA and ROAS units is blocked', async () => {
+  // tROAS ad group (current_target_roas known), model proposed a CPA target.
+  // Comparing 4.4 against 4.0 used to read as +10% and pass, then wrote a target
+  // CPA of 0.0000044 and collapsed delivery.
+  const action: OptimizerAction = {
+    type: 'adjust_bid',
+    target_id: 'customers/1/adGroups/2',
+    params: { current_target_roas: 4.0, target_cpa_micros: 4.4 },
+    reason_ar: 'اختبار',
+    reason_en: 'test',
+    expected_impact: { metric: 'cpa', delta_pct: 0, delta_sar_per_month: 0 },
+  };
+  assert.equal(await checkGuardrails(action, 'account-1', mockSupabase({})), null);
+});

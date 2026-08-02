@@ -43,9 +43,12 @@ const ASSISTANT_TIMEOUT_MS = 110_000;
 export function AssistantClient({
   accounts,
   selectedCustomerId,
+  initialBrief = null,
 }: {
   accounts: Account[];
   selectedCustomerId: string | null;
+  /** Prefilled composer text (e.g. a campaign-opportunity brief). The user still reviews and sends it. */
+  initialBrief?: string | null;
 }) {
   const router = useRouter();
   const [isSwitching, startTransition] = useTransition();
@@ -53,6 +56,9 @@ export function AssistantClient({
   const [customerId, setCustomerId] = useState(selectedCustomerId ?? accounts[0]?.customer_id ?? '');
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [message, setMessage] = useState('');
+  // A campaign-opportunity brief arrives as a review card, not stuffed into
+  // the single-line composer: the user reads it, then sends with one click.
+  const [pendingBrief, setPendingBrief] = useState<string | null>(initialBrief);
   const [loading, setLoading] = useState(false);
   const [listening, setListening] = useState(false);
   const [error, setError] = useState('');
@@ -207,7 +213,7 @@ export function AssistantClient({
 
   return (
     <div className="grid gap-5 lg:grid-cols-[1fr_290px]">
-      <section className="flex h-[calc(100dvh-13rem)] min-h-[520px] flex-col surface-card overflow-hidden">
+      <section className="flex h-[calc(100dvh-15rem)] min-h-[440px] flex-col overflow-hidden surface-card sm:h-[calc(100dvh-13rem)] sm:min-h-[520px]">
         {/* Header with account context */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
           <div className="flex min-w-0 items-center gap-2.5">
@@ -215,7 +221,7 @@ export function AssistantClient({
               <Sparkles className="h-4 w-4" />
             </span>
             <div className="min-w-0">
-              <div className="text-[13px] font-semibold leading-tight tracking-tight">المساعد الذكي</div>
+              <div className="text-[13px] font-semibold leading-tight">المساعد الذكي</div>
               <div className="truncate text-[11px] leading-tight text-muted-foreground">
                 {selectedAccount ? googleAdsAccountDisplayName(selectedAccount) : customerId}
               </div>
@@ -252,7 +258,7 @@ export function AssistantClient({
               <span className="flex h-12 w-12 items-center justify-center rounded-xl border border-primary/25 bg-primary/10 text-primary">
                 <Sparkles className="h-5 w-5" />
               </span>
-              <h3 className="mt-5 text-base font-semibold tracking-tight">اسألني عن حسابك</h3>
+              <h3 className="mt-5 text-base font-semibold">اسألني عن حسابك</h3>
               <p className="mt-2 max-w-sm text-[13px] leading-7 text-muted-foreground">{SEED_MESSAGE}</p>
               <div className="mt-6 flex flex-wrap justify-center gap-2">
                 {SUGGESTED_PROMPTS.slice(0, 4).map((prompt) => (
@@ -288,6 +294,38 @@ export function AssistantClient({
           {error && (
             <div className="mb-3">
               <Alert tone="danger">{error}</Alert>
+            </div>
+          )}
+          {pendingBrief && (
+            <div className="mb-3 rounded-lg border border-primary/25 bg-primary/[0.06] p-3.5">
+              <div className="flex items-center gap-2 text-[12.5px] font-semibold text-primary">
+                <Sparkles className="h-3.5 w-3.5" />
+                طلب بناء حملة من مركز الموافقات
+              </div>
+              <p className="mt-2 max-h-28 overflow-y-auto text-[12.5px] leading-6 text-foreground-subtle scrollbar-thin">
+                {pendingBrief}
+              </p>
+              <div className="mt-3 flex gap-2">
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={() => {
+                    const brief = pendingBrief;
+                    setPendingBrief(null);
+                    if (brief) void sendMessage(brief);
+                  }}
+                  className={buttonClasses({ variant: 'primary', size: 'sm' })}
+                >
+                  ابنِ الحملة الآن
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPendingBrief(null)}
+                  className={buttonClasses({ variant: 'outline', size: 'sm' })}
+                >
+                  إلغاء
+                </button>
+              </div>
             </div>
           )}
           <div className="flex items-end gap-2">
@@ -328,7 +366,7 @@ export function AssistantClient({
       {/* Side panel */}
       <aside className="space-y-3">
         <section className="surface-card overflow-hidden">
-          <div className="flex items-center gap-2 border-b border-border px-4 py-3 text-[13px] font-semibold tracking-tight">
+          <div className="flex items-center gap-2 border-b border-border px-4 py-3 text-[13px] font-semibold">
             <TrendingUp className="h-3.5 w-3.5 text-primary" />
             أوامر جاهزة
           </div>
@@ -387,7 +425,7 @@ function ChatBubble({ item }: { item: ChatItem }) {
               className="rounded-lg border border-border bg-background-elevated px-3 py-2 text-foreground"
             >
               <div className="text-[11px] text-muted-foreground">{card.label}</div>
-              <div className="mt-0.5 text-[15px] font-semibold tracking-tight numeric">{card.value}</div>
+              <div className="mt-0.5 text-[15px] font-semibold numeric">{card.value}</div>
             </div>
           ))}
         </div>
@@ -417,7 +455,7 @@ function ChatBubble({ item }: { item: ChatItem }) {
 
       {item.draft && (
         <div className="mt-3 rounded-lg border border-primary/25 bg-primary/[0.08] p-3 text-foreground">
-          <div className="text-[13px] font-semibold tracking-tight">{item.draft.name}</div>
+          <div className="text-[13px] font-semibold">{item.draft.name}</div>
           <div className="mt-2 grid gap-1.5 text-xs sm:grid-cols-3">
             <span className="text-muted-foreground">النوع: {campaignTypeLabel(item.draft.type)}</span>
             <span className="text-muted-foreground">الميزانية: {item.draft.daily_budget_sar} ر.س/يوم</span>

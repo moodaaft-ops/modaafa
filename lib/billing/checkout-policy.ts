@@ -132,7 +132,19 @@ export async function recordTrialGrant({
   }
 }
 
-async function lookupUserEmail(supabase: any, userId: string) {
-  const { data } = await supabase.from('users').select('email').eq('id', userId).maybeSingle();
-  return (data?.email as string | undefined) ?? null;
+async function lookupUserEmail(_supabase: any, userId: string) {
+  // Resolve from the AUTHORITATIVE Supabase Auth identity, never from
+  // public.users.email. That column is client-writable (RLS `FOR ALL`), so
+  // recording the durable trial ledger under a user-chosen address — while the
+  // eligibility check reads the real Google identity email — would reopen the
+  // delete-and-re-register unlimited-free-trial loop the ledger exists to close.
+  try {
+    const admin = createAdminClient();
+    const { data, error } = await admin.auth.admin.getUserById(userId);
+    if (error) throw error;
+    return (data.user?.email as string | undefined) ?? null;
+  } catch (error) {
+    console.error('Failed to resolve authoritative email for trial ledger', error);
+    return null;
+  }
 }

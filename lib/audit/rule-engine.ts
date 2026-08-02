@@ -60,9 +60,27 @@ type AccountContext = {
 export function runRuleBasedAudit({
   account,
   campaigns,
+  conversionTracking = null,
+  benchmark = null,
 }: {
   account: AccountContext;
   campaigns: CachedCampaign[];
+  /**
+   * Live check from the Google Ads API: how many ENABLED conversion actions
+   * the account has. `null` means the check could not run (offline audit) —
+   * treated as unknown, never as healthy.
+   */
+  conversionTracking?: { enabled_actions: number } | null;
+  /**
+   * Anonymous sector medians (>= 3 businesses) in the account's currency.
+   * `null` when the platform does not yet have enough peers in this sector.
+   */
+  benchmark?: {
+    businesses_count: number;
+    median_cpa: number | null;
+    median_ctr: number | null;
+    median_roas: number | null;
+  } | null;
 }): AuditResult {
   const active = campaigns.filter((campaign) => campaign.status === 'ENABLED');
   const m30 = campaigns.map((campaign) => ({
@@ -193,6 +211,40 @@ export function runRuleBasedAudit({
     });
   }
 
+  // Sector comparison — the number no generic blog post can give: how this
+  // account performs against REAL peers in the same sector and currency.
+  const benchmarkCpa = benchmark?.median_cpa ?? null;
+  if (
+    benchmarkCpa !== null &&
+    benchmarkCpa > 0 &&
+    conversions30 > 0 &&
+    avgCpa > benchmarkCpa * 1.5
+  ) {
+    const multiplier = round(avgCpa / benchmarkCpa, 1);
+    findings.push({
+      category: 'bidding',
+      severity: multiplier >= 2 ? 'critical' : 'medium',
+      title_ar: `تكلفة تحويلك أعلى من متوسط قطاعك بـ ${multiplier}×`,
+      title_en: 'CPA is above the sector median',
+      description_ar: `متوسط تكلفة التحويل في حسابك ${formatCurrency(avgCpa, currencyCode)} بينما متوسط قطاعك على المنصة ${formatCurrency(benchmarkCpa, currencyCode)} (مبني على ${benchmark!.businesses_count} أنشطة مشابهة). هذا الفارق عادةً يعني هدراً في الكلمات أو مزايدة أعلى من اللازم — راجع توصيات الكلمات والمزايدة أولاً.`,
+      description_en: `Account CPA is ${multiplier}x the sector median across ${benchmark!.businesses_count} peer businesses.`,
+      expected_impact: {
+        metric: 'cpa',
+        delta_pct: Math.min(35, Math.round((1 - benchmarkCpa / avgCpa) * 100)),
+        delta_sar_per_month: round(spend30 * Math.min(0.3, 1 - benchmarkCpa / avgCpa)),
+      },
+      action_payload: {
+        operation: 'review_vs_sector_benchmark',
+        details: {
+          account_cpa: round(avgCpa),
+          sector_median_cpa: benchmarkCpa,
+          businesses_count: benchmark!.businesses_count,
+          currency_code: currencyCode,
+        },
+      },
+    });
+  }
+
   if (zeroSpendActive.length > 0) {
     findings.push({
       category: 'structure',
@@ -209,7 +261,36 @@ export function runRuleBasedAudit({
     });
   }
 
-  if (spend30 > 0 && conversions30 === 0) {
+  // Conversion tracking health — checked BEFORE interpreting any conversion
+  // number, because with broken tracking every downstream metric lies.
+  const trackingMissing = conversionTracking !== null && conversionTracking.enabled_actions === 0;
+  const trackingSuspect =
+    !trackingMissing && spend30 > 0 && clicks30 >= 100 && conversions30 === 0;
+
+  if (trackingMissing) {
+    findings.push({
+      category: 'targeting',
+      severity: 'critical',
+      title_ar: 'تتبع التحويلات غير مفعّل',
+      title_en: 'Conversion tracking is not set up',
+      description_ar:
+        'لا يوجد أي إجراء تحويل مفعّل في هذا الحساب، يعني Google لا تعرف متى يشتري العميل أو يتواصل معك. هذه أهم خطوة قبل أي تحسين: بدون تتبع، كل قرارات الميزانية والمزايدة تصير تخميناً. فعّل تتبع التحويلات أولاً.',
+      description_en: 'No enabled conversion actions exist. Every optimization decision is blind until tracking is set up.',
+      expected_impact: { metric: 'conversions', delta_pct: 30, delta_sar_per_month: round(spend30 * 0.3) },
+      action_payload: { operation: 'setup_conversion_tracking', details: { customer_id: account.customer_id } },
+    });
+  } else if (trackingSuspect) {
+    findings.push({
+      category: 'targeting',
+      severity: 'critical',
+      title_ar: 'يبدو أن تتبع التحويلات معطل',
+      title_en: 'Conversion tracking looks broken',
+      description_ar: `الحساب استقبل ${clicks30} نقرة خلال 30 يوماً بدون أي تحويل مسجل${conversionTracking ? '، رغم وجود إجراءات تحويل مفعلة' : ''}. إما أن كود التتبع لا يعمل على الموقع، أو أن الاستهداف بعيد تماماً عن جمهورك. تحقق من التتبع أولاً قبل أي قرار تحسين.`,
+      description_en: 'Real click volume with zero recorded conversions — verify the tracking tag before optimizing.',
+      expected_impact: { metric: 'conversions', delta_pct: 20, delta_sar_per_month: round(spend30 * 0.25) },
+      action_payload: { operation: 'audit_conversion_tracking', details: { customer_id: account.customer_id } },
+    });
+  } else if (spend30 > 0 && conversions30 === 0) {
     findings.push({
       category: 'targeting',
       severity: 'critical',
@@ -230,6 +311,9 @@ export function runRuleBasedAudit({
   const score = clamp(
     88 -
       (active.length === 0 ? 30 : 0) -
+      // Broken tracking undermines every other number, so it drags the
+      // headline score harder than any single wasteful campaign.
+      (trackingMissing ? 18 : trackingSuspect ? 12 : 0) -
       Math.min(22, (estimatedWaste / Math.max(1, spend30)) * 35) -
       (ctr30 > 0 && ctr30 < 0.04 ? 8 : 0) -
       (zeroSpendActive.length > 0 ? 5 : 0),
@@ -244,7 +328,11 @@ export function runRuleBasedAudit({
     negative_keywords: clamp(spendNoConversions.length > 0 ? 55 : 75, 40, 88),
     bidding: clamp(expensiveCampaigns.length > 0 ? 61 : 78, 45, 90),
     budget: clamp(estimatedWaste > spend30 * 0.2 ? 58 : 80, 40, 92),
-    targeting: clamp(conversions30 > 0 ? 76 : spend30 > 0 ? 52 : 68, 40, 88),
+    targeting: clamp(
+      trackingMissing ? 40 : trackingSuspect ? 45 : conversions30 > 0 ? 76 : spend30 > 0 ? 52 : 68,
+      40,
+      88
+    ),
   };
 
   const sortedFindings = findings
