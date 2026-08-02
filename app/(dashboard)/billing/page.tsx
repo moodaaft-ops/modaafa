@@ -121,10 +121,10 @@ export default async function BillingPage({
           <div className="canvas-glow pointer-events-none absolute inset-0 opacity-50" aria-hidden />
           <div className="relative flex flex-wrap items-center justify-between gap-4">
             <div>
-              <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-foreground-subtle">
+              <div className="text-[11px] font-medium uppercase text-foreground-subtle">
                 الخطة الحالية
               </div>
-              <div className="mt-2 flex flex-wrap items-center gap-2.5 text-[26px] font-bold leading-none tracking-tight">
+              <div className="mt-2 flex flex-wrap items-center gap-2.5 text-[26px] font-bold leading-none">
                 {subscription ? planLabel(subscription.plan) : 'لا يوجد اشتراك نشط'}
                 {subscription && (
                   <StatusBadge tone={subscription.status === 'active' ? 'success' : 'warning'}>
@@ -151,7 +151,7 @@ export default async function BillingPage({
                 <input type="hidden" name="plan" value="growth" />
                 <input type="hidden" name="period" value="monthly" />
                 <PendingSubmitButton pendingLabel="جاري فتح الدفع..." className={buttonClasses({ variant: 'secondary' })}>
-                  {trialEligible ? 'ابدأ تجربة النمو / Growth' : 'اشترك في النمو / Growth'}
+                  {trialEligible ? 'ابدأ تجربة خطة النمو' : 'اشترك في خطة النمو'}
                 </PendingSubmitButton>
               </form>
             ) : null}
@@ -176,8 +176,8 @@ export default async function BillingPage({
 
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <h2 className="text-[17px] font-semibold tracking-tight">{plan.name}</h2>
-                    <p className="mt-0.5 text-[11px] font-medium uppercase tracking-wide text-foreground-subtle" dir="ltr">
+                    <h2 className="text-[17px] font-semibold">{plan.name}</h2>
+                    <p className="mt-0.5 text-[11px] font-medium uppercase text-foreground-subtle" dir="ltr">
                       {plan.nameEn}
                     </p>
                   </div>
@@ -191,7 +191,7 @@ export default async function BillingPage({
                 <p className="mt-2 text-[13px] leading-6 text-muted-foreground">{plan.limit}</p>
 
                 <div className="mt-5 flex items-baseline gap-1.5">
-                  <span className="text-[2rem] font-bold leading-none tracking-tight numeric">
+                  <span className="text-[2rem] font-bold leading-none numeric">
                     {formatSAR(plan.price)}
                   </span>
                   <span className="text-[13px] text-muted-foreground">/ شهر</span>
@@ -247,7 +247,7 @@ export default async function BillingPage({
         {/* Invoices */}
         <section className="surface-card overflow-hidden">
           <div className="border-b border-border px-5 py-4">
-            <h2 className="text-[14px] font-semibold tracking-tight">آخر الفواتير</h2>
+            <h2 className="text-[14px] font-semibold">آخر الفواتير</h2>
             <p className="mt-1 text-xs text-muted-foreground">آخر 5 فواتير صادرة على هذا الحساب.</p>
           </div>
           {(invoices ?? []).length === 0 ? (

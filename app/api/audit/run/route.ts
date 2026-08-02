@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerClient } from '@/lib/supabase/server';
+import { createAdminClient, createServerClient } from '@/lib/supabase/server';
 import { decrypt } from '@/lib/crypto';
+import { getCustomer } from '@/lib/google-ads/client';
 import { syncCampaignCacheWithLoginFallback } from '@/lib/google-ads/sync';
 import { runRuleBasedAudit } from '@/lib/audit/rule-engine';
+import { getSectorBenchmark } from '@/lib/benchmarks/compute';
 import {
   getLinkedGoogleAdsAccount,
   normalizeCustomerId,
@@ -69,6 +71,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'account_not_found' }, { status: 404 });
   }
 
+  let admin;
+  try {
+    admin = createAdminClient();
+  } catch {
+    return NextResponse.json({ error: 'service_unavailable' }, { status: 503 });
+  }
+
   const usage = await consumeFeatureUsage({
     supabase,
     userId: user.id,
@@ -88,10 +97,13 @@ export async function POST(req: NextRequest) {
 
   const startTime = Date.now();
   let syncError: string | null = null;
+  let conversionTracking: { enabled_actions: number } | null = null;
 
   try {
+    let refreshTokenForChecks: string | null = null;
     try {
       const refreshToken = decrypt(account.refresh_token_encrypted);
+      refreshTokenForChecks = refreshToken;
       const syncResult = await syncCampaignCacheWithLoginFallback({
         supabase,
         customerId: account.customer_id,
@@ -114,6 +126,28 @@ export async function POST(req: NextRequest) {
       console.warn('Campaign sync failed, continuing with cached data', syncError);
     }
 
+    // Conversion tracking is the single most important thing to verify: with
+    // broken tracking every downstream number lies. Best-effort — a failed
+    // lookup degrades to "unknown" rather than failing the audit.
+    if (refreshTokenForChecks) {
+      try {
+        const customer = getCustomer(
+          account.customer_id,
+          refreshTokenForChecks,
+          account.manager_id ?? undefined
+        ) as any;
+        const conversionActions = await customer.query(`
+          SELECT conversion_action.resource_name, conversion_action.status
+          FROM conversion_action
+          WHERE conversion_action.status = 'ENABLED'
+          LIMIT 50
+        `);
+        conversionTracking = { enabled_actions: conversionActions.length };
+      } catch (trackingError) {
+        console.warn('Conversion tracking check failed during audit', trackingError);
+      }
+    }
+
     const { data: campaigns, error: campaignErr } = await supabase
       .from('campaigns_cache')
       .select('*')
@@ -124,6 +158,20 @@ export async function POST(req: NextRequest) {
       .limit(1000);
     if (campaignErr) throw campaignErr;
 
+    // Sector benchmark: anonymous medians from >= 3 businesses in the same
+    // sector/currency, if the platform has enough of them yet. Best-effort.
+    let sectorBenchmark = null;
+    try {
+      const { data: businessRow } = await supabase
+        .from('businesses')
+        .select('sector')
+        .eq('user_id', user.id)
+        .maybeSingle();
+      sectorBenchmark = await getSectorBenchmark(supabase, businessRow?.sector, account.currency_code);
+    } catch (benchmarkError) {
+      console.warn('Sector benchmark lookup failed during audit', benchmarkError);
+    }
+
     const result = runRuleBasedAudit({
       account: {
         customer_id: account.customer_id,
@@ -131,11 +179,13 @@ export async function POST(req: NextRequest) {
         currency_code: account.currency_code,
       },
       campaigns: campaigns ?? [],
+      conversionTracking,
+      benchmark: sectorBenchmark,
     });
 
     const duration = Date.now() - startTime;
 
-    const { data: audit, error: auditErr } = await supabase
+    const { data: audit, error: auditErr } = await admin
       .from('audits')
       .insert({
         account_id: account.id,
@@ -148,6 +198,7 @@ export async function POST(req: NextRequest) {
           currency_code: account.currency_code,
           campaigns_count: campaigns?.length ?? 0,
           sync_error: syncError,
+          sector_benchmark: sectorBenchmark,
         },
         estimated_monthly_waste: result.estimated_monthly_waste_sar,
         duration_ms: duration,
@@ -169,10 +220,10 @@ export async function POST(req: NextRequest) {
       status: 'pending',
     }));
 
-    const { error: recErr } = await supabase.from('recommendations').insert(recRows);
-    if (recErr) console.error('Failed to insert recommendations', recErr);
+    const { error: recErr } = await admin.from('recommendations').insert(recRows);
+    if (recErr) throw recErr;
 
-    await supabase.from('reports').insert({
+    const { error: reportErr } = await admin.from('reports').insert({
       account_id: account.id,
       period_type: 'weekly',
       period_start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
@@ -186,6 +237,7 @@ export async function POST(req: NextRequest) {
         currency_code: account.currency_code ?? 'SAR',
       },
     });
+    if (reportErr) throw reportErr;
 
     if (isForm) {
       return withSelectedAccountCookie(

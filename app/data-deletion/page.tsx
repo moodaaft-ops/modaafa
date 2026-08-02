@@ -23,7 +23,11 @@ export default function DataDeletionPage() {
           والتوصيات وسجل المستخدم. إذا تعذر إلغاء الاشتراك فلن تكمل الحذف حمايةً لك من بقاء فوترة غير مرتبطة بحساب.
         </p>
         <p>
-          <Link href="/settings" className="font-semibold text-primary hover:underline dark:text-primary">
+          <Link
+            href="/settings"
+            prefetch={false}
+            className="font-semibold text-primary hover:underline dark:text-primary"
+          >
             الانتقال إلى الإعدادات
           </Link>
         </p>

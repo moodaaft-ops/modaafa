@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 128" role="img" aria-label="مُضاعِف">
+  <g transform="translate(432 0)" fill="#064E3B">
+    <path fill-rule="evenodd" d="M20 108V86C20 56 40 37 69 37H78C101 37 116 52 116 74C116 97 99 110 74 110H20V108ZM45 89H72C83 89 92 84 92 74C92 64 85 58 75 58H70C55 58 45 68 45 84V89Z"/>
+    <path d="M22 20H68" stroke="#064E3B" stroke-width="13" stroke-linecap="round"/>
+    <circle cx="103" cy="20" r="11"/>
+  </g>
+  <text x="402" y="78" fill="#064E3B" font-family="'IBM Plex Sans Arabic','Geeza Pro','Tahoma',sans-serif" font-size="50" font-weight="700" text-anchor="end">مُضاعِف</text>
+</svg>

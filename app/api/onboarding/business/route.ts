@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerClient } from '@/lib/supabase/server';
+import { createAdminClient, createServerClient } from '@/lib/supabase/server';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 import { isSameOriginRequest } from '@/lib/security/origin';
 
@@ -53,13 +53,27 @@ export async function POST(req: NextRequest) {
     return respond(req, 'invalid_primary_goal', 400);
   }
 
-  await supabase.from('users').upsert({
+  let admin;
+  try {
+    admin = createAdminClient();
+  } catch (adminError) {
+    console.error('User profile service is unavailable', adminError);
+    return respond(req, 'security_service_unavailable', 503);
+  }
+
+  // Identity/profile writes are service-owned. Always use the email returned
+  // by Supabase Auth rather than accepting identity fields from the request.
+  const { error: profileError } = await admin.from('users').upsert({
     id: user.id,
     email: user.email,
     name: user.user_metadata?.full_name ?? user.user_metadata?.name ?? null,
     avatar_url: user.user_metadata?.avatar_url ?? null,
     last_login_at: new Date().toISOString(),
   });
+  if (profileError) {
+    console.error('Failed to save the authenticated user profile', profileError);
+    return respond(req, 'save_failed', 500);
+  }
 
   const row = {
     user_id: user.id,

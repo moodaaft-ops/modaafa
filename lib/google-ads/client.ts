@@ -88,9 +88,15 @@ export function getGoogleAdsErrorCodes(error: unknown) {
 }
 
 export function googleAdsAuthNeedsReconnect(error: unknown) {
-  return getGoogleAdsErrorCodes(error).some((code) =>
-    ['UNAUTHORIZED_CLIENT', 'INVALID_CLIENT', 'INVALID_GRANT'].includes(code)
-  );
+  if (getGoogleAdsErrorCodes(error).some((code) =>
+    ['UNAUTHORIZED_CLIENT', 'INVALID_CLIENT', 'INVALID_GRANT', 'AUTHENTICATION_ERROR'].includes(code)
+  )) {
+    return true;
+  }
+  // A bare 401 with no parseable Google errorCode (a revoked grant surfacing
+  // mid-cache) carries none of the codes above, so the sync cron never marked
+  // the account for reconnect and retried it every night forever.
+  return error instanceof GoogleAdsRestError && error.status === 401;
 }
 
 function extractOAuthErrorCode(error: unknown) {
@@ -197,6 +203,12 @@ async function googleAdsRest<T>({
       return data as T;
     } catch (error) {
       lastError = error;
+      // A 401 means the cached access token is stale, or the grant was revoked
+      // while the token was still cached. Evict it so the next call re-mints
+      // instead of failing against a dead cache entry for up to 45 minutes.
+      if (error instanceof GoogleAdsRestError && error.status === 401) {
+        invalidateAccessToken(refreshToken);
+      }
       if (attempt >= maxAttempts || !isRetryableGoogleAdsError(error)) throw error;
       // Jittered backoff: 400ms, 1200ms.
       const delay = 400 * 3 ** (attempt - 1) + Math.floor(Math.random() * 200);
@@ -230,12 +242,24 @@ function isRetryableGoogleAdsError(error: unknown) {
  */
 const accessTokenCache = new Map<string, { token: string; expiresAt: number }>();
 
+function accessTokenCacheKey(refreshToken: string) {
+  return createHash('sha256').update(refreshToken).digest('hex');
+}
+
+function invalidateAccessToken(refreshToken: string) {
+  accessTokenCache.delete(accessTokenCacheKey(refreshToken));
+}
+
 async function getCachedAccessToken(refreshToken: string) {
-  const key = createHash('sha256').update(refreshToken).digest('hex');
+  const key = accessTokenCacheKey(refreshToken);
   const cached = accessTokenCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.token;
 
   const token = await refreshAccessToken(refreshToken);
+  // Refresh the entry (delete then set) so a re-minted token moves to the tail
+  // of the insertion order and the eviction below drops a genuinely cold key
+  // rather than the hot one we just refreshed.
+  accessTokenCache.delete(key);
   // Google access tokens live ~3600s; refresh well before the edge.
   accessTokenCache.set(key, { token, expiresAt: Date.now() + 45 * 60 * 1000 });
 
@@ -421,6 +445,26 @@ export function getCustomer(
           normalizedCustomerId,
           'adGroupCriteria',
           toUpdateOperations(items, ['status']),
+          normalizedLoginCustomerId,
+          options
+        ),
+      // Expansion path: add a positive keyword mined from a converting search
+      // term. Same mutate service as pausing, different operation kind.
+      create: (items: unknown[], options?: { validateOnly?: boolean }) =>
+        mutateResource(
+          refreshToken,
+          normalizedCustomerId,
+          'adGroupCriteria',
+          toCreateOperations(items),
+          normalizedLoginCustomerId,
+          options
+        ),
+      remove: (resourceNames: string[], options?: { validateOnly?: boolean }) =>
+        mutateResource(
+          refreshToken,
+          normalizedCustomerId,
+          'adGroupCriteria',
+          resourceNames.map((resourceName) => ({ remove: resourceName })),
           normalizedLoginCustomerId,
           options
         ),

@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { retrieveCheckoutSession, retrieveStripeSubscription } from '@/lib/billing/stripe';
+import {
+  planFromSubscription,
+  retrieveCheckoutSession,
+  retrieveStripeSubscription,
+} from '@/lib/billing/stripe';
 import { createAdminClient, createServerClient } from '@/lib/supabase/server';
 import { recordTrialGrant } from '@/lib/billing/checkout-policy';
+import { applySubscriptionEvent } from '@/lib/billing/subscription-events';
 
 export const runtime = 'nodejs';
 
@@ -43,27 +48,34 @@ export async function GET(req: NextRequest) {
         ? checkout.subscription
         : await retrieveStripeSubscription(subscriptionId);
 
-    const plan = normalizePlan(checkout.metadata?.plan ?? subscription.metadata?.plan);
-    const period = normalizePeriod(checkout.metadata?.period ?? subscription.metadata?.period);
+    // Derive the plan from the PRICE the subscription is actually billed on,
+    // not from checkout metadata. Metadata is a creation-time snapshot Stripe
+    // never updates, so a user who changed plans in the Customer Portal and
+    // then landed back on this success URL would have the stale metadata plan
+    // written over the correct price-derived one.
+    const { plan, period } = planFromSubscription(subscription);
     const admin = createAdminClient();
-    const { error } = await admin.from('subscriptions').upsert(
-      {
-        user_id: user.id,
-        plan,
-        billing_period: period,
-        status: normalizeStatus(subscription.status),
-        stripe_subscription_id: subscription.id,
-        stripe_customer_id:
-          typeof subscription.customer === 'string'
-            ? subscription.customer
-            : subscription.customer?.id,
-        trial_ends_at: stripeTimestamp(subscription.trial_end),
-        current_period_start: stripeTimestamp(subscription.current_period_start),
-        current_period_end: stripeTimestamp(subscription.current_period_end),
-      },
-      { onConflict: 'stripe_subscription_id' },
-    );
-    if (error) throw error;
+    // Route the write through the same ordering-guarded path the webhook uses.
+    // A bare upsert here skipped the `last_event_at` guard entirely and could
+    // clobber a newer webhook-applied state with this readback. Using
+    // current_period_start as the event time keeps this fallback a floor: a
+    // real webhook (event.created) always sorts newer and wins.
+    const periodStart = stripeTimestamp(subscription.current_period_start);
+    await applySubscriptionEvent(admin, {
+      user_id: user.id,
+      plan,
+      billing_period: period,
+      status: normalizeStatus(subscription.status),
+      stripe_subscription_id: subscription.id,
+      stripe_customer_id:
+        typeof subscription.customer === 'string'
+          ? subscription.customer
+          : subscription.customer?.id,
+      trial_ends_at: stripeTimestamp(subscription.trial_end),
+      current_period_start: periodStart,
+      current_period_end: stripeTimestamp(subscription.current_period_end),
+      last_event_at: periodStart ?? new Date(0).toISOString(),
+    });
     if (subscription.trial_end) {
       await recordTrialGrant({
         supabase: admin,
@@ -86,14 +98,6 @@ export async function GET(req: NextRequest) {
 
 function billingError(req: NextRequest, error: string) {
   return NextResponse.redirect(new URL(`/billing?error=${encodeURIComponent(error)}`, req.url));
-}
-
-function normalizePlan(value?: string | null): 'starter' | 'growth' | 'pro' {
-  return value === 'growth' || value === 'pro' ? value : 'starter';
-}
-
-function normalizePeriod(value?: string | null): 'monthly' | 'yearly' {
-  return value === 'yearly' ? 'yearly' : 'monthly';
 }
 
 function normalizeStatus(status?: string) {

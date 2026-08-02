@@ -40,7 +40,7 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
   const { data: actions } = selectedAccount
     ? await supabase
         .from('ai_actions')
-        .select('id, action_type, description_ar, expected_impact, result, rollback_payload, rollback_status, reverted_at, created_at')
+        .select('id, action_type, description_ar, expected_impact, observed_impact, result, rollback_payload, rollback_status, reverted_at, created_at')
         .eq('account_id', selectedAccount.id)
         .order('created_at', { ascending: false })
         .limit(20)
@@ -93,7 +93,7 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
             <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
               <section className="surface-card overflow-hidden">
                 <div className="border-b border-border px-5 py-4">
-                  <div className="text-[14px] font-semibold tracking-tight">التوصيات</div>
+                  <div className="text-[14px] font-semibold">التوصيات</div>
                   <p className="mt-1 text-xs leading-6 text-muted-foreground">
                     أي تعديل على إعلانات Google يبدأ هنا ولا يُنفّذ مباشرة بدون موافقة واضحة.
                   </p>
@@ -129,21 +129,40 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
                               ) : null}
                             </div>
                           </div>
-                          {item.status === 'pending' && (
-                            <div className="flex flex-shrink-0 gap-2">
-                              <RecommendationAction id={item.id} intent="approve" label="اعتماد" />
-                              <RecommendationAction id={item.id} intent="dismiss" label="تجاهل" secondary />
-                            </div>
-                          )}
-                          {item.status === 'approved' && (
-                            <div className="flex flex-shrink-0 gap-2">
-                              {subscription.active ? (
-                                <RecommendationAction id={item.id} intent="execute" label="تنفيذ" />
-                              ) : (
-                                <a href="/billing" className={buttonClasses({ variant: 'primary', size: 'sm' })}>تفعيل التنفيذ</a>
+                          {isCampaignOpportunity(item) ? (
+                            // Growth opportunity: its CTA is the BUILDER, not a
+                            // Google Ads mutation — the draft still goes through
+                            // normal review inside the assistant.
+                            ['pending', 'approved'].includes(item.status) && (
+                              <div className="flex flex-shrink-0 gap-2">
+                                <a
+                                  href={`/assistant?brief=${encodeURIComponent(String(item.action_payload?.brief_ar ?? ''))}`}
+                                  className={buttonClasses({ variant: 'primary', size: 'sm' })}
+                                >
+                                  ابنِ الحملة في المساعد
+                                </a>
+                                <RecommendationAction id={item.id} intent="dismiss" label="تجاهل" secondary />
+                              </div>
+                            )
+                          ) : (
+                            <>
+                              {item.status === 'pending' && (
+                                <div className="flex flex-shrink-0 gap-2">
+                                  <RecommendationAction id={item.id} intent="approve" label="اعتماد" />
+                                  <RecommendationAction id={item.id} intent="dismiss" label="تجاهل" secondary />
+                                </div>
                               )}
-                              <RecommendationAction id={item.id} intent="dismiss" label="إلغاء" secondary />
-                            </div>
+                              {item.status === 'approved' && (
+                                <div className="flex flex-shrink-0 gap-2">
+                                  {subscription.active ? (
+                                    <RecommendationAction id={item.id} intent="execute" label="تنفيذ" />
+                                  ) : (
+                                    <a href="/billing" className={buttonClasses({ variant: 'primary', size: 'sm' })}>تفعيل التنفيذ</a>
+                                  )}
+                                  <RecommendationAction id={item.id} intent="dismiss" label="إلغاء" secondary />
+                                </div>
+                              )}
+                            </>
                           )}
                         </div>
                         {item.description && <p className="mt-2 text-sm leading-7 text-muted-foreground">{item.description}</p>}
@@ -159,7 +178,7 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
 
               <section className="surface-card overflow-hidden">
                 <div className="border-b border-border px-5 py-4">
-                  <div className="text-[14px] font-semibold tracking-tight">سجل التنفيذ</div>
+                  <div className="text-[14px] font-semibold">سجل التنفيذ</div>
                   <p className="mt-1 text-xs leading-6 text-muted-foreground">أثر واضح لكل قرار اعتمدته أو نفّذته المنصة لاحقاً.</p>
                 </div>
                 {(actions ?? []).length === 0 ? (
@@ -175,7 +194,7 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
                     {(actions ?? []).map((action: any) => (
                       <div key={action.id} className="p-5">
                         <div className="font-semibold text-foreground">{action.description_ar}</div>
-                        <div className="mt-2 text-xs text-muted-foreground" dir="ltr">
+                        <div className="mt-2 text-xs text-muted-foreground">
                           {actionTypeLabel(action.action_type)} · {timeAgoAr(action.created_at)}
                         </div>
                         {action.expected_impact?.delta_sar_per_month ? (
@@ -183,6 +202,11 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
                             تأثير متوقع: {formatCurrency(action.expected_impact.delta_sar_per_month, selectedAccount?.currency_code)}/شهر
                           </div>
                         ) : null}
+                        <ObservedImpact
+                          impact={action.observed_impact}
+                          actionType={action.action_type}
+                          currencyCode={selectedAccount?.currency_code}
+                        />
                         {canRollback(action) ? (
                           <form action="/api/actions/rollback" method="post" className="mt-3">
                             <input type="hidden" name="action_id" value={action.id} />
@@ -291,10 +315,32 @@ function ChangePreview({
     pause_keyword: 'إيقاف كلمة مفتاحية',
     pause_ad: 'إيقاف إعلان',
     add_negative_keyword: 'إضافة كلمة سلبية',
+    add_keyword: 'إضافة كلمة رابحة من عبارات البحث',
+    build_campaign_opportunity: 'اقتراح حملة جديدة (تُبنى في المساعد)',
     manual_campaign_draft: 'مسودة حملة جديدة (تحتاج مراجعة يدوية)',
   };
 
-  if (operation === 'adjust_budget') {
+  if (operation === 'build_campaign_opportunity') {
+    const terms: any[] = Array.isArray(payload.terms) ? payload.terms : [];
+    for (const term of terms.slice(0, 5)) {
+      rows.push({
+        label: `«${term.term}»`,
+        value: `${formatNumberAr(term.conversions ?? 0)} تحويل · ${formatCurrency(term.cost ?? 0, currencyCode)}`,
+      });
+    }
+    if (payload.totals?.conversions) {
+      rows.push({
+        label: 'الإجمالي (30 يوم)',
+        value: `${formatNumberAr(payload.totals.conversions)} تحويل · ${formatCurrency(payload.totals.cost ?? 0, currencyCode)}`,
+      });
+    }
+  } else if (operation === 'add_keyword') {
+    if (params.keyword_text) rows.push({ label: 'الكلمة الجديدة', value: String(params.keyword_text) });
+    if (params.match_type) rows.push({ label: 'نوع المطابقة', value: String(params.match_type), ltr: true });
+    if (params.ad_group_resource) {
+      rows.push({ label: 'المجموعة الإعلانية', value: String(params.ad_group_resource), ltr: true });
+    }
+  } else if (operation === 'adjust_budget') {
     const next = Number(params.new_amount_micros ?? 0) / 1_000_000;
     if (next > 0) rows.push({ label: 'الميزانية اليومية الجديدة', value: formatCurrency(next, currencyCode) });
     if (params.budget_resource) {
@@ -346,6 +392,57 @@ function ChangePreview({
   );
 }
 
+function isCampaignOpportunity(item: any) {
+  return String(item?.action_payload?.operation ?? '') === 'build_campaign_opportunity';
+}
+
+/**
+ * The learning loop's payoff: what ACTUALLY happened in the 7 days after the
+ * change, measured against the 7 days before it. Turns the log from "we
+ * predicted X" into "this decision did X" — the sentence that builds trust.
+ */
+function ObservedImpact({
+  impact,
+  actionType,
+  currencyCode,
+}: {
+  impact: any;
+  actionType: string;
+  currencyCode?: string | null;
+}) {
+  if (!impact || impact.status === 'unmeasurable' || !impact.after) return null;
+  const before = impact.before ?? { cost: 0, conversions: 0 };
+  const after = impact.after;
+  const delta = impact.delta ?? {};
+
+  const parts: string[] = [];
+  if (actionType === 'pause_keyword' || actionType === 'pause_ad') {
+    // Pauses are savings stories: the spend the entity used to burn weekly.
+    if (before.cost > 0) {
+      parts.push(`وفّرنا ~${formatCurrency(before.cost, currencyCode)} أسبوعياً كانت تُصرف بدون نتيجة`);
+    }
+  } else if (actionType === 'add_keyword') {
+    // Promotions are growth stories: what the new keyword brought in.
+    parts.push(`الكلمة الجديدة جابت ${formatNumberAr(after.clicks ?? 0)} نقرة و${formatNumberAr(after.conversions ?? 0)} تحويل في أسبوعها الأول`);
+  } else {
+    if (typeof delta.conversions === 'number' && delta.conversions !== 0) {
+      parts.push(`${delta.conversions > 0 ? '+' : ''}${formatNumberAr(delta.conversions)} تحويل/أسبوع`);
+    }
+    if (typeof delta.cost === 'number' && delta.cost !== 0) {
+      parts.push(`${delta.cost > 0 ? '+' : '−'}${formatCurrency(Math.abs(delta.cost), currencyCode)} إنفاق/أسبوع`);
+    }
+    if (parts.length === 0) parts.push('الأداء مستقر بعد التعديل');
+  }
+  if (parts.length === 0) return null;
+
+  return (
+    <div className="mt-2 inline-flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md bg-primary/[0.08] px-2.5 py-1.5 text-xs font-medium text-primary ring-1 ring-inset ring-primary/20">
+      <span className="font-semibold">النتيجة المقاسة بعد التنفيذ:</span>
+      <span className="text-foreground-subtle">{parts.join(' · ')}</span>
+    </div>
+  );
+}
+
 /** Raw enum values like PAUSE_KEYWORD were rendered verbatim in the Arabic log. */
 function actionTypeLabel(value?: string | null) {
   if (!value) return 'إجراء';
@@ -355,6 +452,8 @@ function actionTypeLabel(value?: string | null) {
     pause_keyword: 'إيقاف كلمة مفتاحية',
     pause_ad: 'إيقاف إعلان',
     add_negative_keyword: 'إضافة كلمة سلبية',
+    add_keyword: 'إضافة كلمة رابحة',
+    approval_queued: 'اعتماد توصية',
     execution_blocked: 'محجوب — يحتاج مراجعة',
     blocked_by_guardrails: 'محجوب بحواجز الأمان',
     preflight_failed: 'فشل التحقق قبل التنفيذ',

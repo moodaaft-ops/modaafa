@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 import { safeLocalPath } from '../lib/security/redirect';
 import { getGoogleLoginVerificationType, getSafeNextPath } from '../lib/auth/google-login';
@@ -13,6 +15,7 @@ import { mapLimit, createTimeBudget } from '../lib/platform/concurrency';
 import { sanitizePromptText } from '../lib/ai/optimizer-agent';
 import { trialLedgerKey } from '../lib/billing/checkout-policy';
 import { syncErrorMessage } from '../lib/ui/sync-errors';
+import { evaluateJobCapacity } from '../lib/platform/job-capacity';
 
 // ---------------------------------------------------------------------------
 // Open redirect
@@ -194,4 +197,50 @@ test('unknown sync codes still return a safe Arabic fallback', () => {
   const message = syncErrorMessage('something_unexpected');
   assert.ok(message.length > 0);
   assert.ok(message.includes('لم ننفذ أي تعديل'));
+});
+
+// ---------------------------------------------------------------------------
+// Executable recommendation integrity
+// ---------------------------------------------------------------------------
+
+test('browser roles cannot forge executable recommendation or evidence rows', () => {
+  const migration = readFileSync(
+    resolve('db/migrations/20260730_security_hardening.sql'),
+    'utf8'
+  );
+  for (const table of ['recommendations', 'ai_actions', 'audits', 'reports']) {
+    assert.match(
+      migration,
+      new RegExp(`REVOKE INSERT, UPDATE, DELETE ON public\\.${table} FROM anon, authenticated`, 'i'),
+      `${table} must be server-write-only`
+    );
+  }
+  assert.match(migration, /CREATE OR REPLACE FUNCTION public\.modaafa_security_posture\(\)/i);
+});
+
+test('recommendation state transitions use the service role after an RLS ownership read', () => {
+  const route = readFileSync(resolve('app/api/recommendations/action/route.ts'), 'utf8');
+  assert.match(route, /const \{ data: recommendation[\s\S]+?await supabase[\s\S]+?\.from\('recommendations'\)[\s\S]+?\.select\(/);
+  assert.doesNotMatch(route, /await supabase\s*\n\s*\.from\('recommendations'\)\s*\n\s*\.update\(/);
+  assert.match(route, /await admin\s*\n\s*\.from\('recommendations'\)\s*\n\s*\.update\(/);
+});
+
+test('launch health proves the security migration and benchmark schema exist', () => {
+  const health = readFileSync(resolve('app/api/health/route.ts'), 'utf8');
+  assert.match(health, /table: 'sector_benchmarks'/);
+  assert.match(health, /rpc\('modaafa_security_posture'\)/);
+  assert.match(health, /securityPosture\?\.ok === true/);
+});
+
+test('hourly background-job capacity reports when daily coverage is exceeded', () => {
+  const capacity = evaluateJobCapacity(23);
+  assert.equal(capacity.ok, true);
+  assert.ok(capacity.sync_daily_capacity >= 23);
+  assert.ok(capacity.optimize_daily_capacity >= 23);
+
+  const overloaded = evaluateJobCapacity(
+    Math.min(capacity.sync_daily_capacity, capacity.optimize_daily_capacity) + 1
+  );
+  assert.equal(overloaded.ok, false);
+  assert.ok(overloaded.estimated_full_cycle_hours > 24);
 });

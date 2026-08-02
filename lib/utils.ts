@@ -48,20 +48,26 @@ export function formatPercent(n: number): string {
   return `${(n * 100).toFixed(1)}%`;
 }
 
+// Latin digits (to match the rest of the UI) but correct Arabic dual/plural
+// grammar from CLDR: "قبل دقيقتين", "قبل ٣ دقائق" — not the ungrammatical
+// "قبل ٢ دقيقة" the hand-rolled version produced, which native speakers notice
+// immediately.
+const relativeTimeAr = new Intl.RelativeTimeFormat('ar-u-nu-latn', { numeric: 'always' });
+
 export function timeAgoAr(date: Date | string): string {
   const d = typeof date === 'string' ? new Date(date) : date;
   const seconds = Math.floor((Date.now() - d.getTime()) / 1000);
 
   if (seconds < 60) return 'الآن';
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `قبل ${minutes} دقيقة`;
+  if (minutes < 60) return relativeTimeAr.format(-minutes, 'minute');
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `قبل ${hours} ساعة`;
+  if (hours < 24) return relativeTimeAr.format(-hours, 'hour');
   const days = Math.floor(hours / 24);
-  if (days < 30) return `قبل ${days} يوم`;
+  if (days < 30) return relativeTimeAr.format(-days, 'day');
   const months = Math.floor(days / 30);
-  if (months < 12) return `قبل ${months} شهر`;
-  return `قبل ${Math.floor(months / 12)} سنة`;
+  if (months < 12) return relativeTimeAr.format(-months, 'month');
+  return relativeTimeAr.format(-Math.floor(months / 12), 'year');
 }
 
 /**

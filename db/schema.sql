@@ -76,13 +76,22 @@ CREATE TABLE IF NOT EXISTS google_ads_accounts (
   time_zone TEXT,
   linked_at TIMESTAMPTZ DEFAULT NOW(),
   last_synced_at TIMESTAMPTZ,
+  last_sync_attempt_at TIMESTAMPTZ,
+  last_optimized_at TIMESTAMPTZ,
   UNIQUE(business_id, customer_id)
 );
 
 CREATE INDEX idx_gads_business ON google_ads_accounts(business_id);
 CREATE INDEX idx_gads_status ON google_ads_accounts(status);
 CREATE INDEX idx_gads_business_selectable ON google_ads_accounts(business_id, is_manager, status);
+CREATE INDEX idx_gads_sync_queue ON google_ads_accounts(last_sync_attempt_at ASC NULLS FIRST)
+  WHERE status = 'active' AND is_manager IS NOT TRUE;
+CREATE INDEX idx_gads_optimize_queue ON google_ads_accounts(last_optimized_at ASC NULLS FIRST)
+  WHERE status = 'active' AND is_manager IS NOT TRUE;
 
+-- Legacy OAuth sessions are no longer created by the current one-consent
+-- linking flow. Keep the table until an owner-approved, backed-up destructive
+-- migration removes it; browser roles are denied all table privileges below.
 CREATE TABLE IF NOT EXISTS pending_oauth_sessions (
   id UUID PRIMARY KEY,
   user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -350,6 +359,26 @@ CREATE TABLE IF NOT EXISTS processed_webhook_events (
 
 CREATE INDEX idx_job_runs_name ON job_runs(job_name, started_at DESC);
 
+-- Anonymous per-(sector, currency) medians, recomputed nightly. Rows only
+-- exist while at least three distinct businesses back the aggregate.
+CREATE TABLE IF NOT EXISTS sector_benchmarks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  sector TEXT NOT NULL,
+  currency_code TEXT NOT NULL DEFAULT 'SAR',
+  window_days INT NOT NULL DEFAULT 30,
+  businesses_count INT NOT NULL,
+  accounts_count INT NOT NULL,
+  median_cpa NUMERIC(12, 2),
+  median_ctr NUMERIC(8, 6),
+  median_roas NUMERIC(10, 2),
+  median_cpc NUMERIC(12, 2),
+  computed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT sector_benchmarks_businesses_k_check CHECK (businesses_count >= 3),
+  CONSTRAINT sector_benchmarks_accounts_check CHECK (accounts_count >= businesses_count),
+  CONSTRAINT sector_benchmarks_window_check CHECK (window_days > 0),
+  UNIQUE (sector, currency_code, window_days)
+);
+
 -- =====================================================
 -- ROW LEVEL SECURITY (RLS)
 -- =====================================================
@@ -371,6 +400,11 @@ ALTER TABLE usage_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE billing_trial_grants ENABLE ROW LEVEL SECURITY;
 ALTER TABLE job_runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE processed_webhook_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sector_benchmarks ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY sector_benchmarks_read ON sector_benchmarks
+  FOR SELECT TO authenticated USING (true);
+REVOKE INSERT, UPDATE, DELETE ON sector_benchmarks FROM anon, authenticated;
 
 -- Users can only see their own row
 CREATE POLICY users_self_only ON users
@@ -459,12 +493,95 @@ REVOKE ALL ON TABLE billing_trial_ledger FROM anon, authenticated;
 -- Metering rows are created through consume_feature_usage() only.
 REVOKE UPDATE, DELETE ON usage_events FROM anon, authenticated;
 
--- Append-only execution history: the 24h cumulative budget guardrail is
--- computed by summing ai_actions, so it must not be erasable.
-REVOKE DELETE ON ai_actions FROM anon, authenticated;
-REVOKE DELETE ON recommendations FROM anon, authenticated;
-REVOKE UPDATE, DELETE ON audits FROM anon, authenticated;
-REVOKE UPDATE, DELETE ON reports FROM anon, authenticated;
+-- Append-only execution history AND executable rollback payloads. ai_actions
+-- is written exclusively by the service role (recommendation execution, the
+-- rollback state machine, the nightly cron), so the browser gets no write verb
+-- at all — its rollback_payload is executed verbatim as a live Google Ads
+-- mutation and must never be client-forgeable. SELECT stays for RLS reads.
+REVOKE INSERT, UPDATE, DELETE ON ai_actions FROM anon, authenticated;
+REVOKE INSERT, UPDATE, DELETE ON recommendations FROM anon, authenticated;
+REVOKE INSERT, UPDATE, DELETE ON audits FROM anon, authenticated;
+REVOKE INSERT, UPDATE, DELETE ON reports FROM anon, authenticated;
+
+-- Identity/profile writes are service-owned. A column-level REVOKE does not
+-- override Supabase's default table-level UPDATE grant.
+REVOKE INSERT, UPDATE, DELETE ON users FROM anon, authenticated;
+
+-- Remove all default write verbs, then grant authenticated RLS-scoped routes
+-- only harmless display/sync metadata. OAuth credentials, tenancy, link status,
+-- insertion and deletion remain service-role-only.
+REVOKE INSERT, UPDATE, DELETE ON google_ads_accounts FROM anon, authenticated;
+GRANT UPDATE (
+  customer_name,
+  manager_id,
+  is_manager,
+  google_status,
+  currency_code,
+  time_zone,
+  last_synced_at,
+  name_repair_attempted_at
+) ON google_ads_accounts TO authenticated;
+
+-- Retained only for backward compatibility and encryption-key rotation.
+REVOKE ALL PRIVILEGES ON pending_oauth_sessions FROM anon, authenticated;
+
+CREATE OR REPLACE FUNCTION modaafa_security_posture()
+RETURNS JSONB
+LANGUAGE SQL
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+  SELECT jsonb_build_object(
+    'ok', NOT (
+      has_table_privilege('anon', 'public.recommendations', 'INSERT') OR
+      has_table_privilege('anon', 'public.recommendations', 'UPDATE') OR
+      has_table_privilege('anon', 'public.recommendations', 'DELETE') OR
+      has_table_privilege('authenticated', 'public.recommendations', 'INSERT') OR
+      has_table_privilege('authenticated', 'public.recommendations', 'UPDATE') OR
+      has_table_privilege('authenticated', 'public.recommendations', 'DELETE') OR
+      has_table_privilege('authenticated', 'public.ai_actions', 'INSERT') OR
+      has_table_privilege('authenticated', 'public.ai_actions', 'UPDATE') OR
+      has_table_privilege('authenticated', 'public.ai_actions', 'DELETE') OR
+      has_table_privilege('authenticated', 'public.audits', 'INSERT') OR
+      has_table_privilege('authenticated', 'public.audits', 'UPDATE') OR
+      has_table_privilege('authenticated', 'public.audits', 'DELETE') OR
+      has_table_privilege('authenticated', 'public.reports', 'INSERT') OR
+      has_table_privilege('authenticated', 'public.reports', 'UPDATE') OR
+      has_table_privilege('authenticated', 'public.reports', 'DELETE') OR
+      has_table_privilege('authenticated', 'public.users', 'INSERT') OR
+      has_table_privilege('authenticated', 'public.users', 'UPDATE') OR
+      has_table_privilege('authenticated', 'public.users', 'DELETE') OR
+      has_column_privilege('authenticated', 'public.google_ads_accounts', 'refresh_token_encrypted', 'UPDATE') OR
+      has_column_privilege('authenticated', 'public.google_ads_accounts', 'business_id', 'UPDATE') OR
+      has_column_privilege('authenticated', 'public.google_ads_accounts', 'status', 'UPDATE')
+    ),
+    'recommendations_browser_write',
+      has_table_privilege('authenticated', 'public.recommendations', 'INSERT') OR
+      has_table_privilege('authenticated', 'public.recommendations', 'UPDATE') OR
+      has_table_privilege('authenticated', 'public.recommendations', 'DELETE'),
+    'ai_actions_browser_write',
+      has_table_privilege('authenticated', 'public.ai_actions', 'INSERT') OR
+      has_table_privilege('authenticated', 'public.ai_actions', 'UPDATE') OR
+      has_table_privilege('authenticated', 'public.ai_actions', 'DELETE'),
+    'evidence_browser_write',
+      has_table_privilege('authenticated', 'public.audits', 'INSERT') OR
+      has_table_privilege('authenticated', 'public.audits', 'UPDATE') OR
+      has_table_privilege('authenticated', 'public.audits', 'DELETE') OR
+      has_table_privilege('authenticated', 'public.reports', 'INSERT') OR
+      has_table_privilege('authenticated', 'public.reports', 'UPDATE') OR
+      has_table_privilege('authenticated', 'public.reports', 'DELETE'),
+    'identity_browser_write',
+      has_table_privilege('authenticated', 'public.users', 'INSERT') OR
+      has_table_privilege('authenticated', 'public.users', 'UPDATE') OR
+      has_table_privilege('authenticated', 'public.users', 'DELETE'),
+    'google_credentials_browser_write',
+      has_column_privilege('authenticated', 'public.google_ads_accounts', 'refresh_token_encrypted', 'UPDATE') OR
+      has_column_privilege('authenticated', 'public.google_ads_accounts', 'business_id', 'UPDATE') OR
+      has_column_privilege('authenticated', 'public.google_ads_accounts', 'status', 'UPDATE')
+  );
+$$;
+REVOKE ALL ON FUNCTION modaafa_security_posture() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION modaafa_security_posture() TO service_role;
 
 -- =====================================================
 -- TRIGGERS

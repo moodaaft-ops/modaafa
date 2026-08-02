@@ -158,7 +158,20 @@ export async function GET(req: NextRequest) {
       // the nightly cron de-prioritise accounts that had never synced at all.
     }));
 
-    const { data: savedAccounts, error: linkError } = await supabase
+    let admin;
+    try {
+      admin = createAdminClient();
+    } catch (adminError) {
+      console.error('Google Ads linking service is unavailable', adminError);
+      return NextResponse.redirect(
+        new URL('/onboarding/connect?error=security_service_unavailable', req.url)
+      );
+    }
+
+    // Account creation and credential/link-state updates are service-owned.
+    // Browser roles only retain RLS-scoped access to harmless display/sync
+    // metadata after the security-hardening migration.
+    const { data: savedAccounts, error: linkError } = await admin
       .from('google_ads_accounts')
       .upsert(rows, { onConflict: 'business_id,customer_id' })
       .select('id, customer_id, customer_name, manager_id, currency_code, refresh_token_encrypted');

@@ -131,7 +131,7 @@ export default async function AuditPage({
         <div className="grid gap-5 lg:grid-cols-3">
           <section className="surface-card p-6 lg:col-span-2">
             <div className="mb-6">
-              <h3 className="text-[15px] font-semibold tracking-tight">تقرير صحة الحساب</h3>
+              <h3 className="text-[15px] font-semibold">تقرير صحة الحساب</h3>
               <p className="mt-1 text-sm leading-7 text-muted-foreground">
                 {latestReport?.summary_ar ?? 'ملخص الفحص الأخير وتوزيع المخاطر حسب بيانات الحساب.'}
               </p>
@@ -168,7 +168,7 @@ export default async function AuditPage({
         <section id="recommendations" className="surface-card overflow-hidden">
           <div className="flex items-center justify-between gap-3 border-b border-border p-5">
             <div>
-              <h3 className="text-[14px] font-semibold tracking-tight">التوصيات</h3>
+              <h3 className="text-[14px] font-semibold">التوصيات</h3>
               <p className="mt-1 text-xs text-muted-foreground">مرتبة من الأحدث، وكل قرار يبقى تحت موافقتك.</p>
             </div>
             <span className="rounded-lg bg-muted px-3 py-1.5 text-sm font-semibold text-muted-foreground">{recs.length}</span>
@@ -241,9 +241,12 @@ function auditErrorMessage(code: string) {
 }
 
 function scoreTone(value: number) {
-  if (value >= 80) return { text: 'text-emerald-600 dark:text-emerald-400', stroke: '#059669', badge: 'success' as const };
-  if (value >= 60) return { text: 'text-amber-600 dark:text-amber-400', stroke: '#D97706', badge: 'warning' as const };
-  return { text: 'text-red-600 dark:text-red-400', stroke: '#DC2626', badge: 'danger' as const };
+  // Colour comes from `currentColor` (the text class, which HAS dark variants)
+  // rather than a hardcoded hex, so the gauge tracks light/dark like the rest
+  // of the product instead of staying a fixed emerald/amber/red.
+  if (value >= 80) return { text: 'text-emerald-600 dark:text-emerald-400', badge: 'success' as const };
+  if (value >= 60) return { text: 'text-amber-600 dark:text-amber-400', badge: 'warning' as const };
+  return { text: 'text-red-600 dark:text-red-400', badge: 'danger' as const };
 }
 
 function HealthGauge({ score }: { score: number }) {
@@ -251,18 +254,19 @@ function HealthGauge({ score }: { score: number }) {
   const circumference = 264;
   return (
     <div className="relative h-44 w-44 flex-shrink-0">
-      <svg className="h-full w-full -rotate-90" viewBox="0 0 100 100">
+      <svg className={cn('h-full w-full -rotate-90', tone.text)} viewBox="0 0 100 100">
         <circle cx="50" cy="50" r="42" fill="none" strokeWidth="10" className="stroke-muted" />
         <circle
           cx="50"
           cy="50"
           r="42"
           fill="none"
-          stroke={tone.stroke}
+          stroke="currentColor"
           strokeWidth="10"
           strokeDasharray={circumference}
           strokeDashoffset={circumference - (circumference * Math.max(0, Math.min(100, score))) / 100}
           strokeLinecap="round"
+          style={{ transition: 'stroke-dashoffset 700ms cubic-bezier(0.16,1,0.3,1)' }}
         />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
@@ -273,17 +277,23 @@ function HealthGauge({ score }: { score: number }) {
   );
 }
 
+// A neutral instrument tile: hairline surface, a thin top accent + progress
+// track coloured by score — instead of six pastel-filled "bag of sweets" tiles.
 function CategoryScore({ label, value }: { label: string; value: number }) {
-  const tone =
-    value >= 80
-      ? 'bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
-      : value >= 60
-        ? 'bg-amber-50 dark:bg-amber-500/15 text-amber-700 dark:text-amber-300'
-        : 'bg-red-50 dark:bg-red-500/15 text-red-700 dark:text-red-300';
+  const tone = scoreTone(value);
+  const clamped = Math.max(0, Math.min(100, value));
   return (
-    <div className={cn('rounded-lg p-3', tone)}>
-      <div className="text-xs">{label}</div>
-      <div className="mt-0.5 text-xl font-bold numeric">{value}</div>
+    <div className="surface-card overflow-hidden p-3">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-xs text-muted-foreground">{label}</span>
+        <span className={cn('text-lg font-bold numeric', tone.text)}>{value}</span>
+      </div>
+      <div className="mt-2 h-1 overflow-hidden rounded-full bg-muted" aria-hidden>
+        <div
+          className={cn('h-full rounded-full bg-current transition-[width] duration-700', tone.text)}
+          style={{ width: `${clamped}%` }}
+        />
+      </div>
     </div>
   );
 }

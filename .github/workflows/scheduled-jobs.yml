@@ -1,0 +1,45 @@
+name: Scheduled production jobs
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+    - cron: '47 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scheduled-production-${{ github.event.schedule || 'manual' }}
+  cancel-in-progress: false
+
+jobs:
+  sync-google-ads:
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '17 * * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Run hourly Google Ads sync
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          test -n "$CRON_SECRET"
+          curl --fail-with-body --silent --show-error \
+            --retry 2 --retry-all-errors --max-time 290 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            https://ai.modaafa.com/api/cron/sync-google-ads
+
+  optimize:
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '47 * * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Run hourly optimization analysis
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          test -n "$CRON_SECRET"
+          curl --fail-with-body --silent --show-error \
+            --retry 2 --retry-all-errors --max-time 290 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            https://ai.modaafa.com/api/cron/optimize

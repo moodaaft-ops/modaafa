@@ -5,6 +5,8 @@ import { hasValidCronAuthorization } from '@/lib/security/cron-auth';
 import { isConfiguredEnv } from '@/lib/platform/env';
 import { checkStripeConfiguration } from '@/lib/billing/stripe';
 import { checkAIConfiguration } from '@/lib/ai/client';
+import { getBillableBusinessIds } from '@/lib/platform/jobs';
+import { evaluateJobCapacity } from '@/lib/platform/job-capacity';
 
 const REQUIRED_ENV = [
   'NEXT_PUBLIC_SUPABASE_URL',
@@ -58,7 +60,8 @@ export async function GET(req: NextRequest) {
     billing.ok &&
     ai.ok &&
     operationalEmail.ok &&
-    database.operational_jobs.ok;
+    database.operational_jobs.ok &&
+    database.job_capacity.ok;
 
   return NextResponse.json({
     ok,
@@ -135,6 +138,7 @@ async function checkDatabase() {
       { table: 'processed_webhook_events', column: 'event_id' },
       { table: 'billing_trial_grants', column: 'user_id' },
       { table: 'rate_limit_windows', column: 'key' },
+      { table: 'sector_benchmarks', column: 'id' },
     ];
     const checks = await Promise.all(
       tables.map(async ({ table, column }) => {
@@ -147,9 +151,24 @@ async function checkDatabase() {
       .select('job_name, status, started_at, finished_at, processed, error_count')
       .order('started_at', { ascending: false })
       .limit(10);
+    const { data: securityPosture, error: securityError } = await supabase
+      .rpc('modaafa_security_posture');
+    let capacityError: string | null = null;
+    let activeBillableAccounts = 0;
+    try {
+      const billableBusinessIds = await getBillableBusinessIds(supabase);
+      activeBillableAccounts = await countActiveAccounts(supabase, billableBusinessIds);
+    } catch (error) {
+      capacityError = error instanceof Error ? error.message : String(error);
+    }
+    const jobCapacity = {
+      ...evaluateJobCapacity(activeBillableAccounts),
+      ok: !capacityError && evaluateJobCapacity(activeBillableAccounts).ok,
+      error: capacityError,
+    };
     const jobExpectations = [
-      { jobName: 'sync-google-ads', maxAgeHours: 30 },
-      { jobName: 'optimize', maxAgeHours: 30 },
+      { jobName: 'sync-google-ads', maxAgeHours: 4 },
+      { jobName: 'optimize', maxAgeHours: 4 },
     ];
     const operationalJobs = jobExpectations.map(({ jobName, maxAgeHours }) => {
       const latest = (latestJobs ?? []).find((job) => job.job_name === jobName) ?? null;
@@ -169,20 +188,45 @@ async function checkDatabase() {
       };
     });
     return {
-      ok: checks.every((check) => check.ok) && !jobsError,
+      ok:
+        checks.every((check) => check.ok) &&
+        !jobsError &&
+        !securityError &&
+        securityPosture?.ok === true &&
+        jobCapacity.ok,
       checks,
+      security_posture: securityPosture ?? null,
+      security_error: securityError?.message ?? null,
       latest_jobs: latestJobs ?? [],
       operational_jobs: {
         ok: !jobsError && operationalJobs.every((job) => job.ok),
         checks: operationalJobs,
       },
+      job_capacity: jobCapacity,
       jobs_error: jobsError?.message ?? null,
     };
   } catch (error) {
     return {
       ok: false,
       operational_jobs: { ok: false, checks: [] },
+      job_capacity: { ok: false, error: 'database_check_failed' },
       error: error instanceof Error ? error.message : String(error),
     };
   }
+}
+
+async function countActiveAccounts(supabase: any, businessIds: string[]) {
+  let total = 0;
+  for (let index = 0; index < businessIds.length; index += 100) {
+    const chunk = businessIds.slice(index, index + 100);
+    const { count, error } = await supabase
+      .from('google_ads_accounts')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'active')
+      .not('is_manager', 'is', true)
+      .in('business_id', chunk);
+    if (error) throw error;
+    total += count ?? 0;
+  }
+  return total;
 }

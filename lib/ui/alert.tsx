@@ -49,7 +49,8 @@ export function Alert({
         styles.box,
         className
       )}
-      role="status"
+      // Errors and warnings are announced assertively; success/info politely.
+      role={tone === 'danger' || tone === 'warning' ? 'alert' : 'status'}
     >
       {icon && <Icon className={cn('mt-0.5 h-5 w-5 flex-shrink-0', styles.icon)} aria-hidden />}
       <div className="min-w-0 leading-6">

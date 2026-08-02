@@ -58,7 +58,7 @@ export default async function BusinessOnboardingPage({
 
         <div className="mb-6 mt-8 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h2 className="text-[26px] font-bold leading-tight tracking-tight sm:text-3xl">عرّفنا على نشاطك</h2>
+            <h2 className="text-[26px] font-bold leading-tight sm:text-3xl">عرّفنا على نشاطك</h2>
             <p className="mt-2 max-w-2xl text-sm leading-7 text-muted-foreground">
               هذي البيانات لا تغيّر أي شيء في حسابك الإعلاني، لكنها تجعل التوصيات مناسبة لسوقك وميزانيتك.
             </p>
