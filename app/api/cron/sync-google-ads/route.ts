@@ -9,7 +9,11 @@ import { ManagerAccountError, syncCampaignCacheWithLoginFallback } from '@/lib/g
 import { finishJobRun, getBillableBusinessIds, startJobRun } from '@/lib/platform/jobs';
 import { sendOpsAlert } from '@/lib/notifications/email';
 import { hasValidCronAuthorization } from '@/lib/security/cron-auth';
-import { createTimeBudget } from '@/lib/platform/concurrency';
+import { createTimeBudget, mapLimit } from '@/lib/platform/concurrency';
+import {
+  SYNC_ACCOUNT_CONCURRENCY,
+  SYNC_ACCOUNT_LIMIT,
+} from '@/lib/platform/job-capacity';
 
 export const maxDuration = 300;
 
@@ -32,7 +36,10 @@ async function runSync(req: NextRequest) {
   }
   const url = new URL(req.url);
   const requestedAccountId = url.searchParams.get('account_id');
-  const limit = Math.min(Number(url.searchParams.get('limit') ?? 50) || 50, 100);
+  const limit = Math.min(
+    Math.max(Number(url.searchParams.get('limit') ?? SYNC_ACCOUNT_LIMIT) || SYNC_ACCOUNT_LIMIT, 1),
+    SYNC_ACCOUNT_LIMIT
+  );
   const job = await startJobRun(supabase, 'sync-google-ads');
 
   let businessIds: string[];
@@ -54,12 +61,18 @@ async function runSync(req: NextRequest) {
     return NextResponse.json({ processed: 0, skipped: 'no_billable_businesses' });
   }
 
+  // Exclude manager (MCC) accounts. A metrics query to one throws
+  // REQUESTED_METRICS_FOR_MANAGER, the row is re-flagged is_manager, and since
+  // it must never enter a metrics queue. last_sync_attempt_at advances even
+  // after a failed attempt, so one revoked/misconfigured account cannot starve
+  // every healthy account behind it.
   let query = supabase
     .from('google_ads_accounts')
     .select('id, customer_id, customer_name, manager_id, currency_code, time_zone, refresh_token_encrypted')
     .eq('status', 'active')
+    .not('is_manager', 'is', true)
     .in('business_id', businessIds)
-    .order('last_synced_at', { ascending: true, nullsFirst: true })
+    .order('last_sync_attempt_at', { ascending: true, nullsFirst: true })
     .limit(limit);
 
   if (requestedAccountId) {
@@ -82,15 +95,14 @@ async function runSync(req: NextRequest) {
 
   // Hard wall-clock budget. Vercel kills the function at maxDuration with no
   // chance to record progress, so the job stops itself early, reports what it
-  // did, and leaves the rest for the next run (the query is ordered by
-  // last_synced_at, so the remainder is picked up first next time).
+  // did, and leaves the rest for the next hourly run.
   const budget = createTimeBudget(SYNC_BUDGET_MS);
   let skippedForTime = 0;
 
-  for (const account of accounts ?? []) {
+  await mapLimit(accounts ?? [], SYNC_ACCOUNT_CONCURRENCY, async (account) => {
     if (budget.expired()) {
       skippedForTime += 1;
-      continue;
+      return;
     }
 
     try {
@@ -132,14 +144,30 @@ async function runSync(req: NextRequest) {
         await supabase.from('google_ads_accounts').update({ status: 'revoked' }).eq('id', account.id);
       }
       if (err instanceof ManagerAccountError) {
-        await supabase.from('google_ads_accounts').update({ is_manager: true }).eq('id', account.id);
+        // Flag it AND stamp last_synced_at so it drops to the back of the
+        // ascending queue instead of resurfacing first on every run.
+        await supabase
+          .from('google_ads_accounts')
+          .update({ is_manager: true, last_synced_at: new Date().toISOString() })
+          .eq('id', account.id);
       }
       results.errors.push({
         customer_id: account.customer_id,
         message: err instanceof Error ? err.message : String(err),
       });
+    } finally {
+      const { error: cursorError } = await supabase
+        .from('google_ads_accounts')
+        .update({ last_sync_attempt_at: new Date().toISOString() })
+        .eq('id', account.id);
+      if (cursorError) {
+        results.errors.push({
+          customer_id: account.customer_id,
+          message: `queue_cursor:${cursorError.message}`,
+        });
+      }
     }
-  }
+  });
 
   const status = results.errors.length === 0 ? 'success' : results.processed > 0 ? 'partial' : 'failed';
   await finishJobRun({
@@ -154,6 +182,8 @@ async function runSync(req: NextRequest) {
       // Never truncate silently: an operator reading job_runs must be able to
       // tell "everything synced" from "we ran out of time".
       skipped_for_time: skippedForTime,
+      batch_limit: limit,
+      concurrency: SYNC_ACCOUNT_CONCURRENCY,
     },
   });
   if (results.errors.length > 0) {

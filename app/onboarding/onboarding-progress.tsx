@@ -38,7 +38,7 @@ export function OnboardingProgress({
             م
           </span>
           <div>
-            <div className="text-[13px] font-semibold leading-tight tracking-tight">تجهيز مُضاعِف</div>
+            <div className="text-[13px] font-semibold leading-tight">تجهيز مُضاعِف</div>
             <div className="text-[11px] leading-tight text-muted-foreground">
               الخطوة {activeIndex + 1} من {steps.length}
             </div>

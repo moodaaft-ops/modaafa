@@ -3,7 +3,7 @@ import { Skeleton, SkeletonCard, SkeletonRows } from '@/lib/ui/skeleton';
 export default function DashboardLoading() {
   return (
     <div dir="rtl">
-      <div className="border-b border-border bg-card px-4 py-4 sm:px-6 lg:px-8">
+      <div className="border-b border-border bg-background/70 px-4 py-4 backdrop-blur-xl sm:px-6 lg:px-8">
         <Skeleton className="h-6 w-56" />
         <Skeleton className="mt-2 h-4 w-72" />
       </div>

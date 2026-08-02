@@ -10,6 +10,8 @@
     "lint": "eslint . --max-warnings=0",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/**/*.test.ts",
+    "test:e2e": "playwright test",
+    "test:e2e:install": "playwright install chromium",
     "check": "pnpm run typecheck && pnpm run lint && pnpm test && pnpm run build",
     "db:migrate": "node scripts/migrate.mjs",
     "crypto:rotate": "tsx scripts/reencrypt-refresh-tokens.ts"
@@ -50,6 +52,7 @@
     "zustand": "^5.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "1.55.1",
     "@types/node": "^22.7.5",
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.1",

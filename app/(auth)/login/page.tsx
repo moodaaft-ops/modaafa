@@ -82,7 +82,7 @@ export default function LoginPage() {
 
   return (
     <main className="min-h-screen bg-background p-4 lg:p-6">
-      <div className="mx-auto grid min-h-[calc(100dvh-3rem)] max-w-6xl overflow-hidden surface-card lg:grid-cols-[1.05fr_460px]">
+      <div className="mx-auto grid min-h-[calc(100dvh-2rem)] max-w-6xl overflow-hidden surface-card lg:min-h-[calc(100dvh-3rem)] lg:grid-cols-[1.05fr_460px]">
         {/* Brand panel. On the near-black canvas a flat ink fill was almost
             indistinguishable from the card, so the split read as one dead
             rectangle; the ambient glow and grid give it depth instead. */}
@@ -93,13 +93,13 @@ export default function LoginPage() {
             <Link href="/" className="flex items-center gap-2.5">
               <Image
                 src="/logo-mark.svg"
-                alt="مُضاعِف"
+                alt="شعار مُضاعِف"
                 width={32}
                 height={32}
-                className="h-8 w-8 rounded-lg ring-1 ring-border"
+                className="h-8 w-8 rounded-lg"
               />
               <span>
-                <span className="block text-[13px] font-semibold leading-tight tracking-tight">مُضاعِف</span>
+                <span className="block text-[13px] font-semibold leading-tight">مُضاعِف</span>
                 <span className="block text-[10px] leading-tight text-muted-foreground" dir="ltr">
                   Modaafa Ads AI
                 </span>
@@ -137,7 +137,7 @@ export default function LoginPage() {
           <div className="w-full">
             <Link href="/" className="mb-8 flex items-center gap-3 lg:hidden">
               <Image src="/logo-mark.svg" alt="مُضاعِف" width={40} height={40} className="h-10 w-10 rounded-xl" />
-              <span className="text-[15px] font-semibold tracking-tight">مُضاعِف</span>
+              <span className="text-[15px] font-semibold">مُضاعِف</span>
             </Link>
 
             <div className="mb-7">

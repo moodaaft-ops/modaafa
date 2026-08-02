@@ -7,27 +7,45 @@ import {
   decideOptimizations,
   checkGuardrails,
   executeAction,
+  type ConversionTrackingStatus,
   type OptimizerSnapshot,
 } from '@/lib/ai/optimizer-agent';
+import { measureObservedImpacts } from '@/lib/ai/impact';
+import {
+  detectCampaignOpportunity,
+  mapConvertingTermRows,
+} from '@/lib/ai/opportunity';
+import {
+  getSectorBenchmark,
+  refreshSectorBenchmarks,
+  type SectorBenchmarkRow,
+} from '@/lib/benchmarks/compute';
+import {
+  computeWeeklyComparison,
+  generateWeeklyNarrative,
+  type CampaignWeekRow,
+} from '@/lib/ai/report-agent';
 import { finishJobRun, getBillableBusinessIds, startJobRun } from '@/lib/platform/jobs';
 import { sendOpsAlert } from '@/lib/notifications/email';
 import { hasValidCronAuthorization } from '@/lib/security/cron-auth';
-import { createTimeBudget } from '@/lib/platform/concurrency';
+import { createTimeBudget, mapLimit } from '@/lib/platform/concurrency';
+import {
+  OPTIMIZE_ACCOUNT_CONCURRENCY,
+  OPTIMIZE_ACCOUNT_LIMIT,
+} from '@/lib/platform/job-capacity';
 
 /**
- * Cron endpoint - runs daily via Vercel Cron.
+ * Cron endpoint - runs hourly via Vercel Cron.
  *
  * Auth via CRON_SECRET header to prevent abuse.
  *
  * Process:
  * 1. List all active accounts
  * 2. For each: snapshot → decide → guardrail-check
- * 3. Queue recommendations by default; execute only when ENABLE_AUTOPILOT_EXECUTION=true
+ * 3. Queue recommendations for explicit owner approval and execution
  */
 export const maxDuration = 300; // 5 min
 
-/** Round-robin batch size; the rest are picked up on the next run. */
-const OPTIMIZE_ACCOUNT_LIMIT = 25;
 /** Leave ~40s of the 300s budget for bookkeeping and ops alerts. */
 const OPTIMIZE_BUDGET_MS = 260_000;
 
@@ -77,11 +95,11 @@ async function runOptimizerCron(req: NextRequest) {
   // it was the same accounts that got skipped every night.
   const { data: accounts, error: accountLookupError } = await supabase
     .from('google_ads_accounts')
-    .select('id, customer_id, manager_id, currency_code, refresh_token_encrypted, business_id')
+    .select('id, customer_id, customer_name, manager_id, currency_code, refresh_token_encrypted, business_id')
     .eq('status', 'active')
     .not('is_manager', 'is', true)
     .in('business_id', businessIds)
-    .order('last_synced_at', { ascending: true, nullsFirst: true })
+    .order('last_optimized_at', { ascending: true, nullsFirst: true })
     .limit(OPTIMIZE_ACCOUNT_LIMIT);
 
   if (accountLookupError) {
@@ -95,35 +113,80 @@ async function runOptimizerCron(req: NextRequest) {
     return NextResponse.json({ processed: 0 });
   }
 
+  // Business context feeds the optimizer the way a real buyer is briefed:
+  // sector, goal, and the owner's budget ceiling. Batched in one query.
+  const businessContextById = new Map<string, { sector: string | null; primary_goal: string | null; monthly_budget: number | null }>();
+  const businessIdsInBatch = Array.from(new Set(accounts.map((account) => account.business_id).filter(Boolean)));
+  if (businessIdsInBatch.length > 0) {
+    const { data: businessRows } = await supabase
+      .from('businesses')
+      .select('id, sector, primary_goal, monthly_budget')
+      .in('id', businessIdsInBatch);
+    for (const row of businessRows ?? []) {
+      businessContextById.set(row.id, {
+        sector: row.sector ?? null,
+        primary_goal: row.primary_goal ?? null,
+        monthly_budget: row.monthly_budget ?? null,
+      });
+    }
+  }
+
   const results = {
     processed: 0,
     actions_executed: 0,
     recommendations_queued: 0,
     actions_blocked: 0,
+    reports_generated: 0,
+    impacts_measured: 0,
+    opportunities_queued: 0,
+    benchmarks_refreshed: 0,
     errors: [] as string[],
   };
+  // One benchmark read per distinct (sector, currency) per run, not per account.
+  const benchmarkCache = new Map<string, SectorBenchmarkRow | null>();
   // Launch policy: scheduled jobs only prepare recommendations. A signed-in
   // account owner must approve and explicitly execute every live mutation.
   const allowLiveExecution = false;
   const budget = createTimeBudget(OPTIMIZE_BUDGET_MS);
   let skippedForTime = 0;
 
-  for (const account of accounts) {
+  await mapLimit(accounts, OPTIMIZE_ACCOUNT_CONCURRENCY, async (account) => {
     if (budget.expired()) {
       skippedForTime += 1;
-      continue;
+      return;
     }
 
     try {
       const refreshToken = decrypt(account.refresh_token_encrypted);
       const customer = getCustomer(account.customer_id, refreshToken, account.manager_id ?? undefined);
 
+      const businessContext = businessContextById.get(account.business_id) ?? null;
+
+      // Sector benchmark for the "compare to your market" context.
+      const benchmarkKey = `${businessContext?.sector ?? ''}|${account.currency_code ?? 'SAR'}`;
+      if (!benchmarkCache.has(benchmarkKey)) {
+        try {
+          benchmarkCache.set(
+            benchmarkKey,
+            await getSectorBenchmark(supabase, businessContext?.sector, account.currency_code)
+          );
+        } catch (benchmarkError) {
+          results.errors.push(
+            `benchmark_lookup:${benchmarkKey}:${benchmarkError instanceof Error ? benchmarkError.message : benchmarkError}`
+          );
+          benchmarkCache.set(benchmarkKey, null);
+        }
+      }
+      const sectorBenchmark = benchmarkCache.get(benchmarkKey) ?? null;
+
       // Build a focused snapshot for the optimizer
       const snapshot = await buildOptimizerSnapshot(
         customer,
         account.id,
         account.customer_id,
-        account.currency_code ?? 'SAR'
+        account.currency_code ?? 'SAR',
+        businessContext,
+        sectorBenchmark
       );
 
       // Get AI decisions
@@ -153,7 +216,11 @@ async function runOptimizerCron(req: NextRequest) {
             .select('id')
             .eq('account_id', account.id)
             .eq('fingerprint', fingerprint)
-            .in('status', ['pending', 'approved', 'executing'])
+            // Include the terminal states, not just the active ones. A user who
+            // DISMISSED a recommendation used to get the identical one re-queued
+            // on the very next nightly run; an APPLIED non-idempotent action
+            // (e.g. add_negative_keyword) could be re-approved into a duplicate.
+            .in('status', ['pending', 'approved', 'executing', 'applied', 'dismissed'])
             .maybeSingle();
           if (existing) continue;
 
@@ -202,9 +269,74 @@ async function runOptimizerCron(req: NextRequest) {
         }
       }
 
+      // ---- Growth bridge: winning search terms that deserve a whole NEW
+      // campaign become a recommendation whose CTA is the campaign builder.
+      if (!budget.expired()) {
+        try {
+          const queued = await maybeQueueCampaignOpportunity({
+            supabase,
+            accountId: account.id,
+            convertingTermRows: snapshot.converting_search_terms ?? [],
+            currencyCode: account.currency_code ?? 'SAR',
+          });
+          if (queued) results.opportunities_queued++;
+        } catch (opportunityError) {
+          console.warn(`Campaign opportunity detection failed for ${account.customer_id}`, opportunityError);
+        }
+      }
+
+      // ---- Learning loop: measure the real effect of past executed actions.
+      if (!budget.expired()) {
+        try {
+          const impact = await measureObservedImpacts({ supabase, customer, accountId: account.id, limit: 5 });
+          results.impacts_measured += impact.measured;
+        } catch (impactError) {
+          console.warn(`Observed-impact measurement failed for ${account.customer_id}`, impactError);
+        }
+      }
+
+      // ---- Weekly intelligence report: once per Saudi week per account.
+      if (!budget.expired()) {
+        try {
+          const generated = await maybeGenerateWeeklyReport({
+            supabase,
+            customer,
+            accountId: account.id,
+            customerName: account.customer_name ?? null,
+            currencyCode: account.currency_code ?? 'SAR',
+            businessContext: businessContextById.get(account.business_id) ?? null,
+          });
+          if (generated) results.reports_generated++;
+        } catch (reportError) {
+          console.warn(`Weekly report generation failed for ${account.customer_id}`, reportError);
+        }
+      }
+
       results.processed++;
     } catch (err) {
       results.errors.push(`${account.customer_id}: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      const { error: cursorError } = await supabase
+        .from('google_ads_accounts')
+        .update({ last_optimized_at: new Date().toISOString() })
+        .eq('id', account.id);
+      if (cursorError) {
+        results.errors.push(`${account.customer_id}:queue_cursor:${cursorError.message}`);
+      }
+    }
+  });
+
+  // ---- Sector benchmarks: recompute once per day from the campaign cache
+  // (DB-only, no Google API calls; internally throttled to every 20h).
+  if (!budget.expired()) {
+    try {
+      const refresh = await refreshSectorBenchmarks(supabase);
+      if (refresh.refreshed) results.benchmarks_refreshed = refresh.rows;
+    } catch (benchmarkError) {
+      console.warn('Sector benchmark refresh failed', benchmarkError);
+      results.errors.push(
+        `benchmark_refresh:${benchmarkError instanceof Error ? benchmarkError.message : benchmarkError}`
+      );
     }
   }
 
@@ -219,11 +351,16 @@ async function runOptimizerCron(req: NextRequest) {
       actions_executed: results.actions_executed,
       recommendations_queued: results.recommendations_queued,
       actions_blocked: results.actions_blocked,
+      reports_generated: results.reports_generated,
+      impacts_measured: results.impacts_measured,
+      opportunities_queued: results.opportunities_queued,
+      benchmarks_refreshed: results.benchmarks_refreshed,
       live_execution_enabled: allowLiveExecution,
       // Never truncate silently: an operator reading job_runs must be able to
       // tell "covered everything" from "ran out of time".
       skipped_for_time: skippedForTime,
       batch_limit: OPTIMIZE_ACCOUNT_LIMIT,
+      concurrency: OPTIMIZE_ACCOUNT_CONCURRENCY,
     },
   });
   if (results.errors.length > 0) {
@@ -257,14 +394,17 @@ async function buildOptimizerSnapshot(
   customer: any,
   accountId: string,
   customerId: string,
-  currencyCode: string
+  currencyCode: string,
+  businessContext: { sector: string | null; primary_goal: string | null; monthly_budget: number | null } | null,
+  sectorBenchmark: SectorBenchmarkRow | null = null
 ): Promise<OptimizerSnapshot> {
-  const [campaigns, highPerforming, underperforming, wastedTerms, poorAds, enabledKeywords] = await Promise.all([
+  const [campaigns, highPerforming, underperforming, wastedTerms, convertingTerms, poorAds, enabledKeywords] =
+    await Promise.all([
     customer.query(`
       SELECT
         campaign.id, campaign.name, campaign.resource_name,
         campaign_budget.id, campaign_budget.amount_micros, campaign_budget.resource_name,
-        metrics.cost_micros, metrics.conversions, metrics.conversions_value
+        metrics.cost_micros, metrics.clicks, metrics.conversions, metrics.conversions_value
       FROM campaign
       WHERE segments.date DURING LAST_7_DAYS
         AND campaign.status = 'ENABLED'
@@ -305,6 +445,23 @@ async function buildOptimizerSnapshot(
         AND metrics.conversions = 0
       LIMIT 50
     `),
+    // The EXPANSION pool: search terms that already convert but are not
+    // keywords yet. Google only reports terms triggered by broad/phrase
+    // matching here, so promoting one to EXACT is a pure win: same demand,
+    // tighter control, its own quality score and bid.
+    customer.query(`
+      SELECT
+        search_term_view.search_term,
+        search_term_view.ad_group,
+        search_term_view.status,
+        metrics.clicks, metrics.cost_micros,
+        metrics.conversions, metrics.conversions_value
+      FROM search_term_view
+      WHERE segments.date DURING LAST_30_DAYS
+        AND metrics.conversions >= 2
+      ORDER BY metrics.conversions DESC
+      LIMIT 30
+    `),
     customer.query(`
       SELECT
         ad_group_ad.resource_name,
@@ -326,6 +483,42 @@ async function buildOptimizerSnapshot(
       LIMIT 10000
     `),
   ]);
+
+  // ---- Conversion tracking health: the gate every other decision sits behind.
+  let conversionTracking: OptimizerSnapshot['conversion_tracking'] = { status: 'unknown', enabled_actions: 0 };
+  try {
+    const conversionActions = await customer.query(`
+      SELECT conversion_action.resource_name, conversion_action.status
+      FROM conversion_action
+      WHERE conversion_action.status = 'ENABLED'
+      LIMIT 50
+    `);
+    const enabledActions = conversionActions.length;
+    const clicks7 = campaigns.reduce(
+      (total: number, row: any) => total + Number(row.metrics?.clicks ?? 0),
+      0
+    );
+    const conversions7 = campaigns.reduce(
+      (total: number, row: any) =>
+        total + Number(row.metrics?.conversions ?? 0),
+      0
+    );
+    const status: ConversionTrackingStatus =
+      enabledActions === 0
+        ? 'missing'
+        : clicks7 >= 100 && conversions7 === 0
+          ? 'suspect'
+          : 'healthy';
+    conversionTracking = {
+      status,
+      enabled_actions: enabledActions,
+      ...(status === 'suspect'
+        ? { note: 'Enabled conversion actions exist but real click volume produced zero conversions in 7 days.' }
+        : {}),
+    };
+  } catch (error) {
+    console.warn(`Conversion tracking check failed for ${customerId}`, error);
+  }
 
   const totals = campaigns.reduce(
     (acc: { cost: number; conversions: number; value: number }, row: any) => {
@@ -354,10 +547,23 @@ async function buildOptimizerSnapshot(
   return {
     account_id: accountId,
     customer_id: customerId,
+    today: new Date().toISOString().slice(0, 10),
+    business_context: businessContext,
+    sector_benchmark: sectorBenchmark
+      ? {
+          sector: sectorBenchmark.sector,
+          businesses_count: sectorBenchmark.businesses_count,
+          median_cpa: sectorBenchmark.median_cpa,
+          median_ctr: sectorBenchmark.median_ctr,
+          median_roas: sectorBenchmark.median_roas,
+        }
+      : null,
+    conversion_tracking: conversionTracking,
     campaigns,
     underperforming_keywords: underperforming,
     high_performing_keywords: highPerforming,
     wasted_search_terms: wastedTerms,
+    converting_search_terms: convertingTerms,
     budget_utilization: budgetUtilization,
     poor_ads: poorAds,
     keyword_count: enabledKeywords.length,
@@ -367,9 +573,196 @@ async function buildOptimizerSnapshot(
   };
 }
 
-function actionFingerprint(accountId: string, action: unknown) {
+// ---------------------------------------------------------------------------
+// Campaign opportunity (growth bridge to the builder)
+// ---------------------------------------------------------------------------
+
+const OPPORTUNITY_COOLDOWN_MS = 14 * 24 * 60 * 60 * 1000;
+
+/**
+ * Queue a "build a new campaign" recommendation when the converting-terms pool
+ * justifies one. Deduped two ways: a stable fingerprint blocks a second ACTIVE
+ * opportunity, and a 14-day cooldown (any status, including dismissed) stops
+ * the platform from re-nagging an owner who said no.
+ */
+async function maybeQueueCampaignOpportunity({
+  supabase,
+  accountId,
+  convertingTermRows,
+  currencyCode,
+}: {
+  supabase: any;
+  accountId: string;
+  convertingTermRows: any[];
+  currencyCode: string;
+}): Promise<boolean> {
+  const opportunity = detectCampaignOpportunity(mapConvertingTermRows(convertingTermRows), currencyCode);
+  if (!opportunity) return false;
+
+  const { data: recent } = await supabase
+    .from('recommendations')
+    .select('id')
+    .eq('account_id', accountId)
+    .gte('created_at', new Date(Date.now() - OPPORTUNITY_COOLDOWN_MS).toISOString())
+    .contains('action_payload', { operation: 'build_campaign_opportunity' })
+    .limit(1)
+    .maybeSingle();
+  if (recent) return false;
+
+  const { error } = await supabase.from('recommendations').insert({
+    account_id: accountId,
+    fingerprint: createHash('sha256').update(`${accountId}:build_campaign_opportunity`).digest('hex'),
+    category: 'structure',
+    severity: opportunity.totals.conversions >= 15 ? 'medium' : 'growth',
+    title: opportunity.title_ar.slice(0, 120),
+    description: opportunity.description_ar,
+    expected_impact: {
+      metric: 'conversions',
+      delta_pct: 15,
+      delta_sar_per_month: Math.round(opportunity.totals.conversion_value * 0.15),
+    },
+    action_payload: {
+      operation: 'build_campaign_opportunity',
+      brief_ar: opportunity.brief_ar,
+      terms: opportunity.terms,
+      totals: opportunity.totals,
+      source: 'optimizer_cron',
+    },
+    status: 'pending',
+  });
+  if (error) {
+    if (error.code === '23505') return false; // an active opportunity already exists
+    throw error;
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Weekly intelligence report
+// ---------------------------------------------------------------------------
+
+/** Saturday 00:00 UTC — the Saudi work week, matching usageWindow('week'). */
+function startOfSaudiWeekIso(now = new Date()) {
+  const date = new Date(now);
+  const daysSinceSaturday = (date.getUTCDay() + 1) % 7;
+  date.setUTCDate(date.getUTCDate() - daysSinceSaturday);
+  date.setUTCHours(0, 0, 0, 0);
+  return date.toISOString();
+}
+
+function isoDay(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function mapWeekRows(rows: any[]): CampaignWeekRow[] {
+  return (rows ?? []).map((row: any) => {
+    const metrics = row.metrics ?? {};
+    return {
+      name: String(row.campaign?.name ?? row.campaign?.id ?? 'حملة'),
+      cost: Number(metrics.costMicros ?? metrics.cost_micros ?? 0) / 1_000_000,
+      clicks: Number(metrics.clicks ?? 0),
+      conversions: Number(metrics.conversions ?? 0),
+      conversion_value: Number(metrics.conversionsValue ?? metrics.conversions_value ?? 0),
+    };
+  });
+}
+
+/**
+ * Generate the week-over-week performance report once per Saudi week per
+ * account. Deterministic math + model narrative; deduped via
+ * metrics.kind = 'weekly_performance' within the current week.
+ */
+async function maybeGenerateWeeklyReport({
+  supabase,
+  customer,
+  accountId,
+  customerName,
+  currencyCode,
+  businessContext,
+}: {
+  supabase: any;
+  customer: any;
+  accountId: string;
+  customerName: string | null;
+  currencyCode: string;
+  businessContext: { sector: string | null; primary_goal: string | null; monthly_budget: number | null } | null;
+}): Promise<boolean> {
+  const weekStart = startOfSaudiWeekIso();
+  const { data: existing } = await supabase
+    .from('reports')
+    .select('id')
+    .eq('account_id', accountId)
+    .gte('generated_at', weekStart)
+    .contains('metrics', { kind: 'weekly_performance' })
+    .limit(1)
+    .maybeSingle();
+  if (existing) return false;
+
+  const now = new Date();
+  const priorStart = new Date(now);
+  priorStart.setUTCDate(priorStart.getUTCDate() - 14);
+  const priorEnd = new Date(now);
+  priorEnd.setUTCDate(priorEnd.getUTCDate() - 8);
+
+  const [thisWeekRows, priorWeekRows] = await Promise.all([
+    customer.query(`
+      SELECT campaign.id, campaign.name, metrics.cost_micros, metrics.clicks, metrics.conversions, metrics.conversions_value
+      FROM campaign
+      WHERE segments.date DURING LAST_7_DAYS
+        AND metrics.impressions > 0
+    `),
+    customer.query(`
+      SELECT campaign.id, campaign.name, metrics.cost_micros, metrics.clicks, metrics.conversions, metrics.conversions_value
+      FROM campaign
+      WHERE segments.date BETWEEN '${isoDay(priorStart)}' AND '${isoDay(priorEnd)}'
+        AND metrics.impressions > 0
+    `),
+  ]);
+
+  const comparison = computeWeeklyComparison(mapWeekRows(thisWeekRows), mapWeekRows(priorWeekRows));
+  // A dead account (no delivery either week) does not deserve a noise report.
+  if (comparison.totals.this_week.cost === 0 && comparison.totals.prior_week.cost === 0) return false;
+
+  const narrative = await generateWeeklyNarrative(comparison, {
+    customer_name: customerName,
+    currency_code: currencyCode,
+    sector: businessContext?.sector ?? null,
+    primary_goal: businessContext?.primary_goal ?? null,
+  });
+
+  const { error } = await supabase.from('reports').insert({
+    account_id: accountId,
+    period_type: 'weekly',
+    period_start: isoDay(new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)),
+    period_end: isoDay(now),
+    summary_ar: narrative.summary_ar,
+    metrics: {
+      kind: 'weekly_performance',
+      generated_by: narrative.generated_by,
+      currency_code: currencyCode,
+      totals: comparison.totals,
+      movers: comparison.movers,
+      highlights_ar: narrative.highlights_ar,
+      next_week_ar: narrative.next_week_ar,
+    },
+  });
+  if (error) throw error;
+  return true;
+}
+
+function actionFingerprint(accountId: string, action: any) {
+  // Fingerprint the STABLE identity of the change only. Hashing the whole
+  // action folded in `reason_ar`/`reason_en`/`expected_impact`, which the model
+  // regenerates with different wording and rounding every night — so the hash
+  // changed each run, the dedupe select missed, and the user accumulated one
+  // near-identical pending recommendation per night per finding.
+  const identity = {
+    type: action?.type ?? null,
+    target_id: action?.target_id ?? null,
+    params: action?.params ?? {},
+  };
   return createHash('sha256')
-    .update(`${accountId}:${stableStringify(action)}`)
+    .update(`${accountId}:${stableStringify(identity)}`)
     .digest('hex');
 }
 
@@ -388,6 +781,7 @@ function categoryForAction(type: string) {
   const map: Record<string, string> = {
     pause_keyword: 'keywords',
     add_negative_keyword: 'keywords',
+    add_keyword: 'keywords',
     adjust_budget: 'budget',
     adjust_bid: 'bidding',
     pause_ad: 'ads',

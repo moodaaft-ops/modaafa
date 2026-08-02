@@ -4,24 +4,23 @@
 - الحساب: `moodaaft@gmail.com` (بروفايل «مُضاعفة»)
 - تاريخ آخر مراجعة من Google: **18 يوليو 2026**
 - تاريخ الفحص المباشر للبريد: **28 يوليو 2026**
+- تاريخ إرسال أدلة الإصلاح إلى Trust & Safety: **28 يوليو 2026**
 
 ---
 
-## 1) الحالة الفعلية — الطلب يحتاج استكمالاً قبل إعادة الإرسال
+## 1) الحالة الفعلية — أُرسلت أدلة الإصلاح والطلب بانتظار مراجعة Google
 
 | # | البند | الحالة |
 |---|---|---|
 | 1 | Homepage requirements | ✅ مكتمل |
 | 2 | Branding guidelines | ✅ مكتمل |
 | 3 | Request minimum scopes | ✅ مكتمل |
-| 4 | **App functionality** | ❌ **فيديو جديد + إظهار أثر التعديل في Google Ads** |
-| 5 | Privacy policy requirements | ❌ **طُلب إفصاح صريح عن مشاركة بيانات Google** |
+| 4 | **App functionality** | ⏳ **فيديو شامل أُرسل في 28 يوليو؛ بانتظار إعادة المراجعة** |
+| 5 | Privacy policy requirements | ⏳ **الإفصاح المطلوب منشور وأُبلغت Google؛ بانتظار إعادة المراجعة** |
 
 **حالة النشر:** In production · **نوع المستخدم:** External · **سقف المستخدمين:** 3 من 100
 
-**أحدث رسالة فعلية في Gmail** من
-`api-oauth-dev-verification-reply+23188ncljqpol1d@google.com` بتاريخ 18 يوليو، ولم يوجد رد مُرسل عليها حتى فحص
-28 يوليو. طلبت الرسالة:
+طلبت رسالة Google Trust & Safety بتاريخ 18 يوليو:
 
 1. فيديو شامل يعرض شاشة الموافقة وكل النطاقات بعد توسيعها.
 2. عرض أقصى وظائف النطاق `https://www.googleapis.com/auth/adwords`.
@@ -30,8 +29,24 @@
 5. تحديث سياسة الخصوصية لتذكر صراحةً مع من تُشارك أو تُنقل أو يُفصح عن بيانات مستخدم Google.
 6. الرد على نفس الرسالة بعد تحديث الفيديو والسياسة وإعادة إرسال الطلب من Google Cloud Console.
 
-تم تحديث سياسة الخصوصية في الكود بتاريخ 28 يوليو. المتبقي إجراء بشري/إنتاجي: تسجيل الفيديو على حساب إعلاني
-تجريبي أو بموافقة صريحة على تعديل آمن، رفعه Unlisted، إعادة الإرسال، ثم الرد على نفس سلسلة البريد.
+تم تنفيذ المطلوب وإرساله في 28 يوليو 2026:
+
+| الدليل | النتيجة |
+|---|---|
+| فيديو التحقق | [YouTube — Unlisted](https://youtu.be/LjmTXg3L73g) |
+| عنوان الفيديو | `Modaafa Ads AI – Google OAuth Verification Demonstration` |
+| مدة الفيديو | 4:38، بدقة 1080p |
+| أثر التعديل | تعديل ميزانية آمن ومعتمد على حملة متوقفة، ثم إثباته في Google Ads Change history وإرجاعه |
+| سياسة الخصوصية | `https://ai.modaafa.com/privacy` — تعمل وتعيد HTTP 200 |
+| الشروط | `https://ai.modaafa.com/terms` — تعمل وتعيد HTTP 200 |
+| الرد على Trust & Safety | أُرسل في نفس السلسلة، وليس رسالة جديدة |
+| Gmail thread ID | `19f74020077fa5db` |
+| Gmail sent message ID | `19faa1a975d3b33d` |
+| وقت الإرسال | `2026-07-28T19:01:36` |
+
+عند الفحص بعد الإرسال ظل Verification Center يعرض نتائج مراجعة 18 يوليو القديمة. هذا متوقع إلى أن يفتح
+المراجع الرد والفيديو ويحدّث حالة الطلب. الصفحة نفسها توجّه المطوّر إلى حل الملاحظات ثم الرد على سلسلة Trust &
+Safety، ولم يظهر زر مستقل لإعادة الإرسال أثناء بقاء الطلب قيد المراجعة.
 
 ### تصحيح افتراض سابق
 
@@ -88,13 +103,12 @@
 
 ---
 
-## 3) مسودة الرد على إيميل Trust & Safety
+## 3) الرد الذي أُرسل إلى Trust & Safety
 
-> ردّ على **نفس سلسلة الإيميل** التي وصلتك منهم — لا تفتح سلسلة جديدة ولا ترسل من بريد آخر.
-> استبدل ما بين `[ ]` قبل الإرسال.
+أُرسل الرد التالي على **نفس سلسلة الإيميل** من `moodaaft@gmail.com`:
 
 ```
-Subject: Re: [اترك عنوان الرسالة الأصلي كما هو]
+Subject: Re: [Action Needed] OAuth Verification Request Acknowledgement
 
 Hello,
 
@@ -102,7 +116,7 @@ Thank you for the review. I have addressed the three points raised under
 "App functionality".
 
 1. UPDATED DEMO VIDEO
-   [ضع رابط YouTube غير المدرج هنا]
+   https://youtu.be/LjmTXg3L73g
    The video now records the complete OAuth consent screen without any cut:
    account chooser, the app name and logo, the full scope text
    (https://www.googleapis.com/auth/adwords), the client ID visible in the
@@ -157,23 +171,24 @@ Thank you for the review. I have addressed the three points raised under
 Please let me know if anything else is needed.
 
 Best regards,
-[اسمك]
+Aiman Amin
 Modaafa — https://ai.modaafa.com
 moodaaft@gmail.com
 ```
 
 ---
 
-## 4) قائمة التحقق قبل إعادة الإرسال
+## 4) قائمة التحقق بعد الإرسال
 
-- [ ] الفيديو مصوَّر على `ai.modaafa.com` الإنتاجي، لا محلياً.
-- [ ] شاشة موافقة Google كاملة بلا قطع، وشريط العنوان ظاهر و`client_id=` مقروء.
-- [ ] نص النطاق `https://www.googleapis.com/auth/adwords` مقروء على الشاشة.
-- [ ] تعليق أو ترجمة إنجليزية طوال الفيديو.
-- [ ] الفيديو **Unlisted** على YouTube، وتحققت من فتحه في نافذة تصفح خفي.
-- [ ] الرد أُرسل على **نفس سلسلة الإيميل** الأصلية.
-- [ ] أُعيد إرسال الطلب من Google Cloud Console بعد تحديث رابط الفيديو والسياسة.
-- [ ] جرّبت خطوات «HOW TO TEST» بنفسك من نافذة خفية حتى النهاية — فإن تعثرت عندك ستتعثر عندهم.
-- [ ] المنصة منشورة بآخر كود قبل التصوير (الهجرة ثم النشر — راجع `LAUNCH_READINESS.md` §8).
+- [x] الفيديو مصوَّر على `ai.modaafa.com` الإنتاجي، لا محلياً.
+- [x] شاشة موافقة Google كاملة بلا قطع، وشريط العنوان ظاهر و`client_id=` مقروء.
+- [x] نص النطاق `https://www.googleapis.com/auth/adwords` ظاهر ضمن شرح الموافقة.
+- [x] تعليق إنجليزي طوال الفيديو.
+- [x] الفيديو **Unlisted** على YouTube، والرابط المباشر يعمل دون خطأ HTTP.
+- [x] الرد أُرسل على **نفس سلسلة الإيميل** الأصلية.
+- [x] أُرسلت خطوات اختبار كاملة، وشرح استخدام النطاق، ورابط سياسة الخصوصية في الرد.
+- [x] المنصة منشورة بآخر كود قبل التصوير (الهجرة ثم النشر — راجع `LAUNCH_READINESS.md` §8).
+- [ ] تتحول ملاحظتا App functionality وPrivacy policy إلى ✅ بعد مراجعة Google الجديدة.
+- [ ] يُضبط `GOOGLE_OAUTH_APP_VERIFIED=true` بعد اكتمال البنود الخمسة فقط.
 
 > **مهم:** لا تضبط `GOOGLE_OAUTH_APP_VERIFIED=true` حتى تتحول كل البنود الخمسة إلى ✅ في Verification Center.

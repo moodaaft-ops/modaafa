@@ -6,9 +6,11 @@ import {
   Building2,
   Check,
   CheckCircle2,
+  ChevronDown,
   LayoutDashboard,
   Layers,
   ListChecks,
+  Lock,
   MessageCircle,
   ShieldCheck,
   Sparkles,
@@ -17,6 +19,14 @@ import {
 } from 'lucide-react';
 import { buttonClasses } from '@/lib/ui/button';
 import { ThemeToggle } from '@/lib/ui/theme-toggle';
+import { Reveal } from './reveal';
+
+const trustPoints = [
+  { label: 'موافقة واضحة قبل أي تعديل' },
+  { label: 'تحقق مسبق على Google' },
+  { label: 'سجل تراجع لكل إجراء' },
+  { label: 'تشفير رموز الوصول' },
+];
 
 const flow = [
   { title: 'سجّل بحساب Google', desc: 'دخول واحد بالبريد الذي يدير إعلاناتك.' },
@@ -105,14 +115,14 @@ export default function HomePage() {
           <Link href="/" className="flex min-w-0 items-center gap-2.5">
             <Image
               src="/logo-mark.svg"
-              alt="مُضاعِف"
+              alt="شعار مُضاعِف"
               width={30}
               height={30}
-              className="h-[30px] w-[30px] flex-shrink-0 rounded-lg ring-1 ring-border"
+              className="h-[30px] w-[30px] flex-shrink-0 rounded-lg"
               priority
             />
             <span className="min-w-0">
-              <span className="block text-[13px] font-semibold leading-tight tracking-tight">مُضاعِف</span>
+              <span className="block text-[13px] font-semibold leading-tight">مُضاعِف</span>
               <span className="block text-[10px] leading-tight text-muted-foreground" dir="ltr">
                 Modaafa Ads AI
               </span>
@@ -180,8 +190,19 @@ export default function HomePage() {
             </p>
           </div>
 
-          <div className="mt-14 sm:mt-16">
+          <Reveal className="mt-14 sm:mt-16" delay={80}>
             <ProductPreview />
+          </Reveal>
+
+          {/* Trust strip — a quiet band of proof points directly under the hero
+              product mock, the highest-leverage place for reassurance. */}
+          <div className="mx-auto mt-10 flex w-full max-w-4xl flex-wrap items-center justify-center gap-x-6 gap-y-2.5">
+            {trustPoints.map((point) => (
+              <span key={point.label} className="inline-flex items-center gap-1.5 text-[12.5px] text-muted-foreground">
+                <CheckCircle2 className="h-3.5 w-3.5 flex-shrink-0 text-primary" aria-hidden />
+                {point.label}
+              </span>
+            ))}
           </div>
         </div>
       </section>
@@ -200,7 +221,7 @@ export default function HomePage() {
                 <span className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-border bg-muted text-[11px] font-bold text-muted-foreground numeric">
                   {index + 1}
                 </span>
-                <h3 className="mt-3 text-[13.5px] font-semibold tracking-tight">{step.title}</h3>
+                <h3 className="mt-3 text-[13.5px] font-semibold">{step.title}</h3>
                 <p className="mt-1.5 text-[12.5px] leading-6 text-muted-foreground">{step.desc}</p>
               </li>
             ))}
@@ -217,16 +238,21 @@ export default function HomePage() {
           </h2>
 
           <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {capabilities.map((item) => {
+            {capabilities.map((item, index) => {
               const Icon = item.icon;
               return (
-                <article key={item.title} className="surface-card surface-interactive group p-5">
+                <Reveal
+                  as="article"
+                  key={item.title}
+                  delay={(index % 3) * 70}
+                  className="surface-card surface-interactive group p-5"
+                >
                   <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-primary/25 bg-primary/10 text-primary transition-colors duration-150 group-hover:border-primary/40">
                     <Icon className="h-4 w-4" aria-hidden />
                   </span>
-                  <h3 className="mt-4 text-[14px] font-semibold tracking-tight">{item.title}</h3>
+                  <h3 className="mt-4 text-[14px] font-semibold">{item.title}</h3>
                   <p className="mt-2 text-[13px] leading-7 text-muted-foreground">{item.body}</p>
-                </article>
+                </Reveal>
               );
             })}
           </div>
@@ -278,7 +304,7 @@ export default function HomePage() {
               return (
                 <article key={item.title} className="surface-card p-5">
                   <Icon className="h-4 w-4 text-muted-foreground" aria-hidden />
-                  <h3 className="mt-3 text-[14px] font-semibold tracking-tight">{item.title}</h3>
+                  <h3 className="mt-3 text-[14px] font-semibold">{item.title}</h3>
                   <p className="mt-2 text-[13px] leading-7 text-muted-foreground">{item.body}</p>
                 </article>
               );
@@ -314,7 +340,7 @@ export default function HomePage() {
                   </span>
                 )}
 
-                <h3 className="text-[15px] font-semibold tracking-tight">{plan.name}</h3>
+                <h3 className="text-[15px] font-semibold">{plan.name}</h3>
                 <p className="mt-1 text-[12.5px] leading-6 text-muted-foreground">{plan.limit}</p>
 
                 <div className="mt-5 flex items-baseline gap-1.5">
@@ -363,8 +389,8 @@ export default function HomePage() {
               <details key={item.q} className="group px-5 py-4">
                 <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-[13.5px] font-medium">
                   {item.q}
-                  <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition-transform duration-150 group-open:rotate-45">
-                    +
+                  <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition-transform duration-200 group-open:rotate-180 group-open:text-primary">
+                    <ChevronDown className="h-3.5 w-3.5" aria-hidden />
                   </span>
                 </summary>
                 <p className="mt-3 text-[13px] leading-8 text-muted-foreground">{item.a}</p>
@@ -393,7 +419,7 @@ export default function HomePage() {
       <footer className="px-4 py-10 sm:px-6">
         <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-4 text-[12.5px] text-muted-foreground">
           <div className="flex items-center gap-2.5">
-            <Image src="/logo-mark.svg" alt="" width={22} height={22} className="h-[22px] w-[22px] rounded-md ring-1 ring-border" />
+            <Image src="/logo-mark.svg" alt="" width={22} height={22} className="h-[22px] w-[22px] rounded-md" />
             <span>© 2026 مُضاعِف · <span dir="ltr">Modaafa Ads AI</span></span>
           </div>
           <div className="flex flex-wrap gap-4">
@@ -418,7 +444,7 @@ export default function HomePage() {
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <span className="inline-flex items-center gap-2 text-[11.5px] font-semibold uppercase tracking-[0.12em] text-primary">
+    <span className="inline-flex items-center gap-2 text-[11.5px] font-semibold uppercase text-primary">
       <span className="h-1 w-1 rounded-full bg-primary" aria-hidden />
       {children}
     </span>
@@ -429,16 +455,19 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 function ProductPreview() {
   return (
     <div className="surface-raised mx-auto w-full min-w-0 max-w-full overflow-hidden lg:max-w-5xl">
+      {/* A real app title-bar instead of the fake traffic-light dots that read
+          as a template — the product mark on the start edge, a secure URL pill
+          centred. */}
       <div className="flex items-center justify-between border-b border-border bg-background-elevated px-4 py-2.5">
-        <div className="flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-full bg-border-strong" />
-          <span className="h-2.5 w-2.5 rounded-full bg-border-strong" />
-          <span className="h-2.5 w-2.5 rounded-full bg-border-strong" />
+        <div className="flex items-center gap-2">
+          <Image src="/logo-mark.svg" alt="" width={18} height={18} className="h-[18px] w-[18px] rounded-md" />
+          <span className="text-[11.5px] font-semibold text-foreground">مُضاعِف</span>
         </div>
-        <div className="rounded-md border border-border bg-card px-2.5 py-1 text-[11px] text-muted-foreground" dir="ltr">
+        <div className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1 text-[11.5px] text-muted-foreground" dir="ltr">
+          <Lock className="h-3 w-3 text-primary" aria-hidden />
           ai.modaafa.com
         </div>
-        <span className="w-12" aria-hidden />
+        <span className="w-14" aria-hidden />
       </div>
 
       <div className="grid w-full min-w-0 max-w-full grid-cols-1 md:grid-cols-[200px_minmax(0,1fr)]">
@@ -446,8 +475,8 @@ function ProductPreview() {
           <div className="mb-2 flex items-center gap-2 rounded-md border border-border bg-card px-2 py-1.5">
             <Building2 className="h-3.5 w-3.5 flex-shrink-0 text-primary" />
             <div className="min-w-0">
-              <div className="truncate text-[11px] font-semibold">متجر تجريبي</div>
-              <div className="text-[9.5px] text-muted-foreground numeric" dir="ltr">
+              <div className="truncate text-[11.5px] font-semibold">متجر تجريبي</div>
+              <div className="text-[11px] text-muted-foreground numeric" dir="ltr">
                 123-456-7890
               </div>
             </div>
@@ -521,9 +550,9 @@ function PreviewMetric({ label, value, danger }: { label: string; value: string;
         className={`absolute inset-x-0 top-0 h-px ${danger ? 'bg-red-500' : 'bg-border-strong'}`}
         aria-hidden
       />
-      <div className="text-[10.5px] text-muted-foreground">{label}</div>
+      <div className="text-[11.5px] text-muted-foreground">{label}</div>
       <div
-        className={`mt-1.5 break-words text-[15px] font-bold leading-tight numeric ${
+        className={`mt-1.5 break-words text-[17px] font-bold leading-tight numeric ${
           danger ? 'text-red-500 dark:text-red-400' : 'text-foreground'
         }`}
       >

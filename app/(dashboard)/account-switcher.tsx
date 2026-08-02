@@ -281,7 +281,7 @@ export function AccountSwitcher({
   return (
     <section ref={containerRef} className="relative mx-4 mt-4 rounded-lg border border-border bg-muted p-3">
       <div className="mb-2 flex items-center justify-between gap-2">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">الحساب الإعلاني</span>
+        <span className="text-[11px] font-semibold uppercase text-muted-foreground">الحساب الإعلاني</span>
         <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
           {busy ? (
             <RefreshCw className="h-3 w-3 animate-spin text-primary" />

@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react';
 import {
   BarChart3,
   CreditCard,
+  HelpCircle,
   LayoutDashboard,
   Megaphone,
   MessageCircle,
@@ -22,6 +23,14 @@ import { RouteProgress } from '@/lib/ui/route-progress';
 import { ThemeToggle } from '@/lib/ui/theme-toggle';
 import { cn } from '@/lib/utils';
 import { AccountSwitcher } from './account-switcher';
+import { WelcomeTour, startWelcomeTour } from './welcome-tour';
+
+/** Nav hrefs that the first-run tour spotlights, mapped to their anchor id. */
+const TOUR_ANCHORS: Record<string, string> = {
+  '/audit': 'nav-audit',
+  '/optimizer': 'nav-optimizer',
+  '/assistant': 'nav-assistant',
+};
 
 const navGroups: Array<{
   label: string;
@@ -97,14 +106,14 @@ export function DashboardChrome({
     <Link href="/dashboard" className="group flex min-w-0 items-center gap-2.5">
       <Image
         src="/logo-mark.svg"
-        alt="مُضاعِف"
+        alt="شعار مُضاعِف"
         width={30}
         height={30}
-        className="h-[30px] w-[30px] flex-shrink-0 rounded-lg ring-1 ring-border"
+        className="h-[30px] w-[30px] flex-shrink-0 rounded-lg"
         priority
       />
       <span className="min-w-0">
-        <span className="block text-[13px] font-semibold leading-tight tracking-tight text-foreground">مُضاعِف</span>
+        <span className="block text-[13px] font-semibold leading-tight text-foreground">مُضاعِف</span>
         <span className="block truncate text-[11px] leading-tight text-muted-foreground">{brandName}</span>
       </span>
     </Link>
@@ -148,10 +157,13 @@ export function DashboardChrome({
             ? 'translate-x-0'
             : 'max-lg:rtl:translate-x-full max-lg:ltr:-translate-x-full'
         )}
+        id="primary-navigation"
         aria-label="التنقل الرئيسي"
-        role="dialog"
+        // Only a modal dialog while it is the mobile drawer. On desktop it is a
+        // permanent navigation landmark, so announcing it as a dialog there
+        // destroyed its semantics.
+        role={mobileOpen ? 'dialog' : undefined}
         aria-modal={mobileOpen ? true : undefined}
-        aria-hidden={!mobileOpen ? undefined : undefined}
       >
         {/* A single faint accent wash at the top of the rail — the only
             decoration in the shell. */}
@@ -169,14 +181,14 @@ export function DashboardChrome({
           </button>
         </div>
 
-        <div className="relative">
+        <div className="relative" data-tour="account-switcher">
           <AccountSwitcher accounts={accounts} selectedCustomerId={selectedCustomerId} />
         </div>
 
         <nav className="relative flex-1 space-y-5 overflow-y-auto px-2.5 py-4 scrollbar-thin">
           {navGroups.map((group) => (
             <div key={group.label}>
-              <div className="px-2.5 pb-1.5 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/60">
+              <div className="px-2.5 pb-1.5 text-[10.5px] font-semibold uppercase text-muted-foreground/60">
                 {group.label}
               </div>
               <div className="space-y-0.5">
@@ -188,6 +200,7 @@ export function DashboardChrome({
                       key={item.href}
                       href={item.href}
                       aria-current={active ? 'page' : undefined}
+                      data-tour={TOUR_ANCHORS[item.href]}
                       className={cn(
                         // The active item is a raised surface, not a coloured
                         // block: it reads as the selected row of a tool rather
@@ -239,6 +252,15 @@ export function DashboardChrome({
           </div>
           <div className="flex items-center gap-1.5">
             <ThemeToggle className="h-8 w-8 flex-shrink-0" />
+            <button
+              type="button"
+              onClick={startWelcomeTour}
+              className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md border border-border bg-card text-muted-foreground transition-colors hover:bg-surface hover:text-foreground"
+              aria-label="جولة تعريفية: شرح المنصة"
+              title="شرح المنصة"
+            >
+              <HelpCircle className="h-[18px] w-[18px]" />
+            </button>
             <form action="/api/auth/signout" method="post" className="min-w-0 flex-1">
               <PendingSubmitButton
                 pendingLabel="جاري الخروج..."
@@ -256,8 +278,8 @@ export function DashboardChrome({
         {/* Mobile top bar */}
         <div className="flex h-14 items-center justify-between gap-3 border-b border-border bg-background/80 px-4 backdrop-blur-xl lg:hidden">
           <Link href="/dashboard" className="flex items-center gap-2">
-            <Image src="/logo-mark.svg" alt="مُضاعِف" width={26} height={26} className="h-[26px] w-[26px] rounded-md ring-1 ring-border" />
-            <span className="text-sm font-semibold tracking-tight">مُضاعِف</span>
+            <Image src="/logo-mark.svg" alt="شعار مُضاعِف" width={26} height={26} className="h-[26px] w-[26px] rounded-md" />
+            <span className="text-sm font-semibold">مُضاعِف</span>
           </Link>
           {/* The selected account is the single most important piece of context
               in the product; on mobile it was only reachable through the
@@ -274,14 +296,52 @@ export function DashboardChrome({
               onClick={() => setMobileOpen(true)}
               className="flex h-9 w-9 items-center justify-center rounded-md border border-border bg-card text-foreground transition-colors hover:bg-surface"
               aria-label="فتح القائمة"
+              aria-expanded={mobileOpen}
+              aria-controls="primary-navigation"
             >
               <Menu className="h-4 w-4" />
             </button>
           </div>
         </div>
 
-        <main className="flex-1 overflow-y-auto scrollbar-thin">{children}</main>
+        {/* Extra bottom padding on mobile so content clears the tab bar. */}
+        <main className="flex-1 overflow-y-auto pb-16 scrollbar-thin lg:pb-0">{children}</main>
+
+        {/* Mobile bottom tab bar — the four daily-work routes one tap away,
+            instead of open-drawer → find item. Desktop keeps the sidebar. */}
+        <nav
+          className="fixed inset-x-0 bottom-0 z-40 flex items-stretch border-t border-border bg-background/90 backdrop-blur-xl lg:hidden"
+          style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+          aria-label="التنقل السريع"
+        >
+          {[
+            { href: '/dashboard', label: 'الرئيسية', icon: LayoutDashboard },
+            { href: '/assistant', label: 'المساعد', icon: MessageCircle },
+            { href: '/audit', label: 'الفحص', icon: ShieldCheck },
+            { href: '/optimizer', label: 'الموافقات', icon: Zap },
+          ].map((item) => {
+            const Icon = item.icon;
+            const active = isActive(item.href);
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                aria-current={active ? 'page' : undefined}
+                className={cn(
+                  'flex flex-1 flex-col items-center justify-center gap-1 py-2.5 text-[10.5px] font-medium transition-colors',
+                  active ? 'text-primary' : 'text-muted-foreground'
+                )}
+              >
+                <Icon className={cn('h-5 w-5', active ? 'text-primary' : 'text-muted-foreground/80')} />
+                {item.label}
+              </Link>
+            );
+          })}
+        </nav>
       </div>
+
+      {/* First-run walkthrough; also replayable from the "شرح المنصة" button. */}
+      <WelcomeTour />
     </div>
   );
 }

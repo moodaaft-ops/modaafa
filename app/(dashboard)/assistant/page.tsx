@@ -11,13 +11,21 @@ export const metadata = {
   title: 'المساعد الذكي',
 };
 
-export default async function AssistantPage() {
+export default async function AssistantPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ brief?: string }>;
+}) {
+  const params = await searchParams;
   const supabase = await createServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   const { accounts, selectedAccount, selectedCustomerId } = await getAccountWorkspace(supabase);
   const subscription = await getSubscriptionAccess(supabase, user?.id);
+  // Prefill from a campaign-opportunity recommendation. Bounded: this lands in
+  // a controlled composer the user still has to send themselves.
+  const initialBrief = String(params?.brief ?? '').slice(0, 2000);
 
   return (
     <>
@@ -33,7 +41,11 @@ export default async function AssistantPage() {
       />
       <div className="p-4 sm:p-6 lg:p-8">
         {subscription.active ? (
-          <AssistantClient accounts={accounts} selectedCustomerId={selectedCustomerId} />
+          <AssistantClient
+            accounts={accounts}
+            selectedCustomerId={selectedCustomerId}
+            initialBrief={initialBrief || null}
+          />
         ) : (
           <SubscriptionGate
             title="فعّل المساعد الذكي بتجربة مجانية"

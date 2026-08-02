@@ -1,0 +1,25 @@
+[informative] This is Modaafa, an Arabic-first software platform for managing Google Ads accounts. The production application is running at ai dot modaafa dot com. In this demonstration, I will show the complete user journey, the Google OAuth consent screen, every product feature that relies on the Google Ads scope, and one explicitly approved change reflected in the source Google Ads account.
+
+[explanation] A user starts by signing in to Modaafa with an email magic link. Google sign-in is not required to access the platform or to reach the Google Ads connection step. After opening the one-time link, a new user enters a few business details, such as the business name, category, monthly advertising budget, and target locations. Modaafa uses this information only to prioritise account analysis and recommendations.
+
+[instruction] On the connection page, Modaafa explains the requested access before starting OAuth. The user then clicks the Google connection button.
+
+[emphasis] This is the complete Google OAuth consent flow. The browser address bar remains visible. The consent screen shows the Modaafa application name and logo. When all services are expanded, the only requested permission is the Google Ads scope: https colon slash slash www dot googleapis dot com slash auth slash adwords. The OAuth client identifier is also visible in the address bar.
+
+[explanation] Modaafa requests no Gmail, Drive, contacts, or other Google permission. Google Ads does not offer a narrower read-only OAuth scope. The adwords scope is required both to read the account and campaign information selected by the owner and to apply an individual change only after the owner explicitly approves it in the product.
+
+[informative] After consent, Modaafa reads the accessible customer list. This includes direct advertising accounts and non-manager client accounts underneath a manager account. Each account is shown with its descriptive name and customer number, and the owner can search and switch between them from the dashboard.
+
+[explanation] The campaigns page reads campaign status, daily budget, spend, clicks, impressions, and conversions for the currently selected account. The account audit analyses the same Google Ads data and creates clear recommendations. The assistant also answers questions using the selected account's real metrics, but it does not make silent changes.
+
+[emphasis] Every possible Google Ads write is routed through the approval centre. Before approval, the owner can see the exact operation, the target resource, the proposed value, the reason, and the expected impact. Approval and execution are separate actions.
+
+[emphasis] For this review, I use the paused campaign named Domen in customer account four two two, four nine nine, six five zero nine. Its daily budget is nine Saudi riyals and thirty halalas. After the owner approves the exact operation, Modaafa temporarily changes the budget to nine Saudi riyals and forty halalas. Because the campaign is paused, this test creates no advertising spend.
+
+[informative] Modaafa validates the request first, executes it through the Google Ads API, and records the result. The Google Ads change history for July twenty-eighth shows both the increase and the later decrease for the same campaign, made through the Google Ads API.
+
+[explanation] The rollback control restores the original daily budget of nine Saudi riyals and thirty halalas. Google Ads now confirms the original value, and Modaafa records that the action was reverted. This demonstrates both the requested write access and the owner's safety control.
+
+[informative] In account settings, the user can disconnect Google Ads or permanently delete their Modaafa account. Permanent deletion first revokes the Google OAuth token, cancels any active subscription, and then removes the user's stored platform data.
+
+[conclusion] Finally, Modaafa's privacy policy identifies every service provider that processes Google user data, the limited purpose for each processor, and the prohibited uses. Google OAuth credentials are encrypted and are never sent to the artificial intelligence provider. Modaafa does not sell Google user data, share it with data brokers, or use it for targeted advertising. This completes the full demonstration of the requested Google Ads scope and the controls available to the account owner.

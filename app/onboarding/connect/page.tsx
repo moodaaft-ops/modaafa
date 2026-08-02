@@ -59,7 +59,7 @@ export default async function ConnectGoogleAdsPage({
         <OnboardingProgress active="connect" showDashboardLink={hasAccounts} />
 
         <div className="mb-6 mt-8">
-          <h2 className="text-[26px] font-bold leading-tight tracking-tight sm:text-3xl">اربط إعلانات Google</h2>
+          <h2 className="text-[26px] font-bold leading-tight sm:text-3xl">اربط إعلانات Google</h2>
           <p className="mt-2 max-w-2xl text-sm leading-7 text-muted-foreground">
             موافقة واحدة تكفي لسحب كل حساباتك، ثم تختار الحساب الذي تعمل عليه من لوحة التحكم.
           </p>
@@ -88,7 +88,7 @@ export default async function ConnectGoogleAdsPage({
         {managerOnly && <ManagerOnlyRecovery />}
 
         <section className="surface-card p-5 sm:p-6">
-          <h3 className="text-[15px] font-semibold tracking-tight">ربط تلقائي لكل الحسابات</h3>
+          <h3 className="text-[15px] font-semibold">ربط تلقائي لكل الحسابات</h3>
           <ul className="mt-4 space-y-3">
             {points.map((point) => {
               const Icon = point.icon;
@@ -197,7 +197,7 @@ function ManagerOnlyRecovery() {
           <TriangleAlert className="h-4 w-4" />
         </span>
         <div className="min-w-0">
-          <h3 className="text-[14px] font-semibold tracking-tight text-amber-900 dark:text-amber-100">
+          <h3 className="text-[14px] font-semibold text-amber-900 dark:text-amber-100">
             وجدنا حسابات إدارية فقط (MCC)
           </h3>
           <p className="mt-1 text-[13px] leading-7 text-amber-900/80 dark:text-amber-100/80">

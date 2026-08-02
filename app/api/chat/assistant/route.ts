@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerClient } from '@/lib/supabase/server';
+import { createAdminClient, createServerClient } from '@/lib/supabase/server';
 import { getLinkedGoogleAdsAccount, normalizeCustomerId } from '@/lib/accounts/selection';
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import { formatCurrency, formatNumberAr } from '@/lib/utils';
@@ -296,7 +296,16 @@ export async function POST(req: NextRequest) {
   }
 
   if (reply.draft_campaign) {
-    await supabase.from('recommendations').insert({
+    let admin;
+    try {
+      admin = createAdminClient();
+    } catch {
+      return NextResponse.json(
+        { error: 'service_unavailable', message: 'تعذر حفظ مسودة الحملة الآن. أعد المحاولة بعد قليل.' },
+        { status: 503 }
+      );
+    }
+    const { error: recommendationError } = await admin.from('recommendations').insert({
       account_id: account.id,
       category: 'structure',
       severity: 'growth',
@@ -321,6 +330,13 @@ export async function POST(req: NextRequest) {
         .digest('hex'),
       status: 'pending',
     });
+    if (recommendationError) {
+      console.error('Failed to persist assistant campaign draft', recommendationError);
+      return NextResponse.json(
+        { error: 'draft_persistence_failed', message: 'تعذر حفظ مسودة الحملة الآن. أعد المحاولة بعد قليل.' },
+        { status: 503 }
+      );
+    }
   }
 
   return NextResponse.json({
