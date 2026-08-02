@@ -1,14 +1,4 @@
 {
-  "crons": [
-    {
-      "path": "/api/cron/sync-google-ads",
-      "schedule": "17 * * * *"
-    },
-    {
-      "path": "/api/cron/optimize",
-      "schedule": "47 * * * *"
-    }
-  ],
   "functions": {
     "app/api/audit/run/route.ts": {
       "maxDuration": 300
