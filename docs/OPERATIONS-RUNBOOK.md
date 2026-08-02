@@ -42,7 +42,8 @@ curl -H "Authorization: Bearer $CRON_SECRET" https://ai.modaafa.com/api/health
 
 ## فشل المهام المجدولة
 
-1. راجع آخر صفوف `job_runs` وتفاصيل Vercel Cron.
+1. راجع آخر صفوف `job_runs` وتشغيلات GitHub Actions في workflow
+   `Scheduled production jobs`؛ Vercel يستضيف المسارات فقط ولا يدير الجدولة.
 2. تأكد من تطابق `CRON_SECRET` وأن وقت التنفيذ ضمن الحد.
 3. راقب `skipped_for_time` و`batch_limit` و`concurrency` في تفاصيل المهمة؛ وجود
    `skipped_for_time` باستمرار يعني أن الدفعة أكبر من ميزانية التنفيذ أو أن
