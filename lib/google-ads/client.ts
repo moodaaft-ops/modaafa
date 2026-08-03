@@ -59,24 +59,54 @@ export class GoogleAdsRestError extends Error {
   status: number;
   codes: string[];
   requestId: string | null;
+  /** Seconds Google asked us to wait before retrying (429/RESOURCE_EXHAUSTED). */
+  retryAfterSeconds: number | null;
 
-  constructor(status: number, message: string, codes: string[] = [], requestId: string | null = null) {
+  constructor(
+    status: number,
+    message: string,
+    codes: string[] = [],
+    requestId: string | null = null,
+    retryAfterSeconds: number | null = null
+  ) {
     super([codes.join(', '), message].filter(Boolean).join(': '));
     this.name = 'GoogleAdsRestError';
     this.status = status;
     this.codes = codes;
     this.requestId = requestId;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
+}
+
+/** Cap on how long a Retry-After hint is worth sleeping inside a 20s-deadline call. */
+const MAX_HONORED_RETRY_AFTER_MS = 8_000;
+
+export function retryAfterMs(error: unknown): number | null {
+  if (!(error instanceof GoogleAdsRestError)) return null;
+  if (error.retryAfterSeconds === null || !Number.isFinite(error.retryAfterSeconds)) return null;
+  return Math.max(0, Math.round(error.retryAfterSeconds * 1000));
 }
 
 export function getGoogleAdsErrorCodes(error: unknown) {
   if (error instanceof GoogleAdsRestError) return error.codes;
 
+  const codes = new Set<string>();
+
+  // Errors like ManagerAccountError carry their classification on a `code`
+  // property, not inside the message. Matching only message substrings made
+  // that error invisible to every classifier: the manual-sync route showed the
+  // generic Arabic failure instead of the purpose-built MCC copy, and never
+  // repaired the stored is_manager flag.
+  const explicit = (error as { code?: unknown })?.code;
+  if (typeof explicit === 'string' && /^[A-Z][A-Z0-9_]{3,}$/.test(explicit)) {
+    codes.add(explicit);
+  }
+
   const oauthCode = extractOAuthErrorCode(error);
-  if (oauthCode) return [oauthCode];
+  if (oauthCode) codes.add(oauthCode);
 
   const message = error instanceof Error ? error.message : String(error ?? '');
-  return [
+  for (const code of [
     'USER_PERMISSION_DENIED',
     'CUSTOMER_NOT_ENABLED',
     'REQUESTED_METRICS_FOR_MANAGER',
@@ -84,7 +114,11 @@ export function getGoogleAdsErrorCodes(error: unknown) {
     'AUTHENTICATION_ERROR',
     'INVALID_GRANT',
     'INVALID_CLIENT',
-  ].filter((code) => message.includes(code));
+  ]) {
+    if (message.includes(code)) codes.add(code);
+  }
+
+  return Array.from(codes);
 }
 
 export function googleAdsAuthNeedsReconnect(error: unknown) {
@@ -152,6 +186,7 @@ async function googleAdsRest<T>({
   const isMutation = path.includes(':mutate');
   const maxAttempts = isMutation ? 1 : GOOGLE_ADS_MAX_ATTEMPTS;
   let lastError: unknown;
+  let retriedAfter401 = false;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
@@ -196,7 +231,8 @@ async function googleAdsRest<T>({
           response.status,
           message,
           extractGoogleAdsErrorCodes(data),
-          extractGoogleAdsRequestId(data)
+          extractGoogleAdsRequestId(data),
+          parseRetryAfterHeader(response.headers.get('retry-after'))
         );
       }
 
@@ -208,10 +244,26 @@ async function googleAdsRest<T>({
       // instead of failing against a dead cache entry for up to 45 minutes.
       if (error instanceof GoogleAdsRestError && error.status === 401) {
         invalidateAccessToken(refreshToken);
+        // One immediate retry with a freshly minted token separates the two
+        // 401 cases: an access token invalidated early (Workspace session
+        // policies, one-off Google-side invalidation) recovers here, while a
+        // genuinely revoked grant fails the re-mint itself with INVALID_GRANT.
+        // Without this, a single stale-cache 401 escaped to the sync cron,
+        // `googleAdsAuthNeedsReconnect` returned true, and a HEALTHY account
+        // was flagged `revoked` and pushed to re-consent.
+        if (!isMutation && !retriedAfter401 && attempt < maxAttempts) {
+          retriedAfter401 = true;
+          continue;
+        }
       }
       if (attempt >= maxAttempts || !isRetryableGoogleAdsError(error)) throw error;
-      // Jittered backoff: 400ms, 1200ms.
-      const delay = 400 * 3 ** (attempt - 1) + Math.floor(Math.random() * 200);
+      // Google's RESOURCE_EXHAUSTED penalty windows are usually ≥30s; retrying
+      // inside them burns quota with a guaranteed failure. When the response
+      // names a delay we cannot afford within our budget, fail fast instead.
+      const hintedDelayMs = retryAfterMs(error);
+      if (hintedDelayMs !== null && hintedDelayMs > MAX_HONORED_RETRY_AFTER_MS) throw error;
+      // Jittered backoff: 400ms, 1200ms — unless Google told us how long.
+      const delay = hintedDelayMs ?? 400 * 3 ** (attempt - 1) + Math.floor(Math.random() * 200);
       await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
@@ -250,26 +302,56 @@ function invalidateAccessToken(refreshToken: string) {
   accessTokenCache.delete(accessTokenCacheKey(refreshToken));
 }
 
+/**
+ * Single-flight refresh. The sync cron runs 4 accounts concurrently and the
+ * metadata pass runs 6 — all typically sharing ONE refresh token. On a cold or
+ * just-evicted cache every worker missed simultaneously and each minted its
+ * own access token against oauth2.googleapis.com: wasted latency, and enough
+ * parallel hits on Google's token endpoint to trip its rate limit, which then
+ * surfaced as sync failures. Concurrent callers now await the same promise.
+ */
+const accessTokenRefreshInFlight = new Map<string, Promise<string>>();
+
 async function getCachedAccessToken(refreshToken: string) {
   const key = accessTokenCacheKey(refreshToken);
   const cached = accessTokenCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.token;
 
-  const token = await refreshAccessToken(refreshToken);
-  // Refresh the entry (delete then set) so a re-minted token moves to the tail
-  // of the insertion order and the eviction below drops a genuinely cold key
-  // rather than the hot one we just refreshed.
-  accessTokenCache.delete(key);
-  // Google access tokens live ~3600s; refresh well before the edge.
-  accessTokenCache.set(key, { token, expiresAt: Date.now() + 45 * 60 * 1000 });
+  const inFlight = accessTokenRefreshInFlight.get(key);
+  if (inFlight) return inFlight;
 
-  // Bound the map in a long-lived lambda.
-  if (accessTokenCache.size > 50) {
-    const oldest = accessTokenCache.keys().next().value;
-    if (oldest) accessTokenCache.delete(oldest);
+  const refreshPromise = (async () => {
+    const token = await refreshAccessToken(refreshToken);
+    // Refresh the entry (delete then set) so a re-minted token moves to the
+    // tail of the insertion order and the eviction below drops a genuinely
+    // cold key rather than the hot one we just refreshed.
+    accessTokenCache.delete(key);
+    // Google access tokens live ~3600s; refresh well before the edge.
+    accessTokenCache.set(key, { token, expiresAt: Date.now() + 45 * 60 * 1000 });
+
+    // Bound the map in a long-lived lambda.
+    if (accessTokenCache.size > 50) {
+      const oldest = accessTokenCache.keys().next().value;
+      if (oldest) accessTokenCache.delete(oldest);
+    }
+
+    return token;
+  })();
+
+  accessTokenRefreshInFlight.set(key, refreshPromise);
+  try {
+    return await refreshPromise;
+  } finally {
+    // Success or failure, clear the slot: a failed refresh must not pin every
+    // future caller to the same rejected promise.
+    accessTokenRefreshInFlight.delete(key);
   }
+}
 
-  return token;
+function parseRetryAfterHeader(value: string | null): number | null {
+  if (!value) return null;
+  const seconds = Number(value.trim());
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds : null;
 }
 
 function extractGoogleAdsErrorCodes(data: any) {
@@ -614,28 +696,31 @@ export async function discoverAccessibleCustomers(
     });
   }
 
-  for (const normalizedDirectId of normalizedDirectIds) {
-    let isManager = false;
-
+  // Bounded-concurrency, not serial: a token with direct access to ~100 client
+  // accounts (no MCC) used to walk this list one at a time with up to 4
+  // fallback searches each — enough to time out the OAuth callback for a
+  // perfectly valid grant. The name backfill below was parallelized for
+  // exactly this reason; this pass now matches it. `put`/`enqueueManager` are
+  // synchronous map/set mutations, safe to call from interleaved callbacks.
+  await mapLimit(normalizedDirectIds, METADATA_CONCURRENCY, async (normalizedDirectId) => {
     try {
       const { metadata, loginCustomerId } = await getCustomerMetadataWithFallback(
         refreshToken,
         normalizedDirectId,
         loginCandidates
       );
-      isManager = metadata.is_manager;
       put({
         customer_id: metadata.customer_id,
         customer_name: metadata.customer_name,
         manager_id: loginCustomerId && loginCustomerId !== normalizedDirectId ? loginCustomerId : null,
-        is_manager: isManager,
+        is_manager: metadata.is_manager,
         status: 'ENABLED',
         currency_code: metadata.currency_code,
         time_zone: metadata.time_zone,
         source: 'direct',
         level: 0,
       });
-      if (isManager) enqueueManager(normalizedDirectId, normalizedDirectId, 0);
+      if (metadata.is_manager) enqueueManager(normalizedDirectId, normalizedDirectId, 0);
     } catch (err) {
       put({
         customer_id: normalizedDirectId,
@@ -649,7 +734,7 @@ export async function discoverAccessibleCustomers(
         level: 0,
       });
     }
-  }
+  });
 
   // Some OAuth users receive client customer IDs from listAccessibleCustomers,
   // while the readable names are only exposed through the customer_client view.
