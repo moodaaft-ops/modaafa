@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createHash } from 'node:crypto';
 import { createAdminClient, createServerClient } from '@/lib/supabase/server';
 import { decrypt } from '@/lib/crypto';
 import { getCustomer } from '@/lib/google-ads/client';
@@ -208,6 +209,22 @@ export async function POST(req: NextRequest) {
 
     if (auditErr) throw auditErr;
 
+    // Supersede the PRIOR audit's still-open findings before inserting this
+    // run's. Without this, running the audit twice (6/hour allowed) left the
+    // approval centre full of duplicate findings from every past run, burying
+    // the live optimizer recommendations on the exact screen that trains the
+    // user to click اعتماد. Only pending rows sourced from an audit are
+    // touched — approved/executing/applied history and optimizer_cron
+    // recommendations are left alone.
+    const { error: supersedeErr } = await admin
+      .from('recommendations')
+      .update({ status: 'dismissed' })
+      .eq('account_id', account.id)
+      .eq('status', 'pending')
+      .not('audit_id', 'is', null)
+      .neq('audit_id', audit.id);
+    if (supersedeErr) throw supersedeErr;
+
     const recRows = result.findings.map((f) => ({
       audit_id: audit.id,
       account_id: account.id,
@@ -217,11 +234,19 @@ export async function POST(req: NextRequest) {
       description: f.description_ar,
       expected_impact: f.expected_impact,
       action_payload: f.action_payload,
+      // Stable identity per (account, operation, target) so a re-run of the
+      // same finding collides on the partial unique index instead of stacking.
+      fingerprint: auditFindingFingerprint(account.id, f.action_payload),
       status: 'pending',
     }));
 
-    const { error: recErr } = await admin.from('recommendations').insert(recRows);
-    if (recErr) throw recErr;
+    // Insert one at a time tolerating 23505: a finding that already exists as
+    // an ACTIVE recommendation (e.g. still-pending from a run milliseconds
+    // earlier, or an approved one) must not abort the whole batch.
+    for (const row of recRows) {
+      const { error: recErr } = await admin.from('recommendations').insert(row);
+      if (recErr && (recErr as { code?: string }).code !== '23505') throw recErr;
+    }
 
     const { error: reportErr } = await admin.from('reports').insert({
       account_id: account.id,
@@ -261,10 +286,9 @@ export async function POST(req: NextRequest) {
     if (isForm) {
       return NextResponse.redirect(new URL('/audit?error=audit_failed', req.url), 303);
     }
-    return NextResponse.json(
-      { error: 'audit_failed', message: err instanceof Error ? err.message : String(err) },
-      { status: 500 }
-    );
+    // Return a stable code only. Raw `err.message` can surface PostgREST
+    // table/column names to the client; keep it in the server log above.
+    return NextResponse.json({ error: 'audit_failed' }, { status: 500 });
   }
 }
 
@@ -274,6 +298,26 @@ async function safeJson(req: NextRequest) {
   } catch {
     return {};
   }
+}
+
+/**
+ * Stable identity of an audit finding: the operation plus its target, not the
+ * generated Arabic wording. Two audit runs that surface the same underlying
+ * issue produce the same fingerprint and collide on the partial unique index
+ * instead of stacking duplicates in the approval centre.
+ */
+function auditFindingFingerprint(accountId: string, actionPayload: any) {
+  const operation = String(actionPayload?.operation ?? 'unknown');
+  const details = actionPayload?.details ?? {};
+  const target =
+    details.campaign_id ??
+    details.budget_resource ??
+    details.resource_name ??
+    details.customer_id ??
+    JSON.stringify(details);
+  return createHash('sha256')
+    .update(`audit:${accountId}:${operation}:${String(target)}`)
+    .digest('hex');
 }
 
 function withSelectedAccountCookie(res: NextResponse, customerId: string) {

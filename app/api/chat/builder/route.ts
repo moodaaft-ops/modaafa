@@ -48,6 +48,16 @@ export async function POST(req: NextRequest) {
   if (!brief || !normalizedCustomerId) {
     return NextResponse.json({ error: 'brief and customerId required' }, { status: 400 });
   }
+  // Cap the brief like the assistant route caps its message (4,000 chars). An
+  // uncapped brief goes straight into the Opus-tier builder prompt and its
+  // tool loop — a multi-megabyte body is avoidable token spend and a
+  // request-too-large failure that still consumes the user's monthly quota.
+  if (String(brief).length > 4000) {
+    return NextResponse.json(
+      { error: 'brief_too_long', message: 'الوصف طويل جداً. اختصره إلى ٤٠٠٠ حرف أو أقل.' },
+      { status: 400 }
+    );
+  }
 
   const { account } = await getLinkedGoogleAdsAccount({
     supabase,
@@ -150,9 +160,7 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     await refundFeatureUsage({ supabase, userId: user.id, usageEventId: usage.usageEventId });
     console.error('Builder failed', err);
-    return NextResponse.json(
-      { error: 'builder_failed', message: err instanceof Error ? err.message : String(err) },
-      { status: 500 }
-    );
+    // Stable code only — raw `err.message` can leak backend detail. Logged above.
+    return NextResponse.json({ error: 'builder_failed' }, { status: 500 });
   }
 }

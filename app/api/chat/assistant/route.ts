@@ -386,16 +386,32 @@ async function loadPersistedChatHistory(supabase: any, sessionId: string): Promi
 const QUESTION_MARKERS =
   /^\s*(كيف|كم|ليش|لماذا|ما\b|ماذا|متى|وش|ايش|أيش|وين|أين|هل|من\b|أي\b|اي\b|what|how|why|when|which|where|who|is|are|do|does|can)\b|[؟?]\s*$/i;
 const ANALYSIS_MARKERS = /حلل|تحليل|أداء|اداء|قارن|مقارنة|لخص|ملخص|اعرض|أعرض|راجع|report|analy[sz]e|compare|summar/i;
-/** Explicit build verbs, plus "campaign" as an object of one. */
+/**
+ * Explicit build verbs. Deliberately excludes bare "أضف/اضف" (add): "أضف كلمة
+ * سلبية" is a keyword request, not a request to build a whole campaign.
+ */
 const BUILD_MARKERS =
-  /(ابن(ي|ِ)?|انشئ|أنشئ|سو(ي|ّي)?|اصنع|أضف|اضف|جهز|جهّز|اكتب لي|صمم|صمّم|create|build|launch|draft|new campaign|write me)/i;
+  /(ابن(ي|ِ)?|انشئ|أنشئ|سو(ي|ّي)?|اصنع|جهز|جهّز|اكتب لي|صمم|صمّم|create|build|launch|draft|new campaign|write me)/i;
+/**
+ * A build request must also name a campaign-like OBJECT. Without this, "سوِّ لي
+ * تقرير شهري" or "اكتب لي رداً" classified as campaign_build and dropped a fake
+ * pending draft — with an invented budget of last week's whole daily spend —
+ * into the approval centre.
+ */
+const CAMPAIGN_OBJECT_MARKERS = /حمل(ة|ات|تي)|إعلان|اعلان|كامبين|campaign|ad\s|ads\b/i;
 
 function detectIntent(message: string): AssistantIntent {
   const looksLikeQuestion = QUESTION_MARKERS.test(message) || ANALYSIS_MARKERS.test(message);
 
-  // A clear build instruction wins over everything, but only when it is not
-  // phrased as a question about existing work.
-  if (BUILD_MARKERS.test(message) && !looksLikeQuestion) return 'campaign_build';
+  // Keyword operations are never campaign builds, even with a build verb:
+  // "أضف كلمة سلبية للحملة" is a keyword ask that happens to mention a campaign.
+  if (/كلمة|كلمات|keyword|negative|سلبية/i.test(message)) return 'keywords';
+
+  // A clear build instruction wins over everything, but only when it names a
+  // campaign object AND is not phrased as a question about existing work.
+  if (BUILD_MARKERS.test(message) && CAMPAIGN_OBJECT_MARKERS.test(message) && !looksLikeQuestion) {
+    return 'campaign_build';
+  }
 
   if (/ميزاني|budget|صرف|انفاق|إنفاق|تكلفة|cpa|roas|عائد/i.test(message)) return 'budget';
   if (/ليش|لماذا|سبب|اشرح|فسر|explain|why/i.test(message)) return 'why';
