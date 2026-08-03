@@ -1,8 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="مُضاعِف">
-  <rect x="4" y="4" width="120" height="120" rx="27" fill="#064E3B"/>
-  <rect x="4.75" y="4.75" width="118.5" height="118.5" rx="26.25" fill="none" stroke="#0D7257" stroke-width="1.5"/>
-  <path d="M27 101V82C27 56 44 40 69 40H76C96 40 108 52 108 71C108 90 94 102 72 102H27V101Z" fill="#FFFFFF"/>
-  <path d="M48 84V80C48 66 56 58 69 58H73C82 58 87 63 87 71C87 80 80 84 70 84H48Z" fill="#10B981"/>
-  <path d="M29 32H67" stroke="#FFFFFF" stroke-width="11" stroke-linecap="round"/>
-  <circle cx="97" cy="32" r="10" fill="#F5A524"/>
+  <rect x="4" y="4" width="120" height="120" rx="30" fill="#063D35"/>
+  <rect x="5" y="5" width="118" height="118" rx="29" fill="none" stroke="#2DD4A4" stroke-opacity=".28" stroke-width="2"/>
+  <path d="M31 34L51 54M77 80L96 99" fill="none" stroke="#2DD4A4" stroke-width="16" stroke-linecap="round"/>
+  <path d="M31 97L93 35" fill="none" stroke="#F8FAFC" stroke-width="16" stroke-linecap="round"/>
+  <path d="M78 27H101V50" fill="none" stroke="#F5B63D" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
