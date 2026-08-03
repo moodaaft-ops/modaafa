@@ -25,6 +25,9 @@ import { isSameOriginRequest } from '@/lib/security/origin';
 export const maxDuration = 120;
 
 export async function POST(req: NextRequest) {
+  // Leave ten seconds for persistence, the response, and usage refunds before
+  // Vercel terminates the function at `maxDuration`.
+  const deadlineAt = Date.now() + 110_000;
 
   // Defence in depth against cross-site POSTs; see lib/security/origin.ts.
   if (!isSameOriginRequest(req)) {
@@ -128,11 +131,16 @@ export async function POST(req: NextRequest) {
     const customer = getCustomer(account.customer_id, refreshToken, account.manager_id ?? undefined);
 
     const business = (account as any).businesses;
-    const result = await buildCampaign(brief, customer, {
-      business_name: business?.name,
-      sector: business?.sector,
-      website: business?.website,
-    });
+    const result = await buildCampaign(
+      brief,
+      customer,
+      {
+        business_name: business?.name,
+        sector: business?.sector,
+        website: business?.website,
+      },
+      { deadlineAt }
+    );
 
     // Persist the draft
     const { error: draftError } = await supabase

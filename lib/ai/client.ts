@@ -76,7 +76,8 @@ export function getModelForAgent(agent: AgentRole): string {
 
 export async function createMessageForAgent(
   agent: AgentRole,
-  params: Omit<Anthropic.MessageCreateParamsNonStreaming, 'model'>
+  params: Omit<Anthropic.MessageCreateParamsNonStreaming, 'model'>,
+  requestOptions?: Anthropic.RequestOptions
 ) {
   const anthropic = getAnthropicClient();
   let lastError: unknown;
@@ -88,7 +89,7 @@ export async function createMessageForAgent(
 
   for (const model of candidates) {
     try {
-      return await anthropic.messages.create({ ...params, model });
+      return await anthropic.messages.create({ ...params, model }, requestOptions);
     } catch (error) {
       lastError = error;
       if (!isUnavailableModelError(error)) throw error;

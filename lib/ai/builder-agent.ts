@@ -99,10 +99,27 @@ export interface BuilderResult {
   tool_trace: Array<{ tool: string; input: any; output: any }>;
 }
 
+export type BuilderRunOptions = {
+  deadlineAt?: number;
+  now?: () => number;
+  minimumRoundBudgetMs?: number;
+};
+
+export const BUILDER_MINIMUM_ROUND_BUDGET_MS = 50_000;
+
+export function hasBuilderRoundBudget({
+  deadlineAt,
+  now = Date.now,
+  minimumRoundBudgetMs = BUILDER_MINIMUM_ROUND_BUDGET_MS,
+}: BuilderRunOptions = {}) {
+  return deadlineAt === undefined || deadlineAt - now() >= minimumRoundBudgetMs;
+}
+
 export async function buildCampaign(
   brief: string,
   customer: Customer,
-  context?: { business_name?: string; sector?: string; website?: string }
+  context?: { business_name?: string; sector?: string; website?: string },
+  options: BuilderRunOptions = {}
 ): Promise<BuilderResult> {
   if (!hasAIBackend()) {
     return buildFallbackCampaign(brief, context);
@@ -120,11 +137,28 @@ export async function buildCampaign(
 
   // Tool-use loop (max 10 turns)
   for (let i = 0; i < 10; i++) {
+    if (!hasBuilderRoundBudget(options)) {
+      console.warn('Campaign builder stopped before the request deadline.', {
+        completedRounds: i,
+      });
+      return buildDeadlineFallback(brief, context, toolTrace);
+    }
+
+    const remainingMs = options.deadlineAt
+      ? options.deadlineAt - (options.now ?? Date.now)()
+      : 45_000;
+
     const response = await createMessageForAgent('builder', {
       max_tokens: 4096,
       system: SYSTEM_PROMPT,
       tools: TOOLS as any,
       messages,
+    }, {
+      // One model attempt must leave time to persist the draft and respond.
+      // Disabling SDK retries here prevents a nominal 45-second round from
+      // silently becoming three attempts that exceed the route duration.
+      timeout: Math.min(45_000, Math.max(1_000, remainingMs - 5_000)),
+      maxRetries: 0,
     });
 
     if (response.stop_reason === 'end_turn') break;
@@ -176,6 +210,25 @@ export async function buildCampaign(
     draft_campaign: finalDraft?.draft ?? {},
     summary_ar: finalDraft?.summary_ar ?? '',
     next_steps_ar: finalDraft?.next_steps_ar ?? [],
+    tool_trace: toolTrace,
+  };
+}
+
+function buildDeadlineFallback(
+  brief: string,
+  context: { business_name?: string; sector?: string; website?: string } | undefined,
+  toolTrace: BuilderResult['tool_trace']
+): BuilderResult {
+  const fallback = buildFallbackCampaign(brief, context);
+  return {
+    ...fallback,
+    summary_ar:
+      'انتهى الوقت المتاح لبناء الحملة بأمان، فحفظت مسودة أولية محافظة بدل فقدان العمل. راجع البيانات وأعد التوليد لإكمال الكلمات والإعلانات والتوقعات.',
+    next_steps_ar: [
+      'راجع الهدف والميزانية اليومية في المسودة',
+      'أعد التوليد لإكمال الكلمات والإعلانات والتوقعات',
+      'لا تطلق الحملة قبل اكتمال المسودة واعتمادها',
+    ],
     tool_trace: toolTrace,
   };
 }
