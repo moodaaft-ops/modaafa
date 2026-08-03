@@ -24,9 +24,11 @@ import { cn, formatDateShortAr } from '@/lib/utils';
 
 export function AccountSwitcher({
   accounts,
+  revokedAccounts,
   selectedCustomerId,
 }: {
   accounts: AdsAccountSummary[];
+  revokedAccounts: AdsAccountSummary[];
   selectedCustomerId: string | null;
 }) {
   const router = useRouter();
@@ -255,23 +257,31 @@ export function AccountSwitcher({
   }
 
   const busy = isPending || syncing || selecting || repairingNames;
+  const revokedAccount = revokedAccounts[0] ?? null;
+  const revokedAccountLabel = revokedAccount
+    ? `${googleAdsAccountDisplayName(revokedAccount)} (${formatGoogleAdsCustomerId(revokedAccount.customer_id)})`
+    : '';
 
   if (accounts.length === 0) {
     return (
-      <div className="mx-4 mt-4 rounded-lg border border-amber-200 dark:border-amber-500/25 bg-amber-50 dark:bg-amber-500/15 p-3">
+      <div className="mx-4 mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-500/25 dark:bg-amber-500/15">
         <div className="flex items-center gap-2 text-sm font-semibold text-amber-900 dark:text-amber-200">
           <CircleAlert className="h-4 w-4" />
-          لا يوجد حساب إعلاني
+          {revokedAccount ? 'انتهت صلاحية ربط Google Ads' : 'لا يوجد حساب إعلاني'}
         </div>
         <p className="mt-1 text-xs leading-5 text-amber-800 dark:text-amber-300">
-          اربط إعلانات Google حتى تظهر بيانات الأداء والتوصيات.
+          {revokedAccount
+            ? `انتهت صلاحية الربط لحساب ${revokedAccountLabel}${
+                revokedAccounts.length > 1 ? ` و${revokedAccounts.length - 1} حساب آخر` : ''
+              }. أعد الربط لاستعادة البيانات.`
+            : 'اربط إعلانات Google حتى تظهر بيانات الأداء والتوصيات.'}
         </p>
         <Link
           href="/onboarding/connect"
           className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/12 px-3 py-2 text-[11.5px] font-semibold text-amber-600 transition-colors hover:bg-amber-500/20 dark:text-amber-300"
         >
-          <Plus className="h-4 w-4" />
-          ربط حساب
+          {revokedAccount ? <RefreshCw className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+          {revokedAccount ? 'إعادة ربط Google Ads' : 'ربط حساب'}
         </Link>
       </div>
     );
@@ -391,6 +401,28 @@ export function AccountSwitcher({
           </div>
         )}
       </div>
+
+      {revokedAccount && (
+        <div className="mt-3 rounded-md border border-amber-300/70 bg-amber-50 px-2.5 py-2 text-[11px] leading-5 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-200">
+          <div className="flex items-start gap-2">
+            <CircleAlert className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+            <span>
+              انتهت صلاحية ربط Google Ads لحساب {revokedAccountLabel}
+              {revokedAccounts.length > 1
+                ? ` و${revokedAccounts.length - 1} حساب آخر`
+                : ''}
+              .
+            </span>
+          </div>
+          <Link
+            href="/onboarding/connect"
+            className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-amber-500/35 bg-amber-500/10 px-2.5 py-1.5 font-semibold text-amber-800 transition-colors hover:bg-amber-500/20 dark:text-amber-200"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            إعادة الربط
+          </Link>
+        </div>
+      )}
 
       {selectedMissingName && !open && (
         <div className="mt-2">

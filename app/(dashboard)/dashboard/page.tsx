@@ -83,7 +83,12 @@ export default async function DashboardPage({
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  const { business: workspaceBusiness, accounts, selectedAccount } = await getAccountWorkspace(supabase);
+  const {
+    business: workspaceBusiness,
+    accounts,
+    revokedAccounts,
+    selectedAccount,
+  } = await getAccountWorkspace(supabase, user?.id);
 
   // Reuse the workspace lookup rather than issuing a second, unordered
   // `.maybeSingle()` query — that variant threw PGRST116 the moment a user had
@@ -138,7 +143,9 @@ export default async function DashboardPage({
         description={
           selectedAccount
             ? `تعمل الآن على ${googleAdsAccountDisplayName(selectedAccount)}`
-            : 'ابدأ بربط حساب إعلاني حتى تظهر بيانات العمل.'
+            : revokedAccounts.length > 0
+              ? 'انتهت صلاحية ربط Google Ads. أعد الربط لاستعادة بيانات العمل.'
+              : 'ابدأ بربط حساب إعلاني حتى تظهر بيانات العمل.'
         }
         account={
           selectedAccount
@@ -187,12 +194,21 @@ export default async function DashboardPage({
         )}
         {accounts.length === 0 ? (
           <EmptyState
-            icon={Plus}
-            title="اربط أول حساب إعلاني لتبدأ"
-            description="مُضاعِف يعمل على حساب إعلاني واحد في كل مرة. اربط إعلانات Google بموافقة واحدة، ثم اختر الحساب وشغّل أول فحص."
+            icon={revokedAccounts.length > 0 ? CircleDashed : Plus}
+            tone={revokedAccounts.length > 0 ? 'warning' : 'neutral'}
+            title={
+              revokedAccounts.length > 0
+                ? 'انتهت صلاحية ربط Google Ads'
+                : 'اربط أول حساب إعلاني لتبدأ'
+            }
+            description={
+              revokedAccounts.length > 0
+                ? `أعد ربط Google Ads لاستعادة ${formatNumberAr(revokedAccounts.length)} حساب وحمل بياناته من جديد.`
+                : 'مُضاعِف يعمل على حساب إعلاني واحد في كل مرة. اربط إعلانات Google بموافقة واحدة، ثم اختر الحساب وشغّل أول فحص.'
+            }
             action={
               <Link href="/onboarding/connect" className={buttonClasses({ variant: 'primary', size: 'lg' })}>
-                ربط إعلانات Google
+                {revokedAccounts.length > 0 ? 'إعادة ربط Google Ads' : 'ربط إعلانات Google'}
               </Link>
             }
           />

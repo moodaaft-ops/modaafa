@@ -65,12 +65,14 @@ export function DashboardChrome({
   brandName,
   userEmail,
   accounts,
+  revokedAccounts,
   selectedCustomerId,
   children,
 }: {
   brandName: string;
   userEmail: string;
   accounts: AdsAccountSummary[];
+  revokedAccounts: AdsAccountSummary[];
   selectedCustomerId: string | null;
   children: React.ReactNode;
 }) {
@@ -201,7 +203,11 @@ export function DashboardChrome({
         </div>
 
         <div className="relative" data-tour="account-switcher">
-          <AccountSwitcher accounts={accounts} selectedCustomerId={selectedCustomerId} />
+          <AccountSwitcher
+            accounts={accounts}
+            revokedAccounts={revokedAccounts}
+            selectedCustomerId={selectedCustomerId}
+          />
         </div>
 
         <nav className="relative flex-1 space-y-5 overflow-y-auto px-2.5 py-4 scrollbar-thin">

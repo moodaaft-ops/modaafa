@@ -76,6 +76,7 @@ export async function getAccountWorkspace(supabase: any, userId?: string | null)
     return {
       business: null,
       accounts: [] as AdsAccountSummary[],
+      revokedAccounts: [] as AdsAccountSummary[],
       selectedAccount: null,
       selectedCustomerId: null,
     };
@@ -87,7 +88,7 @@ export async function getAccountWorkspace(supabase: any, userId?: string | null)
       'id, customer_id, customer_name, manager_id, status, is_manager, google_status, currency_code, time_zone, last_synced_at'
     )
     .eq('business_id', business.id)
-    .eq('status', 'active')
+    .in('status', ['active', 'revoked'])
     // Manager accounts can never answer a metrics query, so they must not be
     // selectable. The env-based MCC list below only ever knew about Modaafa's
     // own manager — a customer who connected their own agency MCC got no
@@ -100,13 +101,9 @@ export async function getAccountWorkspace(supabase: any, userId?: string | null)
     console.error('Failed to load Google Ads accounts', error);
   }
 
-  const managerIds = configuredManagerCustomerIdSet();
-  const accounts = ((data ?? []) as AdsAccountSummary[])
-    .map((account) => ({
-      ...account,
-      customer_id: normalizeCustomerId(account.customer_id),
-    }))
-    .filter((account) => !managerIds.has(account.customer_id) && account.is_manager !== true);
+  const { accounts, revokedAccounts } = partitionGoogleAdsAccounts(
+    (data ?? []) as AdsAccountSummary[]
+  );
 
   const selectedAccount = pickSelectedAdsAccount(
     accounts,
@@ -117,8 +114,26 @@ export async function getAccountWorkspace(supabase: any, userId?: string | null)
   return {
     business,
     accounts,
+    revokedAccounts,
     selectedAccount,
     selectedCustomerId: selectedAccount?.customer_id ?? null,
+  };
+}
+
+export function partitionGoogleAdsAccounts(
+  rows: AdsAccountSummary[],
+  managerIds = configuredManagerCustomerIdSet()
+) {
+  const clientAccounts = rows
+    .map((account) => ({
+      ...account,
+      customer_id: normalizeCustomerId(account.customer_id),
+    }))
+    .filter((account) => !managerIds.has(account.customer_id) && account.is_manager !== true);
+
+  return {
+    accounts: clientAccounts.filter((account) => account.status === 'active'),
+    revokedAccounts: clientAccounts.filter((account) => account.status === 'revoked'),
   };
 }
 
