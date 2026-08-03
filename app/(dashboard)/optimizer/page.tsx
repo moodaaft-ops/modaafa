@@ -244,6 +244,7 @@ function optimizerErrorMessage(code: string) {
     manual_review_required: 'هذه التوصية وصفية وتحتاج مراجعة يدوية، لذلك لم ننفذها تلقائياً.',
     execution_failed: 'اجتازت العملية المراجعة الأولية لكن تعذر تنفيذها في Google Ads. لم نعتبرها مطبقة.',
     execution_recording_failed: 'تم إرسال التعديل إلى Google Ads لكن تعذر تأكيد حفظ السجل. أوقفنا إعادة التنفيذ وأبلغنا فريق التشغيل للمطابقة اليدوية.',
+    execution_unverified: 'انتهت مهلة إرسال التعديل وقد يكون طُبق فعلاً في Google Ads. أوقفنا إعادة التنفيذ وأبلغنا فريق التشغيل — راجع سجل التغييرات في Google Ads قبل أي محاولة جديدة.',
     already_executing: 'هذه التوصية قيد التنفيذ أو نُفذت بالفعل. حدّث الصفحة لرؤية حالتها الحالية.',
     recommendation_locked: 'لا يمكن تغيير هذه التوصية أثناء التنفيذ أو بعد تطبيقها.',
     invalid_rollback: 'طلب التراجع غير صالح.',
@@ -342,7 +343,19 @@ function ChangePreview({
     }
   } else if (operation === 'adjust_budget') {
     const next = Number(params.new_amount_micros ?? 0) / 1_000_000;
+    const current = Number(params.current_amount_micros ?? 0) / 1_000_000;
+    const deltaPct = Number(params.delta_pct ?? NaN);
+    if (current > 0) rows.push({ label: 'الميزانية اليومية الحالية', value: formatCurrency(current, currencyCode) });
     if (next > 0) rows.push({ label: 'الميزانية اليومية الجديدة', value: formatCurrency(next, currencyCode) });
+    // Delta-only payloads (queued before the absolute amount is known) must
+    // still show a number — an approval card for a budget change with no
+    // amount on it defeats the whole point of this block.
+    if (!(next > 0) && Number.isFinite(deltaPct) && deltaPct !== 0) {
+      rows.push({
+        label: 'نسبة التغيير',
+        value: `${deltaPct > 0 ? '+' : ''}${formatNumberAr(Number(deltaPct.toFixed(1)))}% من الميزانية الحالية (يُحسب المبلغ من القيمة الحية عند التنفيذ)`,
+      });
+    }
     if (params.budget_resource) {
       rows.push({ label: 'المورد المستهدف', value: String(params.budget_resource), ltr: true });
     }
