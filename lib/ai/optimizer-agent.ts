@@ -37,12 +37,12 @@ YOUR PHILOSOPHY
 - Trust the data: don't guess. Not acting is a valid decision.
 
 ALLOWED ACTIONS
-- pause_keyword: pause keywords with sustained low CTR (<1%) and zero conversions over 7+ days, AND clicks > 20
-- add_negative_keyword: add a negative when a search term has 5+ clicks and 0 conversions
+- pause_keyword: pause keywords with sustained low CTR (<1%) and zero conversions over 7+ days, AND clicks > 20. target_id is the keyword's ad_group_criterion.resource_name copied verbatim.
+- add_negative_keyword: add a negative when a search term has 5+ clicks and 0 conversions. params: { campaign_resource, keyword_text, match_type: "EXACT" | "PHRASE" }. campaign_resource MUST be the campaign.resource_name copied verbatim from the SAME wasted_search_terms row — never guess a campaign from the campaign list.
 - add_keyword: promote a CONVERTING search term (2+ conversions in 30 days) into a real keyword in the ad group that captured it. params: { ad_group_resource, keyword_text, match_type: "EXACT" | "PHRASE", source: { clicks, conversions, cost } }. Never propose a keyword that already exists in the account, and never use BROAD.
-- adjust_budget: increase a budget by max 25% if ROAS > target AND budget is 90%+ utilized for 3+ days; decrease by max 30% if ROAS < target by 50%+. params must include delta_pct and budget_resource.
-- adjust_bid: adjust ad-group target CPA / target ROAS within ±20% based on conversion trends. Name exactly ONE target kind and match the kind the ad group already uses.
-- pause_ad: pause individual ads with ad_strength=POOR and CTR < half of ad-group average
+- adjust_budget: increase a budget by max 25% if ROAS > target AND budget is 90%+ utilized for 3+ days; decrease by max 30% if ROAS < target by 50%+. params: { budget_resource, current_amount_micros (copy from the campaign row), new_amount_micros (the absolute new daily amount), delta_pct }. new_amount_micros is what actually executes — a delta alone is not executable.
+- adjust_bid: adjust ad-group target CPA / target ROAS within ±20% based on conversion trends. ONLY for ad groups listed in <account_data>.ad_group_bid_targets. params: { ad_group_resource, and exactly ONE of target_cpa_micros or target_roas (the new value), plus the matching current_target_cpa_micros or current_target_roas copied verbatim from that row }. Match the target kind the ad group already uses; never introduce the other kind.
+- pause_ad: pause individual ads with ad_strength=POOR and CTR < half of ad-group average. target_id is ad_group_ad.resource_name copied verbatim.
 
 DECISION FRAMEWORK
 1. Read the snapshot below carefully, tracking health first.
@@ -114,6 +114,14 @@ export interface OptimizerSnapshot {
   wasted_search_terms: any[];
   /** Converting search terms not yet promoted to keywords — the expansion pool. */
   converting_search_terms?: any[];
+  /**
+   * Enabled ad groups that carry an explicit target CPA / target ROAS, with
+   * their current values. adjust_bid proposals are only valid against rows in
+   * this list: without it the model had no current value to anchor to, the
+   * queue-time guardrail failed closed, and no bid recommendation ever reached
+   * the approval centre.
+   */
+  ad_group_bid_targets?: any[];
   budget_utilization: any[];
   poor_ads: any[];
   keyword_count: number;

@@ -7,6 +7,7 @@ import {
 } from '@/lib/google-ads/client';
 import { ManagerAccountError, syncCampaignCacheWithLoginFallback } from '@/lib/google-ads/sync';
 import { finishJobRun, getBillableBusinessIds, startJobRun } from '@/lib/platform/jobs';
+import { pruneOperationalTables } from '@/lib/platform/retention';
 import { sendOpsAlert } from '@/lib/notifications/email';
 import { hasValidCronAuthorization } from '@/lib/security/cron-auth';
 import { createTimeBudget, mapLimit } from '@/lib/platform/concurrency';
@@ -19,6 +20,12 @@ export const maxDuration = 300;
 
 /** Leave ~40s of the 300s function budget for bookkeeping and alerts. */
 const SYNC_BUDGET_MS = 260_000;
+/**
+ * Minimum budget left to ADMIT one more account: a worst-case single account
+ * (metadata fallback chain + four metric windows with retries) admitted at the
+ * budget edge would run past the hard kill, where nothing gets recorded.
+ */
+const SYNC_PER_ACCOUNT_RESERVE_MS = 45_000;
 
 async function runSync(req: NextRequest) {
   if (!hasValidCronAuthorization(req)) {
@@ -41,6 +48,12 @@ async function runSync(req: NextRequest) {
     SYNC_ACCOUNT_LIMIT
   );
   const job = await startJobRun(supabase, 'sync-google-ads');
+  if (job.alreadyRunning) {
+    // The scheduler's own curl retry (--retry-all-errors --max-time 290) can
+    // re-invoke while the first invocation is still executing. 409 tells the
+    // caller honestly; the running invocation keeps its claim.
+    return NextResponse.json({ skipped: 'already_running' }, { status: 409 });
+  }
 
   let businessIds: string[];
   try {
@@ -100,7 +113,7 @@ async function runSync(req: NextRequest) {
   let skippedForTime = 0;
 
   await mapLimit(accounts ?? [], SYNC_ACCOUNT_CONCURRENCY, async (account) => {
-    if (budget.expired()) {
+    if (budget.expired(SYNC_PER_ACCOUNT_RESERVE_MS)) {
       skippedForTime += 1;
       return;
     }
@@ -169,6 +182,13 @@ async function runSync(req: NextRequest) {
     }
   });
 
+  // Retention for ever-growing operational tables rides along here — the one
+  // job guaranteed to run hourly. Best-effort by construction.
+  let retention: { pruned: string[]; failures: string[] } | null = null;
+  if (!budget.expired()) {
+    retention = await pruneOperationalTables(supabase);
+  }
+
   const status = results.errors.length === 0 ? 'success' : results.processed > 0 ? 'partial' : 'failed';
   await finishJobRun({
     supabase,
@@ -179,6 +199,7 @@ async function runSync(req: NextRequest) {
     details: {
       updated_campaign_rows: results.updated_campaign_rows,
       active_campaigns: results.active_campaigns,
+      retention: retention ?? { skipped: 'time_budget_exhausted' },
       // Never truncate silently: an operator reading job_runs must be able to
       // tell "everything synced" from "we ran out of time".
       skipped_for_time: skippedForTime,

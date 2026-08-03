@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createHash } from 'node:crypto';
 import { createAdminClient } from '@/lib/supabase/server';
-import { getCustomer } from '@/lib/google-ads/client';
+import { getCustomer, getGoogleAdsErrorCodes } from '@/lib/google-ads/client';
+import { assertNotManagerAccount } from '@/lib/google-ads/sync';
 import { decrypt } from '@/lib/crypto';
 import {
   decideOptimizations,
@@ -48,6 +49,13 @@ export const maxDuration = 300; // 5 min
 
 /** Leave ~40s of the 300s budget for bookkeeping and ops alerts. */
 const OPTIMIZE_BUDGET_MS = 260_000;
+/**
+ * Minimum budget left to ADMIT one more account. An account admitted with 1s
+ * remaining could still spend ~60s on snapshot retries plus an Anthropic call
+ * past the 300s hard kill — where `finishJobRun` never runs and the job_runs
+ * row is stuck `running`. Sized to a realistic worst-case single account.
+ */
+const OPTIMIZE_PER_ACCOUNT_RESERVE_MS = 45_000;
 
 async function runOptimizerCron(req: NextRequest) {
   // Auth
@@ -66,6 +74,11 @@ async function runOptimizerCron(req: NextRequest) {
   }
 
   const job = await startJobRun(supabase, 'optimize');
+  if (job.alreadyRunning) {
+    // Overlapping optimize runs select the same oldest accounts and double
+    // the Anthropic spend; refuse the second invocation honestly.
+    return NextResponse.json({ skipped: 'already_running' }, { status: 409 });
+  }
 
   let businessIds: string[];
   try {
@@ -151,7 +164,7 @@ async function runOptimizerCron(req: NextRequest) {
   let skippedForTime = 0;
 
   await mapLimit(accounts, OPTIMIZE_ACCOUNT_CONCURRENCY, async (account) => {
-    if (budget.expired()) {
+    if (budget.expired(OPTIMIZE_PER_ACCOUNT_RESERVE_MS)) {
       skippedForTime += 1;
       return;
     }
@@ -159,6 +172,14 @@ async function runOptimizerCron(req: NextRequest) {
     try {
       const refreshToken = decrypt(account.refresh_token_encrypted);
       const customer = getCustomer(account.customer_id, refreshToken, account.manager_id ?? undefined);
+
+      // Same hard guard the sync path runs: never fire metrics GAQL at a
+      // manager account. The DB `is_manager` filter above is only as good as
+      // the stored flag — a manager mis-recorded as `false` (a transient
+      // metadata failure during discovery) otherwise ate 7 doomed metrics
+      // queries here every hourly run until the SYNC cron happened to repair
+      // it. The catch below writes the flag back, so this self-heals.
+      await assertNotManagerAccount(customer);
 
       const businessContext = businessContextById.get(account.business_id) ?? null;
 
@@ -220,7 +241,10 @@ async function runOptimizerCron(req: NextRequest) {
             // DISMISSED a recommendation used to get the identical one re-queued
             // on the very next nightly run; an APPLIED non-idempotent action
             // (e.g. add_negative_keyword) could be re-approved into a duplicate.
-            .in('status', ['pending', 'approved', 'executing', 'applied', 'dismissed'])
+            // `failed` is included too: re-queueing a pending twin of a failed
+            // row meant re-approving the original later collided with the
+            // fingerprint unique index and surfaced as `recommendation_locked`.
+            .in('status', ['pending', 'approved', 'executing', 'applied', 'dismissed', 'failed'])
             .maybeSingle();
           if (existing) continue;
 
@@ -314,6 +338,18 @@ async function runOptimizerCron(req: NextRequest) {
 
       results.processed++;
     } catch (err) {
+      // Self-heal the stored flag the moment Google (or our own pre-flight)
+      // says this is a manager account, mirroring the sync cron. Without this
+      // the same account failed every optimize run forever.
+      if (getGoogleAdsErrorCodes(err).includes('REQUESTED_METRICS_FOR_MANAGER')) {
+        const { error: managerFlagError } = await supabase
+          .from('google_ads_accounts')
+          .update({ is_manager: true })
+          .eq('id', account.id);
+        if (managerFlagError) {
+          results.errors.push(`${account.customer_id}:manager_flag:${managerFlagError.message}`);
+        }
+      }
       results.errors.push(`${account.customer_id}: ${err instanceof Error ? err.message : err}`);
     } finally {
       const { error: cursorError } = await supabase
@@ -398,8 +434,12 @@ async function buildOptimizerSnapshot(
   businessContext: { sector: string | null; primary_goal: string | null; monthly_budget: number | null } | null,
   sectorBenchmark: SectorBenchmarkRow | null = null
 ): Promise<OptimizerSnapshot> {
-  const [campaigns, highPerforming, underperforming, wastedTerms, convertingTerms, poorAds, enabledKeywords] =
+  const [campaigns, highPerforming, underperforming, wastedTerms, convertingTerms, poorAds, enabledKeywords, adGroupBidTargets] =
     await Promise.all([
+    // Bounded, highest-spend first. This and the underperforming query below
+    // had no LIMIT: a large account could return thousands of rows, ballooning
+    // the per-account prompt to hundreds of KB every hourly run (real token
+    // cost, and request-too-large failures that aborted the account).
     customer.query(`
       SELECT
         campaign.id, campaign.name, campaign.resource_name,
@@ -408,6 +448,8 @@ async function buildOptimizerSnapshot(
       FROM campaign
       WHERE segments.date DURING LAST_7_DAYS
         AND campaign.status = 'ENABLED'
+      ORDER BY metrics.cost_micros DESC
+      LIMIT 200
     `),
     customer.query(`
       SELECT
@@ -433,11 +475,20 @@ async function buildOptimizerSnapshot(
         AND metrics.conversions = 0
         AND metrics.ctr < 0.01
         AND ad_group_criterion.status = 'ENABLED'
+      ORDER BY metrics.cost_micros DESC
+      LIMIT 100
     `),
+    // campaign.resource_name is selected so add_negative_keyword can name the
+    // campaign that actually served the term. Without it the model saw the
+    // campaign list but no term→campaign mapping, and attached negatives to a
+    // plausible-but-wrong campaign — a mistake every validation layer accepts,
+    // because any same-account campaign is "valid".
     customer.query(`
       SELECT
         search_term_view.search_term,
         search_term_view.ad_group,
+        campaign.resource_name,
+        campaign.name,
         metrics.clicks, metrics.cost_micros
       FROM search_term_view
       WHERE segments.date DURING LAST_7_DAYS
@@ -454,6 +505,8 @@ async function buildOptimizerSnapshot(
         search_term_view.search_term,
         search_term_view.ad_group,
         search_term_view.status,
+        campaign.resource_name,
+        campaign.name,
         metrics.clicks, metrics.cost_micros,
         metrics.conversions, metrics.conversions_value
       FROM search_term_view
@@ -482,6 +535,31 @@ async function buildOptimizerSnapshot(
       WHERE ad_group_criterion.status = 'ENABLED'
       LIMIT 10000
     `),
+    // Current ad-group bid targets — the data adjust_bid decisions anchor to.
+    // Without this list the model had no current value to copy, the queue-time
+    // ±20% guardrail failed closed (unknown current ⇒ blocked), and not one
+    // bid recommendation ever reached the approval centre.
+    customer.query(`
+      SELECT
+        ad_group.resource_name,
+        ad_group.name,
+        ad_group.campaign,
+        ad_group.target_cpa_micros,
+        ad_group.target_roas,
+        metrics.conversions, metrics.cost_micros
+      FROM ad_group
+      WHERE segments.date DURING LAST_30_DAYS
+        AND ad_group.status = 'ENABLED'
+      ORDER BY metrics.cost_micros DESC
+      LIMIT 50
+    `).then((rows: any[]) =>
+      rows.filter((row: any) => {
+        const adGroup = row.adGroup ?? row.ad_group ?? {};
+        const cpa = Number(adGroup.targetCpaMicros ?? adGroup.target_cpa_micros ?? 0);
+        const roas = Number(adGroup.targetRoas ?? adGroup.target_roas ?? 0);
+        return cpa > 0 || roas > 0;
+      })
+    ).catch(() => [] as any[]),
   ]);
 
   // ---- Conversion tracking health: the gate every other decision sits behind.
@@ -564,6 +642,7 @@ async function buildOptimizerSnapshot(
     high_performing_keywords: highPerforming,
     wasted_search_terms: wastedTerms,
     converting_search_terms: convertingTerms,
+    ad_group_bid_targets: adGroupBidTargets,
     budget_utilization: budgetUtilization,
     poor_ads: poorAds,
     keyword_count: enabledKeywords.length,
@@ -746,7 +825,13 @@ async function maybeGenerateWeeklyReport({
       next_week_ar: narrative.next_week_ar,
     },
   });
-  if (error) throw error;
+  if (error) {
+    // Two overlapping runs can race past the read-check above; the unique
+    // weekly-report index (migration 20260803) turns the loser into a 23505,
+    // which simply means the report already exists.
+    if ((error as { code?: string }).code === '23505') return false;
+    throw error;
+  }
   return true;
 }
 
