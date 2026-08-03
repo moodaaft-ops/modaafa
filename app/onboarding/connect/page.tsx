@@ -52,6 +52,11 @@ export default async function ConnectGoogleAdsPage({
   // thing, so it gets its own recovery block instead of a red bar above an
   // unchanged page. See ManagerOnlyRecovery below.
   const managerOnly = params?.error === 'no_client_accounts';
+  // `no_accounts` (the Google account owns no Google Ads account at all) is the
+  // same kind of dead end for a brand-new advertiser: a red line offering no
+  // way forward. It gets its own recovery block too.
+  const noAccounts = params?.error === 'no_accounts';
+  const recoveryError = managerOnly || noAccounts;
 
   return (
     <main className="px-4 py-8 sm:px-6">
@@ -79,13 +84,14 @@ export default async function ConnectGoogleAdsPage({
           </Alert>
         </div>
 
-        {params?.error && !managerOnly && (
+        {params?.error && !recoveryError && (
           <div className="mb-5">
             <Alert tone="danger">{errors[params.error] ?? 'حدث خطأ أثناء الربط.'}</Alert>
           </div>
         )}
 
         {managerOnly && <ManagerOnlyRecovery />}
+        {noAccounts && <NoAccountsRecovery />}
 
         <section className="surface-card p-5 sm:p-6">
           <h3 className="text-[15px] font-semibold">ربط تلقائي لكل الحسابات</h3>
@@ -203,6 +209,73 @@ function ManagerOnlyRecovery() {
           <p className="mt-1 text-[13px] leading-7 text-amber-900/80 dark:text-amber-100/80">
             الحسابات الإدارية لا تحتوي على حملات أو بيانات أداء، ولا يمكن قراءة المقاييس منها. نحتاج حساب عميل واحداً
             على الأقل تحت الحساب الإداري، أو حساباً إعلانياً مباشراً.
+          </p>
+        </div>
+      </div>
+
+      <div className="grid gap-px bg-amber-500/15 sm:grid-cols-3">
+        {options.map((option) => (
+          <div key={option.title} className="flex flex-col bg-background p-5">
+            <div className="text-[13px] font-semibold text-foreground">{option.title}</div>
+            <p className="mt-2 flex-1 text-xs leading-6 text-muted-foreground">{option.body}</p>
+            {option.href && (
+              <a
+                href={option.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline"
+              >
+                {option.cta}
+                <ArrowUpLeft className="h-3.5 w-3.5" />
+              </a>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/**
+ * The brand-new-advertiser dead end.
+ *
+ * `no_accounts` means the Google account that authorised owns no Google Ads
+ * account at all — common for a genuinely new advertiser. The old page showed
+ * one red line ("لم نجد حسابات…") above an unchanged page, with retrying the
+ * same email guaranteed to fail again. Each option here is an actual next step:
+ * create a first Google Ads account, or reconnect with the email that owns one.
+ */
+function NoAccountsRecovery() {
+  const options = [
+    {
+      title: 'أنشئ أول حساب إعلاني في Google Ads',
+      body: 'إذا لم تُنشئ حساب Google Ads بعد، أنشئه مجاناً في دقائق. بعد إنشائه ارجع هنا وأعد الربط بنفس البريد.',
+      href: 'https://ads.google.com/nav/selectaccount?authuser=0&dst=/aw/campaigns/new',
+      cta: 'إنشاء حساب Google Ads',
+    },
+    {
+      title: 'جرّب بريد Google آخر',
+      body: 'إن كان حسابك الإعلاني على بريد مختلف، اضغط زر الربط بالأسفل واختر البريد الذي يملك الحساب الإعلاني.',
+    },
+    {
+      title: 'اطلب دعوة من مالك الحساب',
+      body: 'إذا كان الحساب عند عميلك أو زميلك، اطلب منه دعوتك بصلاحية إدارة على الحساب ثم أعد الربط.',
+    },
+  ];
+
+  return (
+    <section className="mb-5 overflow-hidden rounded-xl border border-amber-500/25 bg-amber-500/[0.06]">
+      <div className="flex items-start gap-3 border-b border-amber-500/20 px-5 py-4">
+        <span className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-500">
+          <TriangleAlert className="h-4 w-4" />
+        </span>
+        <div className="min-w-0">
+          <h3 className="text-[14px] font-semibold text-amber-900 dark:text-amber-100">
+            لم نجد أي حساب إعلاني على هذا البريد
+          </h3>
+          <p className="mt-1 text-[13px] leading-7 text-amber-900/80 dark:text-amber-100/80">
+            منحتنا Google الصلاحية بنجاح، لكن حساب Google الذي اخترته لا يملك أي حساب إعلاني في Google Ads بعد.
+            اختر أحد الحلول التالية ثم أعد الربط من الزر بالأسفل.
           </p>
         </div>
       </div>

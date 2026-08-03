@@ -301,6 +301,7 @@ export default async function DashboardPage({
               <CampaignSpendChart
                 currencyCode={selectedAccount?.currency_code}
                 campaigns={activeCampaigns.map((c) => ({
+                  id: c.google_campaign_id ?? c.id,
                   name: c.name ?? 'حملة',
                   spend: moneyMetric(c.metrics_7d, 'cost'),
                   roas: c.metrics_30d?.roas ?? 0,
