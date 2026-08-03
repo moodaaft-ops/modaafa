@@ -1,6 +1,7 @@
 import { createServerClient as createSSRClient, type CookieOptions } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { isConfiguredEnv } from '@/lib/platform/env';
+import { requestCache } from '@/lib/platform/request-cache';
 import { SUPABASE_COOKIE_OPTIONS } from '@/lib/supabase/cookie-options';
 
 /**
@@ -37,6 +38,23 @@ export async function createServerClient() {
     }
   );
 }
+
+/**
+ * Request-scoped client and authenticated user for React Server Components.
+ * Layouts and their pages render in the same request, so caching this pair
+ * avoids repeating Supabase's auth round trip while keeping Route Handlers on
+ * a fresh client through `createServerClient()`.
+ */
+export const getRequestServerClient = requestCache(createServerClient);
+
+export const getRequestAuthContext = requestCache(async () => {
+  const supabase = await getRequestServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  return { supabase, user };
+});
 
 /**
  * Service-role client - bypasses RLS. Use ONLY for admin tasks

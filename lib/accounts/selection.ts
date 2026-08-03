@@ -1,5 +1,7 @@
 import { cookies } from 'next/headers';
 import { isGeneratedFallbackName } from './display';
+import { requestCache } from '@/lib/platform/request-cache';
+import { getRequestServerClient } from '@/lib/supabase/server';
 
 export const SELECTED_ADS_ACCOUNT_COOKIE = 'modaafa_selected_customer_id';
 
@@ -26,6 +28,11 @@ export type AdsAccountSummary = {
 export type BusinessSummary = {
   id: string;
   name?: string | null;
+  sector?: string | null;
+  website?: string | null;
+  monthly_budget?: number | null;
+  primary_goal?: string | null;
+  target_regions?: string[] | null;
   selected_google_ads_customer_id?: string | null;
 };
 
@@ -38,7 +45,7 @@ export type GoogleAdsSelectableAccount = {
   time_zone?: string | null;
 };
 
-export async function getUserBusiness(
+async function loadUserBusiness(
   supabase: any,
   userId?: string | null
 ): Promise<BusinessSummary | null> {
@@ -51,7 +58,9 @@ export async function getUserBusiness(
 
   const { data, error } = await supabase
     .from('businesses')
-    .select('id, name, selected_google_ads_customer_id')
+    .select(
+      'id, name, sector, website, monthly_budget, primary_goal, target_regions, selected_google_ads_customer_id'
+    )
     .eq('user_id', resolvedUserId)
     .order('created_at', { ascending: false })
     .limit(1)
@@ -65,12 +74,23 @@ export async function getUserBusiness(
   return data ?? null;
 }
 
-export async function getAccountWorkspace(supabase: any, userId?: string | null) {
+export const getUserBusiness = requestCache(async (userId: string): Promise<BusinessSummary | null> => {
+  const supabase = await getRequestServerClient();
+  return loadUserBusiness(supabase, userId);
+});
+
+/** Route Handlers already own a request-bound client, so they use this form. */
+export function getUserBusinessWithClient(supabase: any, userId?: string | null) {
+  return loadUserBusiness(supabase, userId);
+}
+
+export const getAccountWorkspace = requestCache(async (userId: string) => {
+  const supabase = await getRequestServerClient();
   const cookieStore = await cookies();
   const selectedFromCookie = normalizeCustomerId(
     cookieStore.get(SELECTED_ADS_ACCOUNT_COOKIE)?.value ?? ''
   );
-  const business = await getUserBusiness(supabase, userId);
+  const business = await getUserBusiness(userId);
 
   if (!business) {
     return {
@@ -118,7 +138,7 @@ export async function getAccountWorkspace(supabase: any, userId?: string | null)
     selectedAccount,
     selectedCustomerId: selectedAccount?.customer_id ?? null,
   };
-}
+});
 
 export function partitionGoogleAdsAccounts(
   rows: AdsAccountSummary[],
@@ -166,7 +186,7 @@ export async function getLinkedGoogleAdsAccount({
   customerId?: string | null;
   select?: string;
 }) {
-  const business = await getUserBusiness(supabase, userId);
+  const business = await loadUserBusiness(supabase, userId);
   if (!business) return { business: null, account: null, error: 'business_not_found' as const };
 
   const managerIds = configuredManagerCustomerIdSet();

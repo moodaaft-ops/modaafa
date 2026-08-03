@@ -1,7 +1,8 @@
 import { Link2, Megaphone } from 'lucide-react';
+import { redirect } from 'next/navigation';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
-import { createServerClient } from '@/lib/supabase/server';
+import { getRequestAuthContext } from '@/lib/supabase/server';
 import { formatCurrency, formatNumberAr } from '@/lib/utils';
 import { moneyMetric } from '@/lib/google-ads/metrics';
 import { campaignStatusLabel, campaignTypeLabel } from '@/lib/ui/labels';
@@ -26,8 +27,9 @@ export default async function CampaignsPage({
   // but this page never read either, so a failed refresh looked exactly like a
   // successful one: same stale table, no message.
   const params = await searchParams;
-  const supabase = await createServerClient();
-  const { accounts, selectedAccount } = await getAccountWorkspace(supabase);
+  const { supabase, user } = await getRequestAuthContext();
+  if (!user) redirect('/login');
+  const { accounts, selectedAccount } = await getAccountWorkspace(user.id);
   const { data: campaigns } = selectedAccount
     ? await supabase
         .from('campaigns_cache')

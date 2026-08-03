@@ -1,7 +1,8 @@
 import { History, Link2, ShieldCheck, Zap } from 'lucide-react';
+import { redirect } from 'next/navigation';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
-import { createServerClient } from '@/lib/supabase/server';
+import { getRequestAuthContext } from '@/lib/supabase/server';
 import { formatCurrency, formatNumberAr, timeAgoAr } from '@/lib/utils';
 import { recommendationStatusLabel, severityLabel } from '@/lib/ui/labels';
 import { PendingSubmitButton } from '@/lib/ui/pending-submit-button';
@@ -20,31 +21,33 @@ export const metadata = {
 
 export default async function OptimizerPage({ searchParams }: { searchParams?: Promise<{ error?: string; executed?: string; approved?: string; reverted?: string; updated?: string }> }) {
   const params = await searchParams;
-  const supabase = await createServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  const { accounts, selectedAccount } = await getAccountWorkspace(supabase);
-  const subscription = await getSubscriptionAccess(supabase, user?.id);
-  const { data: recommendations } = selectedAccount
-    ? await supabase
-        .from('recommendations')
-        // action_payload is selected so the approval card can state EXACTLY
-        // what will change. Without it the user was approving an LLM-written
-        // sentence while a completely different object drove the mutation.
-        .select('id, title, description, severity, status, expected_impact, action_payload, created_at')
-        .eq('account_id', selectedAccount.id)
-        .order('created_at', { ascending: false })
-        .limit(20)
-    : { data: [] };
-  const { data: actions } = selectedAccount
-    ? await supabase
-        .from('ai_actions')
-        .select('id, action_type, description_ar, expected_impact, observed_impact, result, rollback_payload, rollback_status, reverted_at, created_at')
-        .eq('account_id', selectedAccount.id)
-        .order('created_at', { ascending: false })
-        .limit(20)
-    : { data: [] };
+  const { supabase, user } = await getRequestAuthContext();
+  if (!user) redirect('/login');
+  const [{ accounts, selectedAccount }, subscription] = await Promise.all([
+    getAccountWorkspace(user.id),
+    getSubscriptionAccess(supabase, user.id),
+  ]);
+  const [{ data: recommendations }, { data: actions }] = await Promise.all([
+    selectedAccount
+      ? supabase
+          .from('recommendations')
+          // action_payload is selected so the approval card can state EXACTLY
+          // what will change. Without it the user was approving an LLM-written
+          // sentence while a completely different object drove the mutation.
+          .select('id, title, description, severity, status, expected_impact, action_payload, created_at')
+          .eq('account_id', selectedAccount.id)
+          .order('created_at', { ascending: false })
+          .limit(20)
+      : Promise.resolve({ data: [] }),
+    selectedAccount
+      ? supabase
+          .from('ai_actions')
+          .select('id, action_type, description_ar, expected_impact, observed_impact, result, rollback_payload, rollback_status, reverted_at, created_at')
+          .eq('account_id', selectedAccount.id)
+          .order('created_at', { ascending: false })
+          .limit(20)
+      : Promise.resolve({ data: [] }),
+  ]);
   const recs = recommendations ?? [];
   const pending = recs.filter((item: any) => item.status === 'pending');
   const approved = recs.filter((item: any) => item.status === 'approved');

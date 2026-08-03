@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import {
   ArrowLeft,
   CheckCircle2,
@@ -13,7 +14,7 @@ import {
 } from 'lucide-react';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
-import { createServerClient } from '@/lib/supabase/server';
+import { getRequestAuthContext } from '@/lib/supabase/server';
 import { formatCurrency, formatNumberAr, timeAgoAr } from '@/lib/utils';
 import { moneyMetric } from '@/lib/google-ads/metrics';
 import { campaignStatusLabel } from '@/lib/ui/labels';
@@ -79,16 +80,14 @@ export default async function DashboardPage({
   }>;
 }) {
   const params = await searchParams;
-  const supabase = await createServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { supabase, user } = await getRequestAuthContext();
+  if (!user) redirect('/login');
   const {
     business: workspaceBusiness,
     accounts,
     revokedAccounts,
     selectedAccount,
-  } = await getAccountWorkspace(supabase, user?.id);
+  } = await getAccountWorkspace(user.id);
 
   // Reuse the workspace lookup rather than issuing a second, unordered
   // `.maybeSingle()` query — that variant threw PGRST116 the moment a user had
@@ -96,26 +95,26 @@ export default async function DashboardPage({
   // email address.
   const business = workspaceBusiness;
 
-  const { data: campaigns } = selectedAccount
-    ? await supabase
-        .from('campaigns_cache')
-        .select('*')
-        .eq('account_id', selectedAccount.id)
-        .order('last_synced_at', { ascending: false })
-        .limit(500)
-    : { data: [] };
-
-  const { data: latestAudit } = selectedAccount
-    ? await supabase
-        .from('audits')
-        .select('health_score, estimated_monthly_waste, ran_at')
-        .eq('account_id', selectedAccount.id)
-        .order('ran_at', { ascending: false })
-        .limit(1)
-        .maybeSingle()
-    : { data: null };
-
-  const subscription = await getSubscriptionAccess(supabase, user?.id);
+  const [{ data: campaigns }, { data: latestAudit }, subscription] = await Promise.all([
+    selectedAccount
+      ? supabase
+          .from('campaigns_cache')
+          .select('*')
+          .eq('account_id', selectedAccount.id)
+          .order('last_synced_at', { ascending: false })
+          .limit(500)
+      : Promise.resolve({ data: [] }),
+    selectedAccount
+      ? supabase
+          .from('audits')
+          .select('health_score, estimated_monthly_waste, ran_at')
+          .eq('account_id', selectedAccount.id)
+          .order('ran_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
+    getSubscriptionAccess(supabase, user.id),
+  ]);
 
   const setupState: Record<string, boolean> = {
     accounts: accounts.length > 0,

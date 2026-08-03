@@ -1,13 +1,10 @@
 import { redirect } from 'next/navigation';
-import { createServerClient } from '@/lib/supabase/server';
+import { getRequestAuthContext } from '@/lib/supabase/server';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { DashboardChrome } from './dashboard-chrome';
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const supabase = await createServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { user } = await getRequestAuthContext();
   if (!user) redirect('/login');
 
   // One workspace load, and pass the known user id so getUserBusiness does not
@@ -16,7 +13,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // again) AND let that reload auth — three redundant round trips on every hard
   // navigation and every router.refresh() (account switch, sync). The business
   // the workspace already resolved is reused for the brand name below.
-  const workspace = await getAccountWorkspace(supabase, user.id);
+  const workspace = await getAccountWorkspace(user.id);
   const { business, accounts, revokedAccounts, selectedCustomerId } = workspace;
 
   // Send a first-time user through onboarding.

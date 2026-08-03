@@ -1,12 +1,13 @@
 import Link from 'next/link';
 import { Building2, Link2, LogOut, Pencil, Settings as SettingsIcon } from 'lucide-react';
+import { redirect } from 'next/navigation';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import {
   formatGoogleAdsCustomerId,
   googleAdsAccountDisplayName,
   googleAdsAccountNameMissing,
 } from '@/lib/accounts/display';
-import { createServerClient } from '@/lib/supabase/server';
+import { getRequestAuthContext } from '@/lib/supabase/server';
 import { getPlatformReadiness, readinessSummary } from '@/lib/platform/readiness';
 import { PendingSubmitButton } from '@/lib/ui/pending-submit-button';
 import { PageHeader } from '@/lib/ui/page-header';
@@ -46,14 +47,9 @@ export default async function SettingsPage({
   searchParams?: Promise<{ delete_error?: string; rename_error?: string; renamed?: string }>;
 }) {
   const params = await searchParams;
-  const supabase = await createServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  const { business: workspaceBusiness, accounts } = await getAccountWorkspace(supabase, user?.id);
-  const { data: business } = workspaceBusiness
-    ? await supabase.from('businesses').select('*').eq('id', workspaceBusiness.id).maybeSingle()
-    : { data: null };
+  const { user } = await getRequestAuthContext();
+  if (!user) redirect('/login');
+  const { business, accounts } = await getAccountWorkspace(user.id);
   // The launch-readiness panel is an OPERATOR view: it names environment
   // variables and reports whether Google's OAuth verification has completed.
   // Rendering it as the first thing a paying customer sees told them the

@@ -1,7 +1,8 @@
 import { BarChart3, Link2 } from 'lucide-react';
+import { redirect } from 'next/navigation';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
-import { createServerClient } from '@/lib/supabase/server';
+import { getRequestAuthContext } from '@/lib/supabase/server';
 import { formatCurrency, timeAgoAr } from '@/lib/utils';
 import { PageHeader } from '@/lib/ui/page-header';
 import { EmptyState } from '@/lib/ui/empty-state';
@@ -12,8 +13,9 @@ export const metadata = {
 };
 
 export default async function ReportsPage() {
-  const supabase = await createServerClient();
-  const { accounts, selectedAccount } = await getAccountWorkspace(supabase);
+  const { supabase, user } = await getRequestAuthContext();
+  if (!user) redirect('/login');
+  const { accounts, selectedAccount } = await getAccountWorkspace(user.id);
   const { data: reports } = selectedAccount
     ? await supabase
         .from('reports')

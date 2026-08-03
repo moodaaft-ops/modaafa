@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { ArrowUpLeft, CheckCircle2, Layers, Link2, ShieldCheck, TriangleAlert } from 'lucide-react';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { formatGoogleAdsCustomerId, googleAdsAccountDisplayName } from '@/lib/accounts/display';
-import { createServerClient } from '@/lib/supabase/server';
+import { getRequestAuthContext } from '@/lib/supabase/server';
 import { Alert } from '@/lib/ui/alert';
 import { buttonClasses } from '@/lib/ui/button';
 import { OnboardingProgress } from '../onboarding-progress';
@@ -40,12 +40,9 @@ export default async function ConnectGoogleAdsPage({
   searchParams?: Promise<{ error?: string }>;
 }) {
   const params = await searchParams;
-  const supabase = await createServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { user } = await getRequestAuthContext();
   if (!user) redirect('/login?next=/onboarding/connect');
-  const { accounts } = await getAccountWorkspace(supabase, user.id);
+  const { accounts } = await getAccountWorkspace(user.id);
   const hasAccounts = (accounts?.length ?? 0) > 0;
   const googleVerified = process.env.GOOGLE_OAUTH_APP_VERIFIED === 'true';
   // `no_client_accounts` is not an error the user can fix by retrying the same
