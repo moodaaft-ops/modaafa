@@ -28,6 +28,9 @@ const securityHeaders = [
 
 const nextConfig = {
   reactStrictMode: true,
+  // Drop the `X-Powered-By: Next.js` header — a free version-fingerprint for
+  // anyone probing the stack, and nothing depends on it.
+  poweredByHeader: false,
   experimental: {
     serverActions: {
       bodySizeLimit: '2mb',
