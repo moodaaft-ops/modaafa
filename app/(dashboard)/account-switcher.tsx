@@ -62,18 +62,19 @@ export function AccountSwitcher({
     [accounts]
   );
   const filteredAccounts = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
+    const normalizedQuery = foldArabic(query.trim().toLowerCase());
     if (!normalizedQuery) return accounts;
 
-    // `''.includes('')` is true for every string, so when the query had no
-    // digits `rawId.includes(digits)` matched EVERY account — searching for
-    // "الصفرات" returned the whole list unchanged, and only numeric queries
-    // ever filtered anything.
-    const digits = normalizedQuery.replace(/\D/g, '');
+    // Fold Arabic-Indic (٠-٩) and Persian (۰-۹) digits to ASCII before
+    // extracting the numeric query: those code points are `\D`, so typing an
+    // account number on an Arabic keyboard ("٧٥٦") used to be stripped to
+    // nothing and matched no account. `''.includes('')` is true for every
+    // string, so the digit clause is still guarded by `digits.length > 0`.
+    const digits = toAsciiDigits(normalizedQuery).replace(/\D/g, '');
 
     return accounts.filter((account) => {
-      const name = account.customer_name?.toLowerCase() ?? '';
-      const displayName = googleAdsAccountDisplayName(account).toLowerCase();
+      const name = foldArabic(account.customer_name?.toLowerCase() ?? '');
+      const displayName = foldArabic(googleAdsAccountDisplayName(account).toLowerCase());
       const rawId = account.customer_id;
       const formattedId = formatGoogleAdsCustomerId(account.customer_id);
       return (
@@ -237,7 +238,7 @@ export function AccountSwitcher({
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
         const errorMessage = [payload.code, ...(payload.codes ?? []), payload.message, payload.error].join(' ');
-        if (/unauthorized_client|invalid_client|invalid_grant/i.test(errorMessage)) setReconnectRequired(true);
+        if (/unauthorized_client|invalid_client|invalid_grant|authentication_error/i.test(errorMessage)) setReconnectRequired(true);
         if (/subscription_required|quota_exceeded/i.test(errorMessage)) setBillingRequired(true);
         setError(friendlySyncError(errorMessage));
         return;
@@ -483,7 +484,11 @@ function friendlySyncError(message: string) {
     normalized.includes('revoked') ||
     normalized.includes('unauthorized_client') ||
     normalized.includes('invalid_client') ||
-    normalized.includes('invalid_grant')
+    normalized.includes('invalid_grant') ||
+    // OAUTH_TOKEN_REVOKED and friends surface as AUTHENTICATION_ERROR, which
+    // googleAdsAuthNeedsReconnect already treats as reconnect-worthy; the copy
+    // must match so the reconnect CTA and message agree.
+    normalized.includes('authentication_error')
   ) {
     return 'انتهت صلاحية ربط Google Ads. أعد الربط من زر إضافة حساب.';
   }
@@ -491,4 +496,28 @@ function friendlySyncError(message: string) {
     return 'إعداد Google OAuth في السيرفر كان غير متطابق مع الربط. تم تسجيل الخطأ وسنصلحه من إعدادات المنصة قبل إعادة المحاولة.';
   }
   return 'تعذر تحديث بيانات الحساب الآن. أعد الربط إذا استمرت المشكلة.';
+}
+
+/**
+ * Fold common Arabic letter variants so name search is forgiving:
+ * أإآ→ا, ة→ه, ى→ي, ؤ→و, ئ→ي, and strip tashkeel. Without this, searching
+ * "احمد" would miss an account named "أحمد".
+ */
+function foldArabic(value: string) {
+  return value
+    .replace(/[ً-ْ]/g, '')
+    .replace(/[أإآ]/g, 'ا')
+    .replace(/ة/g, 'ه')
+    .replace(/ى/g, 'ي')
+    .replace(/ؤ/g, 'و')
+    .replace(/ئ/g, 'ي');
+}
+
+/** Map Arabic-Indic (٠-٩) and Persian (۰-۹) digits to ASCII 0-9. */
+function toAsciiDigits(value: string) {
+  return value.replace(/[٠-٩۰-۹]/g, (ch) => {
+    const code = ch.charCodeAt(0);
+    const base = code >= 0x06f0 ? 0x06f0 : 0x0660;
+    return String(code - base);
+  });
 }

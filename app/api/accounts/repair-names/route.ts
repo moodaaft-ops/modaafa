@@ -47,11 +47,8 @@ export async function POST(req: NextRequest) {
     return respond(req, { ok: true, ...result });
   } catch (error) {
     console.error('Google Ads account name repair failed', error);
-    return respond(
-      req,
-      { error: 'repair_failed', message: error instanceof Error ? error.message : String(error) },
-      500
-    );
+    // Stable code only — the raw message can carry PostgREST/internal detail.
+    return respond(req, { error: 'repair_failed' }, 500);
   }
 }
 
