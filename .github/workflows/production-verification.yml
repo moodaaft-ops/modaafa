@@ -78,4 +78,4 @@ jobs:
           if [ "$first" = "200" ]; then
             rejected="$RUNNER_TEMP/sync-2.json"
           fi
-          jq -e '.error == "already_running"' "$rejected" > /dev/null
+          jq -e '.skipped == "already_running"' "$rejected" > /dev/null
