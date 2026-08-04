@@ -17,9 +17,9 @@
     "crypto:rotate": "tsx scripts/reencrypt-refresh-tokens.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.32.1",
-    "@supabase/ssr": "^0.5.1",
-    "@supabase/supabase-js": "^2.45.4",
+    "@anthropic-ai/sdk": "^0.115.0",
+    "@supabase/ssr": "^0.12.4",
+    "@supabase/supabase-js": "^2.111.0",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
     "google-ads-api": "^17.1.0",
