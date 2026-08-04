@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import { ArrowLeft, Lightbulb, ShieldCheck } from 'lucide-react';
-import { createServerClient } from '@/lib/supabase/server';
+import { getRequestAuthContext } from '@/lib/supabase/server';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { PendingSubmitButton } from '@/lib/ui/pending-submit-button';
 import { buttonClasses } from '@/lib/ui/button';
@@ -33,22 +33,21 @@ export default async function BusinessOnboardingPage({
   searchParams?: Promise<{ error?: string }>;
 }) {
   const params = await searchParams;
-  const supabase = await createServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { supabase, user } = await getRequestAuthContext();
   if (!user) redirect('/login?next=/onboarding/business');
-  const { data: business } = await supabase
-    .from('businesses')
-    .select('*')
-    .eq('user_id', user?.id ?? '')
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const [{ data: business }, { accounts }] = await Promise.all([
+    supabase
+      .from('businesses')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    getAccountWorkspace(user.id),
+  ]);
   // Settings links here to EDIT an existing profile, so a user who arrives
   // that way is not onboarding at all and must be able to leave without
   // submitting the form.
-  const { accounts } = await getAccountWorkspace(supabase, user.id);
   const canLeave = (accounts?.length ?? 0) > 0;
 
   return (

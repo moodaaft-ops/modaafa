@@ -14,6 +14,7 @@ import {
 } from '@/lib/notifications/email';
 import { recordTrialGrant } from '@/lib/billing/checkout-policy';
 import { applySubscriptionEvent } from '@/lib/billing/subscription-events';
+import { recordPaidInvoice } from '@/lib/billing/invoices';
 
 /**
  * POST /api/webhooks/stripe
@@ -189,24 +190,15 @@ export async function POST(req: NextRequest) {
         throwOnSupabaseError('find invoice subscription', subscriptionError);
 
         if (sub) {
-          const invoiceKey = invoice.number ?? invoice.id;
-          // Upsert on the (user_id, invoice_number) unique index rather than
-          // read-then-insert: a concurrent re-delivery could pass the old
-          // existence check twice and show the customer a duplicate invoice.
-          const { error: invoiceError } = await supabase.from('invoices').upsert(
-            {
-              subscription_id: sub.id,
-              user_id: sub.user_id,
-              amount_sar: minorUnitsToAmount(invoice.amount_paid ?? 0, invoice.currency),
-              currency: (invoice.currency ?? 'sar').toUpperCase(),
-              status: 'paid',
-              invoice_number: invoiceKey,
-              invoice_url: invoice.hosted_invoice_url,
-              paid_at: new Date().toISOString(),
-            },
-            { onConflict: 'user_id,invoice_number', ignoreDuplicates: true }
-          );
-          throwOnSupabaseError('record Stripe invoice', invoiceError);
+          // Plain INSERT tolerating 23505 — NOT upsert. The uniqueness index is
+          // partial (`WHERE invoice_number IS NOT NULL`) and PostgREST's
+          // `onConflict` cannot carry the predicate, so the old upsert failed
+          // every delivery with 42P10. See lib/billing/invoices.ts.
+          await recordPaidInvoice(supabase, {
+            subscriptionRowId: sub.id,
+            userId: sub.user_id,
+            invoice,
+          });
         }
         break;
       }
@@ -336,23 +328,6 @@ async function claimStripeWebhookEvent(
 
 /** Longer than maxDuration, so a killed attempt is provably finished. */
 const STALE_CLAIM_MS = 5 * 60 * 1000;
-
-/**
- * Stripe amounts are in the currency's minor unit, and the exponent is not
- * always 2 (JPY has none; KWD/BHD/OMR have three).
- */
-function minorUnitsToAmount(amount: number, currency?: string | null) {
-  const code = (currency ?? 'sar').toLowerCase();
-  if (ZERO_DECIMAL_CURRENCIES.has(code)) return amount;
-  if (THREE_DECIMAL_CURRENCIES.has(code)) return amount / 1000;
-  return amount / 100;
-}
-
-const ZERO_DECIMAL_CURRENCIES = new Set([
-  'bif', 'clp', 'djf', 'gnf', 'jpy', 'kmf', 'krw', 'mga', 'pyg', 'rwf',
-  'ugx', 'vnd', 'vuv', 'xaf', 'xof', 'xpf',
-]);
-const THREE_DECIMAL_CURRENCIES = new Set(['bhd', 'jod', 'kwd', 'omr', 'tnd']);
 
 async function safeUserEmail(
   supabase: any,

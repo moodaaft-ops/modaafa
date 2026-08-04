@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase/server';
-import { getUserBusiness } from '@/lib/accounts/selection';
+import { getUserBusinessWithClient } from '@/lib/accounts/selection';
 import { repairMissingGoogleAdsMetadata } from '@/lib/accounts/metadata-repair';
 import { getSubscriptionAccess } from '@/lib/billing/entitlements';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
     return respond(req, { error: 'subscription_required' }, 402);
   }
 
-  const business = await getUserBusiness(supabase, user.id);
+  const business = await getUserBusinessWithClient(supabase, user.id);
   if (!business) return respond(req, { error: 'business_not_found' }, 404);
 
   try {
@@ -47,11 +47,8 @@ export async function POST(req: NextRequest) {
     return respond(req, { ok: true, ...result });
   } catch (error) {
     console.error('Google Ads account name repair failed', error);
-    return respond(
-      req,
-      { error: 'repair_failed', message: error instanceof Error ? error.message : String(error) },
-      500
-    );
+    // Stable code only — the raw message can carry PostgREST/internal detail.
+    return respond(req, { error: 'repair_failed' }, 500);
   }
 }
 

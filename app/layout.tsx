@@ -24,11 +24,11 @@ export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? 'https://ai.modaafa.com'),
   icons: {
     icon: [
-      { url: '/favicon.ico', sizes: '48x48' },
-      { url: '/favicon.svg', type: 'image/svg+xml' },
+      { url: '/favicon.ico?v=20260803', sizes: '48x48' },
+      { url: '/favicon.svg?v=20260803', type: 'image/svg+xml' },
     ],
-    shortcut: '/favicon.ico',
-    apple: '/apple-touch-icon.png',
+    shortcut: '/favicon.ico?v=20260803',
+    apple: '/apple-touch-icon.png?v=20260803',
   },
   applicationName: 'Modaafa Ads AI',
   manifest: '/manifest.webmanifest',

@@ -1,7 +1,8 @@
 import { History, Link2, ShieldCheck, Zap } from 'lucide-react';
+import { redirect } from 'next/navigation';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
-import { createServerClient } from '@/lib/supabase/server';
+import { getRequestAuthContext } from '@/lib/supabase/server';
 import { formatCurrency, formatNumberAr, timeAgoAr } from '@/lib/utils';
 import { recommendationStatusLabel, severityLabel } from '@/lib/ui/labels';
 import { PendingSubmitButton } from '@/lib/ui/pending-submit-button';
@@ -20,31 +21,33 @@ export const metadata = {
 
 export default async function OptimizerPage({ searchParams }: { searchParams?: Promise<{ error?: string; executed?: string; approved?: string; reverted?: string; updated?: string }> }) {
   const params = await searchParams;
-  const supabase = await createServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  const { accounts, selectedAccount } = await getAccountWorkspace(supabase);
-  const subscription = await getSubscriptionAccess(supabase, user?.id);
-  const { data: recommendations } = selectedAccount
-    ? await supabase
-        .from('recommendations')
-        // action_payload is selected so the approval card can state EXACTLY
-        // what will change. Without it the user was approving an LLM-written
-        // sentence while a completely different object drove the mutation.
-        .select('id, title, description, severity, status, expected_impact, action_payload, created_at')
-        .eq('account_id', selectedAccount.id)
-        .order('created_at', { ascending: false })
-        .limit(20)
-    : { data: [] };
-  const { data: actions } = selectedAccount
-    ? await supabase
-        .from('ai_actions')
-        .select('id, action_type, description_ar, expected_impact, observed_impact, result, rollback_payload, rollback_status, reverted_at, created_at')
-        .eq('account_id', selectedAccount.id)
-        .order('created_at', { ascending: false })
-        .limit(20)
-    : { data: [] };
+  const { supabase, user } = await getRequestAuthContext();
+  if (!user) redirect('/login');
+  const [{ accounts, selectedAccount }, subscription] = await Promise.all([
+    getAccountWorkspace(user.id),
+    getSubscriptionAccess(supabase, user.id),
+  ]);
+  const [{ data: recommendations }, { data: actions }] = await Promise.all([
+    selectedAccount
+      ? supabase
+          .from('recommendations')
+          // action_payload is selected so the approval card can state EXACTLY
+          // what will change. Without it the user was approving an LLM-written
+          // sentence while a completely different object drove the mutation.
+          .select('id, title, description, severity, status, expected_impact, action_payload, created_at')
+          .eq('account_id', selectedAccount.id)
+          .order('created_at', { ascending: false })
+          .limit(20)
+      : Promise.resolve({ data: [] }),
+    selectedAccount
+      ? supabase
+          .from('ai_actions')
+          .select('id, action_type, description_ar, expected_impact, observed_impact, result, rollback_payload, rollback_status, reverted_at, created_at')
+          .eq('account_id', selectedAccount.id)
+          .order('created_at', { ascending: false })
+          .limit(20)
+      : Promise.resolve({ data: [] }),
+  ]);
   const recs = recommendations ?? [];
   const pending = recs.filter((item: any) => item.status === 'pending');
   const approved = recs.filter((item: any) => item.status === 'approved');
@@ -244,6 +247,7 @@ function optimizerErrorMessage(code: string) {
     manual_review_required: 'هذه التوصية وصفية وتحتاج مراجعة يدوية، لذلك لم ننفذها تلقائياً.',
     execution_failed: 'اجتازت العملية المراجعة الأولية لكن تعذر تنفيذها في Google Ads. لم نعتبرها مطبقة.',
     execution_recording_failed: 'تم إرسال التعديل إلى Google Ads لكن تعذر تأكيد حفظ السجل. أوقفنا إعادة التنفيذ وأبلغنا فريق التشغيل للمطابقة اليدوية.',
+    execution_unverified: 'انتهت مهلة إرسال التعديل وقد يكون طُبق فعلاً في Google Ads. أوقفنا إعادة التنفيذ وأبلغنا فريق التشغيل — راجع سجل التغييرات في Google Ads قبل أي محاولة جديدة.',
     already_executing: 'هذه التوصية قيد التنفيذ أو نُفذت بالفعل. حدّث الصفحة لرؤية حالتها الحالية.',
     recommendation_locked: 'لا يمكن تغيير هذه التوصية أثناء التنفيذ أو بعد تطبيقها.',
     invalid_rollback: 'طلب التراجع غير صالح.',
@@ -342,7 +346,19 @@ function ChangePreview({
     }
   } else if (operation === 'adjust_budget') {
     const next = Number(params.new_amount_micros ?? 0) / 1_000_000;
+    const current = Number(params.current_amount_micros ?? 0) / 1_000_000;
+    const deltaPct = Number(params.delta_pct ?? NaN);
+    if (current > 0) rows.push({ label: 'الميزانية اليومية الحالية', value: formatCurrency(current, currencyCode) });
     if (next > 0) rows.push({ label: 'الميزانية اليومية الجديدة', value: formatCurrency(next, currencyCode) });
+    // Delta-only payloads (queued before the absolute amount is known) must
+    // still show a number — an approval card for a budget change with no
+    // amount on it defeats the whole point of this block.
+    if (!(next > 0) && Number.isFinite(deltaPct) && deltaPct !== 0) {
+      rows.push({
+        label: 'نسبة التغيير',
+        value: `${deltaPct > 0 ? '+' : ''}${formatNumberAr(Number(deltaPct.toFixed(1)))}% من الميزانية الحالية (يُحسب المبلغ من القيمة الحية عند التنفيذ)`,
+      });
+    }
     if (params.budget_resource) {
       rows.push({ label: 'المورد المستهدف', value: String(params.budget_resource), ltr: true });
     }

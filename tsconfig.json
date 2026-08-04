@@ -17,5 +17,18 @@
     "paths": { "@/*": ["./*"] }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules", "_to_delete", "_sync"]
+  "exclude": [
+    "node_modules",
+    "_to_delete",
+    "_sync",
+    "**/* 2.ts",
+    "**/* 2.tsx",
+    "**/* 3.ts",
+    "**/* 3.tsx",
+    "**/* 4.ts",
+    "**/* 4.tsx",
+    "**/* 2/**",
+    "**/* 3/**",
+    "**/* 4/**"
+  ]
 }

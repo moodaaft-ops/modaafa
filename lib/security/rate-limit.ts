@@ -22,7 +22,7 @@ export async function checkRateLimit({
   windowSeconds: number;
   identifier?: string | null;
 }): Promise<RateLimitResult> {
-  const rawIdentifier = identifier?.trim() || clientIp(req) || 'unknown';
+  const rawIdentifier = identifier?.trim() || resolveClientIp(req) || 'unknown';
   const digest = createHash('sha256').update(rawIdentifier).digest('hex');
   const key = `${scope}:${digest}`;
   const supabase = createAdminClient();
@@ -55,7 +55,33 @@ export function rateLimitHeaders(result: RateLimitResult) {
   };
 }
 
-function clientIp(req: NextRequest) {
-  const forwarded = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
-  return forwarded || req.headers.get('x-real-ip') || null;
+/**
+ * Client IP for rate limiting — only consulted when a limiter has no
+ * authenticated identifier (today: the unauthenticated login endpoint).
+ *
+ * Exported for tests.
+ *
+ * ORDER MATTERS. The old code took the LEFT-most `x-forwarded-for` entry,
+ * which is whatever the caller put in their own header: one attacker rotating
+ * that value per request both bypassed the login rate limit entirely and
+ * minted a brand-new `rate_limit_windows` row per request — an unauthenticated
+ * storage-exhaustion vector. Platform-set headers (`x-vercel-forwarded-for`,
+ * `x-real-ip`) cannot be spoofed by the caller on Vercel, and when we must
+ * fall back to a forwarded chain we take the RIGHT-most hop — the one appended
+ * by the nearest trusted proxy — never the left-most.
+ */
+export function resolveClientIp(req: { headers: { get(name: string): string | null } }) {
+  const platform =
+    lastHop(req.headers.get('x-vercel-forwarded-for')) ?? lastHop(req.headers.get('x-real-ip'));
+  if (platform) return platform;
+  return lastHop(req.headers.get('x-forwarded-for'));
+}
+
+function lastHop(value: string | null) {
+  if (!value) return null;
+  const parts = value
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return parts.length > 0 ? parts[parts.length - 1] : null;
 }

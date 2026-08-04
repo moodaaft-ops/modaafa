@@ -1,5 +1,6 @@
 import { MessageCircle } from 'lucide-react';
-import { createServerClient } from '@/lib/supabase/server';
+import { redirect } from 'next/navigation';
+import { getRequestAuthContext } from '@/lib/supabase/server';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import { PageHeader } from '@/lib/ui/page-header';
@@ -17,12 +18,12 @@ export default async function AssistantPage({
   searchParams?: Promise<{ brief?: string }>;
 }) {
   const params = await searchParams;
-  const supabase = await createServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  const { accounts, selectedAccount, selectedCustomerId } = await getAccountWorkspace(supabase);
-  const subscription = await getSubscriptionAccess(supabase, user?.id);
+  const { supabase, user } = await getRequestAuthContext();
+  if (!user) redirect('/login');
+  const [{ accounts, selectedAccount, selectedCustomerId }, subscription] = await Promise.all([
+    getAccountWorkspace(user.id),
+    getSubscriptionAccess(supabase, user.id),
+  ]);
   // Prefill from a campaign-opportunity recommendation. Bounded: this lands in
   // a controlled composer the user still has to send themselves.
   const initialBrief = String(params?.brief ?? '').slice(0, 2000);

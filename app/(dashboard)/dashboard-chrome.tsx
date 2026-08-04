@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   BarChart3,
   CreditCard,
@@ -65,17 +65,22 @@ export function DashboardChrome({
   brandName,
   userEmail,
   accounts,
+  revokedAccounts,
   selectedCustomerId,
   children,
 }: {
   brandName: string;
   userEmail: string;
   accounts: AdsAccountSummary[];
+  revokedAccounts: AdsAccountSummary[];
   selectedCustomerId: string | null;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const drawerWasOpen = useRef(false);
 
   // The mobile drawer is a modal surface: Escape must close it, matching the
   // account-switcher dropdown which already handles Escape and outside clicks.
@@ -86,6 +91,21 @@ export function DashboardChrome({
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
+  }, [mobileOpen]);
+
+  // Move focus into the drawer when it opens and restore it to the menu button
+  // when it closes. Announcing `role="dialog" aria-modal` without moving focus
+  // left keyboard and screen-reader users tabbing through the page content
+  // sitting behind the overlay. Guarded so the initial (closed) mount does not
+  // steal focus to the menu button on every page load.
+  useEffect(() => {
+    if (mobileOpen) {
+      drawerWasOpen.current = true;
+      closeButtonRef.current?.focus();
+    } else if (drawerWasOpen.current) {
+      drawerWasOpen.current = false;
+      menuButtonRef.current?.focus();
+    }
   }, [mobileOpen]);
 
   useEffect(() => {
@@ -172,6 +192,7 @@ export function DashboardChrome({
         <div className="relative flex h-14 items-center justify-between gap-2 border-b border-border px-3">
           {brand}
           <button
+            ref={closeButtonRef}
             type="button"
             onClick={() => setMobileOpen(false)}
             className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground lg:hidden"
@@ -182,7 +203,11 @@ export function DashboardChrome({
         </div>
 
         <div className="relative" data-tour="account-switcher">
-          <AccountSwitcher accounts={accounts} selectedCustomerId={selectedCustomerId} />
+          <AccountSwitcher
+            accounts={accounts}
+            revokedAccounts={revokedAccounts}
+            selectedCustomerId={selectedCustomerId}
+          />
         </div>
 
         <nav className="relative flex-1 space-y-5 overflow-y-auto px-2.5 py-4 scrollbar-thin">
@@ -292,6 +317,7 @@ export function DashboardChrome({
           <div className="flex flex-shrink-0 items-center gap-1.5">
             <ThemeToggle className="h-9 w-9" />
             <button
+              ref={menuButtonRef}
               type="button"
               onClick={() => setMobileOpen(true)}
               className="flex h-9 w-9 items-center justify-center rounded-md border border-border bg-card text-foreground transition-colors hover:bg-surface"

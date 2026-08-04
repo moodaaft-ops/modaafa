@@ -1,5 +1,6 @@
 import Stripe from 'stripe';
 import { isConfiguredEnv } from '@/lib/platform/env';
+import { minorUnitsToAmount } from '@/lib/billing/invoices';
 
 /**
  * Stripe billing utilities. Stripe is the ONLY payment provider in production.
@@ -245,6 +246,64 @@ export async function ensureStripeCustomer(params: {
   );
 
   return created.id;
+}
+
+export type PlanPriceAmount = { amount: number; currency: string } | null;
+export type PlanPriceAmounts = Record<PlanKey, Record<PeriodKey, PlanPriceAmount>>;
+
+let priceAmountsCache: { at: number; data: PlanPriceAmounts } | null = null;
+const PRICE_AMOUNTS_TTL_MS = 60 * 60 * 1000;
+
+/**
+ * Live display amounts for the pricing cards, read from the same six Stripe
+ * prices checkout actually bills. The yearly amounts were previously
+ * unpurchasable AND undisplayable because the UI hardcoded monthly numbers —
+ * hardcoding yearly ones too would just create a second copy that drifts from
+ * Stripe. Failure here must never break the billing page, so errors degrade to
+ * `null` (the page then falls back to its static monthly copy).
+ */
+export async function getPlanPriceAmounts(): Promise<PlanPriceAmounts | null> {
+  if (priceAmountsCache && Date.now() - priceAmountsCache.at < PRICE_AMOUNTS_TTL_MS) {
+    return priceAmountsCache.data;
+  }
+
+  try {
+    const stripe = getStripe();
+    const slots = Object.entries(PLAN_PRICE_IDS).flatMap(([plan, periods]) =>
+      Object.entries(periods).map(([period, priceId]) => ({
+        plan: plan as PlanKey,
+        period: period as PeriodKey,
+        priceId: isConfiguredEnv(priceId) ? priceId.trim() : null,
+      })),
+    );
+
+    const resolved = await Promise.all(
+      slots.map(async (slot): Promise<[PlanKey, PeriodKey, PlanPriceAmount]> => {
+        if (!slot.priceId) return [slot.plan, slot.period, null];
+        try {
+          const price = await stripe.prices.retrieve(slot.priceId);
+          if (!price.active || typeof price.unit_amount !== 'number') {
+            return [slot.plan, slot.period, null];
+          }
+          return [
+            slot.plan,
+            slot.period,
+            { amount: minorUnitsToAmount(price.unit_amount, price.currency), currency: price.currency },
+          ];
+        } catch {
+          return [slot.plan, slot.period, null];
+        }
+      }),
+    );
+
+    const data = { starter: {}, growth: {}, pro: {} } as PlanPriceAmounts;
+    for (const [plan, period, amount] of resolved) data[plan][period] = amount;
+    priceAmountsCache = { at: Date.now(), data };
+    return data;
+  } catch (error) {
+    console.error('Failed to load Stripe price amounts for the billing page', error);
+    return priceAmountsCache?.data ?? null;
+  }
 }
 
 export async function checkStripeConfiguration() {

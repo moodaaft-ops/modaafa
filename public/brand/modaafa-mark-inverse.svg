@@ -1,6 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="مُضاعِف">
-  <path d="M20 108V86C20 56 40 37 69 37H78C101 37 116 52 116 74C116 97 99 110 74 110H20V108Z" fill="#FFFFFF"/>
-  <path d="M45 89V84C45 68 55 58 70 58H75C85 58 92 64 92 74C92 84 83 89 72 89H45Z" fill="#10B981"/>
-  <path d="M22 27H68" stroke="#FFFFFF" stroke-width="13" stroke-linecap="round"/>
-  <circle cx="103" cy="27" r="11" fill="#F5A524"/>
+  <path d="M25 30L50 55M78 82L103 107" fill="none" stroke="#2DD4A4" stroke-width="17" stroke-linecap="round"/>
+  <path d="M25 103L94 34" fill="none" stroke="#F8FAFC" stroke-width="17" stroke-linecap="round"/>
+  <path d="M78 24H105V51" fill="none" stroke="#F5B63D" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

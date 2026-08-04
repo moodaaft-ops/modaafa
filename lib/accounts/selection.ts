@@ -1,5 +1,7 @@
 import { cookies } from 'next/headers';
 import { isGeneratedFallbackName } from './display';
+import { requestCache } from '@/lib/platform/request-cache';
+import { getRequestServerClient } from '@/lib/supabase/server';
 
 export const SELECTED_ADS_ACCOUNT_COOKIE = 'modaafa_selected_customer_id';
 
@@ -26,6 +28,11 @@ export type AdsAccountSummary = {
 export type BusinessSummary = {
   id: string;
   name?: string | null;
+  sector?: string | null;
+  website?: string | null;
+  monthly_budget?: number | null;
+  primary_goal?: string | null;
+  target_regions?: string[] | null;
   selected_google_ads_customer_id?: string | null;
 };
 
@@ -38,7 +45,7 @@ export type GoogleAdsSelectableAccount = {
   time_zone?: string | null;
 };
 
-export async function getUserBusiness(
+async function loadUserBusiness(
   supabase: any,
   userId?: string | null
 ): Promise<BusinessSummary | null> {
@@ -51,7 +58,9 @@ export async function getUserBusiness(
 
   const { data, error } = await supabase
     .from('businesses')
-    .select('id, name, selected_google_ads_customer_id')
+    .select(
+      'id, name, sector, website, monthly_budget, primary_goal, target_regions, selected_google_ads_customer_id'
+    )
     .eq('user_id', resolvedUserId)
     .order('created_at', { ascending: false })
     .limit(1)
@@ -65,17 +74,29 @@ export async function getUserBusiness(
   return data ?? null;
 }
 
-export async function getAccountWorkspace(supabase: any, userId?: string | null) {
+export const getUserBusiness = requestCache(async (userId: string): Promise<BusinessSummary | null> => {
+  const supabase = await getRequestServerClient();
+  return loadUserBusiness(supabase, userId);
+});
+
+/** Route Handlers already own a request-bound client, so they use this form. */
+export function getUserBusinessWithClient(supabase: any, userId?: string | null) {
+  return loadUserBusiness(supabase, userId);
+}
+
+export const getAccountWorkspace = requestCache(async (userId: string) => {
+  const supabase = await getRequestServerClient();
   const cookieStore = await cookies();
   const selectedFromCookie = normalizeCustomerId(
     cookieStore.get(SELECTED_ADS_ACCOUNT_COOKIE)?.value ?? ''
   );
-  const business = await getUserBusiness(supabase, userId);
+  const business = await getUserBusiness(userId);
 
   if (!business) {
     return {
       business: null,
       accounts: [] as AdsAccountSummary[],
+      revokedAccounts: [] as AdsAccountSummary[],
       selectedAccount: null,
       selectedCustomerId: null,
     };
@@ -87,7 +108,7 @@ export async function getAccountWorkspace(supabase: any, userId?: string | null)
       'id, customer_id, customer_name, manager_id, status, is_manager, google_status, currency_code, time_zone, last_synced_at'
     )
     .eq('business_id', business.id)
-    .eq('status', 'active')
+    .in('status', ['active', 'revoked'])
     // Manager accounts can never answer a metrics query, so they must not be
     // selectable. The env-based MCC list below only ever knew about Modaafa's
     // own manager — a customer who connected their own agency MCC got no
@@ -100,13 +121,9 @@ export async function getAccountWorkspace(supabase: any, userId?: string | null)
     console.error('Failed to load Google Ads accounts', error);
   }
 
-  const managerIds = configuredManagerCustomerIdSet();
-  const accounts = ((data ?? []) as AdsAccountSummary[])
-    .map((account) => ({
-      ...account,
-      customer_id: normalizeCustomerId(account.customer_id),
-    }))
-    .filter((account) => !managerIds.has(account.customer_id) && account.is_manager !== true);
+  const { accounts, revokedAccounts } = partitionGoogleAdsAccounts(
+    (data ?? []) as AdsAccountSummary[]
+  );
 
   const selectedAccount = pickSelectedAdsAccount(
     accounts,
@@ -117,8 +134,26 @@ export async function getAccountWorkspace(supabase: any, userId?: string | null)
   return {
     business,
     accounts,
+    revokedAccounts,
     selectedAccount,
     selectedCustomerId: selectedAccount?.customer_id ?? null,
+  };
+});
+
+export function partitionGoogleAdsAccounts(
+  rows: AdsAccountSummary[],
+  managerIds = configuredManagerCustomerIdSet()
+) {
+  const clientAccounts = rows
+    .map((account) => ({
+      ...account,
+      customer_id: normalizeCustomerId(account.customer_id),
+    }))
+    .filter((account) => !managerIds.has(account.customer_id) && account.is_manager !== true);
+
+  return {
+    accounts: clientAccounts.filter((account) => account.status === 'active'),
+    revokedAccounts: clientAccounts.filter((account) => account.status === 'revoked'),
   };
 }
 
@@ -151,7 +186,7 @@ export async function getLinkedGoogleAdsAccount({
   customerId?: string | null;
   select?: string;
 }) {
-  const business = await getUserBusiness(supabase, userId);
+  const business = await loadUserBusiness(supabase, userId);
   if (!business) return { business: null, account: null, error: 'business_not_found' as const };
 
   const managerIds = configuredManagerCustomerIdSet();

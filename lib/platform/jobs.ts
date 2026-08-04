@@ -1,15 +1,65 @@
 import { isSubscriptionEntitled } from '@/lib/billing/entitlements';
 
+/**
+ * A `running` row older than this is a corpse: maxDuration is 300s, so any
+ * genuine invocation has finished (or been killed) well inside 10 minutes.
+ */
+const STALE_RUNNING_MS = 10 * 60 * 1000;
+
 export async function startJobRun(supabase: any, jobName: string) {
   const startedAt = new Date();
+
+  // Overlap guard. The GitHub Actions scheduler calls these routes with
+  // `--retry 2 --retry-all-errors --max-time 290` against maxDuration=300, so
+  // a slow run is aborted CLIENT-side at 290s and immediately re-invoked while
+  // the first invocation is still executing — two live optimize runs then
+  // select the same oldest accounts and double the Anthropic spend. Manual
+  // workflow_dispatch runs in a separate concurrency group and can overlap the
+  // schedule too. Best-effort (a storage error must not stop the job); the
+  // check-then-insert race that remains is closed at the DB by the partial
+  // unique index in migration 20260803_full_audit_integrity.sql.
+  try {
+    const staleCutoff = new Date(startedAt.getTime() - STALE_RUNNING_MS).toISOString();
+    await supabase
+      .from('job_runs')
+      .update({
+        status: 'failed',
+        finished_at: startedAt.toISOString(),
+        error_message:
+          'superseded: running row went stale — the invocation was killed before it could record completion',
+      })
+      .eq('job_name', jobName)
+      .eq('status', 'running')
+      .lt('started_at', staleCutoff);
+
+    const { data: running } = await supabase
+      .from('job_runs')
+      .select('id')
+      .eq('job_name', jobName)
+      .eq('status', 'running')
+      .gte('started_at', staleCutoff)
+      .limit(1)
+      .maybeSingle();
+    if (running) return { id: undefined as string | undefined, startedAt, alreadyRunning: true };
+  } catch (error) {
+    console.error('Job overlap guard unavailable; starting anyway', { jobName, error });
+  }
+
   const { data, error } = await supabase
     .from('job_runs')
     .insert({ job_name: jobName, status: 'running', started_at: startedAt.toISOString() })
     .select('id')
     .maybeSingle();
 
-  if (error) console.error('Failed to record job start', { jobName, error });
-  return { id: data?.id as string | undefined, startedAt };
+  if (error) {
+    // 23505 = the DB-level "one running row per job" index says a concurrent
+    // invocation won the race after our check.
+    if ((error as { code?: string }).code === '23505') {
+      return { id: undefined as string | undefined, startedAt, alreadyRunning: true };
+    }
+    console.error('Failed to record job start', { jobName, error });
+  }
+  return { id: data?.id as string | undefined, startedAt, alreadyRunning: false };
 }
 
 export async function finishJobRun({

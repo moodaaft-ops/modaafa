@@ -1,5 +1,6 @@
 import { ClipboardCheck, ShieldCheck, Link2 } from 'lucide-react';
-import { createServerClient } from '@/lib/supabase/server';
+import { redirect } from 'next/navigation';
+import { getRequestAuthContext } from '@/lib/supabase/server';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import { formatCurrency, timeAgoAr } from '@/lib/utils';
@@ -27,12 +28,12 @@ export default async function AuditPage({
   searchParams?: Promise<{ ran?: string; error?: string; approved?: string }>;
 }) {
   const params = await searchParams;
-  const supabase = await createServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  const { accounts, selectedAccount, selectedCustomerId } = await getAccountWorkspace(supabase);
-  const subscription = await getSubscriptionAccess(supabase, user?.id);
+  const { supabase, user } = await getRequestAuthContext();
+  if (!user) redirect('/login');
+  const [{ accounts, selectedAccount, selectedCustomerId }, subscription] = await Promise.all([
+    getAccountWorkspace(user.id),
+    getSubscriptionAccess(supabase, user.id),
+  ]);
 
   const { data: audit } = selectedAccount
     ? await supabase
@@ -88,19 +89,20 @@ export default async function AuditPage({
     );
   }
 
-  const { data: recommendations } = await supabase
-    .from('recommendations')
-    .select('*')
-    .eq('audit_id', audit.id)
-    .order('created_at', { ascending: false });
-
-  const { data: latestReport } = await supabase
-    .from('reports')
-    .select('summary_ar, generated_at')
-    .eq('account_id', audit.account_id)
-    .order('generated_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const [{ data: recommendations }, { data: latestReport }] = await Promise.all([
+    supabase
+      .from('recommendations')
+      .select('*')
+      .eq('audit_id', audit.id)
+      .order('created_at', { ascending: false }),
+    supabase
+      .from('reports')
+      .select('summary_ar, generated_at')
+      .eq('account_id', audit.account_id)
+      .order('generated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
 
   const recs = recommendations ?? [];
 

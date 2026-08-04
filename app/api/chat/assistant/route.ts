@@ -6,6 +6,7 @@ import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import { formatCurrency, formatNumberAr } from '@/lib/utils';
 import { moneyMetric } from '@/lib/google-ads/metrics';
 import { createMessageForAgent, hasAIBackend } from '@/lib/ai/client';
+import { detectIntent, type AssistantIntent } from '@/lib/ai/intent';
 import { sanitizePromptText } from '@/lib/ai/optimizer-agent';
 import {
   consumeFeatureUsage,
@@ -58,14 +59,6 @@ type CachedCampaign = {
     impressions?: number;
   } | null;
 };
-
-type AssistantIntent =
-  | 'budget'
-  | 'why'
-  | 'campaign_build'
-  | 'recommendation'
-  | 'keywords'
-  | 'summary';
 
 type ChatTurn = { role: 'user' | 'assistant'; content: string };
 type ChatSessionRow = { id: string; account_id: string | null };
@@ -373,37 +366,6 @@ async function loadPersistedChatHistory(supabase: any, sessionId: string): Promi
       .reverse()
       .map((turn) => ({ role: turn.role, content: turn.content }))
   );
-}
-
-/**
- * Interrogatives and analysis verbs. A question ABOUT a campaign is not a
- * request to BUILD one — the old classifier matched the bare noun "حملة", so
- * "كيف أداء حملة الرياض؟" was routed to campaign_build and silently inserted a
- * `pending` draft into the approval centre. Five performance questions buried
- * the real optimizer recommendations under five fake ones, on the exact screen
- * where the user is being trained to click "اعتماد".
- */
-const QUESTION_MARKERS =
-  /^\s*(كيف|كم|ليش|لماذا|ما\b|ماذا|متى|وش|ايش|أيش|وين|أين|هل|من\b|أي\b|اي\b|what|how|why|when|which|where|who|is|are|do|does|can)\b|[؟?]\s*$/i;
-const ANALYSIS_MARKERS = /حلل|تحليل|أداء|اداء|قارن|مقارنة|لخص|ملخص|اعرض|أعرض|راجع|report|analy[sz]e|compare|summar/i;
-/** Explicit build verbs, plus "campaign" as an object of one. */
-const BUILD_MARKERS =
-  /(ابن(ي|ِ)?|انشئ|أنشئ|سو(ي|ّي)?|اصنع|أضف|اضف|جهز|جهّز|اكتب لي|صمم|صمّم|create|build|launch|draft|new campaign|write me)/i;
-
-function detectIntent(message: string): AssistantIntent {
-  const looksLikeQuestion = QUESTION_MARKERS.test(message) || ANALYSIS_MARKERS.test(message);
-
-  // A clear build instruction wins over everything, but only when it is not
-  // phrased as a question about existing work.
-  if (BUILD_MARKERS.test(message) && !looksLikeQuestion) return 'campaign_build';
-
-  if (/ميزاني|budget|صرف|انفاق|إنفاق|تكلفة|cpa|roas|عائد/i.test(message)) return 'budget';
-  if (/ليش|لماذا|سبب|اشرح|فسر|explain|why/i.test(message)) return 'why';
-  if (/كلمة|كلمات|keyword|negative|سلبية/i.test(message)) return 'keywords';
-  if (/توصي|توصية|افضل|أفضل|ابدأ|خطوة|قرار|حسن|تحسين|recommend/i.test(message)) {
-    return 'recommendation';
-  }
-  return 'summary';
 }
 
 async function buildReply({

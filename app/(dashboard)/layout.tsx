@@ -1,25 +1,20 @@
 import { redirect } from 'next/navigation';
-import { createServerClient } from '@/lib/supabase/server';
+import { getRequestAuthContext } from '@/lib/supabase/server';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { DashboardChrome } from './dashboard-chrome';
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const supabase = await createServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { user } = await getRequestAuthContext();
   if (!user) redirect('/login');
 
-  const { data: business } = await supabase
-    .from('businesses')
-    .select('name')
-    .eq('user_id', user.id)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  const workspace = await getAccountWorkspace(supabase);
-  const { accounts, selectedCustomerId } = workspace;
+  // One workspace load, and pass the known user id so getUserBusiness does not
+  // re-call auth.getUser() internally. This layout previously ran its own
+  // `businesses` select AND getAccountWorkspace (which loads the business
+  // again) AND let that reload auth — three redundant round trips on every hard
+  // navigation and every router.refresh() (account switch, sync). The business
+  // the workspace already resolved is reused for the brand name below.
+  const workspace = await getAccountWorkspace(user.id);
+  const { business, accounts, revokedAccounts, selectedCustomerId } = workspace;
 
   // Send a first-time user through onboarding.
   //
@@ -37,6 +32,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       brandName={business?.name ?? user.email ?? 'مساحة العمل'}
       userEmail={user.email ?? ''}
       accounts={accounts}
+      revokedAccounts={revokedAccounts}
       selectedCustomerId={selectedCustomerId}
     >
       {children}

@@ -25,6 +25,9 @@ import { isSameOriginRequest } from '@/lib/security/origin';
 export const maxDuration = 120;
 
 export async function POST(req: NextRequest) {
+  // Leave ten seconds for persistence, the response, and usage refunds before
+  // Vercel terminates the function at `maxDuration`.
+  const deadlineAt = Date.now() + 110_000;
 
   // Defence in depth against cross-site POSTs; see lib/security/origin.ts.
   if (!isSameOriginRequest(req)) {
@@ -47,6 +50,16 @@ export async function POST(req: NextRequest) {
   const normalizedCustomerId = normalizeCustomerId(String(customerId ?? ''));
   if (!brief || !normalizedCustomerId) {
     return NextResponse.json({ error: 'brief and customerId required' }, { status: 400 });
+  }
+  // Cap the brief like the assistant route caps its message (4,000 chars). An
+  // uncapped brief goes straight into the Opus-tier builder prompt and its
+  // tool loop — a multi-megabyte body is avoidable token spend and a
+  // request-too-large failure that still consumes the user's monthly quota.
+  if (String(brief).length > 4000) {
+    return NextResponse.json(
+      { error: 'brief_too_long', message: 'الوصف طويل جداً. اختصره إلى ٤٠٠٠ حرف أو أقل.' },
+      { status: 400 }
+    );
   }
 
   const { account } = await getLinkedGoogleAdsAccount({
@@ -118,11 +131,16 @@ export async function POST(req: NextRequest) {
     const customer = getCustomer(account.customer_id, refreshToken, account.manager_id ?? undefined);
 
     const business = (account as any).businesses;
-    const result = await buildCampaign(brief, customer, {
-      business_name: business?.name,
-      sector: business?.sector,
-      website: business?.website,
-    });
+    const result = await buildCampaign(
+      brief,
+      customer,
+      {
+        business_name: business?.name,
+        sector: business?.sector,
+        website: business?.website,
+      },
+      { deadlineAt }
+    );
 
     // Persist the draft
     const { error: draftError } = await supabase
@@ -150,9 +168,7 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     await refundFeatureUsage({ supabase, userId: user.id, usageEventId: usage.usageEventId });
     console.error('Builder failed', err);
-    return NextResponse.json(
-      { error: 'builder_failed', message: err instanceof Error ? err.message : String(err) },
-      { status: 500 }
-    );
+    // Stable code only — raw `err.message` can leak backend detail. Logged above.
+    return NextResponse.json({ error: 'builder_failed' }, { status: 500 });
   }
 }

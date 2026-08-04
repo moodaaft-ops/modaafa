@@ -19,6 +19,8 @@ import {
 } from 'lucide-react';
 import { buttonClasses } from '@/lib/ui/button';
 import { ThemeToggle } from '@/lib/ui/theme-toggle';
+import { getPlanPriceAmounts, type PeriodKey, type PlanKey } from '@/lib/billing/stripe';
+import { cn, formatCurrency } from '@/lib/utils';
 import { Reveal } from './reveal';
 
 const trustPoints = [
@@ -56,24 +58,24 @@ const audience = [
 // on the billing page they could not reach without signing up.
 const plans = [
   {
-    id: 'starter',
+    id: 'starter' as PlanKey,
     name: 'البداية',
-    price: '500',
+    monthlyPrice: 500,
     limit: 'للبداية وإدارة العمل اليومي',
     features: ['20 محادثة ذكية يومياً', 'فحصان أسبوعياً', '5 مزامنات يدوية يومياً', '3 تنفيذات معتمدة يومياً'],
   },
   {
-    id: 'growth',
+    id: 'growth' as PlanKey,
     name: 'النمو',
-    price: '1,200',
+    monthlyPrice: 1200,
     limit: 'للشركات النشطة والمتابعة اليومية',
     features: ['100 محادثة ذكية يومياً', '7 فحوصات أسبوعياً', '20 مزامنة يدوية يومياً', '20 تنفيذاً معتمداً يومياً'],
     highlighted: true,
   },
   {
-    id: 'pro',
+    id: 'pro' as PlanKey,
     name: 'الاحتراف',
-    price: '2,500',
+    monthlyPrice: 2500,
     limit: 'للوكالات والاستخدام المكثف',
     features: ['500 محادثة ذكية يومياً', '70 فحصاً أسبوعياً', '100 مزامنة يومياً', '100 تنفيذ معتمد يومياً'],
   },
@@ -106,7 +108,15 @@ const faq = [
   },
 ];
 
-export default function HomePage() {
+export default async function HomePage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ period?: string }>;
+}) {
+  const params = await searchParams;
+  const period: PeriodKey = params?.period === 'yearly' ? 'yearly' : 'monthly';
+  const priceAmounts = await getPlanPriceAmounts();
+
   return (
     <main className="min-h-screen w-full max-w-full overflow-x-clip bg-background text-foreground">
       {/* ---------------------------------------------------------------- Nav */}
@@ -320,58 +330,116 @@ export default function HomePage() {
             <SectionLabel>الأسعار</SectionLabel>
             <h2 className="mt-3 text-display-sm font-bold">خطة لكل حجم عمل.</h2>
             <p className="mx-auto mt-3 max-w-lg text-[13.5px] leading-7 text-muted-foreground">
-              كل الخطط تبدأ بتجربة 14 يوماً. الأسعار بالريال السعودي شهرياً قبل الضريبة.
+              كل الخطط تبدأ بتجربة 14 يوماً. الأسعار بالريال السعودي قبل الضريبة.
             </p>
+            <div
+              className="mt-5 inline-flex items-center rounded-lg border border-border bg-background-elevated p-1 text-[13px]"
+              role="group"
+              aria-label="فترة الفوترة"
+            >
+              <Link
+                href="/?period=monthly#pricing"
+                aria-current={period === 'monthly' ? 'true' : undefined}
+                className={cn(
+                  'rounded-md px-4 py-1.5 font-medium transition-colors',
+                  period === 'monthly'
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                شهري
+              </Link>
+              <Link
+                href="/?period=yearly#pricing"
+                aria-current={period === 'yearly' ? 'true' : undefined}
+                className={cn(
+                  'rounded-md px-4 py-1.5 font-medium transition-colors',
+                  period === 'yearly'
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                سنوي
+              </Link>
+            </div>
           </div>
 
           <div className="mt-10 grid gap-4 md:grid-cols-3">
-            {plans.map((plan) => (
-              <article
-                key={plan.id}
-                className={
-                  plan.highlighted
-                    ? 'surface-raised relative flex flex-col p-6 ring-1 ring-primary/30'
-                    : 'surface-card flex flex-col p-6'
-                }
-              >
-                {plan.highlighted && (
-                  <span className="absolute -top-2.5 start-6 rounded-full bg-primary px-2.5 py-0.5 text-[10.5px] font-bold text-primary-foreground">
-                    الأكثر اختياراً
-                  </span>
-                )}
+            {plans.map((plan) => {
+              const livePrice = priceAmounts?.[plan.id]?.[period] ?? null;
+              const displayAmount =
+                livePrice?.amount ?? (period === 'monthly' ? plan.monthlyPrice : null);
+              const displayCurrency = (livePrice?.currency ?? 'sar').toUpperCase();
+              const monthlyAmount =
+                priceAmounts?.[plan.id]?.monthly?.amount ?? plan.monthlyPrice;
+              const yearlySavings =
+                period === 'yearly' && livePrice && displayCurrency === 'SAR'
+                  ? Math.max(0, monthlyAmount * 12 - livePrice.amount)
+                  : 0;
 
-                <h3 className="text-[15px] font-semibold">{plan.name}</h3>
-                <p className="mt-1 text-[12.5px] leading-6 text-muted-foreground">{plan.limit}</p>
-
-                <div className="mt-5 flex items-baseline gap-1.5">
-                  <span className="text-[2.25rem] font-bold leading-none numeric" dir="ltr">
-                    {plan.price}
-                  </span>
-                  <span className="text-[13px] text-muted-foreground">ر.س / شهر</span>
-                </div>
-
-                <ul className="mt-5 flex-1 space-y-2.5 border-t border-border pt-5">
-                  {plan.features.map((feature) => (
-                    <li key={feature} className="flex items-start gap-2 text-[12.5px] leading-6">
-                      <Check className="mt-1 h-3.5 w-3.5 flex-shrink-0 text-primary" aria-hidden />
-                      <span className="text-foreground-subtle">{feature}</span>
-                    </li>
-                  ))}
-                </ul>
-
-                {/* Carry the chosen plan through login so the user lands on the
-                    right checkout instead of a bare pricing table again. */}
-                <Link
-                  href={`/login?next=${encodeURIComponent(`/billing?plan=${plan.id}`)}`}
-                  className={`${buttonClasses({
-                    variant: plan.highlighted ? 'primary' : 'outline',
-                    block: true,
-                  })} mt-6`}
+              return (
+                <article
+                  key={plan.id}
+                  className={
+                    plan.highlighted
+                      ? 'surface-raised relative flex flex-col p-6 ring-1 ring-primary/30'
+                      : 'surface-card flex flex-col p-6'
+                  }
                 >
-                  ابدأ بخطة {plan.name}
-                </Link>
-              </article>
-            ))}
+                  {plan.highlighted && (
+                    <span className="absolute -top-2.5 start-6 rounded-full bg-primary px-2.5 py-0.5 text-[10.5px] font-bold text-primary-foreground">
+                      الأكثر اختياراً
+                    </span>
+                  )}
+
+                  <h3 className="text-[15px] font-semibold">{plan.name}</h3>
+                  <p className="mt-1 text-[12.5px] leading-6 text-muted-foreground">{plan.limit}</p>
+
+                  <div className="mt-5 flex min-h-10 items-baseline gap-1.5">
+                    {displayAmount !== null ? (
+                      <>
+                        <span className="text-[2.25rem] font-bold leading-none numeric">
+                          {formatCurrency(displayAmount, displayCurrency)}
+                        </span>
+                        <span className="text-[13px] text-muted-foreground">
+                          / {period === 'yearly' ? 'سنة' : 'شهر'}
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-[13px] font-semibold leading-6 text-muted-foreground">
+                        يظهر السعر السنوي النهائي في صفحة الدفع
+                      </span>
+                    )}
+                  </div>
+                  {yearlySavings > 0 && (
+                    <p className="mt-1.5 text-[12px] font-medium text-emerald-500">
+                      وفّر {formatCurrency(yearlySavings, 'SAR')} مقارنة بالدفع الشهري
+                    </p>
+                  )}
+
+                  <ul className="mt-5 flex-1 space-y-2.5 border-t border-border pt-5">
+                    {plan.features.map((feature) => (
+                      <li key={feature} className="flex items-start gap-2 text-[12.5px] leading-6">
+                        <Check className="mt-1 h-3.5 w-3.5 flex-shrink-0 text-primary" aria-hidden />
+                        <span className="text-foreground-subtle">{feature}</span>
+                      </li>
+                    ))}
+                  </ul>
+
+                  {/* Carry the chosen plan and period through login so the user
+                      lands on the matching billing choice. */}
+                  <Link
+                    href={`/login?next=${encodeURIComponent(`/billing?plan=${plan.id}&period=${period}`)}`}
+                    className={`${buttonClasses({
+                      variant: plan.highlighted ? 'primary' : 'outline',
+                      block: true,
+                    })} mt-6`}
+                  >
+                    ابدأ بخطة {plan.name}
+                  </Link>
+                </article>
+              );
+            })}
           </div>
         </div>
       </section>

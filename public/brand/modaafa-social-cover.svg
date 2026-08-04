@@ -1,46 +1,41 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-label="مُضاعِف — الميديا باير الذكي لإعلانات Google">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-label="مُضاعِف — ذكاء إعلانات Google تحت موافقتك">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#0A0C11"/>
-      <stop offset=".62" stop-color="#0A1210"/>
-      <stop offset="1" stop-color="#062A21"/>
-    </linearGradient>
     <pattern id="grid" width="52" height="52" patternUnits="userSpaceOnUse">
       <path d="M52 0H0V52" fill="none" stroke="#FFFFFF" stroke-opacity=".045"/>
     </pattern>
   </defs>
-  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect width="1200" height="630" fill="#090E13"/>
+  <rect x="744" width="456" height="630" fill="#0B211D"/>
   <rect width="1200" height="630" fill="url(#grid)"/>
-  <path d="M0 496C216 438 405 446 578 496S952 574 1200 492V630H0Z" fill="#064E3B" fill-opacity=".28"/>
-  <path d="M0 526C224 470 408 476 578 523S950 598 1200 521" fill="none" stroke="#10B981" stroke-opacity=".22" stroke-width="2"/>
+  <path d="M0 518C222 466 407 468 584 514S956 582 1200 516V630H0Z" fill="#063D35" fill-opacity=".48"/>
+  <path d="M0 548C227 496 414 498 584 542S953 607 1200 545" fill="none" stroke="#2DD4A4" stroke-opacity=".3" stroke-width="2"/>
 
-  <g transform="translate(1000 68)">
-    <rect x="4" y="4" width="120" height="120" rx="27" fill="#064E3B"/>
-    <rect x="4.75" y="4.75" width="118.5" height="118.5" rx="26.25" fill="none" stroke="#10B981" stroke-opacity=".45" stroke-width="1.5"/>
-    <path d="M27 101V82C27 56 44 40 69 40H76C96 40 108 52 108 71C108 90 94 102 72 102H27V101Z" fill="#FFFFFF"/>
-    <path d="M48 84V80C48 66 56 58 69 58H73C82 58 87 63 87 71C87 80 80 84 70 84H48Z" fill="#10B981"/>
-    <path d="M29 32H67" stroke="#FFFFFF" stroke-width="11" stroke-linecap="round"/>
-    <circle cx="97" cy="32" r="10" fill="#F5A524"/>
+  <g transform="translate(1000 66)">
+    <rect x="4" y="4" width="120" height="120" rx="30" fill="#063D35"/>
+    <rect x="5" y="5" width="118" height="118" rx="29" fill="none" stroke="#2DD4A4" stroke-opacity=".28" stroke-width="2"/>
+    <path d="M31 34L51 54M77 80L96 99" fill="none" stroke="#2DD4A4" stroke-width="16" stroke-linecap="round"/>
+    <path d="M31 97L93 35" fill="none" stroke="#F8FAFC" stroke-width="16" stroke-linecap="round"/>
+    <path d="M78 27H101V50" fill="none" stroke="#F5B63D" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
   </g>
   <text x="970" y="124" fill="#F8FAFC" font-family="'IBM Plex Sans Arabic','Geeza Pro','Tahoma',sans-serif" font-size="42" font-weight="700" text-anchor="end">مُضاعِف</text>
-  <text x="970" y="160" fill="#94A3B8" font-family="'IBM Plex Sans Arabic','Segoe UI',sans-serif" font-size="17" font-weight="600" text-anchor="end" direction="ltr">MODAAFA ADS AI</text>
+  <text x="970" y="160" fill="#94A3B8" font-family="'IBM Plex Sans Arabic','Segoe UI',sans-serif" font-size="16" font-weight="600" text-anchor="end" direction="ltr">GOOGLE ADS INTELLIGENCE</text>
 
-  <text x="1080" y="285" fill="#F8FAFC" font-family="'IBM Plex Sans Arabic','Geeza Pro','Tahoma',sans-serif" font-size="64" font-weight="700" text-anchor="end">إعلانات Google،</text>
-  <text x="1080" y="372" fill="#34D399" font-family="'IBM Plex Sans Arabic','Geeza Pro','Tahoma',sans-serif" font-size="70" font-weight="700" text-anchor="end">بقرارات أذكى.</text>
-  <text x="1080" y="424" fill="#A8B2C0" font-family="'IBM Plex Sans Arabic','Geeza Pro','Tahoma',sans-serif" font-size="25" font-weight="500" text-anchor="end">فحص، توصيات، وموافقة واضحة قبل أي تعديل.</text>
+  <text x="1080" y="286" fill="#F8FAFC" font-family="'IBM Plex Sans Arabic','Geeza Pro','Tahoma',sans-serif" font-size="64" font-weight="700" text-anchor="end">إعلانات Google،</text>
+  <text x="1080" y="374" fill="#2DD4A4" font-family="'IBM Plex Sans Arabic','Geeza Pro','Tahoma',sans-serif" font-size="70" font-weight="700" text-anchor="end">بقرارات أذكى.</text>
+  <text x="1080" y="427" fill="#A8B2C0" font-family="'IBM Plex Sans Arabic','Geeza Pro','Tahoma',sans-serif" font-size="25" font-weight="500" text-anchor="end">فحص، توصيات، وموافقة واضحة قبل أي تعديل.</text>
 
   <g transform="translate(72 232)">
-    <rect width="390" height="224" rx="18" fill="#11161D" stroke="#2A333E"/>
-    <rect x="28" y="28" width="126" height="34" rx="9" fill="#0A2F25"/>
-    <circle cx="50" cy="45" r="6" fill="#10B981"/>
-    <text x="68" y="51" fill="#6EE7B7" font-family="'IBM Plex Sans Arabic','Geeza Pro','Tahoma',sans-serif" font-size="16" font-weight="600">الحساب متصل</text>
+    <rect width="390" height="224" rx="12" fill="#111820" stroke="#2A3540"/>
+    <rect x="28" y="28" width="126" height="34" rx="8" fill="#0B3028"/>
+    <circle cx="50" cy="45" r="6" fill="#2DD4A4"/>
+    <text x="68" y="51" fill="#A7F3D0" font-family="'IBM Plex Sans Arabic','Geeza Pro','Tahoma',sans-serif" font-size="16" font-weight="600">الحساب متصل</text>
     <text x="362" y="108" fill="#94A3B8" font-family="'IBM Plex Sans Arabic','Geeza Pro','Tahoma',sans-serif" font-size="17" font-weight="500" text-anchor="end">صحة الحساب</text>
     <text x="362" y="157" fill="#F8FAFC" font-family="'IBM Plex Sans Arabic','Segoe UI',sans-serif" font-size="46" font-weight="700" text-anchor="end" direction="ltr">83 / 100</text>
-    <rect x="28" y="184" width="334" height="8" rx="4" fill="#25303A"/>
-    <rect x="28" y="184" width="277" height="8" rx="4" fill="#10B981"/>
+    <rect x="28" y="184" width="334" height="8" rx="4" fill="#26323D"/>
+    <rect x="28" y="184" width="277" height="8" rx="4" fill="#2DD4A4"/>
   </g>
 
-  <text x="72" y="566" fill="#94A3B8" font-family="'IBM Plex Sans Arabic','Segoe UI',sans-serif" font-size="22" font-weight="600" direction="ltr">ai.modaafa.com</text>
-  <circle cx="1126" cy="552" r="6" fill="#F5A524"/>
-  <text x="1108" y="560" fill="#CBD5E1" font-family="'IBM Plex Sans Arabic','Geeza Pro','Tahoma',sans-serif" font-size="21" font-weight="500" text-anchor="end">أنت تقرر. مُضاعِف ينفّذ.</text>
+  <text x="72" y="572" fill="#94A3B8" font-family="'IBM Plex Sans Arabic','Segoe UI',sans-serif" font-size="22" font-weight="600" direction="ltr">ai.modaafa.com</text>
+  <circle cx="1126" cy="558" r="6" fill="#F5B63D"/>
+  <text x="1108" y="566" fill="#CBD5E1" font-family="'IBM Plex Sans Arabic','Geeza Pro','Tahoma',sans-serif" font-size="21" font-weight="500" text-anchor="end">أنت تقرر. مُضاعِف ينفّذ.</text>
 </svg>

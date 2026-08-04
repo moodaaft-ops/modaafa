@@ -46,7 +46,7 @@ export function hasAIBackend() {
   );
 }
 
-export function getModelName(tier: ModelTier = 'opus'): string {
+export function getModelName(tier: ModelTier = 'sonnet'): string {
   const configured = {
     opus:
       process.env.ANTHROPIC_MODEL_OPUS ??
@@ -64,9 +64,9 @@ export function getModelName(tier: ModelTier = 'opus'): string {
   // These exact IDs are last-resort compatibility fallbacks. Normal requests
   // first discover the models actually enabled for the production API key.
   return {
-    opus: 'claude-opus-4-1-20250805',
-    sonnet: 'claude-sonnet-4-20250514',
-    haiku: 'claude-3-5-haiku-20241022',
+    opus: 'claude-opus-5',
+    sonnet: 'claude-sonnet-5',
+    haiku: 'claude-haiku-4-5-20251001',
   }[tier];
 }
 
@@ -76,16 +76,20 @@ export function getModelForAgent(agent: AgentRole): string {
 
 export async function createMessageForAgent(
   agent: AgentRole,
-  params: Omit<Anthropic.MessageCreateParamsNonStreaming, 'model'>
+  params: Omit<Anthropic.MessageCreateParamsNonStreaming, 'model'>,
+  requestOptions?: Anthropic.RequestOptions
 ) {
   const anthropic = getAnthropicClient();
   let lastError: unknown;
+  const preferredModel = getModelForAgent(agent);
   const discoveredModels = await getAvailableModelCandidates(agent);
-  const candidates = Array.from(new Set([...discoveredModels, ...modelCandidatesForAgent(agent)]));
+  const candidates = Array.from(
+    new Set([preferredModel, ...discoveredModels, ...modelCandidatesForAgent(agent)])
+  );
 
   for (const model of candidates) {
     try {
-      return await anthropic.messages.create({ ...params, model });
+      return await anthropic.messages.create({ ...params, model }, requestOptions);
     } catch (error) {
       lastError = error;
       if (!isUnavailableModelError(error)) throw error;
@@ -209,8 +213,8 @@ function modelCandidatesForAgent(agent: AgentRole) {
   const primary = getModelForAgent(agent);
   const compatibilityFallbacks =
     agent === 'audit' || agent === 'builder'
-      ? ['claude-opus-4-1-20250805', 'claude-sonnet-4-20250514']
-      : ['claude-sonnet-4-20250514', 'claude-opus-4-1-20250805'];
+      ? ['claude-opus-5', 'claude-sonnet-5', 'claude-opus-4-1-20250805']
+      : ['claude-sonnet-5', 'claude-opus-5', 'claude-sonnet-4-6-20260217'];
 
   return Array.from(new Set([primary, ...compatibilityFallbacks]));
 }

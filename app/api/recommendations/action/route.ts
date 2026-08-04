@@ -8,7 +8,12 @@ import {
   executeAction,
   type OptimizerAction,
 } from '@/lib/ai/optimizer-agent';
-import { consumeFeatureUsage, refundFeatureUsage } from '@/lib/billing/entitlements';
+import { buildExecutableAction } from '@/lib/ai/executable-action';
+import {
+  consumeFeatureUsage,
+  getSubscriptionAccess,
+  refundFeatureUsage,
+} from '@/lib/billing/entitlements';
 import { safeLocalPath } from '@/lib/security/redirect';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 import { sendOpsAlert } from '@/lib/notifications/email';
@@ -118,6 +123,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.redirect(new URL(`${next}?error=account_not_found`, req.url), 303);
     }
 
+    // Cheap entitlement gate BEFORE the Google Ads preflight. The quota
+    // reservation further down is still authoritative; this check exists so a
+    // lapsed subscriber repeatedly clicking تنفيذ does not spend live Google
+    // Ads reads and guardrail aggregation against the shared developer token
+    // just to be told no afterwards.
+    const subscriptionAccess = await getSubscriptionAccess(supabase, user.id);
+    if (!subscriptionAccess.active) {
+      return NextResponse.redirect(new URL(`${next}?error=subscription_required`, req.url), 303);
+    }
+
     // Re-validate the resource names against THIS account's customer id now
     // that it is known. The first pass accepts any `customers/<id>/…`, so
     // without this a payload could name a resource in a different account.
@@ -141,6 +156,7 @@ export async function POST(req: NextRequest) {
     let rollbackPayload: Record<string, unknown>;
     let measurement: MeasurementDescriptor | null;
     let mutationApplied = false;
+    let liveMutationOutcomeUnknown = false;
     try {
       const refreshToken = decrypt(account.refresh_token_encrypted);
       const customer = getCustomer(account.customer_id, refreshToken, account.manager_id ?? undefined);
@@ -206,7 +222,21 @@ export async function POST(req: NextRequest) {
       const refreshToken = decrypt(account.refresh_token_encrypted);
       const customer = getCustomer(account.customer_id, refreshToken, account.manager_id ?? undefined);
       await executeAction(safe, customer, { validateOnly: true });
-      const result = await executeAction(safe, customer);
+      let result: unknown;
+      try {
+        result = await executeAction(safe, customer);
+      } catch (mutateError) {
+        // A client-side timeout on the LIVE mutate is ambiguous: Google may
+        // have committed the change after our 20s deadline. Marking it
+        // `failed` (re-executable) risked a duplicate apply of a
+        // non-idempotent create. Flag it so the catch below keeps the row
+        // locked and asks for manual verification instead.
+        const errorName = (mutateError as { name?: string })?.name;
+        if (errorName === 'TimeoutError' || errorName === 'AbortError') {
+          liveMutationOutcomeUnknown = true;
+        }
+        throw mutateError;
+      }
       mutationApplied = true;
       const appliedAt = new Date().toISOString();
       const appliedResult = {
@@ -256,25 +286,41 @@ export async function POST(req: NextRequest) {
 
       return NextResponse.redirect(new URL(`${next}?executed=1`, req.url), 303);
     } catch (error) {
-      if (mutationApplied) {
-        console.error('Google Ads mutation succeeded but execution recording failed', {
-          recommendationId: recommendation.id,
-          accountId: account.id,
-          executionKey,
-          error: operationalError(error),
-        });
+      if (mutationApplied || liveMutationOutcomeUnknown) {
+        console.error(
+          mutationApplied
+            ? 'Google Ads mutation succeeded but execution recording failed'
+            : 'Google Ads mutation timed out with an unknown outcome',
+          {
+            recommendationId: recommendation.id,
+            accountId: account.id,
+            executionKey,
+            error: operationalError(error),
+          }
+        );
         await safeExecutionAlert({
-          subject: 'تعديل Google Ads يحتاج مطابقة يدوية',
-          message: 'نجح إرسال التعديل إلى Google Ads لكن تعذر تأكيد حفظ سجل التنفيذ. تُركت التوصية مقفلة لمنع تكرار التعديل.',
+          subject: mutationApplied
+            ? 'تعديل Google Ads يحتاج مطابقة يدوية'
+            : 'نتيجة تعديل Google Ads غير مؤكدة',
+          message: mutationApplied
+            ? 'نجح إرسال التعديل إلى Google Ads لكن تعذر تأكيد حفظ سجل التنفيذ. تُركت التوصية مقفلة لمنع تكرار التعديل.'
+            : 'انتهت مهلة نداء التعديل بعد إرساله إلى Google Ads وقد يكون طُبق فعلاً. تُركت التوصية مقفلة — راجع سجل التغييرات في Google Ads قبل أي إعادة تنفيذ.',
           details: {
             recommendation_id: recommendation.id,
             account_id: account.id,
             execution_key: executionKey,
             action_type: safe.type,
+            outcome: mutationApplied ? 'applied_recording_failed' : 'unknown_after_timeout',
             error: operationalError(error),
           },
         });
-        return NextResponse.redirect(new URL(`${next}?error=execution_recording_failed`, req.url), 303);
+        return NextResponse.redirect(
+          new URL(
+            `${next}?error=${mutationApplied ? 'execution_recording_failed' : 'execution_unverified'}`,
+            req.url
+          ),
+          303
+        );
       }
 
       await refundFeatureUsage({ supabase, userId: user.id, usageEventId: usage.usageEventId });
@@ -325,89 +371,6 @@ export async function POST(req: NextRequest) {
   return NextResponse.redirect(new URL(`${next}?approved=1`, req.url), 303);
 }
 
-function buildExecutableAction(
-  payload: any,
-  recommendation: any,
-  accountCustomerId?: string | null
-): OptimizerAction | null {
-  const operation = String(payload?.operation ?? '');
-  const allowed = ['pause_keyword', 'add_negative_keyword', 'add_keyword', 'adjust_budget', 'adjust_bid', 'pause_ad'];
-  if (!allowed.includes(operation)) return null;
-
-  const params = payload?.params ?? {};
-  const targetId = String(payload?.target_id ?? '');
-  const base = {
-    type: operation as OptimizerAction['type'],
-    target_id: targetId,
-    params,
-    reason_ar: recommendation.description ?? recommendation.title,
-    reason_en: recommendation.title,
-    expected_impact: {
-      metric: String(recommendation.expected_impact?.metric ?? 'performance'),
-      delta_pct: Number(recommendation.expected_impact?.delta_pct ?? 0),
-      delta_sar_per_month: Number(recommendation.expected_impact?.delta_sar_per_month ?? 0),
-    },
-  } satisfies OptimizerAction;
-
-  if (operation === 'pause_keyword' || operation === 'pause_ad') {
-    const resourceType = operation === 'pause_keyword' ? 'adGroupCriteria' : 'adGroupAds';
-    return validGoogleAdsResource(targetId, resourceType, accountCustomerId) ? base : null;
-  }
-
-  if (operation === 'add_negative_keyword') {
-    const campaignResource = String(params.campaign_resource ?? '');
-    const keywordText = String(params.keyword_text ?? '').trim();
-    const matchType = String(params.match_type ?? '').trim();
-    if (
-      !validGoogleAdsResource(campaignResource, 'campaigns', accountCustomerId) ||
-      !keywordText ||
-      !['EXACT', 'PHRASE', 'BROAD'].includes(matchType)
-    ) {
-      return null;
-    }
-    return base;
-  }
-
-  if (operation === 'add_keyword') {
-    const adGroupResource = String(params.ad_group_resource ?? '');
-    const keywordText = String(params.keyword_text ?? '').trim();
-    const matchType = String(params.match_type ?? '').trim();
-    if (
-      !validGoogleAdsResource(adGroupResource, 'adGroups', accountCustomerId) ||
-      !keywordText ||
-      keywordText.length > 80 ||
-      // Positive keyword promotion is deliberately narrower than negatives:
-      // EXACT/PHRASE only, so a promoted term can never widen delivery.
-      !['EXACT', 'PHRASE'].includes(matchType)
-    ) {
-      return null;
-    }
-    return base;
-  }
-
-  if (operation === 'adjust_budget') {
-    const budgetResource = String(params.budget_resource ?? '');
-    const newAmountMicros = Number(params.new_amount_micros ?? 0);
-    if (
-      !validGoogleAdsResource(budgetResource, 'campaignBudgets', accountCustomerId) ||
-      !Number.isFinite(newAmountMicros) ||
-      newAmountMicros <= 0
-    ) {
-      return null;
-    }
-    return base;
-  }
-
-  if (operation === 'adjust_bid') {
-    const adGroupResource = String(params.ad_group_resource ?? '');
-    const hasBidTarget = params.target_cpa_micros !== undefined || params.target_roas !== undefined;
-    if (!validGoogleAdsResource(adGroupResource, 'adGroups', accountCustomerId) || !hasBidTarget) return null;
-    return base;
-  }
-
-  return null;
-}
-
 async function markExecutionFailed({
   admin,
   recommendation,
@@ -434,6 +397,14 @@ async function markExecutionFailed({
     .eq('account_id', recommendation.account_id);
   if (executionKey) {
     updateQuery = updateQuery.eq('execution_key', executionKey).eq('status', 'executing');
+  } else {
+    // Fail CLOSED: the pre-claim failure paths (preflight, guardrails,
+    // resource mismatch) may only demote a row that is still `approved`.
+    // Without this guard, request B's transient preflight failure flipped a
+    // row that request A had just claimed (`executing`) — or even finished
+    // (`applied`) — back to `failed`, which the approve path accepts, re-arming
+    // a second live execution of an already-applied mutation.
+    updateQuery = updateQuery.eq('status', 'approved');
   }
   await updateQuery;
 
@@ -466,18 +437,6 @@ async function releaseExecutionClaim(
     .eq('account_id', recommendation.account_id)
     .eq('execution_key', executionKey)
     .eq('status', 'executing');
-}
-
-/**
- * Resource names must belong to the SELECTED account, not just any account.
- * The customer id was previously left as a wildcard, so an action payload
- * could name a resource under a different `customers/<id>/…`; only Google's
- * own scoping stopped the write.
- */
-function validGoogleAdsResource(value: string, resourceType: string, accountCustomerId?: string | null) {
-  const customerPattern = accountCustomerId ? accountCustomerId.replace(/\D/g, '') : '\\d+';
-  if (accountCustomerId && !customerPattern) return false;
-  return new RegExp(`^customers/${customerPattern}/${resourceType}/[^/]+$`).test(value);
 }
 
 /**
@@ -547,6 +506,16 @@ async function prepareActionForExecution(action: OptimizerAction, customer: any)
     const budget = rows[0]?.campaignBudget ?? rows[0]?.campaign_budget;
     const currentAmountMicros = Number(budget?.amountMicros ?? budget?.amount_micros ?? 0);
     if (!currentAmountMicros) throw new Error('Unable to read current campaign budget before execution');
+    // A delta-only payload (what the optimizer prompt produced historically)
+    // becomes executable HERE, against the live budget — not against whatever
+    // the budget was on the night the recommendation was queued.
+    if (!(Number(params.new_amount_micros) > 0)) {
+      const deltaPct = Number(params.delta_pct);
+      if (!Number.isFinite(deltaPct) || deltaPct === 0) {
+        throw new Error('Budget action carries neither an absolute amount nor a delta');
+      }
+      params.new_amount_micros = Math.round(currentAmountMicros * (1 + deltaPct / 100));
+    }
     params.current_amount_micros = currentAmountMicros;
     params.delta_pct = ((Number(params.new_amount_micros) - currentAmountMicros) / currentAmountMicros) * 100;
     rollbackPayload = {

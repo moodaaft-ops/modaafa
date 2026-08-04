@@ -8,6 +8,7 @@ import {
 } from '../lib/accounts/display';
 import {
   normalizeCustomerId,
+  partitionGoogleAdsAccounts,
   pickPersistedOrPreferredGoogleAdsAccount,
   pickPreferredGoogleAdsAccount,
   pickSelectedAdsAccount,
@@ -142,4 +143,25 @@ test('stale selection safely falls back to the first linked account', () => {
     '1111111111'
   );
   assert.equal(pickSelectedAdsAccount([], null, null), null);
+});
+
+test('revoked accounts remain visible for reconnect but can never be selected', () => {
+  const { accounts, revokedAccounts } = partitionGoogleAdsAccounts(
+    [
+      { id: 'active', customer_id: '111-111-1111', customer_name: 'نشط', status: 'active' },
+      { id: 'revoked', customer_id: '222-222-2222', customer_name: 'منتهي', status: 'revoked' },
+      {
+        id: 'manager',
+        customer_id: '756-114-1000',
+        customer_name: 'مدير',
+        status: 'revoked',
+        is_manager: true,
+      },
+    ],
+    new Set(['7561141000'])
+  );
+
+  assert.deepEqual(accounts.map((account) => account.customer_id), ['1111111111']);
+  assert.deepEqual(revokedAccounts.map((account) => account.customer_id), ['2222222222']);
+  assert.equal(pickSelectedAdsAccount(accounts, '2222222222', '2222222222')?.id, 'active');
 });

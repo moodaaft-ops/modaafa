@@ -12,7 +12,7 @@ import { formatCurrency } from '@/lib/utils';
  * fully token-driven, RTL-native, and animated on mount.
  */
 
-type Row = { name: string; spend: number; roas: number };
+type Row = { id?: string | number; name: string; spend: number; roas: number };
 
 export function CampaignSpendChart({
   campaigns,
@@ -41,12 +41,15 @@ export function CampaignSpendChart({
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
         <div>
           <h3 className="text-[14px] font-semibold">توزيع الإنفاق حسب الحملة</h3>
-          <p className="mt-1 text-xs text-muted-foreground">آخر ٧ أيام — أعلى {data.length} حملات إنفاقاً</p>
+          {/* Latin digits, matching the app-wide numerals policy in
+              lib/utils.ts — an Eastern-Arabic ٧ next to Latin-digit money is
+              exactly the mixed-numeral screen that policy eliminated. */}
+          <p className="mt-1 text-xs text-muted-foreground">آخر 7 أيام — أعلى {data.length} حملات إنفاقاً</p>
         </div>
         <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
           <span className="inline-flex items-center gap-1.5">
             <span className="h-2.5 w-2.5 rounded-sm bg-primary" aria-hidden />
-            ROAS ≥ ١×
+            ROAS ≥ 1×
           </span>
           <span className="inline-flex items-center gap-1.5">
             <span className="h-2.5 w-2.5 rounded-sm bg-amber-500" aria-hidden />
@@ -56,11 +59,14 @@ export function CampaignSpendChart({
       </div>
 
       <ul className="space-y-3.5 p-5">
-        {data.map((row) => {
+        {data.map((row, index) => {
           const pct = Math.max(3, (row.spend / max) * 100);
           const healthy = row.roas >= 1;
           return (
-            <li key={row.name}>
+            // Key by id when present (two campaigns can share a name — common
+            // with copied campaigns — and a duplicate React key drops a bar);
+            // fall back to name+index otherwise.
+            <li key={row.id ?? `${row.name}-${index}`}>
               <div className="mb-1.5 flex items-baseline justify-between gap-3">
                 <span className="min-w-0 truncate text-[13px] font-medium text-foreground">{row.name}</span>
                 <span className="flex-shrink-0 text-[12px] text-muted-foreground">

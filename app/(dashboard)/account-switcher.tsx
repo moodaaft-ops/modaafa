@@ -24,9 +24,11 @@ import { cn, formatDateShortAr } from '@/lib/utils';
 
 export function AccountSwitcher({
   accounts,
+  revokedAccounts,
   selectedCustomerId,
 }: {
   accounts: AdsAccountSummary[];
+  revokedAccounts: AdsAccountSummary[];
   selectedCustomerId: string | null;
 }) {
   const router = useRouter();
@@ -62,18 +64,19 @@ export function AccountSwitcher({
     [accounts]
   );
   const filteredAccounts = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
+    const normalizedQuery = foldArabic(query.trim().toLowerCase());
     if (!normalizedQuery) return accounts;
 
-    // `''.includes('')` is true for every string, so when the query had no
-    // digits `rawId.includes(digits)` matched EVERY account — searching for
-    // "الصفرات" returned the whole list unchanged, and only numeric queries
-    // ever filtered anything.
-    const digits = normalizedQuery.replace(/\D/g, '');
+    // Fold Arabic-Indic (٠-٩) and Persian (۰-۹) digits to ASCII before
+    // extracting the numeric query: those code points are `\D`, so typing an
+    // account number on an Arabic keyboard ("٧٥٦") used to be stripped to
+    // nothing and matched no account. `''.includes('')` is true for every
+    // string, so the digit clause is still guarded by `digits.length > 0`.
+    const digits = toAsciiDigits(normalizedQuery).replace(/\D/g, '');
 
     return accounts.filter((account) => {
-      const name = account.customer_name?.toLowerCase() ?? '';
-      const displayName = googleAdsAccountDisplayName(account).toLowerCase();
+      const name = foldArabic(account.customer_name?.toLowerCase() ?? '');
+      const displayName = foldArabic(googleAdsAccountDisplayName(account).toLowerCase());
       const rawId = account.customer_id;
       const formattedId = formatGoogleAdsCustomerId(account.customer_id);
       return (
@@ -237,7 +240,7 @@ export function AccountSwitcher({
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
         const errorMessage = [payload.code, ...(payload.codes ?? []), payload.message, payload.error].join(' ');
-        if (/unauthorized_client|invalid_client|invalid_grant/i.test(errorMessage)) setReconnectRequired(true);
+        if (/unauthorized_client|invalid_client|invalid_grant|authentication_error/i.test(errorMessage)) setReconnectRequired(true);
         if (/subscription_required|quota_exceeded/i.test(errorMessage)) setBillingRequired(true);
         setError(friendlySyncError(errorMessage));
         return;
@@ -254,23 +257,31 @@ export function AccountSwitcher({
   }
 
   const busy = isPending || syncing || selecting || repairingNames;
+  const revokedAccount = revokedAccounts[0] ?? null;
+  const revokedAccountLabel = revokedAccount
+    ? `${googleAdsAccountDisplayName(revokedAccount)} (${formatGoogleAdsCustomerId(revokedAccount.customer_id)})`
+    : '';
 
   if (accounts.length === 0) {
     return (
-      <div className="mx-4 mt-4 rounded-lg border border-amber-200 dark:border-amber-500/25 bg-amber-50 dark:bg-amber-500/15 p-3">
+      <div className="mx-4 mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-500/25 dark:bg-amber-500/15">
         <div className="flex items-center gap-2 text-sm font-semibold text-amber-900 dark:text-amber-200">
           <CircleAlert className="h-4 w-4" />
-          لا يوجد حساب إعلاني
+          {revokedAccount ? 'انتهت صلاحية ربط Google Ads' : 'لا يوجد حساب إعلاني'}
         </div>
         <p className="mt-1 text-xs leading-5 text-amber-800 dark:text-amber-300">
-          اربط إعلانات Google حتى تظهر بيانات الأداء والتوصيات.
+          {revokedAccount
+            ? `انتهت صلاحية الربط لحساب ${revokedAccountLabel}${
+                revokedAccounts.length > 1 ? ` و${revokedAccounts.length - 1} حساب آخر` : ''
+              }. أعد الربط لاستعادة البيانات.`
+            : 'اربط إعلانات Google حتى تظهر بيانات الأداء والتوصيات.'}
         </p>
         <Link
           href="/onboarding/connect"
           className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/12 px-3 py-2 text-[11.5px] font-semibold text-amber-600 transition-colors hover:bg-amber-500/20 dark:text-amber-300"
         >
-          <Plus className="h-4 w-4" />
-          ربط حساب
+          {revokedAccount ? <RefreshCw className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+          {revokedAccount ? 'إعادة ربط Google Ads' : 'ربط حساب'}
         </Link>
       </div>
     );
@@ -391,6 +402,28 @@ export function AccountSwitcher({
         )}
       </div>
 
+      {revokedAccount && (
+        <div className="mt-3 rounded-md border border-amber-300/70 bg-amber-50 px-2.5 py-2 text-[11px] leading-5 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-200">
+          <div className="flex items-start gap-2">
+            <CircleAlert className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+            <span>
+              انتهت صلاحية ربط Google Ads لحساب {revokedAccountLabel}
+              {revokedAccounts.length > 1
+                ? ` و${revokedAccounts.length - 1} حساب آخر`
+                : ''}
+              .
+            </span>
+          </div>
+          <Link
+            href="/onboarding/connect"
+            className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-amber-500/35 bg-amber-500/10 px-2.5 py-1.5 font-semibold text-amber-800 transition-colors hover:bg-amber-500/20 dark:text-amber-200"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            إعادة الربط
+          </Link>
+        </div>
+      )}
+
       {selectedMissingName && !open && (
         <div className="mt-2">
           <StatusBadge tone="warning" icon={CircleAlert}>
@@ -483,7 +516,11 @@ function friendlySyncError(message: string) {
     normalized.includes('revoked') ||
     normalized.includes('unauthorized_client') ||
     normalized.includes('invalid_client') ||
-    normalized.includes('invalid_grant')
+    normalized.includes('invalid_grant') ||
+    // OAUTH_TOKEN_REVOKED and friends surface as AUTHENTICATION_ERROR, which
+    // googleAdsAuthNeedsReconnect already treats as reconnect-worthy; the copy
+    // must match so the reconnect CTA and message agree.
+    normalized.includes('authentication_error')
   ) {
     return 'انتهت صلاحية ربط Google Ads. أعد الربط من زر إضافة حساب.';
   }
@@ -491,4 +528,28 @@ function friendlySyncError(message: string) {
     return 'إعداد Google OAuth في السيرفر كان غير متطابق مع الربط. تم تسجيل الخطأ وسنصلحه من إعدادات المنصة قبل إعادة المحاولة.';
   }
   return 'تعذر تحديث بيانات الحساب الآن. أعد الربط إذا استمرت المشكلة.';
+}
+
+/**
+ * Fold common Arabic letter variants so name search is forgiving:
+ * أإآ→ا, ة→ه, ى→ي, ؤ→و, ئ→ي, and strip tashkeel. Without this, searching
+ * "احمد" would miss an account named "أحمد".
+ */
+function foldArabic(value: string) {
+  return value
+    .replace(/[ً-ْ]/g, '')
+    .replace(/[أإآ]/g, 'ا')
+    .replace(/ة/g, 'ه')
+    .replace(/ى/g, 'ي')
+    .replace(/ؤ/g, 'و')
+    .replace(/ئ/g, 'ي');
+}
+
+/** Map Arabic-Indic (٠-٩) and Persian (۰-۹) digits to ASCII 0-9. */
+function toAsciiDigits(value: string) {
+  return value.replace(/[٠-٩۰-۹]/g, (ch) => {
+    const code = ch.charCodeAt(0);
+    const base = code >= 0x06f0 ? 0x06f0 : 0x0660;
+    return String(code - base);
+  });
 }

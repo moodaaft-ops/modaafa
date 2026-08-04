@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import {
   ArrowLeft,
   CheckCircle2,
@@ -13,7 +14,7 @@ import {
 } from 'lucide-react';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
-import { createServerClient } from '@/lib/supabase/server';
+import { getRequestAuthContext } from '@/lib/supabase/server';
 import { formatCurrency, formatNumberAr, timeAgoAr } from '@/lib/utils';
 import { moneyMetric } from '@/lib/google-ads/metrics';
 import { campaignStatusLabel } from '@/lib/ui/labels';
@@ -79,11 +80,14 @@ export default async function DashboardPage({
   }>;
 }) {
   const params = await searchParams;
-  const supabase = await createServerClient();
+  const { supabase, user } = await getRequestAuthContext();
+  if (!user) redirect('/login');
   const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  const { business: workspaceBusiness, accounts, selectedAccount } = await getAccountWorkspace(supabase);
+    business: workspaceBusiness,
+    accounts,
+    revokedAccounts,
+    selectedAccount,
+  } = await getAccountWorkspace(user.id);
 
   // Reuse the workspace lookup rather than issuing a second, unordered
   // `.maybeSingle()` query — that variant threw PGRST116 the moment a user had
@@ -91,26 +95,26 @@ export default async function DashboardPage({
   // email address.
   const business = workspaceBusiness;
 
-  const { data: campaigns } = selectedAccount
-    ? await supabase
-        .from('campaigns_cache')
-        .select('*')
-        .eq('account_id', selectedAccount.id)
-        .order('last_synced_at', { ascending: false })
-        .limit(500)
-    : { data: [] };
-
-  const { data: latestAudit } = selectedAccount
-    ? await supabase
-        .from('audits')
-        .select('health_score, estimated_monthly_waste, ran_at')
-        .eq('account_id', selectedAccount.id)
-        .order('ran_at', { ascending: false })
-        .limit(1)
-        .maybeSingle()
-    : { data: null };
-
-  const subscription = await getSubscriptionAccess(supabase, user?.id);
+  const [{ data: campaigns }, { data: latestAudit }, subscription] = await Promise.all([
+    selectedAccount
+      ? supabase
+          .from('campaigns_cache')
+          .select('*')
+          .eq('account_id', selectedAccount.id)
+          .order('last_synced_at', { ascending: false })
+          .limit(500)
+      : Promise.resolve({ data: [] }),
+    selectedAccount
+      ? supabase
+          .from('audits')
+          .select('health_score, estimated_monthly_waste, ran_at')
+          .eq('account_id', selectedAccount.id)
+          .order('ran_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
+    getSubscriptionAccess(supabase, user.id),
+  ]);
 
   const setupState: Record<string, boolean> = {
     accounts: accounts.length > 0,
@@ -138,7 +142,9 @@ export default async function DashboardPage({
         description={
           selectedAccount
             ? `تعمل الآن على ${googleAdsAccountDisplayName(selectedAccount)}`
-            : 'ابدأ بربط حساب إعلاني حتى تظهر بيانات العمل.'
+            : revokedAccounts.length > 0
+              ? 'انتهت صلاحية ربط Google Ads. أعد الربط لاستعادة بيانات العمل.'
+              : 'ابدأ بربط حساب إعلاني حتى تظهر بيانات العمل.'
         }
         account={
           selectedAccount
@@ -187,12 +193,21 @@ export default async function DashboardPage({
         )}
         {accounts.length === 0 ? (
           <EmptyState
-            icon={Plus}
-            title="اربط أول حساب إعلاني لتبدأ"
-            description="مُضاعِف يعمل على حساب إعلاني واحد في كل مرة. اربط إعلانات Google بموافقة واحدة، ثم اختر الحساب وشغّل أول فحص."
+            icon={revokedAccounts.length > 0 ? CircleDashed : Plus}
+            tone={revokedAccounts.length > 0 ? 'warning' : 'neutral'}
+            title={
+              revokedAccounts.length > 0
+                ? 'انتهت صلاحية ربط Google Ads'
+                : 'اربط أول حساب إعلاني لتبدأ'
+            }
+            description={
+              revokedAccounts.length > 0
+                ? `أعد ربط Google Ads لاستعادة ${formatNumberAr(revokedAccounts.length)} حساب وحمل بياناته من جديد.`
+                : 'مُضاعِف يعمل على حساب إعلاني واحد في كل مرة. اربط إعلانات Google بموافقة واحدة، ثم اختر الحساب وشغّل أول فحص.'
+            }
             action={
               <Link href="/onboarding/connect" className={buttonClasses({ variant: 'primary', size: 'lg' })}>
-                ربط إعلانات Google
+                {revokedAccounts.length > 0 ? 'إعادة ربط Google Ads' : 'ربط إعلانات Google'}
               </Link>
             }
           />
@@ -301,6 +316,7 @@ export default async function DashboardPage({
               <CampaignSpendChart
                 currencyCode={selectedAccount?.currency_code}
                 campaigns={activeCampaigns.map((c) => ({
+                  id: c.google_campaign_id ?? c.id,
                   name: c.name ?? 'حملة',
                   spend: moneyMetric(c.metrics_7d, 'cost'),
                   roas: c.metrics_30d?.roas ?? 0,
