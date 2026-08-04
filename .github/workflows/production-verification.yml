@@ -1,0 +1,81 @@
+name: Production verification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-verification
+  cancel-in-progress: false
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify detailed launch health
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          test -n "$CRON_SECRET"
+
+          response="$RUNNER_TEMP/health.json"
+          curl --fail-with-body --silent --show-error \
+            --max-time 60 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            https://ai.modaafa.com/api/health > "$response"
+
+          jq '{
+            launch_ready,
+            env_ok: ([.checks.env[]] | all),
+            readiness_ok: .checks.readiness_summary.ok,
+            database_ok: .checks.database.ok,
+            billing_ok: .checks.billing.ok,
+            ai_ok: .checks.ai.ok,
+            operational_email_ok: .checks.operational_email.ok,
+            operational_jobs_ok: .checks.database.operational_jobs.ok,
+            job_capacity_ok: .checks.database.job_capacity.ok
+          }' "$response"
+
+          jq -e '.launch_ready == true' "$response" > /dev/null
+
+  cron-concurrency:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify duplicate jobs are rejected
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          test -n "$CRON_SECRET"
+
+          endpoint="https://ai.modaafa.com/api/cron/sync-google-ads"
+          for attempt in 1 2; do
+            curl --silent --show-error \
+              --max-time 290 \
+              -o "$RUNNER_TEMP/sync-$attempt.json" \
+              -w '%{http_code}' \
+              -H "Authorization: Bearer $CRON_SECRET" \
+              "$endpoint" > "$RUNNER_TEMP/sync-$attempt.status" &
+          done
+          wait
+
+          first="$(cat "$RUNNER_TEMP/sync-1.status")"
+          second="$(cat "$RUNNER_TEMP/sync-2.status")"
+          printf 'Concurrent sync statuses: %s, %s\n' "$first" "$second"
+
+          if ! { [ "$first" = "200" ] && [ "$second" = "409" ]; } && \
+             ! { [ "$first" = "409" ] && [ "$second" = "200" ]; }; then
+            echo "Expected exactly one 200 response and one 409 already_running response."
+            exit 1
+          fi
+
+          rejected="$RUNNER_TEMP/sync-1.json"
+          if [ "$first" = "200" ]; then
+            rejected="$RUNNER_TEMP/sync-2.json"
+          fi
+          jq -e '.error == "already_running"' "$rejected" > /dev/null
