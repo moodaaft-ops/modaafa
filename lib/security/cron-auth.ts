@@ -3,7 +3,14 @@ import type { NextRequest } from 'next/server';
 import { isConfiguredEnv } from '@/lib/platform/env';
 
 export function hasValidCronAuthorization(req: NextRequest) {
-  const secret = process.env.CRON_SECRET;
+  return hasValidBearerAuthorization(req, process.env.CRON_SECRET);
+}
+
+export function hasValidHealthAuthorization(req: NextRequest) {
+  return hasValidBearerAuthorization(req, process.env.HEALTH_SECRET);
+}
+
+function hasValidBearerAuthorization(req: NextRequest, secret?: string) {
   if (!isConfiguredEnv(secret)) return false;
 
   const expected = Buffer.from(`Bearer ${secret.trim()}`);

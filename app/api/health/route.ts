@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getPlatformReadiness, readinessSummary } from '@/lib/platform/readiness';
-import { hasValidCronAuthorization } from '@/lib/security/cron-auth';
+import { hasValidHealthAuthorization } from '@/lib/security/cron-auth';
 import { isConfiguredEnv } from '@/lib/platform/env';
 import { checkStripeConfiguration } from '@/lib/billing/stripe';
 import { checkAIConfiguration } from '@/lib/ai/client';
@@ -35,10 +35,11 @@ const REQUIRED_ENV = [
   'STRIPE_PRICE_PRO_YEARLY',
   'ANTHROPIC_API_KEY',
   'CRON_SECRET',
+  'HEALTH_SECRET',
 ] as const;
 
 export async function GET(req: NextRequest) {
-  const authorized = hasValidCronAuthorization(req);
+  const authorized = hasValidHealthAuthorization(req);
 
   if (!authorized) {
     const heartbeat = await checkPublicDatabaseHeartbeat();

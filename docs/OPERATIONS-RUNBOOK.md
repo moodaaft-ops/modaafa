@@ -6,12 +6,13 @@
 ويعيد `503` بلا تفاصيل تشغيلية عند تعطل أي منهما. الفحص التفصيلي يحتاج:
 
 ```bash
-curl -H "Authorization: Bearer $CRON_SECRET" https://ai.modaafa.com/api/health
+curl -H "Authorization: Bearer $HEALTH_SECRET" https://ai.modaafa.com/api/health
 ```
 
 - `ok`: التطبيق وقاعدة البيانات والمتغيرات الحرجة قابلة للتشغيل.
 - `launch_ready`: كل تكامل تجاري وتشغيلي ناجح، بما فيه Google verification وStripe وAnthropic والبريد والمهام.
 - لا تنشر ناتج الفحص المفصل لأنه يحتوي تفاصيل تشغيلية، وإن كان لا يعرض المفاتيح نفسها.
+- استخدم `HEALTH_SECRET` مستقلاً عن `CRON_SECRET`؛ الأول للقراءة التشغيلية، والثاني يشغّل مهام الإنتاج.
 
 ## فشل ربط Google
 
