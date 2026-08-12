@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { applySubscriptionEvent } from '../lib/billing/subscription-events';
+import {
+  applySubscriptionEvent,
+  LiveSubscriptionConflictError,
+} from '../lib/billing/subscription-events';
 
 type StoredRow = Record<string, unknown> & {
   id: string;
@@ -12,6 +15,7 @@ type StoredRow = Record<string, unknown> & {
 class FakeSubscriptions {
   rows = new Map<string, StoredRow>();
   concurrentInsert: StoredRow | null = null;
+  conflictingLiveUser = false;
 
   from(table: string) {
     assert.equal(table, 'subscriptions');
@@ -20,7 +24,7 @@ class FakeSubscriptions {
 }
 
 class FakeQuery {
-  private operation: 'update' | null = null;
+  private operation: 'read' | 'update' | null = null;
   private payload: Record<string, unknown> = {};
   private subscriptionId: string | null = null;
   private eventCreatedAt: string | null = null;
@@ -35,6 +39,7 @@ class FakeQuery {
 
   async insert(payload: Record<string, unknown>) {
     const subscriptionId = String(payload.stripe_subscription_id);
+    if (this.database.conflictingLiveUser) return { error: { code: '23505' } };
     if (this.database.concurrentInsert) {
       this.database.rows.set(subscriptionId, this.database.concurrentInsert);
       this.database.concurrentInsert = null;
@@ -67,16 +72,22 @@ class FakeQuery {
 
   select(column: string) {
     assert.equal(column, 'id');
+    if (!this.operation) this.operation = 'read';
     return this;
   }
 
   async maybeSingle() {
-    assert.equal(this.operation, 'update');
     assert.ok(this.subscriptionId);
-    assert.ok(this.eventCreatedAt);
 
     const existing = this.database.rows.get(this.subscriptionId);
     if (!existing) return { data: null, error: null };
+
+    if (this.operation === 'read') {
+      return { data: { id: existing.id }, error: null };
+    }
+
+    assert.equal(this.operation, 'update');
+    assert.ok(this.eventCreatedAt);
 
     const currentTime = existing.last_event_at
       ? new Date(existing.last_event_at).getTime()
@@ -165,4 +176,19 @@ test('a concurrent first delivery still leaves the newest Stripe event stored', 
   assert.equal(result, 'updated');
   assert.equal(database.rows.get('sub_123')?.status, 'active');
   assert.equal(database.rows.get('sub_123')?.id, 'concurrent-row');
+});
+
+test('a different live subscription for the same user is surfaced as an operational conflict', async () => {
+  const database = new FakeSubscriptions();
+  database.conflictingLiveUser = true;
+
+  await assert.rejects(
+    applySubscriptionEvent(database, eventRow('active', '2026-07-30T10:01:00.000Z')),
+    (error: unknown) => {
+      assert.ok(error instanceof LiveSubscriptionConflictError);
+      assert.equal(error.userId, 'user-1');
+      assert.equal(error.incomingSubscriptionId, 'sub_123');
+      return true;
+    }
+  );
 });
