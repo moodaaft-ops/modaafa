@@ -27,7 +27,7 @@ const GOOGLE_ADS_REQUEST_TIMEOUT_MS = 20_000;
 const GOOGLE_ADS_MAX_ATTEMPTS = 3;
 /**
  * How many login-customer-id candidates to try when reading an account's
- * metadata: no header, the account itself, then the two most likely managers.
+ * metadata: no header, then the three most likely distinct managers.
  */
 const METADATA_FALLBACK_ATTEMPTS = 4;
 /** Parallel metadata reads. Google enforces a per-developer-token QPS cap. */
@@ -446,19 +446,12 @@ export async function getCustomerMetadataWithFallback(
   customerId: string,
   loginCustomerIds: string[] = []
 ): Promise<{ metadata: CustomerMetadata; loginCustomerId: string | null }> {
-  const normalizedCustomerId = customerId.replace(/-/g, '');
   // Bounded chain. It used to try EVERY manager id discovered anywhere in the
   // tree, and only stopped on a response that carried a name — so an account
   // Google genuinely will not name (a normal, permitted state) burned the
   // whole list. With 10 sub-managers and 50 unnamed accounts that was 600
   // serial searches, which timed out the OAuth callback.
-  const attempts = [
-    null,
-    normalizedCustomerId,
-    ...[...loginCustomerIds, ...configuredManagerIds()]
-      .map((value) => value.replace(/-/g, ''))
-      .filter((value, index, values) => value && values.indexOf(value) === index),
-  ].slice(0, METADATA_FALLBACK_ATTEMPTS);
+  const attempts = buildMetadataLoginAttempts(customerId, loginCustomerIds);
 
   let lastError: unknown;
   let firstSuccessfulResult: { metadata: CustomerMetadata; loginCustomerId: string | null } | null = null;
@@ -477,6 +470,27 @@ export async function getCustomerMetadataWithFallback(
 
   if (firstSuccessfulResult) return firstSuccessfulResult;
   throw lastError instanceof Error ? lastError : new Error(String(lastError ?? 'Customer metadata lookup failed'));
+}
+
+/**
+ * Build a bounded metadata fallback chain without wasting a slot on the
+ * customer itself. A no-header request already covers direct access; setting
+ * login-customer-id to the leaf customer is not a manager fallback.
+ */
+export function buildMetadataLoginAttempts(
+  customerId: string,
+  loginCustomerIds: string[] = [],
+  configuredIds: string[] = configuredManagerIds()
+): Array<string | null> {
+  const normalizedCustomerId = customerId.replace(/-/g, '');
+  const managers = [...loginCustomerIds, ...configuredIds]
+    .map((value) => value.replace(/-/g, '').trim())
+    .filter(
+      (value, index, values) =>
+        Boolean(value) && value !== normalizedCustomerId && values.indexOf(value) === index
+    );
+
+  return [null, ...managers].slice(0, METADATA_FALLBACK_ATTEMPTS);
 }
 
 async function mutateResource(
