@@ -1,4 +1,12 @@
-export type SubscriptionEventWriteResult = 'inserted' | 'updated' | 'stale_or_missing';
+export type SubscriptionEventWriteResult =
+  | 'inserted'
+  | 'updated'
+  | 'stale_or_missing'
+  | 'ignored_deleted_user';
+
+export function subscriptionEventWasApplied(result: SubscriptionEventWriteResult) {
+  return result === 'inserted' || result === 'updated';
+}
 
 export class LiveSubscriptionConflictError extends Error {
   readonly userId: string;
@@ -51,7 +59,18 @@ export async function applySubscriptionEvent(
 
   const { error: insertError } = await supabase.from('subscriptions').insert(normalizedRow);
   if (!insertError) return 'inserted';
-  if ((insertError as { code?: string }).code !== '23505') {
+  const insertCode = (insertError as { code?: string }).code;
+  if (
+    insertCode === '23503' &&
+    normalizedRow.user_id &&
+    !(await userStillExists(supabase, String(normalizedRow.user_id)))
+  ) {
+    // Account deletion removes the local subscription before Stripe can
+    // deliver its cancellation event. Retrying cannot recreate a row whose
+    // user foreign key is gone, so acknowledge this late lifecycle event.
+    return 'ignored_deleted_user';
+  }
+  if (insertCode !== '23505') {
     throw new Error('Failed to insert Stripe subscription event', { cause: insertError });
   }
 
@@ -68,6 +87,18 @@ export async function applySubscriptionEvent(
   if (existing) return 'stale_or_missing';
 
   throw new LiveSubscriptionConflictError(String(normalizedRow.user_id), subscriptionId);
+}
+
+async function userStillExists(supabase: any, userId: string) {
+  const { data, error } = await supabase
+    .from('users')
+    .select('id')
+    .eq('id', userId)
+    .maybeSingle();
+  if (error) {
+    throw new Error('Failed to classify Stripe event for a deleted user', { cause: error });
+  }
+  return Boolean(data);
 }
 
 async function updateExistingSubscription(

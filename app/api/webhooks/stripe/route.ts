@@ -13,8 +13,16 @@ import {
   trialEndingEmail,
 } from '@/lib/notifications/email';
 import { recordTrialGrant } from '@/lib/billing/checkout-policy';
-import { applySubscriptionEvent } from '@/lib/billing/subscription-events';
+import {
+  applySubscriptionEvent,
+  subscriptionEventWasApplied,
+} from '@/lib/billing/subscription-events';
 import { recordPaidInvoice } from '@/lib/billing/invoices';
+import {
+  claimStripeWebhookEvent,
+  completeStripeWebhookEvent,
+  failStripeWebhookEvent,
+} from '@/lib/billing/webhook-ledger';
 
 /**
  * POST /api/webhooks/stripe
@@ -108,7 +116,7 @@ export async function POST(req: NextRequest) {
                 ? stripeTimestamp(stripeSubscription.canceled_at) ?? eventCreatedAt
                 : null,
         });
-        if (writeResult !== 'stale_or_missing' && stripeSubscription.trial_end) {
+        if (subscriptionEventWasApplied(writeResult) && stripeSubscription.trial_end) {
           await recordTrialGrant({
             supabase,
             userId,
@@ -116,7 +124,7 @@ export async function POST(req: NextRequest) {
             source: 'stripe_webhook',
           });
         }
-        if (writeResult !== 'stale_or_missing') {
+        if (subscriptionEventWasApplied(writeResult)) {
           await safeUserEmail(supabase, userId, subscriptionWelcomeEmail());
         }
         break;
@@ -149,7 +157,7 @@ export async function POST(req: NextRequest) {
         };
 
         const writeResult = await applySubscriptionEvent(supabase, row);
-        if (writeResult !== 'stale_or_missing' && userId && sub.trial_end) {
+        if (subscriptionEventWasApplied(writeResult) && userId && sub.trial_end) {
           await recordTrialGrant({
             supabase,
             userId,
@@ -214,34 +222,14 @@ export async function POST(req: NextRequest) {
         );
         const status = normalizeSubscriptionStatus(stripeSubscription.status);
         const userId = stripeSubscription.metadata?.userId;
-        if (writeResult !== 'stale_or_missing' && status === 'past_due' && userId) {
+        if (subscriptionEventWasApplied(writeResult) && status === 'past_due' && userId) {
           await safeUserEmail(supabase, userId, paymentFailedEmail());
         }
         break;
       }
     }
 
-    const { data: completedRow, error: completedError } = await supabase
-      .from('processed_webhook_events')
-      .update({
-        status: 'completed',
-        completed_at: new Date().toISOString(),
-        error_message: null,
-      })
-      .eq('event_id', event.id)
-      .eq('status', 'processing')
-      .select('event_id')
-      .maybeSingle();
-    throwOnSupabaseError('complete processed Stripe event', completedError);
-    if (!completedRow) {
-      // A zero-row match is not a PostgREST error, so this used to be
-      // invisible: the side effects ran but the row stayed `processing`,
-      // making it eligible for a stale re-claim and a second execution.
-      console.error('Stripe event side effects ran but the ledger row was not marked completed', {
-        eventId: event.id,
-        eventType: event.type,
-      });
-    }
+    await completeStripeWebhookEvent(supabase, event.id);
   } catch (error) {
     console.error('Stripe webhook processing failed', {
       eventId: event.id,
@@ -249,14 +237,7 @@ export async function POST(req: NextRequest) {
       error,
     });
     try {
-      await supabase
-        .from('processed_webhook_events')
-        .update({
-          status: 'failed',
-          error_message: errorText(error).slice(0, 1000),
-          last_attempt_at: new Date().toISOString(),
-        })
-        .eq('event_id', event.id);
+      await failStripeWebhookEvent(supabase, event.id, errorText(error));
       await sendOpsAlert({
         subject: 'فشل Stripe webhook',
         message: `تعذر معالجة الحدث ${event.type}. سيعيد Stripe المحاولة تلقائياً.`,
@@ -270,64 +251,6 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({ received: true });
 }
-
-type WebhookClaim = 'claimed' | 'already_completed' | 'in_flight';
-
-/**
- * Insert-first claim. `processed_webhook_events.event_id` is the primary key,
- * so exactly one concurrent delivery wins and 23505 is the contention signal —
- * this is not a read-then-write race.
- *
- * The caller must distinguish `already_completed` (safe to 200) from
- * `in_flight` (must NOT 200, or Stripe stops retrying an event whose only
- * attempt may have died mid-flight).
- */
-async function claimStripeWebhookEvent(
-  supabase: any,
-  eventId: string,
-  eventType: string
-): Promise<WebhookClaim> {
-  const now = new Date().toISOString();
-  const { error: insertError } = await supabase.from('processed_webhook_events').insert({
-    event_id: eventId,
-    event_type: eventType,
-    status: 'processing',
-    attempts: 1,
-    last_attempt_at: now,
-  });
-  if (!insertError) return 'claimed';
-  if ((insertError as { code?: string }).code !== '23505') throw insertError;
-
-  const { data: existing, error: lookupError } = await supabase
-    .from('processed_webhook_events')
-    .select('status, attempts, last_attempt_at')
-    .eq('event_id', eventId)
-    .maybeSingle();
-  throwOnSupabaseError('read duplicate Stripe event', lookupError);
-  if (!existing) return 'in_flight';
-  if (existing.status === 'completed') return 'already_completed';
-
-  const stale = Date.now() - new Date(existing.last_attempt_at).getTime() > STALE_CLAIM_MS;
-  if (existing.status === 'processing' && !stale) return 'in_flight';
-
-  const { data: claimed, error: claimError } = await supabase
-    .from('processed_webhook_events')
-    .update({
-      status: 'processing',
-      attempts: Number(existing.attempts ?? 1) + 1,
-      last_attempt_at: now,
-      error_message: null,
-    })
-    .eq('event_id', eventId)
-    .eq('status', existing.status)
-    .select('event_id')
-    .maybeSingle();
-  throwOnSupabaseError('claim Stripe event retry', claimError);
-  return claimed ? 'claimed' : 'in_flight';
-}
-
-/** Longer than maxDuration, so a killed attempt is provably finished. */
-const STALE_CLAIM_MS = 5 * 60 * 1000;
 
 async function safeUserEmail(
   supabase: any,

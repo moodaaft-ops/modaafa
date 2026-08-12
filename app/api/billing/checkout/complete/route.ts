@@ -6,7 +6,12 @@ import {
 } from '@/lib/billing/stripe';
 import { createAdminClient, createServerClient } from '@/lib/supabase/server';
 import { recordTrialGrant } from '@/lib/billing/checkout-policy';
-import { applySubscriptionEvent } from '@/lib/billing/subscription-events';
+import {
+  applySubscriptionEvent,
+  LiveSubscriptionConflictError,
+} from '@/lib/billing/subscription-events';
+import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
+import { sendOpsAlert } from '@/lib/notifications/email';
 
 export const runtime = 'nodejs';
 
@@ -25,6 +30,21 @@ export async function GET(req: NextRequest) {
   } = await supabase.auth.getUser();
   if (!user) {
     return NextResponse.redirect(new URL('/login?error=session_expired', req.url));
+  }
+
+  try {
+    const rateLimit = await checkRateLimit({
+      req,
+      scope: 'billing_checkout_complete',
+      limit: 12,
+      windowSeconds: 3600,
+      identifier: user.id,
+    });
+    if (!rateLimit.allowed) {
+      return billingError(req, 'too_many_requests', rateLimitHeaders(rateLimit));
+    }
+  } catch {
+    return billingError(req, 'security_service_unavailable');
   }
 
   try {
@@ -87,6 +107,18 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.redirect(new URL('/dashboard?subscribed=1', req.url));
   } catch (error) {
+    if (error instanceof LiveSubscriptionConflictError) {
+      await safeOpsAlert({
+        subject: 'تعارض اشتراك Stripe حي',
+        message: 'وصل اشتراك ثانٍ لمستخدم لديه اشتراك حي مختلف. لم يُخفَ التعارض ويحتاج مراجعة Stripe.',
+        details: {
+          user_id: error.userId,
+          incoming_subscription_id: error.incomingSubscriptionId,
+          source: 'checkout_complete',
+        },
+      });
+      return billingError(req, 'subscription_conflict');
+    }
     console.error('Failed to activate Stripe Checkout session', {
       sessionId,
       userId: user.id,
@@ -96,8 +128,19 @@ export async function GET(req: NextRequest) {
   }
 }
 
-function billingError(req: NextRequest, error: string) {
-  return NextResponse.redirect(new URL(`/billing?error=${encodeURIComponent(error)}`, req.url));
+function billingError(req: NextRequest, error: string, headers?: Record<string, string>) {
+  return NextResponse.redirect(
+    new URL(`/billing?error=${encodeURIComponent(error)}`, req.url),
+    { status: 303, headers },
+  );
+}
+
+async function safeOpsAlert(payload: Parameters<typeof sendOpsAlert>[0]) {
+  try {
+    await sendOpsAlert(payload);
+  } catch (error) {
+    console.error('Failed to send Stripe subscription-conflict alert', error);
+  }
 }
 
 function normalizeStatus(status?: string) {

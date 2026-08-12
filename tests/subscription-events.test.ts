@@ -16,10 +16,13 @@ class FakeSubscriptions {
   rows = new Map<string, StoredRow>();
   concurrentInsert: StoredRow | null = null;
   conflictingLiveUser = false;
+  deletedUserForeignKey = false;
+  userExists = true;
 
   from(table: string) {
-    assert.equal(table, 'subscriptions');
-    return new FakeQuery(this);
+    if (table === 'subscriptions') return new FakeQuery(this);
+    if (table === 'users') return new FakeUsersQuery(this);
+    throw new Error(`Unexpected table ${table}`);
   }
 }
 
@@ -39,6 +42,7 @@ class FakeQuery {
 
   async insert(payload: Record<string, unknown>) {
     const subscriptionId = String(payload.stripe_subscription_id);
+    if (this.database.deletedUserForeignKey) return { error: { code: '23503' } };
     if (this.database.conflictingLiveUser) return { error: { code: '23505' } };
     if (this.database.concurrentInsert) {
       this.database.rows.set(subscriptionId, this.database.concurrentInsert);
@@ -103,6 +107,28 @@ class FakeQuery {
       last_event_at: this.eventCreatedAt,
     });
     return { data: { id: existing.id }, error: null };
+  }
+}
+
+class FakeUsersQuery {
+  constructor(private readonly database: FakeSubscriptions) {}
+
+  select(column: string) {
+    assert.equal(column, 'id');
+    return this;
+  }
+
+  eq(column: string, value: string) {
+    assert.equal(column, 'id');
+    assert.equal(value, 'user-1');
+    return this;
+  }
+
+  async maybeSingle() {
+    return {
+      data: this.database.userExists ? { id: 'user-1' } : null,
+      error: null,
+    };
   }
 }
 
@@ -190,5 +216,29 @@ test('a different live subscription for the same user is surfaced as an operatio
       assert.equal(error.incomingSubscriptionId, 'sub_123');
       return true;
     }
+  );
+});
+
+test('a late Stripe event after account deletion is completed without recreating the user', async () => {
+  const database = new FakeSubscriptions();
+  database.deletedUserForeignKey = true;
+  database.userExists = false;
+
+  const result = await applySubscriptionEvent(
+    database,
+    eventRow('canceled', '2026-07-30T10:01:00.000Z'),
+  );
+
+  assert.equal(result, 'ignored_deleted_user');
+  assert.equal(database.rows.size, 0);
+});
+
+test('an unexpected foreign-key failure is not hidden while the user still exists', async () => {
+  const database = new FakeSubscriptions();
+  database.deletedUserForeignKey = true;
+
+  await assert.rejects(
+    applySubscriptionEvent(database, eventRow('active', '2026-07-30T10:01:00.000Z')),
+    /Failed to insert Stripe subscription event/,
   );
 });

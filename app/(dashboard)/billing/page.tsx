@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { Check, CreditCard, ReceiptText } from 'lucide-react';
-import { createServerClient } from '@/lib/supabase/server';
+import { getRequestAuthContext } from '@/lib/supabase/server';
 import { assertSupabaseRead } from '@/lib/supabase/query-errors';
 import { cn, formatCurrency, formatDateAr } from '@/lib/utils';
 import { planLabel, subscriptionStatusLabel } from '@/lib/ui/labels';
@@ -22,6 +22,7 @@ const billingErrors: Record<string, string> = {
   invalid_session: 'جلسة الدفع غير صالحة أو لا تخص هذا الحساب.',
   subscription_missing: 'اكتملت جلسة الدفع لكن لم يصلنا رقم الاشتراك. لم يتم تفعيل الخطة بعد.',
   activation_failed: 'اكتمل الدفع لكن تعذر تأكيد التفعيل فوراً. سنعيد المزامنة تلقائياً، ويمكنك تحديث الصفحة.',
+  subscription_conflict: 'اكتشفنا اشتراكاً آخر مرتبطاً بحسابك. لم نخفِ المشكلة، وسيراجعها فريق التشغيل قبل أي إجراء.',
   checkout_failed: 'تعذر إنشاء جلسة الدفع. لم يتم خصم أي مبلغ.',
   too_many_requests: 'تم طلب بوابة الفوترة عدة مرات خلال فترة قصيرة. انتظر دقيقة ثم أعد المحاولة.',
   security_service_unavailable: 'تعذر التحقق الآمن من طلب الفوترة الآن. أعد المحاولة بعد قليل.',
@@ -73,14 +74,11 @@ export default async function BillingPage({
   // bare pricing table that forgot their choice.
   const chosenPlan = params?.plan && PLAN_IDS.includes(params.plan) ? (params.plan as PlanKey) : null;
 
-  const supabase = await createServerClient();
+  const { supabase, user } = await getRequestAuthContext();
   // Every query below is scoped to `user.id` explicitly. RLS already does this,
   // but billing is the wrong place to have exactly one line of defence: a
   // future switch to the admin client, or RLS disabled during an incident,
   // would turn each of these into a cross-tenant read with no second check.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
   if (!user) redirect('/login?next=/billing');
 
   // One shared policy for eligibility and entitlement — this page previously
