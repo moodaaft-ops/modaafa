@@ -440,7 +440,7 @@ CREATE POLICY actions_owner_only ON ai_actions
   ));
 
 CREATE POLICY campaigns_owner_only ON campaigns_cache
-  FOR ALL USING (account_id IN (
+  FOR SELECT USING (account_id IN (
     SELECT id FROM google_ads_accounts
     WHERE business_id IN (SELECT id FROM businesses WHERE user_id = auth.uid())
   ));
@@ -500,6 +500,7 @@ REVOKE INSERT, UPDATE, DELETE ON ai_actions FROM anon, authenticated;
 REVOKE INSERT, UPDATE, DELETE ON recommendations FROM anon, authenticated;
 REVOKE INSERT, UPDATE, DELETE ON audits FROM anon, authenticated;
 REVOKE INSERT, UPDATE, DELETE ON reports FROM anon, authenticated;
+REVOKE INSERT, UPDATE, DELETE ON campaigns_cache FROM anon, authenticated;
 
 -- Identity/profile writes are service-owned. A column-level REVOKE does not
 -- override Supabase's default table-level UPDATE grant.
@@ -546,6 +547,9 @@ AS $$
       has_table_privilege('authenticated', 'public.reports', 'INSERT') OR
       has_table_privilege('authenticated', 'public.reports', 'UPDATE') OR
       has_table_privilege('authenticated', 'public.reports', 'DELETE') OR
+      has_table_privilege('authenticated', 'public.campaigns_cache', 'INSERT') OR
+      has_table_privilege('authenticated', 'public.campaigns_cache', 'UPDATE') OR
+      has_table_privilege('authenticated', 'public.campaigns_cache', 'DELETE') OR
       has_table_privilege('authenticated', 'public.users', 'INSERT') OR
       has_table_privilege('authenticated', 'public.users', 'UPDATE') OR
       has_table_privilege('authenticated', 'public.users', 'DELETE') OR
@@ -569,6 +573,10 @@ AS $$
       has_table_privilege('authenticated', 'public.reports', 'INSERT') OR
       has_table_privilege('authenticated', 'public.reports', 'UPDATE') OR
       has_table_privilege('authenticated', 'public.reports', 'DELETE'),
+    'campaign_cache_browser_write',
+      has_table_privilege('authenticated', 'public.campaigns_cache', 'INSERT') OR
+      has_table_privilege('authenticated', 'public.campaigns_cache', 'UPDATE') OR
+      has_table_privilege('authenticated', 'public.campaigns_cache', 'DELETE'),
     'identity_browser_write',
       has_table_privilege('authenticated', 'public.users', 'INSERT') OR
       has_table_privilege('authenticated', 'public.users', 'UPDATE') OR

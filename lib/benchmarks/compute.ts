@@ -77,11 +77,11 @@ export function sumCampaignMetrics30d(rows: Array<{ metrics_30d: any }>): {
   return totals;
 }
 
-/** Group qualified account aggregates into benchmark rows (k >= 3 businesses). */
+/** Group qualified business aggregates into benchmark rows (k >= 3 businesses). */
 export function buildSectorBenchmarks(accounts: AccountAggregate[]): SectorBenchmarkRow[] {
   const groups = new Map<string, AccountAggregate[]>();
   for (const account of accounts) {
-    if (!account.sector || account.impressions < MIN_IMPRESSIONS || account.cost <= 0) continue;
+    if (!account.sector) continue;
     const key = `${account.sector}\u0000${account.currency_code}`;
     const group = groups.get(key) ?? [];
     group.push(account);
@@ -91,25 +91,44 @@ export function buildSectorBenchmarks(accounts: AccountAggregate[]): SectorBench
   const rows: SectorBenchmarkRow[] = [];
   for (const [key, group] of groups) {
     const [sector, currency_code] = key.split('\u0000');
-    const businesses = new Set(group.map((account) => account.business_id));
-    if (businesses.size < BENCHMARK_MIN_BUSINESSES) continue;
+    const byBusiness = new Map<string, AccountAggregate>();
+    for (const account of group) {
+      const current = byBusiness.get(account.business_id);
+      if (current) {
+        current.cost += account.cost;
+        current.clicks += account.clicks;
+        current.impressions += account.impressions;
+        current.conversions += account.conversions;
+        current.conversion_value += account.conversion_value;
+      } else {
+        byBusiness.set(account.business_id, { ...account });
+      }
+    }
 
-    const converting = group.filter((account) => account.conversions > 0);
+    const businesses = Array.from(byBusiness.values()).filter(
+      (business) => business.impressions >= MIN_IMPRESSIONS && business.cost > 0
+    );
+    if (businesses.length < BENCHMARK_MIN_BUSINESSES) continue;
+
+    const converting = businesses.filter((business) => business.conversions > 0);
+    const participatingBusinessIds = new Set(businesses.map((business) => business.business_id));
     rows.push({
       sector,
       currency_code,
       window_days: 30,
-      businesses_count: businesses.size,
-      accounts_count: group.length,
-      median_cpa: median(converting.map((account) => account.cost / account.conversions)),
+      businesses_count: businesses.length,
+      accounts_count: group.filter((account) => participatingBusinessIds.has(account.business_id)).length,
+      median_cpa: median(converting.map((business) => business.cost / business.conversions)),
       median_ctr: median(
-        group
-          .filter((account) => account.impressions > 0)
-          .map((account) => account.clicks / account.impressions)
+        businesses
+          .filter((business) => business.impressions > 0)
+          .map((business) => business.clicks / business.impressions)
       ),
-      median_roas: median(converting.map((account) => account.conversion_value / account.cost)),
+      median_roas: median(converting.map((business) => business.conversion_value / business.cost)),
       median_cpc: median(
-        group.filter((account) => account.clicks > 0).map((account) => account.cost / account.clicks)
+        businesses
+          .filter((business) => business.clicks > 0)
+          .map((business) => business.cost / business.clicks)
       ),
     });
   }

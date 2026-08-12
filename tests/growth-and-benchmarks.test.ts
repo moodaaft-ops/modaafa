@@ -138,6 +138,29 @@ test('three businesses produce a benchmark with median (not mean) CPA', () => {
   assert.equal(rows[0].businesses_count, 3);
 });
 
+test('one business with many accounts contributes one benchmark observation', () => {
+  const dominantAgencyAccounts = Array.from({ length: 5 }, (_, index) =>
+    aggregate({
+      business_id: 'b1',
+      cost: 1000,
+      conversions: 1,
+      impressions: 10_000 + index,
+    })
+  );
+  const rows = buildSectorBenchmarks([
+    ...dominantAgencyAccounts,
+    aggregate({ business_id: 'b2', cost: 500, conversions: 10 }), // CPA 50
+    aggregate({ business_id: 'b3', cost: 900, conversions: 10 }), // CPA 90
+  ]);
+
+  assert.equal(rows.length, 1);
+  // b1 is CPA 1000 after its accounts are combined. Per-account weighting
+  // would return 1000; one observation per business correctly returns 90.
+  assert.equal(rows[0].median_cpa, 90);
+  assert.equal(rows[0].businesses_count, 3);
+  assert.equal(rows[0].accounts_count, 7);
+});
+
 test('different currencies never mix into one benchmark', () => {
   const rows = buildSectorBenchmarks([
     aggregate({ business_id: 'b1', currency_code: 'SAR' }),

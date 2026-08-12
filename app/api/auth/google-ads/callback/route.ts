@@ -203,7 +203,7 @@ export async function GET(req: NextRequest) {
 
       try {
         const syncResult = await syncCampaignCacheWithLoginFallback({
-          supabase,
+          supabase: admin,
           customerId: selectedAccount.customer_id,
           refreshToken,
           accountId: selectedAccount.id,
@@ -211,7 +211,7 @@ export async function GET(req: NextRequest) {
           loginCustomerIds: [selectedAccount.manager_id],
         });
         if (syncResult.loginCustomerId) {
-          await supabase
+          await admin
             .from('google_ads_accounts')
             .update({ manager_id: syncResult.loginCustomerId })
             .eq('id', selectedAccount.id);

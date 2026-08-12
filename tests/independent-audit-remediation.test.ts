@@ -24,6 +24,20 @@ test('quota refunds are service-role-only in the production hardening migration'
   assert.match(migration, /has_function_privilege\('authenticated', 'public\.refund_feature_usage\(uuid,uuid\)'/i);
 });
 
+test('campaign cache writes are service-owned in the production hardening migration', () => {
+  const migration = readFileSync(
+    resolve('db/migrations/20260812_independent_audit_hardening.sql'),
+    'utf8'
+  );
+
+  assert.match(
+    migration,
+    /REVOKE INSERT, UPDATE, DELETE ON public\.campaigns_cache FROM anon, authenticated/i
+  );
+  assert.match(migration, /CREATE POLICY campaigns_owner_only[\s\S]*FOR SELECT USING/i);
+  assert.match(migration, /campaign_cache_browser_write/i);
+});
+
 test('audit summaries cannot collide with the weekly performance report index', () => {
   const row = buildAuditReportRow({
     accountId: 'account-1',

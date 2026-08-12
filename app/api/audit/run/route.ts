@@ -107,14 +107,14 @@ export async function POST(req: NextRequest) {
       const refreshToken = decrypt(account.refresh_token_encrypted);
       refreshTokenForChecks = refreshToken;
       const syncResult = await syncCampaignCacheWithLoginFallback({
-        supabase,
+        supabase: admin,
         customerId: account.customer_id,
         refreshToken,
         accountId: account.id,
         currencyCode: account.currency_code,
         loginCustomerIds: [account.manager_id],
       });
-      await supabase
+      await admin
         .from('google_ads_accounts')
         .update({
           last_synced_at: new Date().toISOString(),
