@@ -9,6 +9,57 @@ export type MeasurementDescriptor = {
   captured_at: string;
 };
 
+const AMBIGUOUS_NETWORK_CODES = new Set([
+  'ECONNABORTED',
+  'ECONNRESET',
+  'EPIPE',
+  'ETIMEDOUT',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_SOCKET',
+]);
+
+/**
+ * A transport error raised after a live mutation was dispatched cannot prove
+ * whether Google committed it. Keep the recommendation locked instead of
+ * making a non-idempotent create action executable again.
+ */
+export function isAmbiguousGoogleAdsMutationError(error: unknown): boolean {
+  for (const candidate of errorChain(error)) {
+    const name = String(candidate.name ?? '');
+    const code = String(candidate.code ?? '').toUpperCase();
+    if (
+      name === 'TimeoutError' ||
+      name === 'AbortError' ||
+      name === 'FetchError' ||
+      name === 'APIConnectionError' ||
+      AMBIGUOUS_NETWORK_CODES.has(code)
+    ) {
+      return true;
+    }
+
+    const message = String(candidate.message ?? '').toLowerCase();
+    if (
+      message.includes('fetch failed') ||
+      message.includes('socket hang up') ||
+      message.includes('network connection was lost')
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function* errorChain(error: unknown) {
+  let current = error;
+  const seen = new Set<unknown>();
+  for (let depth = 0; depth < 4 && current && typeof current === 'object'; depth += 1) {
+    if (seen.has(current)) return;
+    seen.add(current);
+    yield current as { name?: unknown; code?: unknown; message?: unknown; cause?: unknown };
+    current = (current as { cause?: unknown }).cause;
+  }
+}
+
 export async function prepareActionForExecution(action: OptimizerAction, customer: any) {
   const params = { ...action.params };
   let rollbackPayload: Record<string, unknown> = { reversible: true };

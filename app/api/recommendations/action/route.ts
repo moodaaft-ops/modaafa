@@ -10,6 +10,7 @@ import {
 } from '@/lib/ai/optimizer-agent';
 import { buildExecutableAction } from '@/lib/ai/executable-action';
 import {
+  isAmbiguousGoogleAdsMutationError,
   prepareActionForExecution,
   type MeasurementDescriptor,
 } from '@/lib/ai/execution-preflight';
@@ -235,8 +236,7 @@ export async function POST(req: NextRequest) {
         // `failed` (re-executable) risked a duplicate apply of a
         // non-idempotent create. Flag it so the catch below keeps the row
         // locked and asks for manual verification instead.
-        const errorName = (mutateError as { name?: string })?.name;
-        if (errorName === 'TimeoutError' || errorName === 'AbortError') {
+        if (isAmbiguousGoogleAdsMutationError(mutateError)) {
           liveMutationOutcomeUnknown = true;
         }
         throw mutateError;
@@ -294,7 +294,7 @@ export async function POST(req: NextRequest) {
         console.error(
           mutationApplied
             ? 'Google Ads mutation succeeded but execution recording failed'
-            : 'Google Ads mutation timed out with an unknown outcome',
+            : 'Google Ads mutation ended with an ambiguous network outcome',
           {
             recommendationId: recommendation.id,
             accountId: account.id,
@@ -314,7 +314,7 @@ export async function POST(req: NextRequest) {
             account_id: account.id,
             execution_key: executionKey,
             action_type: safe.type,
-            outcome: mutationApplied ? 'applied_recording_failed' : 'unknown_after_timeout',
+            outcome: mutationApplied ? 'applied_recording_failed' : 'unknown_after_network_error',
             error: operationalError(error),
           },
         });

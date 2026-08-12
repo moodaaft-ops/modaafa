@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { prepareActionForExecution } from '../lib/ai/execution-preflight';
+import {
+  isAmbiguousGoogleAdsMutationError,
+  prepareActionForExecution,
+} from '../lib/ai/execution-preflight';
 import type { OptimizerAction } from '../lib/ai/optimizer-agent';
 
 function budgetAction(params: Record<string, unknown>): OptimizerAction {
@@ -51,5 +54,27 @@ test('budget preflight fails closed when neither a valid absolute amount nor del
   await assert.rejects(
     prepareActionForExecution(budgetAction({ delta_pct: 0 }), customer),
     /neither an absolute amount nor a delta/
+  );
+});
+
+test('transport failures after a mutation are treated as an unknown Google Ads outcome', () => {
+  const reset = Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
+  const nestedFetch = new TypeError('fetch failed', {
+    cause: Object.assign(new Error('connection timed out'), { code: 'ETIMEDOUT' }),
+  });
+
+  assert.equal(isAmbiguousGoogleAdsMutationError(reset), true);
+  assert.equal(isAmbiguousGoogleAdsMutationError(nestedFetch), true);
+  assert.equal(isAmbiguousGoogleAdsMutationError({ name: 'AbortError' }), true);
+});
+
+test('an explicit Google rejection is not mistaken for an ambiguous network outcome', () => {
+  assert.equal(
+    isAmbiguousGoogleAdsMutationError({
+      name: 'GoogleAdsRestError',
+      code: 'POLICY_FINDING',
+      message: 'The ad violates policy',
+    }),
+    false,
   );
 });
