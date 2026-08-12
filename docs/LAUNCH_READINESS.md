@@ -333,7 +333,7 @@ HSTS وCSP بالـ nonce وPermissions-Policy مفعّلة، ولم تسجل Ve
    `9f1af5f`، ثم دُمجت جولة التدقيق والتحقق والأمان عبر PRs `#10`–`#20`
    حتى الإصدار `e3437aa`، ونجحت فحوص GitHub وVercel قبل كل دمج.
 3. [x] شُغّل الفحص المفصل بعد النشر:
-   `curl -H "Authorization: Bearer $CRON_SECRET" https://ai.modaafa.com/api/health`
+   `curl -H "Authorization: Bearer $HEALTH_SECRET" https://ai.modaafa.com/api/health`
    وكانت كل المكونات سليمة و`launch_ready: true`.
 4. [x] تحققت مسارات `/robots.txt` و`/sitemap.xml` و`/favicon.ico` و`/og-image.png` وأصبحت 200.
 5. [x] ضُبط `MODAAFA_OPERATOR_EMAILS=moodaaft@gmail.com`.
