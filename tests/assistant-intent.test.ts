@@ -6,6 +6,10 @@ test('asking about campaign performance does not create a campaign draft', () =>
   assert.notEqual(detectIntent('كيف أداء حملة الرياض؟'), 'campaign_build');
 });
 
+test('an Arabic how-to question without punctuation does not create a draft', () => {
+  assert.notEqual(detectIntent('كيف أنشئ حملة'), 'campaign_build');
+});
+
 test('adding a negative keyword is classified as a keyword operation', () => {
   assert.equal(detectIntent('أضف كلمة سلبية للحملة'), 'keywords');
 });

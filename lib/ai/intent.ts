@@ -7,8 +7,12 @@ export type AssistantIntent =
   | 'summary';
 
 /** A question about an existing campaign must never create a campaign draft. */
+const TOKEN_END = String.raw`(?=\s|$|[،,:؛؟?!])`;
 const QUESTION_MARKERS =
-  /^\s*(كيف|كم|ليش|لماذا|ما\b|ماذا|متى|وش|ايش|أيش|وين|أين|هل|من\b|أي\b|اي\b|what|how|why|when|which|where|who|is|are|do|does|can)\b|[؟?]\s*$/i;
+  new RegExp(
+    String.raw`^\s*(كيف|كم|ليش|لماذا|ما|ماذا|متى|وش|ايش|أيش|وين|أين|هل|من|أي|اي|what|how|why|when|which|where|who|is|are|do|does|can)${TOKEN_END}|[؟?]\s*$`,
+    'i'
+  );
 const ANALYSIS_MARKERS =
   /حلل|تحليل|أداء|اداء|قارن|مقارنة|لخص|ملخص|اعرض|أعرض|راجع|report|analy[sz]e|compare|summar/i;
 
