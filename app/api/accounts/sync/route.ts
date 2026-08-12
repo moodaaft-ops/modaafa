@@ -175,7 +175,7 @@ export async function POST(req: NextRequest) {
 
     return res;
   } catch (err) {
-    await refundFeatureUsage({ supabase, userId: user.id, usageEventId: usage.usageEventId });
+    await refundFeatureUsage({ userId: user.id, usageEventId: usage.usageEventId });
     console.error('Manual Google Ads sync failed', err);
     const codes = getGoogleAdsErrorCodes(err);
     return respond(

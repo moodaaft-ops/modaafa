@@ -5,6 +5,7 @@ import { decrypt } from '@/lib/crypto';
 import { getCustomer } from '@/lib/google-ads/client';
 import { syncCampaignCacheWithLoginFallback } from '@/lib/google-ads/sync';
 import { runRuleBasedAudit } from '@/lib/audit/rule-engine';
+import { buildAuditReportRow } from '@/lib/audit/report';
 import { getSectorBenchmark } from '@/lib/benchmarks/compute';
 import {
   getLinkedGoogleAdsAccount,
@@ -248,20 +249,16 @@ export async function POST(req: NextRequest) {
       if (recErr && (recErr as { code?: string }).code !== '23505') throw recErr;
     }
 
-    const { error: reportErr } = await admin.from('reports').insert({
-      account_id: account.id,
-      period_type: 'weekly',
-      period_start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
-      period_end: new Date().toISOString().slice(0, 10),
-      summary_ar: result.summary_ar,
-      summary_en: result.summary_en,
-      metrics: {
-        health_score: result.health_score,
-        recommendations_count: result.findings.length,
-        estimated_monthly_waste_sar: result.estimated_monthly_waste_sar,
-        currency_code: account.currency_code ?? 'SAR',
-      },
-    });
+    const { error: reportErr } = await admin.from('reports').insert(buildAuditReportRow({
+      accountId: account.id,
+      auditId: audit.id,
+      summaryAr: result.summary_ar,
+      summaryEn: result.summary_en,
+      healthScore: result.health_score,
+      recommendationsCount: result.findings.length,
+      estimatedMonthlyWasteSar: result.estimated_monthly_waste_sar,
+      currencyCode: account.currency_code ?? 'SAR',
+    }));
     if (reportErr) throw reportErr;
 
     if (isForm) {
@@ -281,7 +278,7 @@ export async function POST(req: NextRequest) {
       usage: { remaining: usage.remaining, resets_at: usage.resetsAt },
     }), account.customer_id);
   } catch (err) {
-    await refundFeatureUsage({ supabase, userId: user.id, usageEventId: usage.usageEventId });
+    await refundFeatureUsage({ userId: user.id, usageEventId: usage.usageEventId });
     console.error('Audit failed', err);
     if (isForm) {
       return NextResponse.redirect(new URL('/audit?error=audit_failed', req.url), 303);

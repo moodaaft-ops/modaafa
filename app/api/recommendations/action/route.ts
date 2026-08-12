@@ -323,7 +323,7 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      await refundFeatureUsage({ supabase, userId: user.id, usageEventId: usage.usageEventId });
+      await refundFeatureUsage({ userId: user.id, usageEventId: usage.usageEventId });
       await markExecutionFailed({
         admin,
         recommendation,

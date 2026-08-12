@@ -166,7 +166,7 @@ export async function POST(req: NextRequest) {
       usage: { remaining: usage.remaining, resets_at: usage.resetsAt },
     });
   } catch (err) {
-    await refundFeatureUsage({ supabase, userId: user.id, usageEventId: usage.usageEventId });
+    await refundFeatureUsage({ userId: user.id, usageEventId: usage.usageEventId });
     console.error('Builder failed', err);
     // Stable code only — raw `err.message` can leak backend detail. Logged above.
     return NextResponse.json({ error: 'builder_failed' }, { status: 500 });

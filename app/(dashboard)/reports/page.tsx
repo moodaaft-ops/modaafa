@@ -71,7 +71,11 @@ export default async function ReportsPage() {
                 ) : (
                   <article key={report.id} className="p-5">
                     <div className="flex items-center justify-between gap-4">
-                      <h2 className="text-[14px] font-semibold">{periodLabel(report.period_type)}</h2>
+                      <h2 className="text-[14px] font-semibold">
+                        {report.metrics?.kind === 'audit_summary'
+                          ? 'ملخص فحص الحساب'
+                          : periodLabel(report.period_type)}
+                      </h2>
                       <span className="text-xs text-muted-foreground">{timeAgoAr(report.generated_at)}</span>
                     </div>
                     <p className="mt-2 text-sm leading-7 text-muted-foreground">

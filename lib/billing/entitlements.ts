@@ -1,3 +1,5 @@
+import { createAdminClient } from '@/lib/supabase/server';
+
 export type BillingPlan = 'starter' | 'growth' | 'pro';
 export type MeteredFeature = 'assistant' | 'campaign_builder' | 'audit' | 'manual_sync' | 'execute_action';
 
@@ -214,20 +216,34 @@ export async function consumeFeatureUsage({
 }
 
 export async function refundFeatureUsage({
-  supabase,
   userId,
   usageEventId,
 }: {
-  supabase: any;
   userId: string;
   usageEventId?: string | null;
 }) {
-  if (!usageEventId) return;
-  const { error } = await supabase.rpc('refund_feature_usage', {
-    p_user_id: userId,
-    p_event_id: usageEventId,
-  });
-  if (error) console.error('Failed to refund feature usage', { usageEventId, error });
+  if (!usageEventId) return false;
+
+  try {
+    // Refunds are a server-owned compensation action. The browser role can
+    // reserve quota, but must never be able to delete its own usage ledger.
+    const admin = createAdminClient();
+    const { data, error } = await admin.rpc('refund_feature_usage', {
+      p_user_id: userId,
+      p_event_id: usageEventId,
+    });
+    if (error) {
+      console.error('Failed to refund feature usage', { usageEventId, error });
+      return false;
+    }
+    return data === true;
+  } catch (error) {
+    console.error('Failed to create the usage refund service client', {
+      usageEventId,
+      error,
+    });
+    return false;
+  }
 }
 
 export function featureAccessMessage(reason?: string) {

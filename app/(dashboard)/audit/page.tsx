@@ -99,6 +99,7 @@ export default async function AuditPage({
       .from('reports')
       .select('summary_ar, generated_at')
       .eq('account_id', audit.account_id)
+      .contains('metrics', { kind: 'audit_summary', audit_id: audit.id })
       .order('generated_at', { ascending: false })
       .limit(1)
       .maybeSingle(),
