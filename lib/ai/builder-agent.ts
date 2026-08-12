@@ -103,9 +103,11 @@ export type BuilderRunOptions = {
   deadlineAt?: number;
   now?: () => number;
   minimumRoundBudgetMs?: number;
+  minimumRetryBudgetMs?: number;
 };
 
 export const BUILDER_MINIMUM_ROUND_BUDGET_MS = 50_000;
+export const BUILDER_MINIMUM_RETRY_BUDGET_MS = 15_000;
 
 export function hasBuilderRoundBudget({
   deadlineAt,
@@ -113,6 +115,30 @@ export function hasBuilderRoundBudget({
   minimumRoundBudgetMs = BUILDER_MINIMUM_ROUND_BUDGET_MS,
 }: BuilderRunOptions = {}) {
   return deadlineAt === undefined || deadlineAt - now() >= minimumRoundBudgetMs;
+}
+
+export function hasBuilderRetryBudget({
+  deadlineAt,
+  now = Date.now,
+  minimumRetryBudgetMs = BUILDER_MINIMUM_RETRY_BUDGET_MS,
+}: BuilderRunOptions = {}) {
+  return deadlineAt === undefined || deadlineAt - now() >= minimumRetryBudgetMs;
+}
+
+export function isRetryableBuilderError(error: unknown) {
+  const status = Number((error as { status?: number })?.status ?? 0);
+  const code = String((error as { code?: string })?.code ?? '');
+  const name = String((error as { name?: string })?.name ?? '');
+
+  return (
+    [408, 409, 429, 500, 502, 503, 504, 529].includes(status) ||
+    ['ETIMEDOUT', 'ECONNRESET', 'ECONNABORTED'].includes(code) ||
+    ['APIConnectionError', 'APIConnectionTimeoutError', 'RateLimitError'].includes(name)
+  );
+}
+
+export function shouldRefundBuilderUsage(result: BuilderResult) {
+  return result.draft_campaign?.needs_ai_enrichment === true;
 }
 
 export async function buildCampaign(
@@ -144,22 +170,43 @@ export async function buildCampaign(
       return buildDeadlineFallback(brief, context, toolTrace);
     }
 
-    const remainingMs = options.deadlineAt
-      ? options.deadlineAt - (options.now ?? Date.now)()
-      : 45_000;
+    let response: Awaited<ReturnType<typeof createMessageForAgent>> | undefined;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const remainingMs = options.deadlineAt
+        ? options.deadlineAt - (options.now ?? Date.now)()
+        : 45_000;
 
-    const response = await createMessageForAgent('builder', {
-      max_tokens: 4096,
-      system: SYSTEM_PROMPT,
-      tools: TOOLS as any,
-      messages,
-    }, {
-      // One model attempt must leave time to persist the draft and respond.
-      // Disabling SDK retries here prevents a nominal 45-second round from
-      // silently becoming three attempts that exceed the route duration.
-      timeout: Math.min(45_000, Math.max(1_000, remainingMs - 5_000)),
-      maxRetries: 0,
-    });
+      try {
+        response = await createMessageForAgent('builder', {
+          max_tokens: 4096,
+          system: SYSTEM_PROMPT,
+          tools: TOOLS as any,
+          messages,
+        }, {
+          // Keep SDK retries disabled so one nominal request cannot silently
+          // expand into three. We perform one explicit retry only for a small
+          // set of transient transport/provider failures while the route still
+          // has enough budget to persist a result.
+          timeout: Math.min(45_000, Math.max(1_000, remainingMs - 5_000)),
+          maxRetries: 0,
+        });
+        break;
+      } catch (error) {
+        const canRetry =
+          attempt === 0 &&
+          isRetryableBuilderError(error) &&
+          hasBuilderRetryBudget(options);
+        if (!canRetry) throw error;
+        console.warn('Retrying the campaign builder after a transient AI error.', {
+          status: Number((error as { status?: number })?.status ?? 0) || undefined,
+          code: String((error as { code?: string })?.code ?? '') || undefined,
+        });
+      }
+    }
+
+    if (!response) {
+      return buildDeadlineFallback(brief, context, toolTrace);
+    }
 
     if (response.stop_reason === 'end_turn') break;
 
@@ -206,10 +253,28 @@ export async function buildCampaign(
     break;
   }
 
+  if (!finalDraft?.draft) {
+    return buildIncompleteFallback(brief, context, toolTrace);
+  }
+
   return {
-    draft_campaign: finalDraft?.draft ?? {},
-    summary_ar: finalDraft?.summary_ar ?? '',
-    next_steps_ar: finalDraft?.next_steps_ar ?? [],
+    draft_campaign: finalDraft.draft,
+    summary_ar: finalDraft.summary_ar ?? '',
+    next_steps_ar: finalDraft.next_steps_ar ?? [],
+    tool_trace: toolTrace,
+  };
+}
+
+function buildIncompleteFallback(
+  brief: string,
+  context: { business_name?: string; sector?: string; website?: string } | undefined,
+  toolTrace: BuilderResult['tool_trace']
+): BuilderResult {
+  const fallback = buildFallbackCampaign(brief, context);
+  return {
+    ...fallback,
+    summary_ar:
+      'لم يكتمل إثراء المسودة بالذكاء الاصطناعي هذه المرة، فحفظت مسودة أولية محافظة. أعد المحاولة قبل اعتماد الحملة.',
     tool_trace: toolTrace,
   };
 }
@@ -266,7 +331,7 @@ function buildFallbackCampaign(
       needs_ai_enrichment: true,
     },
     summary_ar:
-      'جهزت مسودة أولية محافظة. لإنتاج كلمات وإعلانات وتوقعات دقيقة، أضف مفتاح الذكاء الاصطناعي ثم أعد توليد الحملة قبل الإطلاق.',
+      'تعذر إكمال إثراء المسودة بالذكاء الاصطناعي الآن، فحفظت مسودة أولية محافظة. أعد المحاولة لإكمال الكلمات والإعلانات والتوقعات قبل الإطلاق.',
     next_steps_ar: [
       'راجع الهدف والميزانية اليومية',
       'أضف صفحة الهبوط والمنتجات أو الخدمات الأساسية',

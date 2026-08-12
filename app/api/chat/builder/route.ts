@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase/server';
 import { getCustomer } from '@/lib/google-ads/client';
 import { decrypt } from '@/lib/crypto';
-import { buildCampaign } from '@/lib/ai/builder-agent';
+import { buildCampaign, shouldRefundBuilderUsage } from '@/lib/ai/builder-agent';
 import { getLinkedGoogleAdsAccount, normalizeCustomerId } from '@/lib/accounts/selection';
 import {
   consumeFeatureUsage,
@@ -158,12 +158,21 @@ export async function POST(req: NextRequest) {
     });
     if (assistantMessageError) throw assistantMessageError;
 
+    // A conservative placeholder is useful to preserve the user's brief, but
+    // it is not a completed AI build and must not consume a paid allowance.
+    const fallbackRefunded = shouldRefundBuilderUsage(result)
+      ? await refundFeatureUsage({ userId: user.id, usageEventId: usage.usageEventId })
+      : false;
+    const remaining = fallbackRefunded
+      ? Math.min(usage.limit, usage.remaining + 1)
+      : usage.remaining;
+
     return NextResponse.json({
       session_id: chatSessionId,
       draft_campaign: result.draft_campaign,
       summary_ar: result.summary_ar,
       next_steps_ar: result.next_steps_ar,
-      usage: { remaining: usage.remaining, resets_at: usage.resetsAt },
+      usage: { remaining, resets_at: usage.resetsAt, refunded: fallbackRefunded },
     });
   } catch (err) {
     await refundFeatureUsage({ userId: user.id, usageEventId: usage.usageEventId });
