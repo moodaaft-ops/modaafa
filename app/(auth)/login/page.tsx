@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { ArrowLeft, Loader2, MailCheck, ShieldCheck } from 'lucide-react';
-import { createClient } from '@/lib/supabase/client';
 import { Alert } from '@/lib/ui/alert';
 import { ThemeToggle } from '@/lib/ui/theme-toggle';
 import { safeLocalPath } from '@/lib/security/redirect';
@@ -62,16 +61,25 @@ export default function LoginPage() {
     e.preventDefault();
     setSending(true);
     setError('');
-    const supabase = createClient();
-    const next = getSafeNextPath();
-    const callbackUrl = `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`;
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: callbackUrl },
-    });
-    setSending(false);
-    if (error) setError(arabicSupabaseError(error.message));
-    else setSent(true);
+    try {
+      // Email OTP is the only control on this page that needs the browser
+      // Supabase SDK. Load it on demand so Google-login visitors do not pay
+      // for that bundle before asking for it.
+      const { createClient } = await import('@/lib/supabase/client');
+      const supabase = createClient();
+      const next = getSafeNextPath();
+      const callbackUrl = `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`;
+      const { error } = await supabase.auth.signInWithOtp({
+        email,
+        options: { emailRedirectTo: callbackUrl },
+      });
+      if (error) setError(arabicSupabaseError(error.message));
+      else setSent(true);
+    } catch {
+      setError('تعذر إرسال رابط الدخول الآن. أعد المحاولة بعد قليل.');
+    } finally {
+      setSending(false);
+    }
   }
 
   function handleGoogleLogin() {

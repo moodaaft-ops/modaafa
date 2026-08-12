@@ -21,6 +21,7 @@ import type { AdsAccountSummary } from '@/lib/accounts/selection';
 import { PendingSubmitButton } from '@/lib/ui/pending-submit-button';
 import { RouteProgress } from '@/lib/ui/route-progress';
 import { ThemeToggle } from '@/lib/ui/theme-toggle';
+import { trapTabKey } from '@/lib/ui/focus-trap';
 import { cn } from '@/lib/utils';
 import { AccountSwitcher } from './account-switcher';
 import { WelcomeTour, startWelcomeTour } from './welcome-tour';
@@ -80,6 +81,8 @@ export function DashboardChrome({
   const [mobileOpen, setMobileOpen] = useState(false);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const drawerRef = useRef<HTMLElement>(null);
+  const mainColumnRef = useRef<HTMLDivElement>(null);
   const drawerWasOpen = useRef(false);
 
   // The mobile drawer is a modal surface: Escape must close it, matching the
@@ -88,9 +91,28 @@ export function DashboardChrome({
     if (!mobileOpen) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setMobileOpen(false);
+      else if (drawerRef.current) trapTabKey(event, drawerRef.current);
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
+  }, [mobileOpen]);
+
+  // The drawer is modal on mobile: the page behind it must not remain
+  // keyboard- or screen-reader-accessible while the overlay is open.
+  useEffect(() => {
+    const mainColumn = mainColumnRef.current;
+    if (!mobileOpen || !mainColumn) return;
+
+    const inertTarget = mainColumn as HTMLDivElement & { inert: boolean };
+    const wasInert = inertTarget.inert;
+    inertTarget.inert = true;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    return () => {
+      inertTarget.inert = wasInert;
+      document.body.style.overflow = previousOverflow;
+    };
   }, [mobileOpen]);
 
   // Move focus into the drawer when it opens and restore it to the menu button
@@ -154,6 +176,7 @@ export function DashboardChrome({
 
       {/* Sidebar — in-flow on desktop, slide-in drawer on mobile */}
       <aside
+        ref={drawerRef}
         className={cn(
           'z-50 flex w-[268px] flex-shrink-0 flex-col border-e border-border bg-[hsl(var(--sidebar))]',
           // `start-0`, NOT `end-0`: in RTL the logical start edge is the RIGHT
@@ -299,7 +322,7 @@ export function DashboardChrome({
       </aside>
 
       {/* Main column */}
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div ref={mainColumnRef} className="flex min-w-0 flex-1 flex-col">
         {/* Mobile top bar */}
         <div className="flex h-14 items-center justify-between gap-3 border-b border-border bg-background/80 px-4 backdrop-blur-xl lg:hidden">
           <Link href="/dashboard" className="flex items-center gap-2">

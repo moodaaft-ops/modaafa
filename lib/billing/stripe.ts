@@ -252,7 +252,9 @@ export type PlanPriceAmount = { amount: number; currency: string } | null;
 export type PlanPriceAmounts = Record<PlanKey, Record<PeriodKey, PlanPriceAmount>>;
 
 let priceAmountsCache: { at: number; data: PlanPriceAmounts } | null = null;
+let priceAmountsFailureAt: number | null = null;
 const PRICE_AMOUNTS_TTL_MS = 60 * 60 * 1000;
+const PRICE_AMOUNTS_FAILURE_TTL_MS = 5 * 60 * 1000;
 
 /**
  * Live display amounts for the pricing cards, read from the same six Stripe
@@ -263,8 +265,12 @@ const PRICE_AMOUNTS_TTL_MS = 60 * 60 * 1000;
  * `null` (the page then falls back to its static monthly copy).
  */
 export async function getPlanPriceAmounts(): Promise<PlanPriceAmounts | null> {
-  if (priceAmountsCache && Date.now() - priceAmountsCache.at < PRICE_AMOUNTS_TTL_MS) {
+  const now = Date.now();
+  if (priceAmountsCache && now - priceAmountsCache.at < PRICE_AMOUNTS_TTL_MS) {
     return priceAmountsCache.data;
+  }
+  if (priceAmountsFailureAt && now - priceAmountsFailureAt < PRICE_AMOUNTS_FAILURE_TTL_MS) {
+    return priceAmountsCache?.data ?? null;
   }
 
   try {
@@ -298,9 +304,11 @@ export async function getPlanPriceAmounts(): Promise<PlanPriceAmounts | null> {
 
     const data = { starter: {}, growth: {}, pro: {} } as PlanPriceAmounts;
     for (const [plan, period, amount] of resolved) data[plan][period] = amount;
-    priceAmountsCache = { at: Date.now(), data };
+    priceAmountsCache = { at: now, data };
+    priceAmountsFailureAt = null;
     return data;
   } catch (error) {
+    priceAmountsFailureAt = now;
     console.error('Failed to load Stripe price amounts for the billing page', error);
     return priceAmountsCache?.data ?? null;
   }

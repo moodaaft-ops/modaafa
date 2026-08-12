@@ -61,11 +61,14 @@ curl -H "Authorization: Bearer $HEALTH_SECRET" https://ai.modaafa.com/api/health
 3. راقب `skipped_for_time` و`batch_limit` و`concurrency` في تفاصيل المهمة؛ وجود
    `skipped_for_time` باستمرار يعني أن الدفعة أكبر من ميزانية التنفيذ أو أن
    التكامل الخارجي بطيء.
-4. افحص `checks.job_capacity` في فحص الصحة المفصل. الإعدادات الافتراضية تغطي
-   2400 حساب للمزامنة و1440 حساباً للتحسين يومياً، مع تدوير عادل عبر
+4. افحص `checks.job_capacity` في فحص الصحة المفصل. القياس يجمع حد الدفعة مع
+   ميزانية التنفيذ (260 ثانية) والزمن التقديري لكل حساب؛ الافتراضي المحافظ
+   يغطي 2016 حساباً للمزامنة و360 حساباً للتحسين يومياً، مع تدوير عادل عبر
    `last_sync_attempt_at` و`last_optimized_at` حتى لا يحتكر حساب متعطل أول الطابور.
 5. يمكن ضبط السعة تدريجياً عبر `CRON_SYNC_ACCOUNT_LIMIT` و`CRON_SYNC_CONCURRENCY`
-   و`CRON_OPTIMIZE_ACCOUNT_LIMIT` و`CRON_OPTIMIZE_CONCURRENCY` ضمن الحدود التي
+   و`CRON_OPTIMIZE_ACCOUNT_LIMIT` و`CRON_OPTIMIZE_CONCURRENCY`. حدّث أيضاً
+   `CRON_SYNC_ESTIMATED_ACCOUNT_SECONDS` و`CRON_OPTIMIZE_ESTIMATED_ACCOUNT_SECONDS`
+   بحسب القيم المرصودة ضمن الحدود التي
    يفرضها الكود؛ راقب Google Ads وAnthropic ومدة الوظيفة بعد كل تغيير.
 6. شغّل المهمة يدوياً بنفس Bearer token بعد الإصلاح.
 7. مهمة التحسين تنشئ توصيات فقط، ولا تنفذ تغييرات حية تلقائياً.

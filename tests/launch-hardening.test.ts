@@ -16,6 +16,7 @@ import { sanitizePromptText } from '../lib/ai/optimizer-agent';
 import { trialLedgerKey } from '../lib/billing/checkout-policy';
 import { syncErrorMessage } from '../lib/ui/sync-errors';
 import { evaluateJobCapacity } from '../lib/platform/job-capacity';
+import { focusWrapTarget } from '../lib/ui/focus-trap';
 
 // ---------------------------------------------------------------------------
 // Open redirect
@@ -270,5 +271,35 @@ test('hourly background-job capacity reports when daily coverage is exceeded', (
     Math.min(capacity.sync_daily_capacity, capacity.optimize_daily_capacity) + 1
   );
   assert.equal(overloaded.ok, false);
-  assert.ok(overloaded.estimated_full_cycle_hours > 24);
+  assert.ok(
+    overloaded.estimated_full_cycle_hours !== null &&
+      overloaded.estimated_full_cycle_hours > 24
+  );
+});
+
+test('job capacity is bounded by the execution budget, not only the batch limit', () => {
+  const capacity = evaluateJobCapacity(100, {
+    runsPerDay: 1,
+    runBudgetSeconds: 100,
+    syncBatchLimit: 100,
+    syncConcurrency: 2,
+    syncEstimatedAccountSeconds: 25,
+    optimizeBatchLimit: 100,
+    optimizeConcurrency: 1,
+    optimizeEstimatedAccountSeconds: 40,
+  });
+
+  assert.equal(capacity.sync_run_capacity, 8);
+  assert.equal(capacity.optimize_run_capacity, 2);
+  assert.equal(capacity.optimize_daily_capacity, 2);
+  assert.equal(capacity.ok, false);
+});
+
+test('modal focus wraps at both ends and enters when focus starts outside', () => {
+  assert.equal(focusWrapTarget(2, 3, false), 0);
+  assert.equal(focusWrapTarget(0, 3, true), 2);
+  assert.equal(focusWrapTarget(1, 3, false), null);
+  assert.equal(focusWrapTarget(-1, 3, false), 0);
+  assert.equal(focusWrapTarget(-1, 3, true), 2);
+  assert.equal(focusWrapTarget(-1, 0, false), -1);
 });
