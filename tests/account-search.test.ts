@@ -1,26 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {
+  foldArabicSearch,
+  searchGoogleAdsAccounts,
+  toAsciiDigits,
+} from '../lib/accounts/search';
 
-// Mirror of the search helpers in app/(dashboard)/account-switcher.tsx.
-// The component is a client module ('use client') that pulls in React and
-// next/navigation, so the pure helpers are re-declared here and kept in sync;
-// this test locks the behaviour the switcher relies on.
-function foldArabic(value: string) {
-  return value
-    .replace(/[ً-ْ]/g, '')
-    .replace(/[أإآ]/g, 'ا')
-    .replace(/ة/g, 'ه')
-    .replace(/ى/g, 'ي')
-    .replace(/ؤ/g, 'و')
-    .replace(/ئ/g, 'ي');
-}
-function toAsciiDigits(value: string) {
-  return value.replace(/[٠-٩۰-۹]/g, (ch) => {
-    const code = ch.charCodeAt(0);
-    const base = code >= 0x06f0 ? 0x06f0 : 0x0660;
-    return String(code - base);
-  });
-}
+const accounts = [
+  { id: 'one', customer_id: '7561141000', customer_name: 'شركة أحمد' },
+  { id: 'two', customer_id: '4201238455', customer_name: 'مؤسسة الصفرات' },
+];
 
 test('Arabic-Indic digits map to ASCII so numeric account search works', () => {
   assert.equal(toAsciiDigits('٧٥٦١١٤').replace(/\D/g, ''), '756114');
@@ -29,16 +18,17 @@ test('Arabic-Indic digits map to ASCII so numeric account search works', () => {
 });
 
 test('a real customer id is matched when typed in Arabic digits', () => {
-  const query = toAsciiDigits(foldArabic('٧٥٦'.toLowerCase())).replace(/\D/g, '');
-  assert.ok(query.length > 0 && '7561141000'.includes(query));
+  assert.deepEqual(searchGoogleAdsAccounts(accounts, '٧٥٦').map((account) => account.id), ['one']);
 });
 
 test('Arabic letter variants fold so name search is forgiving', () => {
-  assert.equal(foldArabic('أحمد'), foldArabic('احمد'));
-  assert.equal(foldArabic('شركة'), 'شركه');
-  assert.ok(foldArabic('مؤسسة الصفرات').includes('موسسه'));
+  assert.equal(foldArabicSearch('أحمد'), foldArabicSearch('احمد'));
+  assert.equal(foldArabicSearch('شركة'), 'شركه');
+  assert.ok(foldArabicSearch('مؤسسة الصفرات').includes('موسسه'));
+  assert.deepEqual(searchGoogleAdsAccounts(accounts, 'احمد').map((account) => account.id), ['one']);
 });
 
 test('an empty query yields an empty digit string (guarded by length elsewhere)', () => {
-  assert.equal(toAsciiDigits(foldArabic('')).replace(/\D/g, ''), '');
+  assert.equal(toAsciiDigits(foldArabicSearch('')).replace(/\D/g, ''), '');
+  assert.equal(searchGoogleAdsAccounts(accounts, '').length, accounts.length);
 });
