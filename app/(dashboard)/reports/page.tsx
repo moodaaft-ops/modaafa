@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import { getRequestAuthContext } from '@/lib/supabase/server';
+import { assertSupabaseRead } from '@/lib/supabase/query-errors';
 import { formatCurrency, timeAgoAr } from '@/lib/utils';
 import { PageHeader } from '@/lib/ui/page-header';
 import { EmptyState } from '@/lib/ui/empty-state';
@@ -16,14 +17,16 @@ export default async function ReportsPage() {
   const { supabase, user } = await getRequestAuthContext();
   if (!user) redirect('/login');
   const { accounts, selectedAccount } = await getAccountWorkspace(user.id);
-  const { data: reports } = selectedAccount
+  const reportsResult = selectedAccount
     ? await supabase
         .from('reports')
         .select('*')
         .eq('account_id', selectedAccount.id)
         .order('generated_at', { ascending: false })
         .limit(30)
-    : { data: [] };
+    : { data: [], error: null };
+  assertSupabaseRead(reportsResult.error, 'load reports page');
+  const reports = reportsResult.data;
 
   const accountName = selectedAccount ? googleAdsAccountDisplayName(selectedAccount) : 'الحساب المختار';
 
@@ -71,7 +74,11 @@ export default async function ReportsPage() {
                 ) : (
                   <article key={report.id} className="p-5">
                     <div className="flex items-center justify-between gap-4">
-                      <h2 className="text-[14px] font-semibold">{periodLabel(report.period_type)}</h2>
+                      <h2 className="text-[14px] font-semibold">
+                        {report.metrics?.kind === 'audit_summary'
+                          ? 'ملخص فحص الحساب'
+                          : periodLabel(report.period_type)}
+                      </h2>
                       <span className="text-xs text-muted-foreground">{timeAgoAr(report.generated_at)}</span>
                     </div>
                     <p className="mt-2 text-sm leading-7 text-muted-foreground">

@@ -39,10 +39,10 @@ export async function POST(req: NextRequest) {
     return respond(req, { error: 'subscription_required' }, 402);
   }
 
-  const business = await getUserBusinessWithClient(supabase, user.id);
-  if (!business) return respond(req, { error: 'business_not_found' }, 404);
-
   try {
+    const business = await getUserBusinessWithClient(supabase, user.id);
+    if (!business) return respond(req, { error: 'business_not_found' }, 404);
+
     const result = await repairMissingGoogleAdsMetadata(supabase, business.id);
     return respond(req, { ok: true, ...result });
   } catch (error) {

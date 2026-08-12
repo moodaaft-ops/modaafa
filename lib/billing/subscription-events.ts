@@ -1,4 +1,24 @@
-export type SubscriptionEventWriteResult = 'inserted' | 'updated' | 'stale_or_missing';
+export type SubscriptionEventWriteResult =
+  | 'inserted'
+  | 'updated'
+  | 'stale_or_missing'
+  | 'ignored_deleted_user';
+
+export function subscriptionEventWasApplied(result: SubscriptionEventWriteResult) {
+  return result === 'inserted' || result === 'updated';
+}
+
+export class LiveSubscriptionConflictError extends Error {
+  readonly userId: string;
+  readonly incomingSubscriptionId: string;
+
+  constructor(userId: string, incomingSubscriptionId: string) {
+    super('A different live Stripe subscription already exists for this user');
+    this.name = 'LiveSubscriptionConflictError';
+    this.userId = userId;
+    this.incomingSubscriptionId = incomingSubscriptionId;
+  }
+}
 
 type SubscriptionEventRow = Record<string, unknown> & {
   stripe_subscription_id: string;
@@ -39,15 +59,46 @@ export async function applySubscriptionEvent(
 
   const { error: insertError } = await supabase.from('subscriptions').insert(normalizedRow);
   if (!insertError) return 'inserted';
-  if ((insertError as { code?: string }).code !== '23505') {
+  const insertCode = (insertError as { code?: string }).code;
+  if (
+    insertCode === '23503' &&
+    normalizedRow.user_id &&
+    !(await userStillExists(supabase, String(normalizedRow.user_id)))
+  ) {
+    // Account deletion removes the local subscription before Stripe can
+    // deliver its cancellation event. Retrying cannot recreate a row whose
+    // user foreign key is gone, so acknowledge this late lifecycle event.
+    return 'ignored_deleted_user';
+  }
+  if (insertCode !== '23505') {
     throw new Error('Failed to insert Stripe subscription event', { cause: insertError });
   }
 
-  // Another delivery inserted the row after our first update. Re-run the
-  // timestamp-guarded update so the newer event wins deterministically.
-  return (await updateExistingSubscription(supabase, normalizedRow))
-    ? 'updated'
-    : 'stale_or_missing';
+  // Another delivery may have inserted this same Stripe subscription after
+  // our first update. Re-run the guarded update so the newer event wins.
+  if (await updateExistingSubscription(supabase, normalizedRow)) return 'updated';
+
+  // `23505` can also come from subscriptions_one_live_per_user when two
+  // different Checkout sessions complete concurrently. That is not a stale
+  // event and must never be swallowed: Stripe may now be charging for a
+  // subscription that has no local row. Distinguish the two constraints by
+  // checking whether this Stripe subscription id exists after contention.
+  const existing = await findSubscriptionByStripeId(supabase, subscriptionId);
+  if (existing) return 'stale_or_missing';
+
+  throw new LiveSubscriptionConflictError(String(normalizedRow.user_id), subscriptionId);
+}
+
+async function userStillExists(supabase: any, userId: string) {
+  const { data, error } = await supabase
+    .from('users')
+    .select('id')
+    .eq('id', userId)
+    .maybeSingle();
+  if (error) {
+    throw new Error('Failed to classify Stripe event for a deleted user', { cause: error });
+  }
+  return Boolean(data);
 }
 
 async function updateExistingSubscription(
@@ -66,4 +117,16 @@ async function updateExistingSubscription(
     throw new Error('Failed to update Stripe subscription event', { cause: error });
   }
   return Boolean(data);
+}
+
+async function findSubscriptionByStripeId(supabase: any, subscriptionId: string) {
+  const { data, error } = await supabase
+    .from('subscriptions')
+    .select('id')
+    .eq('stripe_subscription_id', subscriptionId)
+    .maybeSingle();
+  if (error) {
+    throw new Error('Failed to classify Stripe subscription conflict', { cause: error });
+  }
+  return data ?? null;
 }

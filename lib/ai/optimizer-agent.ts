@@ -215,12 +215,22 @@ function sanitizeSnapshotForPrompt(snapshot: OptimizerSnapshot) {
 
 export function sanitizePromptText(value: string) {
   return value
+    .normalize('NFKC')
     .slice(0, 300)
+    // Remove invisible direction/zero-width controls that can split a command
+    // visually while leaving it intelligible to the model.
+    .replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/gi, '')
     // Strip anything that looks like a role marker or a delimiter escape.
     .replace(/<\/?\s*(account_data|system|assistant|human|user)[^>]*>/gi, ' ')
     .replace(/\b(system|assistant|human|user)\s*:/gi, '$1 ')
-    .replace(/\b(ignore|disregard|forget)\s+(all\s+)?(previous|prior|above)\b/gi, '[filtered]')
-    .replace(/تجاهل\s+(كل\s+)?(التعليمات|ما\s+سبق)/gi, '[filtered]')
+    .replace(
+      /(?:ignore|disregard|forget)[\s\p{P}\p{S}_]+(?:(?:all|any)[\s\p{P}\p{S}_]+)?(?:previous|prior|above)(?:[\s\p{P}\p{S}_]+(?:instructions?|directions?|rules?))?/giu,
+      '[filtered]'
+    )
+    .replace(
+      /(?:تجاهل|[أإا]همل|انس[\u064b-\u065f\u0670]*|[إا]نسى)[\s\p{P}\p{S}_]+(?:(?:كل|جميع|كافة)[\s\p{P}\p{S}_]+)?(?:التعليمات|تعليمات|التوجيهات|توجيهات|الأوامر|اوامر|ما[\s\p{P}\p{S}_]+سبق)/giu,
+      '[filtered]'
+    )
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, ' ');
 }
 

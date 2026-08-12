@@ -5,7 +5,7 @@ import { Loader2 } from 'lucide-react';
 import { buttonClasses } from '@/lib/ui/button';
 import { cn } from '@/lib/utils';
 
-export function ConnectGoogleAdsButton() {
+export function ConnectGoogleAdsButton({ label = 'منح صلاحية Google Ads' }: { label?: string }) {
   const [loading, setLoading] = useState(false);
 
   return (
@@ -25,7 +25,7 @@ export function ConnectGoogleAdsButton() {
           <path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303c-.792 2.237-2.231 4.166-4.087 5.571l6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z" />
         </svg>
       )}
-      {loading ? 'جاري فتح شاشة الصلاحية...' : 'منح صلاحية Google Ads'}
+      {loading ? 'جاري فتح شاشة الصلاحية...' : label}
     </a>
   );
 }

@@ -14,6 +14,7 @@ import {
   Search,
 } from 'lucide-react';
 import type { AdsAccountSummary } from '@/lib/accounts/selection';
+import { searchGoogleAdsAccounts } from '@/lib/accounts/search';
 import {
   formatGoogleAdsCustomerId,
   googleAdsAccountDisplayName,
@@ -64,28 +65,7 @@ export function AccountSwitcher({
     [accounts]
   );
   const filteredAccounts = useMemo(() => {
-    const normalizedQuery = foldArabic(query.trim().toLowerCase());
-    if (!normalizedQuery) return accounts;
-
-    // Fold Arabic-Indic (٠-٩) and Persian (۰-۹) digits to ASCII before
-    // extracting the numeric query: those code points are `\D`, so typing an
-    // account number on an Arabic keyboard ("٧٥٦") used to be stripped to
-    // nothing and matched no account. `''.includes('')` is true for every
-    // string, so the digit clause is still guarded by `digits.length > 0`.
-    const digits = toAsciiDigits(normalizedQuery).replace(/\D/g, '');
-
-    return accounts.filter((account) => {
-      const name = foldArabic(account.customer_name?.toLowerCase() ?? '');
-      const displayName = foldArabic(googleAdsAccountDisplayName(account).toLowerCase());
-      const rawId = account.customer_id;
-      const formattedId = formatGoogleAdsCustomerId(account.customer_id);
-      return (
-        name.includes(normalizedQuery) ||
-        displayName.includes(normalizedQuery) ||
-        (digits.length > 0 && rawId.includes(digits)) ||
-        formattedId.includes(normalizedQuery)
-      );
-    });
+    return searchGoogleAdsAccounts(accounts, query);
   }, [accounts, query]);
 
   const closeMenu = useCallback(() => {
@@ -528,28 +508,4 @@ function friendlySyncError(message: string) {
     return 'إعداد Google OAuth في السيرفر كان غير متطابق مع الربط. تم تسجيل الخطأ وسنصلحه من إعدادات المنصة قبل إعادة المحاولة.';
   }
   return 'تعذر تحديث بيانات الحساب الآن. أعد الربط إذا استمرت المشكلة.';
-}
-
-/**
- * Fold common Arabic letter variants so name search is forgiving:
- * أإآ→ا, ة→ه, ى→ي, ؤ→و, ئ→ي, and strip tashkeel. Without this, searching
- * "احمد" would miss an account named "أحمد".
- */
-function foldArabic(value: string) {
-  return value
-    .replace(/[ً-ْ]/g, '')
-    .replace(/[أإآ]/g, 'ا')
-    .replace(/ة/g, 'ه')
-    .replace(/ى/g, 'ي')
-    .replace(/ؤ/g, 'و')
-    .replace(/ئ/g, 'ي');
-}
-
-/** Map Arabic-Indic (٠-٩) and Persian (۰-۹) digits to ASCII 0-9. */
-function toAsciiDigits(value: string) {
-  return value.replace(/[٠-٩۰-۹]/g, (ch) => {
-    const code = ch.charCodeAt(0);
-    const base = code >= 0x06f0 ? 0x06f0 : 0x0660;
-    return String(code - base);
-  });
 }

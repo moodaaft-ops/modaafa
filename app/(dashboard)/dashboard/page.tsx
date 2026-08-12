@@ -15,6 +15,7 @@ import {
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import { getRequestAuthContext } from '@/lib/supabase/server';
+import { assertSupabaseRead } from '@/lib/supabase/query-errors';
 import { formatCurrency, formatNumberAr, timeAgoAr } from '@/lib/utils';
 import { moneyMetric } from '@/lib/google-ads/metrics';
 import { campaignStatusLabel } from '@/lib/ui/labels';
@@ -95,7 +96,7 @@ export default async function DashboardPage({
   // email address.
   const business = workspaceBusiness;
 
-  const [{ data: campaigns }, { data: latestAudit }, subscription] = await Promise.all([
+  const [campaignsResult, auditResult, subscription] = await Promise.all([
     selectedAccount
       ? supabase
           .from('campaigns_cache')
@@ -103,7 +104,7 @@ export default async function DashboardPage({
           .eq('account_id', selectedAccount.id)
           .order('last_synced_at', { ascending: false })
           .limit(500)
-      : Promise.resolve({ data: [] }),
+      : Promise.resolve({ data: [], error: null }),
     selectedAccount
       ? supabase
           .from('audits')
@@ -112,9 +113,13 @@ export default async function DashboardPage({
           .order('ran_at', { ascending: false })
           .limit(1)
           .maybeSingle()
-      : Promise.resolve({ data: null }),
+      : Promise.resolve({ data: null, error: null }),
     getSubscriptionAccess(supabase, user.id),
   ]);
+  assertSupabaseRead(campaignsResult.error, 'load dashboard campaigns');
+  assertSupabaseRead(auditResult.error, 'load dashboard audit');
+  const campaigns = campaignsResult.data;
+  const latestAudit = auditResult.data;
 
   const setupState: Record<string, boolean> = {
     accounts: accounts.length > 0,

@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import { getRequestAuthContext } from '@/lib/supabase/server';
+import { assertSupabaseRead } from '@/lib/supabase/query-errors';
 import { formatCurrency, formatNumberAr } from '@/lib/utils';
 import { moneyMetric } from '@/lib/google-ads/metrics';
 import { campaignStatusLabel, campaignTypeLabel } from '@/lib/ui/labels';
@@ -30,14 +31,16 @@ export default async function CampaignsPage({
   const { supabase, user } = await getRequestAuthContext();
   if (!user) redirect('/login');
   const { accounts, selectedAccount } = await getAccountWorkspace(user.id);
-  const { data: campaigns } = selectedAccount
+  const campaignsResult = selectedAccount
     ? await supabase
         .from('campaigns_cache')
         .select('*')
         .eq('account_id', selectedAccount.id)
         .order('last_synced_at', { ascending: false })
         .limit(500)
-    : { data: [] };
+    : { data: [], error: null };
+  assertSupabaseRead(campaignsResult.error, 'load campaigns page');
+  const campaigns = campaignsResult.data;
   const sortedCampaigns = [...(campaigns ?? [])].sort((a, b) => {
     const aEnabled = a.status === 'ENABLED' ? 1 : 0;
     const bEnabled = b.status === 'ENABLED' ? 1 : 0;

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowLeft, ArrowRight, Check, Sparkles, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { trapTabKey } from '@/lib/ui/focus-trap';
 
 /**
  * First-run product tour.
@@ -69,6 +70,8 @@ export function WelcomeTour() {
   const [index, setIndex] = useState(0);
   const [rect, setRect] = useState<Rect | null>(null);
   const cardRef = useRef<HTMLDivElement | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
 
   const step = STEPS[index];
 
@@ -141,6 +144,31 @@ export function WelcomeTour() {
     };
   }, [active, index, step]);
 
+  // Treat the walkthrough as a real modal: focus enters the card, the app
+  // behind it becomes inert, and focus returns to the original trigger.
+  useEffect(() => {
+    if (!active) return;
+    previousFocusRef.current = document.activeElement as HTMLElement | null;
+
+    const root = rootRef.current;
+    const inertSiblings = root
+      ? Array.from(document.body.children).filter((element) => element !== root)
+      : [];
+    const previousInert = inertSiblings.map((element) => ({
+      element: element as HTMLElement & { inert: boolean },
+      inert: Boolean((element as HTMLElement & { inert: boolean }).inert),
+    }));
+    for (const entry of previousInert) entry.element.inert = true;
+
+    const frame = window.requestAnimationFrame(() => cardRef.current?.focus());
+    return () => {
+      window.cancelAnimationFrame(frame);
+      for (const entry of previousInert) entry.element.inert = entry.inert;
+      previousFocusRef.current?.focus();
+      previousFocusRef.current = null;
+    };
+  }, [active]);
+
   // Escape closes; arrows navigate.
   useEffect(() => {
     if (!active) return;
@@ -148,6 +176,7 @@ export function WelcomeTour() {
       if (event.key === 'Escape') finish();
       if (event.key === 'ArrowLeft') setIndex((i) => Math.min(STEPS.length - 1, i + 1));
       if (event.key === 'ArrowRight') setIndex((i) => Math.max(0, i - 1));
+      if (cardRef.current) trapTabKey(event, cardRef.current);
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -175,7 +204,7 @@ export function WelcomeTour() {
   })();
 
   return createPortal(
-    <div className="fixed inset-0 z-[100]" role="dialog" aria-modal="true" aria-label="جولة تعريفية">
+    <div ref={rootRef} className="fixed inset-0 z-[100]" role="dialog" aria-modal="true" aria-label="جولة تعريفية">
       {/* Dimmed backdrop with a spotlight hole punched around the anchor. */}
       {rect ? (
         <div
@@ -196,6 +225,7 @@ export function WelcomeTour() {
       {/* Step card */}
       <div
         ref={cardRef}
+        tabIndex={-1}
         className="absolute w-[min(92vw,360px)] surface-raised p-5 shadow-pop animate-fade-in-fast"
         style={cardStyle}
       >

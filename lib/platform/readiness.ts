@@ -100,6 +100,14 @@ export function getPlatformReadiness(): ReadinessItem[] {
       fix_ar: 'أضف CRON_SECRET لتأمين مزامنة Google Ads والتحسينات المجدولة.',
     },
     {
+      id: 'health_monitoring',
+      label_ar: 'فحص الصحة التشغيلي',
+      label_en: 'Operational health monitoring',
+      ok: isConfiguredEnv(process.env.HEALTH_SECRET),
+      severity: 'blocker',
+      fix_ar: 'أضف HEALTH_SECRET مستقلاً عن CRON_SECRET لحماية تفاصيل فحص الصحة.',
+    },
+    {
       id: 'operational_email',
       label_ar: 'البريد التشغيلي',
       label_en: 'Operational email',

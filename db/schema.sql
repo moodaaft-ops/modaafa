@@ -440,7 +440,7 @@ CREATE POLICY actions_owner_only ON ai_actions
   ));
 
 CREATE POLICY campaigns_owner_only ON campaigns_cache
-  FOR ALL USING (account_id IN (
+  FOR SELECT USING (account_id IN (
     SELECT id FROM google_ads_accounts
     WHERE business_id IN (SELECT id FROM businesses WHERE user_id = auth.uid())
   ));
@@ -470,9 +470,6 @@ CREATE POLICY reports_owner_only ON reports
 CREATE POLICY usage_events_owner_select ON usage_events
   FOR SELECT USING (user_id = auth.uid());
 
-CREATE POLICY usage_events_owner_insert ON usage_events
-  FOR INSERT WITH CHECK (user_id = auth.uid());
-
 CREATE POLICY billing_trial_grants_owner_select ON billing_trial_grants
   FOR SELECT USING (user_id = (SELECT auth.uid()));
 
@@ -490,8 +487,9 @@ REVOKE INSERT, UPDATE, DELETE ON invoices FROM anon, authenticated;
 REVOKE INSERT, UPDATE, DELETE ON billing_trial_grants FROM anon, authenticated;
 REVOKE ALL ON TABLE billing_trial_ledger FROM anon, authenticated;
 
--- Metering rows are created through consume_feature_usage() only.
-REVOKE UPDATE, DELETE ON usage_events FROM anon, authenticated;
+-- Metering rows are created through consume_feature_usage() only and refunded
+-- by the service role only.
+REVOKE INSERT, UPDATE, DELETE ON usage_events FROM anon, authenticated;
 
 -- Append-only execution history AND executable rollback payloads. ai_actions
 -- is written exclusively by the service role (recommendation execution, the
@@ -502,6 +500,7 @@ REVOKE INSERT, UPDATE, DELETE ON ai_actions FROM anon, authenticated;
 REVOKE INSERT, UPDATE, DELETE ON recommendations FROM anon, authenticated;
 REVOKE INSERT, UPDATE, DELETE ON audits FROM anon, authenticated;
 REVOKE INSERT, UPDATE, DELETE ON reports FROM anon, authenticated;
+REVOKE INSERT, UPDATE, DELETE ON campaigns_cache FROM anon, authenticated;
 
 -- Identity/profile writes are service-owned. A column-level REVOKE does not
 -- override Supabase's default table-level UPDATE grant.
@@ -548,12 +547,22 @@ AS $$
       has_table_privilege('authenticated', 'public.reports', 'INSERT') OR
       has_table_privilege('authenticated', 'public.reports', 'UPDATE') OR
       has_table_privilege('authenticated', 'public.reports', 'DELETE') OR
+      has_table_privilege('authenticated', 'public.campaigns_cache', 'INSERT') OR
+      has_table_privilege('authenticated', 'public.campaigns_cache', 'UPDATE') OR
+      has_table_privilege('authenticated', 'public.campaigns_cache', 'DELETE') OR
       has_table_privilege('authenticated', 'public.users', 'INSERT') OR
       has_table_privilege('authenticated', 'public.users', 'UPDATE') OR
       has_table_privilege('authenticated', 'public.users', 'DELETE') OR
       has_column_privilege('authenticated', 'public.google_ads_accounts', 'refresh_token_encrypted', 'UPDATE') OR
       has_column_privilege('authenticated', 'public.google_ads_accounts', 'business_id', 'UPDATE') OR
-      has_column_privilege('authenticated', 'public.google_ads_accounts', 'status', 'UPDATE')
+      has_column_privilege('authenticated', 'public.google_ads_accounts', 'status', 'UPDATE') OR
+      has_function_privilege('authenticated', 'public.refund_feature_usage(uuid,uuid)', 'EXECUTE') OR
+      to_regprocedure('public.consume_feature_usage(uuid,text,uuid,integer,timestamptz,timestamptz,jsonb)') IS NULL OR
+      to_regprocedure('public.consume_rate_limit(text,integer,integer)') IS NULL OR
+      to_regprocedure('public.refund_feature_usage(uuid,uuid)') IS NULL OR
+      NOT has_function_privilege('authenticated', 'public.consume_feature_usage(uuid,text,uuid,integer,timestamptz,timestamptz,jsonb)', 'EXECUTE') OR
+      NOT has_function_privilege('service_role', 'public.consume_rate_limit(text,integer,integer)', 'EXECUTE') OR
+      NOT has_function_privilege('service_role', 'public.refund_feature_usage(uuid,uuid)', 'EXECUTE')
     ),
     'recommendations_browser_write',
       has_table_privilege('authenticated', 'public.recommendations', 'INSERT') OR
@@ -570,6 +579,10 @@ AS $$
       has_table_privilege('authenticated', 'public.reports', 'INSERT') OR
       has_table_privilege('authenticated', 'public.reports', 'UPDATE') OR
       has_table_privilege('authenticated', 'public.reports', 'DELETE'),
+    'campaign_cache_browser_write',
+      has_table_privilege('authenticated', 'public.campaigns_cache', 'INSERT') OR
+      has_table_privilege('authenticated', 'public.campaigns_cache', 'UPDATE') OR
+      has_table_privilege('authenticated', 'public.campaigns_cache', 'DELETE'),
     'identity_browser_write',
       has_table_privilege('authenticated', 'public.users', 'INSERT') OR
       has_table_privilege('authenticated', 'public.users', 'UPDATE') OR
@@ -577,7 +590,21 @@ AS $$
     'google_credentials_browser_write',
       has_column_privilege('authenticated', 'public.google_ads_accounts', 'refresh_token_encrypted', 'UPDATE') OR
       has_column_privilege('authenticated', 'public.google_ads_accounts', 'business_id', 'UPDATE') OR
-      has_column_privilege('authenticated', 'public.google_ads_accounts', 'status', 'UPDATE')
+      has_column_privilege('authenticated', 'public.google_ads_accounts', 'status', 'UPDATE'),
+    'usage_refund_browser_execute',
+      has_function_privilege('authenticated', 'public.refund_feature_usage(uuid,uuid)', 'EXECUTE'),
+    'usage_rpc_exists',
+      to_regprocedure('public.consume_feature_usage(uuid,text,uuid,integer,timestamptz,timestamptz,jsonb)') IS NOT NULL,
+    'usage_rpc_authenticated_execute',
+      has_function_privilege('authenticated', 'public.consume_feature_usage(uuid,text,uuid,integer,timestamptz,timestamptz,jsonb)', 'EXECUTE'),
+    'rate_limit_rpc_exists',
+      to_regprocedure('public.consume_rate_limit(text,integer,integer)') IS NOT NULL,
+    'rate_limit_rpc_service_execute',
+      has_function_privilege('service_role', 'public.consume_rate_limit(text,integer,integer)', 'EXECUTE'),
+    'refund_rpc_exists',
+      to_regprocedure('public.refund_feature_usage(uuid,uuid)') IS NOT NULL,
+    'refund_rpc_service_execute',
+      has_function_privilege('service_role', 'public.refund_feature_usage(uuid,uuid)', 'EXECUTE')
   );
 $$;
 REVOKE ALL ON FUNCTION modaafa_security_posture() FROM PUBLIC, anon, authenticated;
@@ -779,7 +806,7 @@ AS $$
 DECLARE
   v_deleted UUID;
 BEGIN
-  IF auth.uid() IS DISTINCT FROM p_user_id THEN
+  IF auth.role() IS DISTINCT FROM 'service_role' THEN
     RAISE EXCEPTION 'forbidden';
   END IF;
 
@@ -794,4 +821,5 @@ $$;
 REVOKE ALL ON FUNCTION public.consume_feature_usage(UUID, TEXT, UUID, INTEGER, TIMESTAMPTZ, TIMESTAMPTZ, JSONB) FROM public;
 GRANT EXECUTE ON FUNCTION public.consume_feature_usage(UUID, TEXT, UUID, INTEGER, TIMESTAMPTZ, TIMESTAMPTZ, JSONB) TO authenticated;
 REVOKE ALL ON FUNCTION public.refund_feature_usage(UUID, UUID) FROM public;
-GRANT EXECUTE ON FUNCTION public.refund_feature_usage(UUID, UUID) TO authenticated;
+REVOKE ALL ON FUNCTION public.refund_feature_usage(UUID, UUID) FROM anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.refund_feature_usage(UUID, UUID) TO service_role;

@@ -252,7 +252,7 @@ export async function POST(req: NextRequest) {
       intent,
     });
   } catch (error) {
-    await refundFeatureUsage({ supabase, userId: user.id, usageEventId: usage.usageEventId });
+    await refundFeatureUsage({ userId: user.id, usageEventId: usage.usageEventId });
     console.error('Assistant generation failed', error);
     return NextResponse.json(
       { error: 'assistant_failed', message: 'تعذر توليد الرد الآن. لم يُخصم الطلب من حد استخدامك.' },

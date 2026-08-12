@@ -115,7 +115,7 @@ done
 
 ثم الفحص المفصّل:
 ```bash
-curl -H "Authorization: Bearer $CRON_SECRET" https://ai.modaafa.com/api/health
+curl -H "Authorization: Bearer $HEALTH_SECRET" https://ai.modaafa.com/api/health
 ```
 يجب أن يعطي `launch_ready: true`. **إن أعطى false، لا تُكمل — أصلح ما يشكو منه أولاً.** لاحظ أنه يفرض الآن `livemode` على Stripe في الإنتاج وسيرفض المفاتيح التجريبية.
 

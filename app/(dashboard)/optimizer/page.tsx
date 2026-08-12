@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import { getRequestAuthContext } from '@/lib/supabase/server';
+import { assertSupabaseRead } from '@/lib/supabase/query-errors';
 import { formatCurrency, formatNumberAr, timeAgoAr } from '@/lib/utils';
 import { recommendationStatusLabel, severityLabel } from '@/lib/ui/labels';
 import { PendingSubmitButton } from '@/lib/ui/pending-submit-button';
@@ -27,7 +28,7 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
     getAccountWorkspace(user.id),
     getSubscriptionAccess(supabase, user.id),
   ]);
-  const [{ data: recommendations }, { data: actions }] = await Promise.all([
+  const [recommendationsResult, actionsResult] = await Promise.all([
     selectedAccount
       ? supabase
           .from('recommendations')
@@ -38,7 +39,7 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
           .eq('account_id', selectedAccount.id)
           .order('created_at', { ascending: false })
           .limit(20)
-      : Promise.resolve({ data: [] }),
+      : Promise.resolve({ data: [], error: null }),
     selectedAccount
       ? supabase
           .from('ai_actions')
@@ -46,8 +47,12 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
           .eq('account_id', selectedAccount.id)
           .order('created_at', { ascending: false })
           .limit(20)
-      : Promise.resolve({ data: [] }),
+      : Promise.resolve({ data: [], error: null }),
   ]);
+  assertSupabaseRead(recommendationsResult.error, 'load optimizer recommendations');
+  assertSupabaseRead(actionsResult.error, 'load optimizer actions');
+  const recommendations = recommendationsResult.data;
+  const actions = actionsResult.data;
   const recs = recommendations ?? [];
   const pending = recs.filter((item: any) => item.status === 'pending');
   const approved = recs.filter((item: any) => item.status === 'approved');

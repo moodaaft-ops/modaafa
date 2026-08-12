@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerClient } from '@/lib/supabase/server';
+import { createAdminClient, createServerClient } from '@/lib/supabase/server';
 import { normalizeCustomerId, SELECTED_ADS_ACCOUNT_COOKIE, getLinkedGoogleAdsAccount } from '@/lib/accounts/selection';
 import { decrypt } from '@/lib/crypto';
 import {
@@ -94,6 +94,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    const admin = createAdminClient();
     const refreshToken = decrypt(account.refresh_token_encrypted);
     const normalizedCustomerId = normalizeCustomerId(account.customer_id);
     let resolvedManagerId = account.manager_id ?? null;
@@ -134,7 +135,7 @@ export async function POST(req: NextRequest) {
     }
 
     const syncResult = await syncCampaignCacheWithLoginFallback({
-      supabase,
+      supabase: admin,
       customerId: account.customer_id,
       refreshToken,
       accountId: account.id,
@@ -151,10 +152,11 @@ export async function POST(req: NextRequest) {
     if (resolvedCurrencyCode) update.currency_code = resolvedCurrencyCode;
     if (resolvedTimeZone) update.time_zone = resolvedTimeZone;
 
-    await supabase
+    const { error: accountUpdateError } = await admin
       .from('google_ads_accounts')
       .update(update)
       .eq('id', account.id);
+    if (accountUpdateError) throw accountUpdateError;
 
     const res = respond(req, isForm, next, {
       ok: true,
@@ -175,7 +177,7 @@ export async function POST(req: NextRequest) {
 
     return res;
   } catch (err) {
-    await refundFeatureUsage({ supabase, userId: user.id, usageEventId: usage.usageEventId });
+    await refundFeatureUsage({ userId: user.id, usageEventId: usage.usageEventId });
     console.error('Manual Google Ads sync failed', err);
     const codes = getGoogleAdsErrorCodes(err);
     return respond(

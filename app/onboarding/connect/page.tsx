@@ -42,8 +42,9 @@ export default async function ConnectGoogleAdsPage({
   const params = await searchParams;
   const { user } = await getRequestAuthContext();
   if (!user) redirect('/login?next=/onboarding/connect');
-  const { accounts } = await getAccountWorkspace(user.id);
+  const { accounts, revokedAccounts } = await getAccountWorkspace(user.id);
   const hasAccounts = (accounts?.length ?? 0) > 0;
+  const hasRevokedAccounts = revokedAccounts.length > 0;
   const googleVerified = process.env.GOOGLE_OAUTH_APP_VERIFIED === 'true';
   // `no_client_accounts` is not an error the user can fix by retrying the same
   // thing, so it gets its own recovery block instead of a red bar above an
@@ -58,7 +59,7 @@ export default async function ConnectGoogleAdsPage({
   return (
     <main className="px-4 py-8 sm:px-6">
       <div className="mx-auto max-w-4xl">
-        <OnboardingProgress active="connect" showDashboardLink={hasAccounts} />
+        <OnboardingProgress active="connect" showDashboardLink={hasAccounts || hasRevokedAccounts} />
 
         <div className="mb-6 mt-8">
           <h2 className="text-[26px] font-bold leading-tight sm:text-3xl">اربط إعلانات Google</h2>
@@ -90,6 +91,15 @@ export default async function ConnectGoogleAdsPage({
         {managerOnly && <ManagerOnlyRecovery />}
         {noAccounts && <NoAccountsRecovery />}
 
+        {hasRevokedAccounts && (
+          <div className="mb-5">
+            <Alert tone="warning" title="انتهت صلاحية بعض الحسابات المربوطة">
+              أعد الربط من الزر أدناه لاستعادة {revokedAccounts.length === 1 ? 'الحساب' : `${revokedAccounts.length} حسابات`}.
+              لن تكون هذه الحسابات قابلة للاختيار أو التعديل حتى تمنح Google Ads الصلاحية مجدداً.
+            </Alert>
+          </div>
+        )}
+
         <section className="surface-card p-5 sm:p-6">
           <h3 className="text-[15px] font-semibold">ربط تلقائي لكل الحسابات</h3>
           <ul className="mt-4 space-y-3">
@@ -107,8 +117,8 @@ export default async function ConnectGoogleAdsPage({
           </ul>
 
           <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-border pt-5">
-            <ConnectGoogleAdsButton />
-            {hasAccounts && (
+            <ConnectGoogleAdsButton label={hasRevokedAccounts ? 'إعادة ربط Google Ads' : undefined} />
+            {(hasAccounts || hasRevokedAccounts) && (
               <Link href="/dashboard" className={buttonClasses({ variant: 'ghost' })}>
                 لدي حسابات — انتقل للوحة التحكم
               </Link>
@@ -154,6 +164,30 @@ export default async function ConnectGoogleAdsPage({
             <Link href="/dashboard" className={`${buttonClasses({ variant: 'primary' })} mt-5`}>
               الانتقال للوحة التحكم
             </Link>
+          </section>
+        )}
+
+        {hasRevokedAccounts && (
+          <section className="mt-5 surface-card p-5 sm:p-6">
+            <div className="mb-4 flex items-center gap-2 text-[13px] font-semibold text-amber-700 dark:text-amber-300">
+              <TriangleAlert className="h-4 w-4" />
+              حسابات تحتاج إعادة ربط ({revokedAccounts.length})
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {revokedAccounts.map((account) => (
+                <div
+                  key={account.customer_id}
+                  className="flex items-center justify-between gap-2 rounded-lg border border-amber-500/25 bg-amber-500/[0.06] px-4 py-3 text-[13px]"
+                >
+                  <span className="min-w-0 truncate font-medium text-foreground">
+                    {googleAdsAccountDisplayName(account)}
+                  </span>
+                  <span className="flex-shrink-0 text-xs text-muted-foreground numeric" dir="ltr">
+                    {formatGoogleAdsCustomerId(account.customer_id)}
+                  </span>
+                </div>
+              ))}
+            </div>
           </section>
         )}
       </div>
