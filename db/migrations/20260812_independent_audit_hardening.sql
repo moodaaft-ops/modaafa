@@ -84,7 +84,13 @@ AS $$
       has_column_privilege('authenticated', 'public.google_ads_accounts', 'refresh_token_encrypted', 'UPDATE') OR
       has_column_privilege('authenticated', 'public.google_ads_accounts', 'business_id', 'UPDATE') OR
       has_column_privilege('authenticated', 'public.google_ads_accounts', 'status', 'UPDATE') OR
-      has_function_privilege('authenticated', 'public.refund_feature_usage(uuid,uuid)', 'EXECUTE')
+      has_function_privilege('authenticated', 'public.refund_feature_usage(uuid,uuid)', 'EXECUTE') OR
+      to_regprocedure('public.consume_feature_usage(uuid,text,uuid,integer,timestamptz,timestamptz,jsonb)') IS NULL OR
+      to_regprocedure('public.consume_rate_limit(text,integer,integer)') IS NULL OR
+      to_regprocedure('public.refund_feature_usage(uuid,uuid)') IS NULL OR
+      NOT has_function_privilege('authenticated', 'public.consume_feature_usage(uuid,text,uuid,integer,timestamptz,timestamptz,jsonb)', 'EXECUTE') OR
+      NOT has_function_privilege('service_role', 'public.consume_rate_limit(text,integer,integer)', 'EXECUTE') OR
+      NOT has_function_privilege('service_role', 'public.refund_feature_usage(uuid,uuid)', 'EXECUTE')
     ),
     'recommendations_browser_write',
       has_table_privilege('authenticated', 'public.recommendations', 'INSERT') OR
@@ -114,7 +120,19 @@ AS $$
       has_column_privilege('authenticated', 'public.google_ads_accounts', 'business_id', 'UPDATE') OR
       has_column_privilege('authenticated', 'public.google_ads_accounts', 'status', 'UPDATE'),
     'usage_refund_browser_execute',
-      has_function_privilege('authenticated', 'public.refund_feature_usage(uuid,uuid)', 'EXECUTE')
+      has_function_privilege('authenticated', 'public.refund_feature_usage(uuid,uuid)', 'EXECUTE'),
+    'usage_rpc_exists',
+      to_regprocedure('public.consume_feature_usage(uuid,text,uuid,integer,timestamptz,timestamptz,jsonb)') IS NOT NULL,
+    'usage_rpc_authenticated_execute',
+      has_function_privilege('authenticated', 'public.consume_feature_usage(uuid,text,uuid,integer,timestamptz,timestamptz,jsonb)', 'EXECUTE'),
+    'rate_limit_rpc_exists',
+      to_regprocedure('public.consume_rate_limit(text,integer,integer)') IS NOT NULL,
+    'rate_limit_rpc_service_execute',
+      has_function_privilege('service_role', 'public.consume_rate_limit(text,integer,integer)', 'EXECUTE'),
+    'refund_rpc_exists',
+      to_regprocedure('public.refund_feature_usage(uuid,uuid)') IS NOT NULL,
+    'refund_rpc_service_execute',
+      has_function_privilege('service_role', 'public.refund_feature_usage(uuid,uuid)', 'EXECUTE')
   );
 $$;
 

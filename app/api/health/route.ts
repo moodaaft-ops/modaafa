@@ -7,6 +7,11 @@ import { checkStripeConfiguration } from '@/lib/billing/stripe';
 import { checkAIConfiguration } from '@/lib/ai/client';
 import { getBillableBusinessIds } from '@/lib/platform/jobs';
 import { evaluateJobCapacity } from '@/lib/platform/job-capacity';
+import {
+  evaluateOperationalJob,
+  evaluateWebhookLedger,
+  extractEmailDomain,
+} from '@/lib/platform/health';
 
 const REQUIRED_ENV = [
   'NEXT_PUBLIC_SUPABASE_URL',
@@ -36,17 +41,21 @@ export async function GET(req: NextRequest) {
   const authorized = hasValidCronAuthorization(req);
 
   if (!authorized) {
+    const heartbeat = await checkPublicDatabaseHeartbeat();
     return NextResponse.json({
-      ok: true,
+      ok: heartbeat,
       service: 'modaafa',
       timestamp: new Date().toISOString(),
+    }, {
+      status: heartbeat ? 200 : 503,
+      headers: { 'Cache-Control': 'no-store' },
     });
   }
 
   const env = Object.fromEntries(REQUIRED_ENV.map((key) => [key, isConfiguredEnv(process.env[key])]));
   const readiness = getPlatformReadiness();
-  const database = await checkDatabase();
-  const [operationalEmail, billing, ai] = await Promise.all([
+  const [database, operationalEmail, billing, ai] = await Promise.all([
+    checkDatabase(),
     checkOperationalEmail(),
     checkStripeConfiguration(),
     checkAIConfiguration(),
@@ -90,6 +99,12 @@ async function checkOperationalEmail() {
     return { ok: false, configured: false, domain: null, status: 'api_key_missing' };
   }
 
+  const fromDomain = extractEmailDomain(fromEmail);
+  const configured = Boolean(fromDomain) && isConfiguredEnv(alertEmail);
+  if (!fromDomain) {
+    return { ok: false, configured, domain: null, status: 'from_email_invalid' };
+  }
+
   try {
     const response = await fetch('https://api.resend.com/domains', {
       headers: { authorization: `Bearer ${apiKey}` },
@@ -99,13 +114,14 @@ async function checkOperationalEmail() {
       data?: Array<{ name?: string; status?: string; region?: string }>;
       message?: string;
     };
-    const domain = payload.data?.find((item) => item.name === 'modaafa.com') ?? null;
-    const configured = isConfiguredEnv(fromEmail) && isConfiguredEnv(alertEmail);
+    const domain = payload.data?.find(
+      (item) => item.name?.trim().toLowerCase() === fromDomain
+    ) ?? null;
 
     return {
       ok: response.ok && configured && domain?.status === 'verified',
       configured,
-      domain: domain?.name ?? null,
+      domain: fromDomain,
       status: domain?.status ?? (response.ok ? 'domain_missing' : 'api_error'),
       region: domain?.region ?? null,
       error: response.ok ? null : payload.message ?? `Resend HTTP ${response.status}`,
@@ -113,8 +129,8 @@ async function checkOperationalEmail() {
   } catch (error) {
     return {
       ok: false,
-      configured: isConfiguredEnv(fromEmail) && isConfiguredEnv(alertEmail),
-      domain: null,
+      configured,
+      domain: fromDomain,
       status: 'request_failed',
       error: error instanceof Error ? error.message : String(error),
     };
@@ -125,6 +141,7 @@ async function checkDatabase() {
   try {
     const supabase = createAdminClient();
     const tables = [
+      { table: 'users', column: 'id' },
       { table: 'businesses', column: 'id' },
       { table: 'google_ads_accounts', column: 'id' },
       // `pending_oauth_sessions` is no longer checked: the two-step
@@ -133,26 +150,68 @@ async function checkDatabase() {
       // The table itself is left in place — dropping it is a separate,
       // irreversible migration decision.
       { table: 'oauth_states', column: 'id' },
+      { table: 'audits', column: 'id' },
+      { table: 'recommendations', column: 'id' },
+      { table: 'ai_actions', column: 'id' },
+      { table: 'campaigns_cache', column: 'id' },
+      { table: 'chat_sessions', column: 'id' },
+      { table: 'chat_messages', column: 'id' },
+      { table: 'subscriptions', column: 'id' },
+      { table: 'invoices', column: 'id' },
+      { table: 'reports', column: 'id' },
       { table: 'usage_events', column: 'id' },
       { table: 'job_runs', column: 'id' },
       { table: 'processed_webhook_events', column: 'event_id' },
       { table: 'billing_trial_grants', column: 'user_id' },
+      { table: 'billing_trial_ledger', column: 'email_hash' },
       { table: 'rate_limit_windows', column: 'key' },
       { table: 'sector_benchmarks', column: 'id' },
     ];
-    const checks = await Promise.all(
-      tables.map(async ({ table, column }) => {
-        const { error } = await supabase.from(table).select(column, { count: 'exact', head: true });
-        return { table, ok: !error, error: error?.message ?? null };
-      })
-    );
-    const { data: latestJobs, error: jobsError } = await supabase
-      .from('job_runs')
-      .select('job_name, status, started_at, finished_at, processed, error_count')
-      .order('started_at', { ascending: false })
-      .limit(10);
-    const { data: securityPosture, error: securityError } = await supabase
-      .rpc('modaafa_security_posture');
+    const jobExpectations = [
+      { jobName: 'sync-google-ads', maxAgeHours: 4 },
+      { jobName: 'optimize', maxAgeHours: 4 },
+    ];
+    const [checks, latestJobResults, securityResult, webhookResult] = await Promise.all([
+      Promise.all(
+        tables.map(async ({ table, column }) => {
+          const { error } = await supabase.from(table).select(column, { head: true }).limit(1);
+          return { table, ok: !error, error: error?.message ?? null };
+        })
+      ),
+      Promise.all(
+        jobExpectations.map(({ jobName }) =>
+          supabase
+            .from('job_runs')
+            .select('job_name, status, started_at, finished_at, processed, error_count')
+            .eq('job_name', jobName)
+            .order('started_at', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+        )
+      ),
+      supabase.rpc('modaafa_security_posture'),
+      supabase
+        .from('processed_webhook_events')
+        .select('status, last_attempt_at')
+        .order('last_attempt_at', { ascending: false })
+        .limit(20),
+    ]);
+    const latestJobs = latestJobResults
+      .map((result) => result.data)
+      .filter((job): job is NonNullable<typeof job> => Boolean(job));
+    const jobsError = latestJobResults.find((result) => result.error)?.error ?? null;
+    const securityPosture = securityResult.data;
+    const securityError = securityResult.error;
+    const webhookLedger = webhookResult.error
+      ? {
+          ok: false,
+          inspected: 0,
+          failed: 0,
+          stale_processing: 0,
+          status: 'query_failed',
+          error: webhookResult.error.message,
+        }
+      : evaluateWebhookLedger(webhookResult.data ?? []);
     let capacityError: string | null = null;
     let activeBillableAccounts = 0;
     try {
@@ -166,38 +225,25 @@ async function checkDatabase() {
       ok: !capacityError && evaluateJobCapacity(activeBillableAccounts).ok,
       error: capacityError,
     };
-    const jobExpectations = [
-      { jobName: 'sync-google-ads', maxAgeHours: 4 },
-      { jobName: 'optimize', maxAgeHours: 4 },
-    ];
-    const operationalJobs = jobExpectations.map(({ jobName, maxAgeHours }) => {
-      const latest = (latestJobs ?? []).find((job) => job.job_name === jobName) ?? null;
-      const ageHours = latest
-        ? Math.round(((Date.now() - new Date(latest.started_at).getTime()) / 3_600_000) * 10) / 10
-        : null;
-      return {
-        job_name: jobName,
-        ok:
-          Boolean(latest) &&
-          latest?.status !== 'failed' &&
-          ageHours !== null &&
-          ageHours <= maxAgeHours,
-        latest_status: latest?.status ?? 'missing',
-        age_hours: ageHours,
-        max_age_hours: maxAgeHours,
-      };
-    });
+    const operationalJobs = jobExpectations.map(({ jobName, maxAgeHours }) =>
+      evaluateOperationalJob(
+        (latestJobs ?? []).find((job) => job.job_name === jobName) ?? null,
+        { jobName, maxAgeHours }
+      )
+    );
     return {
       ok:
         checks.every((check) => check.ok) &&
         !jobsError &&
         !securityError &&
         securityPosture?.ok === true &&
+        webhookLedger.ok &&
         jobCapacity.ok,
       checks,
       security_posture: securityPosture ?? null,
       security_error: securityError?.message ?? null,
       latest_jobs: latestJobs ?? [],
+      webhook_processing: webhookLedger,
       operational_jobs: {
         ok: !jobsError && operationalJobs.every((job) => job.ok),
         checks: operationalJobs,
@@ -212,6 +258,16 @@ async function checkDatabase() {
       job_capacity: { ok: false, error: 'database_check_failed' },
       error: error instanceof Error ? error.message : String(error),
     };
+  }
+}
+
+async function checkPublicDatabaseHeartbeat() {
+  try {
+    const supabase = createAdminClient();
+    const { error } = await supabase.from('businesses').select('id').limit(1);
+    return !error;
+  } catch {
+    return false;
   }
 }
 

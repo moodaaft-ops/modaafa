@@ -22,6 +22,9 @@ test('quota refunds are service-role-only in the production hardening migration'
   assert.match(migration, /auth\.role\(\) IS DISTINCT FROM 'service_role'/i);
   assert.match(migration, /usage_refund_browser_execute/i);
   assert.match(migration, /has_function_privilege\('authenticated', 'public\.refund_feature_usage\(uuid,uuid\)'/i);
+  assert.match(migration, /to_regprocedure\('public\.consume_feature_usage\(uuid,text,uuid,integer,timestamptz,timestamptz,jsonb\)'\) IS NULL/i);
+  assert.match(migration, /to_regprocedure\('public\.consume_rate_limit\(text,integer,integer\)'\) IS NULL/i);
+  assert.match(migration, /refund_rpc_service_execute/i);
 });
 
 test('campaign cache writes are service-owned in the production hardening migration', () => {
