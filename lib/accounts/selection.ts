@@ -2,6 +2,7 @@ import { cookies } from 'next/headers';
 import { isGeneratedFallbackName } from './display';
 import { requestCache } from '@/lib/platform/request-cache';
 import { getRequestServerClient } from '@/lib/supabase/server';
+import { assertSupabaseRead } from '@/lib/supabase/query-errors';
 
 export const SELECTED_ADS_ACCOUNT_COOKIE = 'modaafa_selected_customer_id';
 
@@ -67,8 +68,7 @@ async function loadUserBusiness(
     .maybeSingle();
 
   if (error) {
-    console.error('Failed to load user business', error);
-    return null;
+    assertSupabaseRead(error, 'load user business');
   }
 
   return data ?? null;
@@ -118,7 +118,7 @@ export const getAccountWorkspace = requestCache(async (userId: string) => {
     .limit(ACCOUNT_LIST_LIMIT);
 
   if (error) {
-    console.error('Failed to load Google Ads accounts', error);
+    assertSupabaseRead(error, 'load Google Ads accounts');
   }
 
   const { accounts, revokedAccounts } = partitionGoogleAdsAccounts(

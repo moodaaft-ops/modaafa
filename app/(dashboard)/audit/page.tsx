@@ -1,6 +1,7 @@
 import { ClipboardCheck, ShieldCheck, Link2 } from 'lucide-react';
 import { redirect } from 'next/navigation';
 import { getRequestAuthContext } from '@/lib/supabase/server';
+import { assertSupabaseRead } from '@/lib/supabase/query-errors';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import { formatCurrency, timeAgoAr } from '@/lib/utils';
@@ -35,7 +36,7 @@ export default async function AuditPage({
     getSubscriptionAccess(supabase, user.id),
   ]);
 
-  const { data: audit } = selectedAccount
+  const auditResult = selectedAccount
     ? await supabase
         .from('audits')
         .select('*')
@@ -43,7 +44,9 @@ export default async function AuditPage({
         .order('ran_at', { ascending: false })
         .limit(1)
         .maybeSingle()
-    : { data: null };
+    : { data: null, error: null };
+  assertSupabaseRead(auditResult.error, 'load latest audit');
+  const audit = auditResult.data;
 
   const accountName = selectedAccount ? googleAdsAccountDisplayName(selectedAccount) : 'إعلانات Google';
 
@@ -89,7 +92,7 @@ export default async function AuditPage({
     );
   }
 
-  const [{ data: recommendations }, { data: latestReport }] = await Promise.all([
+  const [recommendationsResult, latestReportResult] = await Promise.all([
     supabase
       .from('recommendations')
       .select('*')
@@ -104,6 +107,10 @@ export default async function AuditPage({
       .limit(1)
       .maybeSingle(),
   ]);
+  assertSupabaseRead(recommendationsResult.error, 'load audit recommendations');
+  assertSupabaseRead(latestReportResult.error, 'load audit report');
+  const recommendations = recommendationsResult.data;
+  const latestReport = latestReportResult.data;
 
   const recs = recommendations ?? [];
 

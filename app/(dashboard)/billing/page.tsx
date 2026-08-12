@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { Check, CreditCard, ReceiptText } from 'lucide-react';
 import { createServerClient } from '@/lib/supabase/server';
+import { assertSupabaseRead } from '@/lib/supabase/query-errors';
 import { cn, formatCurrency, formatDateAr } from '@/lib/utils';
 import { planLabel, subscriptionStatusLabel } from '@/lib/ui/labels';
 import { PendingSubmitButton } from '@/lib/ui/pending-submit-button';
@@ -99,6 +100,7 @@ export default async function BillingPage({
     getPlanPriceAmounts(),
   ]);
 
+  assertSupabaseRead(invoicesResult.error, 'load billing invoices');
   const invoices = invoicesResult.data ?? [];
   const trialEligible = checkout.trialEligible;
   const hasLiveSubscription = Boolean(checkout.activeSubscriptionId);
