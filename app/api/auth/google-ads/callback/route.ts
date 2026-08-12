@@ -10,13 +10,13 @@ import {
 } from '@/lib/accounts/selection';
 import { syncCampaignCacheWithLoginFallback } from '@/lib/google-ads/sync';
 import { handleGoogleLoginCallback, isGoogleLoginCallback } from '@/lib/auth/google-login-callback';
-import { isGeneratedFallbackName } from '@/lib/accounts/display';
 import {
   GOOGLE_ADS_OAUTH_STATE_COOKIE,
-  hasGoogleAdsOAuthState,
 } from '@/lib/auth/google-ads-oauth-state';
 import { consumeOAuthState } from '@/lib/auth/oauth-state-store';
+import { validateGoogleAdsOAuthState } from '@/lib/auth/oauth-state-validation';
 import { mapLimit } from '@/lib/platform/concurrency';
+import { buildGoogleAdsLinkRows } from '@/lib/google-ads/link-account-rows';
 
 export const maxDuration = 300;
 
@@ -75,22 +75,19 @@ export async function GET(req: NextRequest) {
     state,
     purpose: 'google_ads_connect',
   });
-  if (serverStateResult !== 'ok') {
-    const cookieState = req.cookies.get(GOOGLE_ADS_OAUTH_STATE_COOKIE)?.value;
-    const cookieValid =
-      serverStateResult === 'unavailable' && hasGoogleAdsOAuthState(cookieState, state);
-    if (!cookieValid) {
+  const stateValidation = validateGoogleAdsOAuthState({
+    serverResult: serverStateResult,
+    cookieValue: req.cookies.get(GOOGLE_ADS_OAUTH_STATE_COOKIE)?.value,
+    returnedState: state,
+  });
+  if (!stateValidation.accepted) {
       console.warn(`Google Ads OAuth state rejected (server: ${serverStateResult})`);
       const res = NextResponse.redirect(
-        new URL(
-          `/onboarding/connect?error=${serverStateResult === 'user_mismatch' ? 'state_user_mismatch' : 'state_mismatch'}`,
-          req.url
-        )
+        new URL(`/onboarding/connect?error=${stateValidation.error}`, req.url)
       );
       // A rejected state must not stay replayable in the cookie.
       res.cookies.delete(GOOGLE_ADS_OAUTH_STATE_COOKIE);
       return res;
-    }
   }
 
   try {
@@ -129,34 +126,12 @@ export async function GET(req: NextRequest) {
     }
 
     const existingMetadata = await loadExistingAccountMetadata(supabase, business.id);
-    const rows = linkableAccounts.map((account) => ({
-      business_id: business.id,
-      customer_id: normalizeCustomerId(account.customer_id),
-      customer_name:
-        account.customer_name ??
-        validExistingName(existingMetadata.get(normalizeCustomerId(account.customer_id))?.customer_name) ??
-        null,
-      manager_id:
-        account.manager_id ??
-        existingMetadata.get(normalizeCustomerId(account.customer_id))?.manager_id ??
-        null,
-      refresh_token_encrypted: encryptedRefreshToken,
-      permissions_scope: ['adwords'],
-      status: 'active',
-      currency_code:
-        account.currency_code ??
-        existingMetadata.get(normalizeCustomerId(account.customer_id))?.currency_code ??
-        null,
-      time_zone:
-        account.time_zone ??
-        existingMetadata.get(normalizeCustomerId(account.customer_id))?.time_zone ??
-        null,
-      is_manager: account.is_manager === true,
-      google_status: account.status ?? null,
-      // Deliberately NOT stamped here. Only the preferred account is synced
-      // below; stamping every row made "آخر تحديث" lie for the rest and made
-      // the nightly cron de-prioritise accounts that had never synced at all.
-    }));
+    const rows = buildGoogleAdsLinkRows({
+      businessId: business.id,
+      encryptedRefreshToken,
+      accounts: linkableAccounts,
+      existingMetadata,
+    });
 
     let admin;
     try {
@@ -302,11 +277,6 @@ async function getOrCreateUserBusiness(
     .maybeSingle();
 
   return reread ?? null;
-}
-
-function validExistingName(name?: string | null) {
-  const trimmed = name?.trim();
-  return trimmed && !isGeneratedFallbackName(trimmed) ? trimmed : null;
 }
 
 async function ensureUserProfile(user: { id: string; email?: string | null; user_metadata?: Record<string, any> }) {
