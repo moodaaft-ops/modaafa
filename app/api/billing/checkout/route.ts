@@ -6,6 +6,7 @@ import { requireAppUrl } from '@/lib/platform/env';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 import { getBillingCheckoutContext } from '@/lib/billing/checkout-policy';
 import { isSameOriginRequest } from '@/lib/security/origin';
+import { isModaafaOperator } from '@/lib/platform/operators';
 
 /**
  * POST /api/billing/checkout
@@ -33,6 +34,12 @@ export async function POST(req: NextRequest) {
   }
 
   const isForm = req.headers.get('content-type')?.includes('application/x-www-form-urlencoded');
+  if (isModaafaOperator(user.email)) {
+    if (isForm) {
+      return NextResponse.redirect(new URL('/billing?error=internal_access', req.url), 303);
+    }
+    return NextResponse.json({ error: 'internal_access' }, { status: 409 });
+  }
   const payload = isForm ? Object.fromEntries((await req.formData()).entries()) : await req.json();
   const { plan, period } = payload;
   if (!['starter', 'growth', 'pro'].includes(plan)) {

@@ -26,7 +26,7 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
   if (!user) redirect('/login');
   const [{ accounts, selectedAccount }, subscription] = await Promise.all([
     getAccountWorkspace(user.id),
-    getSubscriptionAccess(supabase, user.id),
+    getSubscriptionAccess(supabase, user.id, user.email),
   ]);
   const [recommendationsResult, actionsResult] = await Promise.all([
     selectedAccount

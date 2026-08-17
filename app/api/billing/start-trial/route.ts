@@ -6,6 +6,7 @@ import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 import { getBillingCheckoutContext } from '@/lib/billing/checkout-policy';
 import { requireAppUrl } from '@/lib/platform/env';
 import { isSameOriginRequest } from '@/lib/security/origin';
+import { isModaafaOperator } from '@/lib/platform/operators';
 
 const plans = ['starter', 'growth', 'pro'];
 
@@ -21,6 +22,10 @@ export async function POST(req: NextRequest) {
   } = await supabase.auth.getUser();
 
   if (!user) return NextResponse.redirect(new URL('/login', req.url), 303);
+
+  if (isModaafaOperator(user.email)) {
+    return NextResponse.redirect(new URL('/billing?error=internal_access', req.url), 303);
+  }
 
   try {
     const rateLimit = await checkRateLimit({ req, scope: 'billing_trial', limit: 5, windowSeconds: 3600, identifier: user.id });

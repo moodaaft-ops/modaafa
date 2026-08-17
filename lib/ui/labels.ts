@@ -5,6 +5,7 @@ const PLAN_LABELS: Record<string, string> = {
 };
 
 const SUBSCRIPTION_STATUS_LABELS: Record<string, string> = {
+  internal: 'صلاحية داخلية',
   trialing: 'تجربة',
   active: 'نشط',
   past_due: 'متأخر الدفع',
@@ -112,6 +113,7 @@ const ENGLISH_TERMS: Record<string, string> = {
   starter: 'Starter',
   growth: 'Growth',
   pro: 'Pro',
+  internal: 'Internal access',
   trialing: 'Trial',
   active: 'Active',
   past_due: 'Past due',

@@ -26,6 +26,7 @@ const billingErrors: Record<string, string> = {
   checkout_failed: 'تعذر إنشاء جلسة الدفع. لم يتم خصم أي مبلغ.',
   too_many_requests: 'تم طلب بوابة الفوترة عدة مرات خلال فترة قصيرة. انتظر دقيقة ثم أعد المحاولة.',
   security_service_unavailable: 'تعذر التحقق الآمن من طلب الفوترة الآن. أعد المحاولة بعد قليل.',
+  internal_access: 'حساب المالك لديه صلاحية داخلية ولا يحتاج اشتراكاً أو تجربة.',
 };
 
 const plans = [
@@ -87,7 +88,7 @@ export default async function BillingPage({
   // "current plan" took the newest row, the exact heuristic entitlements.ts
   // documents as showing a paying customer "no active subscription".
   const [access, checkout, invoicesResult, priceAmounts] = await Promise.all([
-    getSubscriptionAccess(supabase, user.id),
+    getSubscriptionAccess(supabase, user.id, user.email),
     getBillingCheckoutContext(supabase, user.id, user.email),
     supabase
       .from('invoices')
@@ -101,8 +102,9 @@ export default async function BillingPage({
   assertSupabaseRead(invoicesResult.error, 'load billing invoices');
   const invoices = invoicesResult.data ?? [];
   const trialEligible = checkout.trialEligible;
+  const hasInternalAccess = access.status === 'internal';
   const hasLiveSubscription = Boolean(checkout.activeSubscriptionId);
-  const currentPlan = hasLiveSubscription ? access.plan : null;
+  const currentPlan = hasLiveSubscription || hasInternalAccess ? access.plan : null;
 
   const buildHref = (nextPeriod: PeriodKey) => {
     const query = new URLSearchParams();
@@ -134,7 +136,7 @@ export default async function BillingPage({
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-2.5 text-[26px] font-bold leading-none">
                 {currentPlan ? planLabel(currentPlan) : 'لا يوجد اشتراك نشط'}
-                {hasLiveSubscription && access.status && (
+                {(hasLiveSubscription || hasInternalAccess) && access.status && (
                   <StatusBadge tone={access.status === 'active' ? 'success' : 'warning'}>
                     {subscriptionStatusLabel(access.status)}
                   </StatusBadge>
@@ -145,14 +147,18 @@ export default async function BillingPage({
                     `trial_end` set forever after a trial converts, so keying on
                     the timestamp showed "تنتهي التجربة في <تاريخ ماضٍ>" to every
                     paying customer instead of their renewal date. */}
-                {access.status === 'trialing' && access.trialEndsAt
+                {hasInternalAccess
+                  ? 'صلاحية المالك مفعلة للاختبار الداخلي ولا ترتبط بفوترة Stripe.'
+                  : access.status === 'trialing' && access.trialEndsAt
                   ? `تنتهي التجربة في ${formatDateAr(access.trialEndsAt)}`
                   : hasLiveSubscription && access.currentPeriodEnd
                     ? `تجديد الاشتراك في ${formatDateAr(access.currentPeriodEnd)}`
                     : 'اختر خطة بالأسفل لتفعيل الفحص والتنفيذ والمساعد الذكي.'}
               </p>
             </div>
-            {hasLiveSubscription && checkout.stripeCustomerId ? (
+            {hasInternalAccess ? (
+              <StatusBadge tone="success">لا تحتاج اشتراكاً</StatusBadge>
+            ) : hasLiveSubscription && checkout.stripeCustomerId ? (
               <form action="/api/billing/portal" method="post">
                 <PendingSubmitButton pendingLabel="جاري فتح Stripe..." className={buttonClasses({ variant: 'secondary' })}>
                   إدارة الاشتراك في Stripe
@@ -234,7 +240,9 @@ export default async function BillingPage({
                     </p>
                   </div>
                   {isCurrent ? (
-                    <StatusBadge tone="success">خطتك الحالية</StatusBadge>
+                    <StatusBadge tone="success">
+                      {hasInternalAccess ? 'مفعلة داخلياً' : 'خطتك الحالية'}
+                    </StatusBadge>
                   ) : isChosen ? (
                     <StatusBadge tone="brand">اختيارك</StatusBadge>
                   ) : plan.highlighted ? (
@@ -278,7 +286,17 @@ export default async function BillingPage({
                 </ul>
 
                 <div className="mt-6 grid gap-2.5">
-                  {isCurrent ? (
+                  {hasInternalAccess ? (
+                    <div
+                      aria-disabled="true"
+                      className={buttonClasses({
+                        variant: isCurrent ? 'primary' : 'outline',
+                        block: true,
+                      })}
+                    >
+                      {isCurrent ? 'مفعلة بصلاحية المالك' : 'متاحة للعملاء'}
+                    </div>
+                  ) : isCurrent ? (
                     <form action="/api/billing/portal" method="post">
                       <PendingSubmitButton
                         pendingLabel="جاري فتح Stripe..."
@@ -320,7 +338,9 @@ export default async function BillingPage({
                     </form>
                   )}
                   <p className="text-center text-[11px] leading-5 text-foreground-subtle">
-                    {hasLiveSubscription && !isCurrent
+                    {hasInternalAccess
+                      ? 'صلاحية داخلية للاختبار؛ لن تُنشأ فاتورة أو جلسة دفع.'
+                      : hasLiveSubscription && !isCurrent
                       ? 'تغيير الخطة يتم داخل بوابة Stripe ويُحتسب الفرق تلقائياً.'
                       : trialEligible
                         ? 'لن يتم الخصم خلال فترة التجربة. البطاقة والفواتير تُدار بأمان عبر Stripe.'
