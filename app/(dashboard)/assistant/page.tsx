@@ -22,7 +22,7 @@ export default async function AssistantPage({
   if (!user) redirect('/login');
   const [{ accounts, selectedAccount, selectedCustomerId }, subscription] = await Promise.all([
     getAccountWorkspace(user.id),
-    getSubscriptionAccess(supabase, user.id),
+    getSubscriptionAccess(supabase, user.id, user.email),
   ]);
   // Prefill from a campaign-opportunity recommendation. Bounded: this lands in
   // a controlled composer the user still has to send themselves.

@@ -33,7 +33,7 @@ export default async function AuditPage({
   if (!user) redirect('/login');
   const [{ accounts, selectedAccount, selectedCustomerId }, subscription] = await Promise.all([
     getAccountWorkspace(user.id),
-    getSubscriptionAccess(supabase, user.id),
+    getSubscriptionAccess(supabase, user.id, user.email),
   ]);
 
   const auditResult = selectedAccount

@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
   // subscription first. This one issues a full discoverAccessibleCustomers()
   // (an MCC tree walk) per refresh token, so without the gate an expired or
   // never-subscribed user could burn shared developer-token QPS at will.
-  const access = await getSubscriptionAccess(supabase, user.id);
+  const access = await getSubscriptionAccess(supabase, user.id, user.email);
   if (!access.active) {
     return respond(req, { error: 'subscription_required' }, 402);
   }

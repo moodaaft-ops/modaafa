@@ -133,7 +133,7 @@ export async function POST(req: NextRequest) {
     // lapsed subscriber repeatedly clicking تنفيذ does not spend live Google
     // Ads reads and guardrail aggregation against the shared developer token
     // just to be told no afterwards.
-    const subscriptionAccess = await getSubscriptionAccess(supabase, user.id);
+    const subscriptionAccess = await getSubscriptionAccess(supabase, user.id, user.email);
     if (!subscriptionAccess.active) {
       return NextResponse.redirect(new URL(`${next}?error=subscription_required`, req.url), 303);
     }
@@ -214,6 +214,7 @@ export async function POST(req: NextRequest) {
     const usage = await consumeFeatureUsage({
       supabase,
       userId: user.id,
+      userEmail: user.email,
       feature: 'execute_action',
       accountId: account.id,
       metadata: { recommendation_id: recommendation.id, customer_id: account.customer_id },

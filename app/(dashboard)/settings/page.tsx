@@ -9,6 +9,7 @@ import {
 } from '@/lib/accounts/display';
 import { getRequestAuthContext } from '@/lib/supabase/server';
 import { getPlatformReadiness, readinessSummary } from '@/lib/platform/readiness';
+import { isModaafaOperator } from '@/lib/platform/operators';
 import { PendingSubmitButton } from '@/lib/ui/pending-submit-button';
 import { PageHeader } from '@/lib/ui/page-header';
 import { Alert } from '@/lib/ui/alert';
@@ -56,11 +57,7 @@ export default async function SettingsPage({
   // product was broken (a red "N عائق إطلاق" badge on their own settings
   // page) and leaked deployment detail. Gate it on an explicit allowlist;
   // /api/health remains the real operator surface.
-  const operatorEmails = (process.env.MODAAFA_OPERATOR_EMAILS ?? '')
-    .split(',')
-    .map((value) => value.trim().toLowerCase())
-    .filter(Boolean);
-  const isOperator = Boolean(user?.email && operatorEmails.includes(user.email.toLowerCase()));
+  const isOperator = isModaafaOperator(user.email);
   const readiness = isOperator ? getPlatformReadiness() : [];
   const summary = readinessSummary(readiness);
 

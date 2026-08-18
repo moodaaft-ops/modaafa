@@ -114,7 +114,7 @@ export default async function DashboardPage({
           .limit(1)
           .maybeSingle()
       : Promise.resolve({ data: null, error: null }),
-    getSubscriptionAccess(supabase, user.id),
+    getSubscriptionAccess(supabase, user.id, user.email),
   ]);
   assertSupabaseRead(campaignsResult.error, 'load dashboard campaigns');
   assertSupabaseRead(auditResult.error, 'load dashboard audit');

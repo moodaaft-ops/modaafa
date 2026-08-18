@@ -159,6 +159,7 @@ export async function POST(req: NextRequest) {
   const usage = await consumeFeatureUsage({
     supabase,
     userId: user.id,
+    userEmail: user.email,
     feature: 'assistant',
     accountId: account.id,
     metadata: { customer_id: account.customer_id },

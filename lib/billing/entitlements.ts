@@ -1,4 +1,5 @@
 import { createAdminClient } from '@/lib/supabase/server';
+import { isModaafaOperator } from '@/lib/platform/operators';
 
 export type BillingPlan = 'starter' | 'growth' | 'pro';
 export type MeteredFeature = 'assistant' | 'campaign_builder' | 'audit' | 'manual_sync' | 'execute_action';
@@ -73,9 +74,27 @@ const PLAN_RANK: Record<BillingPlan, number> = { starter: 1, growth: 2, pro: 3 }
  * disabling RLS during an incident, would silently turn an entitlement check
  * into a cross-tenant read.
  */
-export async function getSubscriptionAccess(supabase: any, userId: string | null | undefined): Promise<SubscriptionAccess> {
+export async function getSubscriptionAccess(
+  supabase: any,
+  userId: string | null | undefined,
+  authenticatedEmail?: string | null
+): Promise<SubscriptionAccess> {
   if (!userId) {
     return { active: false, plan: null, status: null, trialEndsAt: null, currentPeriodEnd: null };
+  }
+
+  // Operators need to exercise the complete product without creating a fake
+  // Stripe subscription. Keep them on the bounded Pro limits so a compromised
+  // operator session cannot create unmetered Anthropic or Google Ads spend.
+  // The email must come from the authenticated server-side Supabase user.
+  if (isModaafaOperator(authenticatedEmail)) {
+    return {
+      active: true,
+      plan: 'pro',
+      status: 'internal',
+      trialEndsAt: null,
+      currentPeriodEnd: null,
+    };
   }
 
   // Select by ENTITLEMENT, not by recency. Taking "the newest row" meant that
@@ -159,17 +178,19 @@ export function isSubscriptionEntitled(subscription: Record<string, any>, now = 
 export async function consumeFeatureUsage({
   supabase,
   userId,
+  userEmail,
   feature,
   accountId,
   metadata,
 }: {
   supabase: any;
   userId: string;
+  userEmail: string | null | undefined;
   feature: MeteredFeature;
   accountId?: string | null;
   metadata?: Record<string, unknown>;
 }): Promise<FeatureAccessResult> {
-  const subscription = await getSubscriptionAccess(supabase, userId);
+  const subscription = await getSubscriptionAccess(supabase, userId, userEmail);
   if (!subscription.active || !subscription.plan) {
     return { ok: false, reason: 'subscription_required', plan: subscription.plan };
   }
