@@ -1,4 +1,4 @@
-import { ClipboardCheck, ShieldCheck, Link2 } from 'lucide-react';
+import { ClipboardCheck, ShieldCheck, Link2, Sparkles, DatabaseZap } from 'lucide-react';
 import { redirect } from 'next/navigation';
 import { getRequestAuthContext } from '@/lib/supabase/server';
 import { assertSupabaseRead } from '@/lib/supabase/query-errors';
@@ -92,6 +92,20 @@ export default async function AuditPage({
     );
   }
 
+  const metricsSnapshot = (audit.metrics_snapshot ?? {}) as any;
+  const liveCoverage = metricsSnapshot.live_coverage as
+    | { coverage_pct?: number; confidence?: string; failed_checks?: string[] }
+    | null;
+  const aiNarrative = metricsSnapshot.ai_narrative as
+    | {
+        headline_ar?: string;
+        executive_summary_ar?: string;
+        priorities_ar?: string[];
+        risks_ar?: string[];
+        growth_ar?: string[];
+      }
+    | null;
+
   const [recommendationsResult, latestReportResult] = await Promise.all([
     supabase
       .from('recommendations')
@@ -138,6 +152,41 @@ export default async function AuditPage({
         {!subscription.active && <SubscriptionGate compact />}
         {params?.error && <Alert tone="danger">{auditErrorMessage(params.error)}</Alert>}
 
+        {liveCoverage && Number(liveCoverage.coverage_pct ?? 0) < 100 && (
+          <Alert tone={liveCoverage.confidence === 'limited' ? 'danger' : 'warning'} title="تغطية الفحص غير مكتملة">
+            اكتملت {Number(liveCoverage.coverage_pct ?? 0)}% من طبقات البيانات الحية. لم نعتبر البيانات المفقودة علامة سلامة.
+            {Array.isArray(liveCoverage.failed_checks) && liveCoverage.failed_checks.length > 0
+              ? ` تعذر فحص: ${liveCoverage.failed_checks.join('، ')}.`
+              : null}
+          </Alert>
+        )}
+
+        {aiNarrative?.headline_ar && (
+          <section className="surface-card overflow-hidden border-primary/25">
+            <div className="flex items-start gap-4 p-5 sm:p-6">
+              <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg bg-primary/12 text-primary">
+                <Sparkles className="h-5 w-5" aria-hidden />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-lg font-bold text-foreground">{aiNarrative.headline_ar}</h2>
+                  <StatusBadge tone="brand">قراءة Claude للأدلة</StatusBadge>
+                </div>
+                {aiNarrative.executive_summary_ar && (
+                  <p className="mt-2 max-w-4xl whitespace-pre-line text-sm leading-7 text-muted-foreground">
+                    {aiNarrative.executive_summary_ar}
+                  </p>
+                )}
+                <div className="mt-5 grid gap-4 md:grid-cols-3">
+                  <NarrativeList title="الأولوية الآن" items={aiNarrative.priorities_ar} />
+                  <NarrativeList title="المخاطر" items={aiNarrative.risks_ar} />
+                  <NarrativeList title="فرص النمو" items={aiNarrative.growth_ar} />
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
+
         <div className="grid gap-5 lg:grid-cols-3">
           <section className="surface-card p-6 lg:col-span-2">
             <div className="mb-6">
@@ -155,6 +204,7 @@ export default async function AuditPage({
                 <CategoryScore label="المزايدة" value={audit.category_scores?.bidding ?? 0} />
                 <CategoryScore label="الميزانية" value={audit.category_scores?.budget ?? 0} />
                 <CategoryScore label="الاستهداف" value={audit.category_scores?.targeting ?? 0} />
+                <CategoryScore label="ثقة البيانات" value={audit.category_scores?.data_confidence ?? 0} />
               </div>
             </div>
           </section>
@@ -187,10 +237,14 @@ export default async function AuditPage({
           {recs.length === 0 ? (
             <EmptyState
               bare
-              tone="neutral"
-              icon={ClipboardCheck}
-              title="لا توجد توصيات محفوظة لهذا الفحص"
-              description="الفحص اكتمل ولم يجد فرصة تستحق تعديلاً على الحساب. أعد الفحص بعد تجميع بيانات أداء أحدث."
+              tone={liveCoverage && Number(liveCoverage.coverage_pct ?? 0) < 100 ? 'warning' : 'neutral'}
+              icon={liveCoverage && Number(liveCoverage.coverage_pct ?? 0) < 100 ? DatabaseZap : ClipboardCheck}
+              title={liveCoverage && Number(liveCoverage.coverage_pct ?? 0) < 100 ? 'الفحص المتقدم لم يكتمل' : 'لا توجد توصيات مدعومة بالأدلة حالياً'}
+              description={
+                liveCoverage && Number(liveCoverage.coverage_pct ?? 0) < 100
+                  ? 'تعذر جمع بعض طبقات Google Ads، لذلك لم نصدر حكماً أخضر وهمياً. أعد الفحص لاستكمال البيانات.'
+                  : 'اكتملت طبقات الفحص ولم تظهر فرصة تتجاوز حدود الأدلة الحالية. أعد الفحص بعد تجميع بيانات أداء أحدث.'
+              }
               action={
                 <a href="/campaigns" className={buttonClasses({ variant: 'outline' })}>
                   استعراض الحملات
@@ -199,7 +253,13 @@ export default async function AuditPage({
             />
           ) : (
             <div className="divide-y divide-border">
-              {recs.map((r: any, idx: number) => (
+              {recs.map((r: any, idx: number) => {
+                const evidence = Array.isArray(r.action_payload?.evidence_ar)
+                  ? r.action_payload.evidence_ar.filter((item: unknown) => typeof item === 'string').slice(0, 5)
+                  : [];
+                const confidence = String(r.action_payload?.confidence ?? '');
+                const source = String(r.action_payload?.source ?? '');
+                return (
                 <div key={r.id} className="flex flex-col gap-4 p-5 sm:flex-row sm:items-start">
                   <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-muted font-bold text-muted-foreground">
                     {idx + 1}
@@ -211,8 +271,23 @@ export default async function AuditPage({
                       <StatusBadge tone={recommendationStatusTone(r.status)}>
                         {recommendationStatusLabel(r.status)}
                       </StatusBadge>
+                      {confidence && <StatusBadge tone={confidence === 'high' ? 'success' : confidence === 'medium' ? 'warning' : 'neutral'}>ثقة {confidenceLabelAr(confidence)}</StatusBadge>}
+                      {source && <StatusBadge tone="info">{sourceLabelAr(source)}</StatusBadge>}
                     </div>
                     <p className="mt-1.5 text-sm leading-7 text-muted-foreground">{r.description}</p>
+                    {evidence.length > 0 && (
+                      <div className="mt-3 rounded-lg border border-border bg-muted/45 p-3">
+                        <div className="text-xs font-semibold text-foreground">الدليل من الحساب</div>
+                        <ul className="mt-2 space-y-1 text-xs leading-6 text-muted-foreground">
+                          {evidence.map((item: string, evidenceIndex: number) => (
+                            <li key={`${r.id}-evidence-${evidenceIndex}`} className="flex gap-2">
+                              <span className="mt-2 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-primary" aria-hidden />
+                              <span>{item}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                     {r.expected_impact?.delta_sar_per_month && (
                       <p className="mt-2 inline-flex items-center gap-1 rounded-md bg-emerald-50 dark:bg-emerald-500/15 px-2 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-300">
                         تأثير متوقع: {formatCurrency(r.expected_impact.delta_sar_per_month, selectedAccount?.currency_code)}/شهر
@@ -233,7 +308,8 @@ export default async function AuditPage({
                     )}
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </section>
@@ -306,6 +382,37 @@ function CategoryScore({ label, value }: { label: string; value: number }) {
       </div>
     </div>
   );
+}
+
+function NarrativeList({ title, items }: { title: string; items?: string[] }) {
+  if (!items?.length) return null;
+  return (
+    <div className="rounded-lg border border-border bg-muted/45 p-4">
+      <div className="text-xs font-semibold text-foreground">{title}</div>
+      <ul className="mt-2 space-y-2 text-xs leading-6 text-muted-foreground">
+        {items.slice(0, 4).map((item, index) => (
+          <li key={`${title}-${index}`} className="flex gap-2">
+            <span className="mt-2 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-primary" aria-hidden />
+            <span>{item}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function confidenceLabelAr(confidence: string) {
+  if (confidence === 'high') return 'عالية';
+  if (confidence === 'medium') return 'متوسطة';
+  return 'محدودة';
+}
+
+function sourceLabelAr(source: string) {
+  if (source === 'google_ads_live') return 'Google Ads مباشر';
+  if (source === 'campaign_cache') return 'بيانات المزامنة';
+  if (source === 'sector_benchmark') return 'مقارنة القطاع';
+  if (source === 'data_coverage') return 'تغطية البيانات';
+  return 'بيانات الحساب';
 }
 
 function RunAuditForm({

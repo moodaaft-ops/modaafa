@@ -5,6 +5,9 @@ import { decrypt } from '@/lib/crypto';
 import { getCustomer } from '@/lib/google-ads/client';
 import { syncCampaignCacheWithLoginFallback } from '@/lib/google-ads/sync';
 import { runRuleBasedAudit } from '@/lib/audit/rule-engine';
+import { collectAuditLiveSnapshot, type AuditLiveSnapshot } from '@/lib/audit/live-snapshot';
+import { generateAuditNarrative } from '@/lib/audit/ai-analyst';
+import { auditFindingTargetKey } from '@/lib/audit/fingerprint';
 import { buildAuditReportRow } from '@/lib/audit/report';
 import { getSectorBenchmark } from '@/lib/benchmarks/compute';
 import {
@@ -100,7 +103,7 @@ export async function POST(req: NextRequest) {
 
   const startTime = Date.now();
   let syncError: string | null = null;
-  let conversionTracking: { enabled_actions: number } | null = null;
+  let liveSnapshot: AuditLiveSnapshot | null = null;
 
   try {
     let refreshTokenForChecks: string | null = null;
@@ -129,26 +132,16 @@ export async function POST(req: NextRequest) {
       console.warn('Campaign sync failed, continuing with cached data', syncError);
     }
 
-    // Conversion tracking is the single most important thing to verify: with
-    // broken tracking every downstream number lies. Best-effort — a failed
-    // lookup degrades to "unknown" rather than failing the audit.
+    // Each live diagnostic is isolated inside the collector. A single GAQL
+    // incompatibility therefore lowers the visible coverage score instead of
+    // turning missing evidence into a false green result.
     if (refreshTokenForChecks) {
-      try {
-        const customer = getCustomer(
-          account.customer_id,
-          refreshTokenForChecks,
-          account.manager_id ?? undefined
-        ) as any;
-        const conversionActions = await customer.query(`
-          SELECT conversion_action.resource_name, conversion_action.status
-          FROM conversion_action
-          WHERE conversion_action.status = 'ENABLED'
-          LIMIT 50
-        `);
-        conversionTracking = { enabled_actions: conversionActions.length };
-      } catch (trackingError) {
-        console.warn('Conversion tracking check failed during audit', trackingError);
-      }
+      const customer = getCustomer(
+        account.customer_id,
+        refreshTokenForChecks,
+        account.manager_id ?? undefined
+      ) as any;
+      liveSnapshot = await collectAuditLiveSnapshot(customer);
     }
 
     const { data: campaigns, error: campaignErr } = await supabase
@@ -182,8 +175,19 @@ export async function POST(req: NextRequest) {
         currency_code: account.currency_code,
       },
       campaigns: campaigns ?? [],
-      conversionTracking,
+      conversionTracking: liveSnapshot?.conversion_tracking ?? null,
       benchmark: sectorBenchmark,
+      liveSnapshot,
+    });
+
+    const aiNarrative = await generateAuditNarrative({
+      account: {
+        customer_id: account.customer_id,
+        customer_name: account.customer_name,
+        currency_code: account.currency_code,
+      },
+      result,
+      snapshot: liveSnapshot,
     });
 
     const duration = Date.now() - startTime;
@@ -202,6 +206,16 @@ export async function POST(req: NextRequest) {
           campaigns_count: campaigns?.length ?? 0,
           sync_error: syncError,
           sector_benchmark: sectorBenchmark,
+          live_coverage: liveSnapshot?.coverage ?? null,
+          live_counts: liveSnapshot
+            ? {
+                campaigns: liveSnapshot.campaigns.length,
+                search_terms: liveSnapshot.search_terms.length,
+                keywords: liveSnapshot.keywords.length,
+                ads: liveSnapshot.ads.length,
+              }
+            : null,
+          ai_narrative: aiNarrative,
         },
         estimated_monthly_waste: result.estimated_monthly_waste_sar,
         duration_ms: duration,
@@ -307,12 +321,7 @@ async function safeJson(req: NextRequest) {
 function auditFindingFingerprint(accountId: string, actionPayload: any) {
   const operation = String(actionPayload?.operation ?? 'unknown');
   const details = actionPayload?.details ?? {};
-  const target =
-    details.campaign_id ??
-    details.budget_resource ??
-    details.resource_name ??
-    details.customer_id ??
-    JSON.stringify(details);
+  const target = auditFindingTargetKey(details);
   return createHash('sha256')
     .update(`audit:${accountId}:${operation}:${String(target)}`)
     .digest('hex');

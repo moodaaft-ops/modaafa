@@ -1,6 +1,7 @@
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import { moneyMetric } from '@/lib/google-ads/metrics';
 import { formatCurrency } from '@/lib/utils';
+import type { AuditLiveSnapshot, AuditConfidence } from '@/lib/audit/live-snapshot';
 
 /**
  * Shape of a completed audit.
@@ -35,6 +36,9 @@ export interface AuditResult {
     action_payload: {
       operation: string;
       details: Record<string, unknown>;
+      evidence_ar?: string[];
+      confidence?: AuditConfidence;
+      source?: 'google_ads_live' | 'campaign_cache' | 'sector_benchmark' | 'data_coverage';
     };
   }>;
 }
@@ -62,6 +66,7 @@ export function runRuleBasedAudit({
   campaigns,
   conversionTracking = null,
   benchmark = null,
+  liveSnapshot = null,
 }: {
   account: AccountContext;
   campaigns: CachedCampaign[];
@@ -81,6 +86,7 @@ export function runRuleBasedAudit({
     median_ctr: number | null;
     median_roas: number | null;
   } | null;
+  liveSnapshot?: AuditLiveSnapshot | null;
 }): AuditResult {
   const active = campaigns.filter((campaign) => campaign.status === 'ENABLED');
   const m30 = campaigns.map((campaign) => ({
@@ -90,7 +96,9 @@ export function runRuleBasedAudit({
   const activeM30 = m30.filter(({ campaign }) => campaign.status === 'ENABLED');
 
   const currencyCode = account.currency_code ?? 'SAR';
-  const spend30 = sum(m30, ({ metrics }) => metrics.cost);
+  const cachedSpend30 = sum(m30, ({ metrics }) => metrics.cost);
+  const liveSpend30 = sum(liveSnapshot?.campaigns ?? [], (campaign) => campaign.cost);
+  const spend30 = cachedSpend30 > 0 ? cachedSpend30 : liveSpend30;
   const spend7 = sum(campaigns, (campaign) => normalizeMetrics(campaign.metrics_7d).cost);
   const conversions30 = sum(m30, ({ metrics }) => metrics.conversions);
   const clicks30 = sum(m30, ({ metrics }) => metrics.clicks);
@@ -303,36 +311,319 @@ export function runRuleBasedAudit({
     });
   }
 
+  const liveWastedTerms = (liveSnapshot?.search_terms ?? [])
+    .filter((term) => term.conversions === 0 && (term.clicks >= 7 || term.cost >= Math.max(20, avgCpa * 0.25)))
+    .sort((a, b) => b.cost - a.cost);
+  const lowQualityKeywords = (liveSnapshot?.keywords ?? [])
+    .filter((keyword) => keyword.quality_score !== null && keyword.quality_score <= 5 && (keyword.cost > 0 || keyword.impressions >= 100))
+    .sort((a, b) => b.cost - a.cost);
+  const weakOrDisapprovedAds = (liveSnapshot?.ads ?? [])
+    .filter((ad) => ad.approval_status === 'DISAPPROVED' || (ad.ad_strength === 'POOR' && ad.impressions >= 100))
+    .sort((a, b) => b.impressions - a.impressions);
+
+  for (const term of liveWastedTerms.slice(0, 5)) {
+    findings.push({
+      category: 'keywords',
+      severity: term.cost >= Math.max(100, avgCpa) ? 'critical' : 'medium',
+      title_ar: `عبارة بحث تستهلك الميزانية بلا نتيجة: ${term.term}`,
+      title_en: 'Search term spending without conversions',
+      description_ar: `ظهرت عبارة البحث الفعلية هذه للمستخدمين وحققت ${term.clicks} نقرة بتكلفة ${formatCurrency(term.cost, currencyCode)} دون تحويل. راجع ملاءمتها قبل إضافتها ككلمة سلبية؛ لا ينفذ الفحص أي تعديل تلقائياً.`,
+      description_en: 'A real search term consumed budget without a recorded conversion.',
+      expected_impact: { metric: 'cost', delta_pct: 8, delta_sar_per_month: round(term.cost) },
+      action_payload: {
+        operation: 'review_wasted_search_term',
+        details: {
+          search_term: term.term,
+          campaign_name: term.campaign_name,
+          campaign_resource_name: term.campaign_resource_name,
+          ad_group_resource_name: term.ad_group_resource_name,
+          cost_30d: term.cost,
+          clicks_30d: term.clicks,
+          currency_code: currencyCode,
+        },
+        evidence_ar: [
+          `${term.clicks} نقرة خلال 30 يوماً`,
+          `${formatCurrency(term.cost, currencyCode)} صرف بلا تحويلات`,
+          `الحملة: ${term.campaign_name || 'غير مسماة'}`,
+        ],
+        confidence: 'high',
+        source: 'google_ads_live',
+      },
+    });
+  }
+
+  for (const keyword of lowQualityKeywords.slice(0, 4)) {
+    findings.push({
+      category: 'keywords',
+      severity: keyword.quality_score !== null && keyword.quality_score <= 3 ? 'critical' : 'medium',
+      title_ar: `جودة كلمة منخفضة: ${keyword.text}`,
+      title_en: 'Low keyword quality score',
+      description_ar: `درجة الجودة ${keyword.quality_score}/10، وهذا قد يرفع تكلفة النقرة ويضعف ترتيب الإعلان. راجع صلة الإعلان وتجربة صفحة الهبوط وتوقع النقر لهذه الكلمة.`,
+      description_en: 'Keyword quality score is low and may increase CPC or weaken ad rank.',
+      expected_impact: { metric: 'cpc', delta_pct: 10, delta_sar_per_month: round(keyword.cost * 0.12) },
+      action_payload: {
+        operation: 'review_low_quality_keyword',
+        details: {
+          keyword: keyword.text,
+          resource_name: keyword.resource_name,
+          quality_score: keyword.quality_score,
+          expected_ctr: keyword.expected_ctr,
+          ad_relevance: keyword.ad_relevance,
+          landing_page_experience: keyword.landing_page_experience,
+        },
+        evidence_ar: [
+          `درجة الجودة ${keyword.quality_score}/10`,
+          `${keyword.impressions} ظهور و${keyword.clicks} نقرة`,
+          `${formatCurrency(keyword.cost, currencyCode)} صرف خلال 30 يوماً`,
+        ],
+        confidence: 'high',
+        source: 'google_ads_live',
+      },
+    });
+  }
+
+  for (const ad of weakOrDisapprovedAds.slice(0, 3)) {
+    const disapproved = ad.approval_status === 'DISAPPROVED';
+    findings.push({
+      category: 'ads',
+      severity: disapproved ? 'critical' : 'medium',
+      title_ar: disapproved ? `إعلان غير مؤهل للعرض: ${ad.ad_group_name}` : `قوة إعلان ضعيفة: ${ad.ad_group_name}`,
+      title_en: disapproved ? 'Disapproved ad' : 'Poor ad strength',
+      description_ar: disapproved
+        ? 'Google صنفت الإعلان كغير موافق عليه. راجع سبب السياسة والإعلان قبل توقع أي ظهور منه.'
+        : 'قوة الإعلان مصنفة POOR مع وجود ظهور فعلي. حسّن تنوع العناوين والأوصاف وصلتها بالكلمات.',
+      description_en: disapproved ? 'Google reports a disapproved ad.' : 'The ad has POOR strength despite receiving impressions.',
+      expected_impact: { metric: 'ctr', delta_pct: 10, delta_sar_per_month: round(ad.cost * 0.08) },
+      action_payload: {
+        operation: 'review_ad_policy_or_strength',
+        details: {
+          resource_name: ad.resource_name,
+          campaign_name: ad.campaign_name,
+          ad_group_name: ad.ad_group_name,
+          ad_strength: ad.ad_strength,
+          approval_status: ad.approval_status,
+        },
+        evidence_ar: [
+          `حالة الموافقة: ${ad.approval_status ?? 'غير متاحة'}`,
+          `قوة الإعلان: ${ad.ad_strength ?? 'غير متاحة'}`,
+          `${ad.impressions} ظهور ونسبة نقر ${formatPercent(ad.ctr)}`,
+        ],
+        confidence: 'high',
+        source: 'google_ads_live',
+      },
+    });
+  }
+
+  const liveCampaignById = new Map((liveSnapshot?.campaigns ?? []).map((campaign) => [campaign.id, campaign]));
+  const budgetLimitedWinners = (liveSnapshot?.search_share ?? [])
+    .map((share) => ({ share, campaign: liveCampaignById.get(share.campaign_id) }))
+    .filter(({ share, campaign }) =>
+      Boolean(
+        campaign &&
+        campaign.conversions > 0 &&
+        share.lost_budget_share !== null &&
+        share.lost_budget_share >= 0.15 &&
+        (avgCpa <= 0 || campaign.cost / campaign.conversions <= avgCpa * 1.1)
+      )
+    )
+    .sort((a, b) => (b.share.lost_budget_share ?? 0) - (a.share.lost_budget_share ?? 0));
+
+  for (const { share, campaign } of budgetLimitedWinners.slice(0, 3)) {
+    if (!campaign) continue;
+    findings.push({
+      category: 'budget',
+      severity: 'growth',
+      title_ar: `حملة ناجحة تفقد ظهوراً بسبب الميزانية: ${campaign.name}`,
+      title_en: 'Efficient campaign is budget limited',
+      description_ar: `الحملة تحقق تحويلات، لكنها تفقد ${formatPercent(share.lost_budget_share ?? 0)} من فرص ظهور البحث بسبب الميزانية. راجع توزيع الميزانية بينها وبين الحملات الأضعف قبل رفع إجمالي الصرف.`,
+      description_en: 'An efficient campaign is losing search impression share because of budget.',
+      expected_impact: { metric: 'conversions', delta_pct: 12, delta_sar_per_month: 0 },
+      action_payload: {
+        operation: 'review_budget_limited_winner',
+        details: {
+          campaign_id: campaign.id,
+          campaign_name: campaign.name,
+          lost_budget_share: share.lost_budget_share,
+          conversions_30d: campaign.conversions,
+          cpa_30d: campaign.conversions > 0 ? round(campaign.cost / campaign.conversions) : null,
+        },
+        evidence_ar: [
+          `${round(campaign.conversions, 2)} تحويل خلال 30 يوماً`,
+          `فقد بسبب الميزانية ${formatPercent(share.lost_budget_share ?? 0)}`,
+          `حصة الظهور ${share.impression_share === null ? 'غير متاحة' : formatPercent(share.impression_share)}`,
+        ],
+        confidence: 'high',
+        source: 'google_ads_live',
+      },
+    });
+  }
+
+  const rankLimited = (liveSnapshot?.search_share ?? [])
+    .filter((share) => share.lost_rank_share !== null && share.lost_rank_share >= 0.35)
+    .sort((a, b) => (b.lost_rank_share ?? 0) - (a.lost_rank_share ?? 0));
+  for (const share of rankLimited.slice(0, 2)) {
+    findings.push({
+      category: 'bidding',
+      severity: 'medium',
+      title_ar: `فقد ظهور مرتفع بسبب الترتيب: ${share.campaign_name}`,
+      title_en: 'High search impression share loss from rank',
+      description_ar: `الحملة تفقد ${formatPercent(share.lost_rank_share ?? 0)} من فرص ظهور البحث بسبب ترتيب الإعلان. راجع الجودة والمزايدة معاً؛ رفع المزايدة وحده ليس علاجاً دائماً.`,
+      description_en: 'The campaign loses substantial search impression share due to ad rank.',
+      expected_impact: { metric: 'impressions', delta_pct: 15, delta_sar_per_month: 0 },
+      action_payload: {
+        operation: 'review_search_rank_loss',
+        details: { campaign_id: share.campaign_id, campaign_name: share.campaign_name, lost_rank_share: share.lost_rank_share },
+        evidence_ar: [`فقد بسبب الترتيب ${formatPercent(share.lost_rank_share ?? 0)}`],
+        confidence: 'high',
+        source: 'google_ads_live',
+      },
+    });
+  }
+
+  const keywordTexts = new Set((liveSnapshot?.keywords ?? []).map((keyword) => normalizeTerm(keyword.text)));
+  const expansionTerms = (liveSnapshot?.search_terms ?? [])
+    .filter((term) => term.conversions >= 2 && term.status !== 'ADDED' && !keywordTexts.has(normalizeTerm(term.term)))
+    .sort((a, b) => b.conversions - a.conversions);
+  for (const term of expansionTerms.slice(0, 3)) {
+    findings.push({
+      category: 'keywords',
+      severity: 'growth',
+      title_ar: `طلب مثبت يستحق تحكماً أدق: ${term.term}`,
+      title_en: 'Converting search term is not managed as a keyword',
+      description_ar: `عبارة البحث حققت ${round(term.conversions, 2)} تحويل وهي غير مضافة ككلمة مستقلة. راجع إضافتها بتطابق مناسب للحصول على تحكم أوضح في المزايدة والرسالة.`,
+      description_en: 'A converting search term is not yet managed as its own keyword.',
+      expected_impact: { metric: 'conversions', delta_pct: 5, delta_sar_per_month: 0 },
+      action_payload: {
+        operation: 'review_converting_search_term',
+        details: {
+          search_term: term.term,
+          campaign_name: term.campaign_name,
+          ad_group_resource_name: term.ad_group_resource_name,
+          conversions_30d: term.conversions,
+          conversion_value_30d: term.conversion_value,
+        },
+        evidence_ar: [`${round(term.conversions, 2)} تحويل خلال 30 يوماً`, `${term.clicks} نقرة`, `الحالة في Google: ${term.status || 'غير مضافة'}`],
+        confidence: 'high',
+        source: 'google_ads_live',
+      },
+    });
+  }
+
+  const liveConversions = sum(liveSnapshot?.campaigns ?? [], (campaign) => campaign.conversions);
+  const liveConversionValue = sum(liveSnapshot?.campaigns ?? [], (campaign) => campaign.conversion_value);
+  if (liveSnapshot?.coverage.campaigns && liveConversions >= 5 && liveConversionValue === 0) {
+    findings.push({
+      category: 'targeting',
+      severity: 'medium',
+      title_ar: 'التحويلات مسجلة بلا قيمة مالية',
+      title_en: 'Conversions have no recorded value',
+      description_ar: `سجل الحساب ${round(liveConversions, 2)} تحويل خلال 30 يوماً، لكن قيمة التحويل الإجمالية صفر. بدون قيمة حقيقية لا يمكن قياس العائد ROAS أو التمييز بين طلب قوي وضعيف.`,
+      description_en: 'Conversions are recorded without monetary value, so ROAS cannot be trusted.',
+      expected_impact: { metric: 'roas', delta_pct: 0, delta_sar_per_month: 0 },
+      action_payload: {
+        operation: 'review_conversion_values',
+        details: { conversions_30d: liveConversions, conversion_value_30d: liveConversionValue },
+        evidence_ar: [`${round(liveConversions, 2)} تحويل`, 'قيمة التحويل الإجمالية 0'],
+        confidence: 'high',
+        source: 'google_ads_live',
+      },
+    });
+  }
+
+  const pausedWinners = (liveSnapshot?.campaigns ?? [])
+    .filter((campaign) => campaign.status === 'PAUSED' && campaign.conversions >= 3)
+    .sort((a, b) => b.conversions - a.conversions);
+  for (const campaign of pausedWinners.slice(0, 2)) {
+    findings.push({
+      category: 'structure',
+      severity: 'growth',
+      title_ar: `حملة موقوفة كانت تحقق نتائج: ${campaign.name}`,
+      title_en: 'Paused campaign had recent conversions',
+      description_ar: `الحملة موقوفة حالياً لكنها سجلت ${round(campaign.conversions, 2)} تحويل في نافذة الثلاثين يوماً. راجع سبب الإيقاف والموسمية قبل تجاهلها.`,
+      description_en: 'A paused campaign still shows recent conversions and deserves a business review.',
+      expected_impact: { metric: 'conversions', delta_pct: 0, delta_sar_per_month: 0 },
+      action_payload: {
+        operation: 'review_paused_winner',
+        details: { campaign_id: campaign.id, campaign_name: campaign.name, conversions_30d: campaign.conversions },
+        evidence_ar: [`${round(campaign.conversions, 2)} تحويل خلال 30 يوماً`, 'الحالة الحالية PAUSED'],
+        confidence: 'medium',
+        source: 'google_ads_live',
+      },
+    });
+  }
+
+  const regressions = activeM30
+    .map(({ campaign, metrics }) => ({ campaign, m30: metrics, m7: normalizeMetrics(campaign.metrics_7d) }))
+    .filter(({ m30, m7 }) => m30.conversions > 0 && m7.conversions > 0 && m7.cpa > m30.cpa * 1.35 && m7.cost >= 50)
+    .sort((a, b) => b.m7.cpa / Math.max(1, b.m30.cpa) - a.m7.cpa / Math.max(1, a.m30.cpa));
+  for (const item of regressions.slice(0, 2)) {
+    findings.push({
+      category: 'bidding',
+      severity: 'medium',
+      title_ar: `تراجع حديث في الكفاءة: ${item.campaign.name ?? item.campaign.google_campaign_id}`,
+      title_en: 'Recent campaign efficiency regression',
+      description_ar: `تكلفة التحويل في آخر 7 أيام ${formatCurrency(item.m7.cpa, currencyCode)} مقابل ${formatCurrency(item.m30.cpa, currencyCode)} في متوسط 30 يوماً. افحص التغييرات الأخيرة وعبارات البحث قبل اتخاذ قرار ميزانية.`,
+      description_en: 'Seven-day CPA is materially worse than the 30-day baseline.',
+      expected_impact: { metric: 'cpa', delta_pct: 10, delta_sar_per_month: round(item.m7.cost * 0.1) },
+      action_payload: {
+        operation: 'review_recent_efficiency_regression',
+        details: { campaign_id: item.campaign.google_campaign_id, cpa_7d: item.m7.cpa, cpa_30d: item.m30.cpa },
+        evidence_ar: [`CPA آخر 7 أيام: ${formatCurrency(item.m7.cpa, currencyCode)}`, `CPA آخر 30 يوماً: ${formatCurrency(item.m30.cpa, currencyCode)}`],
+        confidence: 'medium',
+        source: 'campaign_cache',
+      },
+    });
+  }
+
+  if (liveSnapshot && liveSnapshot.coverage.coverage_pct < 100) {
+    findings.push({
+      category: 'structure',
+      severity: liveSnapshot.coverage.confidence === 'limited' ? 'critical' : 'medium',
+      title_ar: 'الفحص المتقدم لم يغطِ كل طبقات الحساب',
+      title_en: 'Advanced audit coverage is incomplete',
+      description_ar: `اكتملت ${liveSnapshot.coverage.coverage_pct}% من طبقات الفحص الحي. لم نعتبر غياب البيانات دليلاً على السلامة، وأبرزنا النتيجة بثقة ${confidenceLabel(liveSnapshot.coverage.confidence)}. أعد الفحص لاستكمال: ${liveSnapshot.coverage.failed_checks.join('، ')}.`,
+      description_en: 'Some live Google Ads diagnostic layers were unavailable, so the score is confidence-capped.',
+      expected_impact: { metric: 'data_quality', delta_pct: 0, delta_sar_per_month: 0 },
+      action_payload: {
+        operation: 'retry_incomplete_audit',
+        details: { coverage_pct: liveSnapshot.coverage.coverage_pct, failed_checks: liveSnapshot.coverage.failed_checks },
+        evidence_ar: [`نسبة تغطية الفحص ${liveSnapshot.coverage.coverage_pct}%`, ...liveSnapshot.coverage.failed_checks.map((check) => `تعذر: ${check}`)],
+        confidence: liveSnapshot.coverage.confidence,
+        source: 'data_coverage',
+      },
+    });
+  }
+
   const estimatedWaste = Math.min(
     spend30,
     sum(spendNoConversions, ({ metrics }) => metrics.cost * 0.5) +
-      sum(expensiveCampaigns, ({ metrics }) => metrics.cost * 0.12)
+      sum(expensiveCampaigns, ({ metrics }) => metrics.cost * 0.12) +
+      sum(liveWastedTerms, (term) => term.cost)
   );
-  const score = clamp(
-    88 -
-      (active.length === 0 ? 30 : 0) -
-      // Broken tracking undermines every other number, so it drags the
-      // headline score harder than any single wasteful campaign.
-      (trackingMissing ? 18 : trackingSuspect ? 12 : 0) -
-      Math.min(22, (estimatedWaste / Math.max(1, spend30)) * 35) -
-      (ctr30 > 0 && ctr30 < 0.04 ? 8 : 0) -
-      (zeroSpendActive.length > 0 ? 5 : 0),
-    35,
-    94
+  const severityPenalty = sum(findings, (finding) =>
+    finding.severity === 'critical' ? 12 : finding.severity === 'medium' ? 6 : 2
+  );
+  const coverageCap = liveSnapshot
+    ? liveSnapshot.coverage.confidence === 'high'
+      ? 96
+      : liveSnapshot.coverage.confidence === 'medium'
+        ? 82
+        : 72
+    : 72;
+  const score = Math.min(
+    coverageCap,
+    clamp(96 - severityPenalty - Math.min(12, (estimatedWaste / Math.max(1, spend30)) * 20), 25, 96)
   );
 
   const categoryScores = {
-    structure: clamp(active.length > 0 ? 78 - zeroSpendActive.length * 4 : 45, 35, 92),
-    ad_quality: clamp(ctr30 >= 0.06 ? 85 : ctr30 >= 0.035 ? 72 : 58, 40, 90),
-    keywords: clamp(spendNoConversions.length > 0 ? 62 : 78, 45, 90),
-    negative_keywords: clamp(spendNoConversions.length > 0 ? 55 : 75, 40, 88),
-    bidding: clamp(expensiveCampaigns.length > 0 ? 61 : 78, 45, 90),
-    budget: clamp(estimatedWaste > spend30 * 0.2 ? 58 : 80, 40, 92),
-    targeting: clamp(
-      trackingMissing ? 40 : trackingSuspect ? 45 : conversions30 > 0 ? 76 : spend30 > 0 ? 52 : 68,
-      40,
-      88
-    ),
+    structure: scoreForCategory(findings, ['structure']),
+    ad_quality: scoreForCategory(findings, ['ads']),
+    keywords: scoreForCategory(findings, ['keywords']),
+    negative_keywords: scoreForCategory(findings, ['keywords'], liveWastedTerms.length > 0 ? 8 : 0),
+    bidding: scoreForCategory(findings, ['bidding']),
+    budget: scoreForCategory(findings, ['budget']),
+    targeting: scoreForCategory(findings, ['targeting']),
+    data_confidence: liveSnapshot?.coverage.coverage_pct ?? 0,
   };
 
   const sortedFindings = findings
@@ -406,4 +697,31 @@ function formatPercent(value: number) {
   // Latin digits: this string is embedded in findings that are also read
   // by the model and shown next to other Latin-numeral metrics.
   return `${round(value * 100, 1)}%`;
+}
+
+function scoreForCategory(
+  findings: AuditResult['findings'],
+  categories: string[],
+  extraPenalty = 0
+) {
+  const penalty = sum(
+    findings.filter((finding) => categories.includes(finding.category)),
+    (finding) => finding.severity === 'critical' ? 18 : finding.severity === 'medium' ? 10 : 4
+  );
+  return Math.round(clamp(94 - penalty - extraPenalty, 28, 94));
+}
+
+function normalizeTerm(value: string) {
+  return value
+    .normalize('NFKC')
+    .replace(/[ًٌٍَُِّْـ]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLocaleLowerCase('ar');
+}
+
+function confidenceLabel(value: AuditConfidence) {
+  if (value === 'high') return 'عالية';
+  if (value === 'medium') return 'متوسطة';
+  return 'محدودة';
 }
