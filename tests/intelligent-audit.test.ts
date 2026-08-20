@@ -5,6 +5,7 @@ import { parseAuditNarrative } from '../lib/audit/ai-analyst';
 import { auditFindingTargetKey } from '../lib/audit/fingerprint';
 import { collectAuditLiveSnapshot, type AuditLiveSnapshot } from '../lib/audit/live-snapshot';
 import { runRuleBasedAudit } from '../lib/audit/rule-engine';
+import { AUDIT_ENGINE_VERSION, auditEngineVersion, isCurrentAuditEngine } from '../lib/audit/version';
 
 const account = {
   customer_id: '3571670180',
@@ -202,6 +203,120 @@ test('live spend is used when the cache is stale instead of reporting zero waste
     liveSnapshot: snapshot(),
   });
   assert.ok(result.estimated_monthly_waste_sar > 0);
+});
+
+test('the current audit engine stamp rejects legacy unversioned results', () => {
+  assert.equal(isCurrentAuditEngine(null), false);
+  assert.equal(isCurrentAuditEngine({}), false);
+  assert.equal(isCurrentAuditEngine({ audit_engine_version: '2' }), false);
+  assert.equal(isCurrentAuditEngine({ audit_engine_version: AUDIT_ENGINE_VERSION - 1 }), false);
+  assert.equal(isCurrentAuditEngine({ audit_engine_version: AUDIT_ENGINE_VERSION }), true);
+  assert.equal(isCurrentAuditEngine({ audit_engine_version: AUDIT_ENGINE_VERSION + 1 }), true);
+  assert.equal(auditEngineVersion({ audit_engine_version: AUDIT_ENGINE_VERSION }), AUDIT_ENGINE_VERSION);
+});
+
+test('real-account-shaped evidence cannot produce a zero-waste healthy audit', () => {
+  const realAccountSnapshot = snapshot({
+    campaigns: [
+      {
+        id: '101',
+        name: '2 ADA Search',
+        resource_name: 'customers/3571670180/campaigns/101',
+        budget_resource_name: 'customers/3571670180/campaignBudgets/1',
+        status: 'ENABLED',
+        type: 'SEARCH',
+        daily_budget: 170,
+        cost: 2216.412536,
+        clicks: 805,
+        impressions: 6828,
+        conversions: 39,
+        conversion_value: 7318.2391,
+        ctr: 0.117897,
+      },
+    ],
+    search_share: [
+      {
+        campaign_id: '101',
+        campaign_name: '2 ADA Search',
+        impression_share: 0.173085,
+        lost_budget_share: 0.564328,
+        lost_rank_share: 0.262587,
+      },
+    ],
+    search_terms: [
+      {
+        term: 'عقيقة',
+        status: 'NONE',
+        campaign_name: '2 ADA Search',
+        campaign_resource_name: 'customers/3571670180/campaigns/101',
+        ad_group_resource_name: 'customers/3571670180/adGroups/201',
+        cost: 81.90941,
+        clicks: 28,
+        impressions: 210,
+        conversions: 0,
+        conversion_value: 0,
+      },
+      {
+        term: 'اضاحي',
+        status: 'NONE',
+        campaign_name: '2 ADA Search',
+        campaign_resource_name: 'customers/3571670180/campaigns/101',
+        ad_group_resource_name: 'customers/3571670180/adGroups/202',
+        cost: 48.07549,
+        clicks: 32,
+        impressions: 240,
+        conversions: 0,
+        conversion_value: 0,
+      },
+      {
+        term: 'أضحية',
+        status: 'NONE',
+        campaign_name: '2 ADA Search',
+        campaign_resource_name: 'customers/3571670180/campaigns/101',
+        ad_group_resource_name: 'customers/3571670180/adGroups/203',
+        cost: 41.38,
+        clicks: 3,
+        impressions: 32,
+        conversions: 0,
+        conversion_value: 0,
+      },
+    ],
+    keywords: [
+      {
+        text: 'عقيقة مولود ذكر',
+        match_type: 'BROAD',
+        resource_name: 'customers/3571670180/adGroupCriteria/201~301',
+        campaign_name: '2 ADA Search',
+        campaign_resource_name: 'customers/3571670180/campaigns/101',
+        ad_group_name: 'عقيقة',
+        ad_group_resource_name: 'customers/3571670180/adGroups/201',
+        cost: 480.542428,
+        clicks: 169,
+        impressions: 1270,
+        conversions: 6,
+        quality_score: 3,
+        expected_ctr: 'BELOW_AVERAGE',
+        ad_relevance: 'AVERAGE',
+        landing_page_experience: 'BELOW_AVERAGE',
+      },
+    ],
+    ads: [],
+    conversion_tracking: { enabled_actions: 13 },
+  });
+
+  const result = runRuleBasedAudit({
+    account,
+    campaigns: [cachedCampaign({ name: '2 ADA Search', daily_budget: 170 })],
+    conversionTracking: { enabled_actions: 13 },
+    liveSnapshot: realAccountSnapshot,
+  });
+  const operations = new Set(result.findings.map((finding) => finding.action_payload.operation));
+
+  assert.ok(result.estimated_monthly_waste_sar >= 170, `expected visible waste, got ${result.estimated_monthly_waste_sar}`);
+  assert.ok(result.health_score < 80, `expected evidence-led risk score, got ${result.health_score}`);
+  assert.ok(operations.has('review_wasted_search_term'));
+  assert.ok(operations.has('review_low_quality_keyword'));
+  assert.ok(operations.has('review_budget_limited_winner'));
 });
 
 test('live collector normalizes micros and isolates a failed diagnostic layer', async () => {

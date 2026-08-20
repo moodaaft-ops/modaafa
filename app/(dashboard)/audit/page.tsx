@@ -16,6 +16,7 @@ import { selectClasses } from '@/lib/ui/field';
 import { cn } from '@/lib/utils';
 import { getSubscriptionAccess, featureAccessMessage } from '@/lib/billing/entitlements';
 import { SubscriptionGate } from '@/lib/ui/subscription-gate';
+import { isCurrentAuditEngine } from '@/lib/audit/version';
 
 type AccountLite = { customer_id: string; customer_name: string | null };
 
@@ -93,6 +94,7 @@ export default async function AuditPage({
   }
 
   const metricsSnapshot = (audit.metrics_snapshot ?? {}) as any;
+  const currentAuditEngine = isCurrentAuditEngine(metricsSnapshot);
   const liveCoverage = metricsSnapshot.live_coverage as
     | { coverage_pct?: number; confidence?: string; failed_checks?: string[] }
     | null;
@@ -105,6 +107,38 @@ export default async function AuditPage({
         growth_ar?: string[];
       }
     | null;
+
+  if (!currentAuditEngine) {
+    return (
+      <>
+        <PageHeader
+          icon={ShieldCheck}
+          title="فحص الحساب"
+          description={`آخر نتيجة محفوظة ${timeAgoAr(audit.ran_at)}، لكنها من محرك الفحص السابق`}
+          account={selectedAccount ? { name: accountName, customerId: selectedAccount.customer_id } : null}
+        />
+        <div className="p-4 sm:p-6 lg:p-8">
+          {params?.error && <Alert tone="danger">{auditErrorMessage(params.error)}</Alert>}
+          <section className="surface-card mx-auto flex max-w-3xl flex-col items-center px-5 py-10 text-center sm:px-10">
+            <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-amber-500/12 text-amber-600 dark:text-amber-300">
+              <DatabaseZap className="h-7 w-7" aria-hidden />
+            </div>
+            <h2 className="mt-5 text-xl font-bold text-foreground">هذه النتيجة قديمة ولا نعتمدها الآن</h2>
+            <p className="mt-3 max-w-2xl text-sm leading-7 text-muted-foreground">
+              حُفظت قبل تشغيل محرك الفحص الذكي الذي يقرأ عبارات البحث وجودة الكلمات وفقد الميزانية والترتيب مباشرة من Google Ads. أخفينا الدرجة والتوصيات القديمة حتى لا تبدو نتيجة سطحية كأنها حكم حديث.
+            </p>
+            <div className="mt-6">
+              {subscription.active ? (
+                <RunAuditForm accounts={accounts} selectedCustomerId={selectedCustomerId} label="تشغيل الفحص الذكي الآن" />
+              ) : (
+                <a href="/billing" className={buttonClasses({ variant: 'primary', size: 'lg' })}>تفعيل الفحص</a>
+              )}
+            </div>
+          </section>
+        </div>
+      </>
+    );
+  }
 
   const [recommendationsResult, latestReportResult] = await Promise.all([
     supabase
