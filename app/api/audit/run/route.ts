@@ -9,6 +9,7 @@ import { collectAuditLiveSnapshot, type AuditLiveSnapshot } from '@/lib/audit/li
 import { generateAuditNarrative } from '@/lib/audit/ai-analyst';
 import { auditFindingTargetKey } from '@/lib/audit/fingerprint';
 import { buildAuditReportRow } from '@/lib/audit/report';
+import { AUDIT_ENGINE_VERSION } from '@/lib/audit/version';
 import { getSectorBenchmark } from '@/lib/benchmarks/compute';
 import {
   getLinkedGoogleAdsAccount,
@@ -200,6 +201,7 @@ export async function POST(req: NextRequest) {
         category_scores: result.category_scores,
         findings: result.findings,
         metrics_snapshot: {
+          audit_engine_version: AUDIT_ENGINE_VERSION,
           customer_id: account.customer_id,
           customer_name: account.customer_name,
           currency_code: account.currency_code,
