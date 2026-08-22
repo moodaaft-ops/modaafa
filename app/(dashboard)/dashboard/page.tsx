@@ -29,6 +29,13 @@ import { PendingSubmitButton } from '@/lib/ui/pending-submit-button';
 import { Alert } from '@/lib/ui/alert';
 import { getSubscriptionAccess } from '@/lib/billing/entitlements';
 import { syncErrorMessage } from '@/lib/ui/sync-errors';
+import {
+  dateRangeHref,
+  resolveDateRange,
+  type DateRangeSearchParams,
+} from '@/lib/analytics/date-range';
+import { loadCampaignsForDateRange } from '@/lib/analytics/campaign-performance';
+import { DateRangePicker } from '@/lib/ui/date-range-picker';
 
 const starterSteps = [
   {
@@ -78,7 +85,7 @@ export default async function DashboardPage({
     subscribed?: string;
     connected?: string;
     accounts?: string;
-  }>;
+  } & DateRangeSearchParams>;
 }) {
   const params = await searchParams;
   const { supabase, user } = await getRequestAuthContext();
@@ -118,27 +125,57 @@ export default async function DashboardPage({
   ]);
   assertSupabaseRead(campaignsResult.error, 'load dashboard campaigns');
   assertSupabaseRead(auditResult.error, 'load dashboard audit');
-  const campaigns = campaignsResult.data;
+  const cachedCampaigns = campaignsResult.data ?? [];
   const latestAudit = auditResult.data;
+  const requestedRange = resolveDateRange(params, '7d');
+  let effectiveRange = requestedRange;
+  let rangeLoadError: string | null = null;
+  let campaigns = cachedCampaigns;
+
+  if (selectedAccount) {
+    try {
+      campaigns = await loadCampaignsForDateRange({
+        supabase,
+        userId: user.id,
+        selectedAccount,
+        campaigns: cachedCampaigns,
+        range: requestedRange,
+      });
+    } catch {
+      effectiveRange = resolveDateRange(null, '7d');
+      rangeLoadError =
+        'تعذر تحميل الفترة المختارة مباشرة من Google Ads. عرضنا آخر 7 أيام المحفوظة مؤقتاً، ويمكنك إعادة المحاولة.';
+      campaigns = await loadCampaignsForDateRange({
+        supabase,
+        userId: user.id,
+        selectedAccount,
+        campaigns: cachedCampaigns,
+        range: effectiveRange,
+      });
+    }
+  }
 
   const setupState: Record<string, boolean> = {
     accounts: accounts.length > 0,
-    campaigns: (campaigns?.length ?? 0) > 0,
+    campaigns: cachedCampaigns.length > 0,
     audit: Boolean(latestAudit),
     subscription: subscription.active,
   };
   const completedCount = Object.values(setupState).filter(Boolean).length;
   const setupComplete = completedCount === 4;
 
-  const sortedCampaigns = [...(campaigns ?? [])].sort((a, b) => {
+  const sortedCampaigns = [...campaigns].sort((a, b) => {
     const aEnabled = a.status === 'ENABLED' ? 1 : 0;
     const bEnabled = b.status === 'ENABLED' ? 1 : 0;
     if (aEnabled !== bEnabled) return bEnabled - aEnabled;
-    return moneyMetric(b.metrics_7d, 'cost') - moneyMetric(a.metrics_7d, 'cost');
+    return moneyMetric(b.range_metrics, 'cost') - moneyMetric(a.range_metrics, 'cost');
   });
   const activeCampaigns = sortedCampaigns.filter((c) => c.status === 'ENABLED');
-  const totalSpend = activeCampaigns.reduce((sum, c) => sum + moneyMetric(c.metrics_7d, 'cost'), 0);
-  const totalConversions = activeCampaigns.reduce((sum, c) => sum + (c.metrics_7d?.conversions ?? 0), 0);
+  const totalSpend = activeCampaigns.reduce((sum, c) => sum + moneyMetric(c.range_metrics, 'cost'), 0);
+  const totalConversions = activeCampaigns.reduce(
+    (sum, c) => sum + (c.range_metrics?.conversions ?? 0),
+    0
+  );
 
   return (
     <>
@@ -161,7 +198,7 @@ export default async function DashboardPage({
             {selectedAccount && (
               <form action="/api/accounts/sync" method="post">
                 <input type="hidden" name="customerId" value={selectedAccount.customer_id} />
-                <input type="hidden" name="next" value="/dashboard" />
+                <input type="hidden" name="next" value={dateRangeHref('/dashboard', requestedRange)} />
                 <PendingSubmitButton pendingLabel="جاري التحديث..." className={buttonClasses({ variant: 'primary' })}>
                   تحديث البيانات
                 </PendingSubmitButton>
@@ -196,6 +233,7 @@ export default async function DashboardPage({
         {params?.sync_error && (
           <Alert tone="danger">{syncErrorMessage(params.sync_error)}</Alert>
         )}
+        {rangeLoadError && <Alert tone="warning">{rangeLoadError}</Alert>}
         {accounts.length === 0 ? (
           <EmptyState
             icon={revokedAccounts.length > 0 ? CircleDashed : Plus}
@@ -218,6 +256,8 @@ export default async function DashboardPage({
           />
         ) : (
           <>
+            <DateRangePicker selection={effectiveRange} />
+
             {/* Setup progress.
                 Was a bordered card containing four more bordered cards, pinned
                 above the KPIs forever — the clearest "cards inside cards" case
@@ -297,8 +337,8 @@ export default async function DashboardPage({
 
             {/* KPIs */}
             <section className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-              <MetricCard label="الإنفاق آخر 7 أيام" value={formatCurrency(totalSpend, selectedAccount?.currency_code)} icon={Wallet} />
-              <MetricCard label="التحويلات آخر 7 أيام" value={formatNumberAr(totalConversions)} icon={TrendingUp} />
+              <MetricCard label={`الإنفاق — ${effectiveRange.label}`} value={formatCurrency(totalSpend, selectedAccount?.currency_code)} icon={Wallet} />
+              <MetricCard label={`التحويلات — ${effectiveRange.label}`} value={formatNumberAr(totalConversions)} icon={TrendingUp} />
               <MetricCard
                 label="صحة الحساب"
                 value={`${latestAudit?.health_score ?? '—'}/100`}
@@ -320,11 +360,12 @@ export default async function DashboardPage({
             {activeCampaigns.length > 0 && totalSpend > 0 && (
               <CampaignSpendChart
                 currencyCode={selectedAccount?.currency_code}
+                rangeLabel={effectiveRange.label}
                 campaigns={activeCampaigns.map((c) => ({
                   id: c.google_campaign_id ?? c.id,
                   name: c.name ?? 'حملة',
-                  spend: moneyMetric(c.metrics_7d, 'cost'),
-                  roas: c.metrics_30d?.roas ?? 0,
+                  spend: moneyMetric(c.range_metrics, 'cost'),
+                  roas: c.range_metrics?.roas ?? 0,
                 }))}
               />
             )}
@@ -335,7 +376,7 @@ export default async function DashboardPage({
                 <div>
                   <h3 className="text-[14px] font-semibold">حملات الحساب المختار</h3>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    {formatNumberAr(activeCampaigns.length)} حملة مفعلة من أصل {formatNumberAr(campaigns?.length ?? 0)}
+                    {formatNumberAr(activeCampaigns.length)} حملة مفعلة من أصل {formatNumberAr(campaigns.length)} خلال {effectiveRange.label}
                   </p>
                 </div>
                 <div className="flex gap-2">
@@ -348,7 +389,7 @@ export default async function DashboardPage({
                 </div>
               </div>
 
-              {(campaigns?.length ?? 0) === 0 ? (
+              {campaigns.length === 0 ? (
                 <EmptyState
                   bare
                   icon={Megaphone}
@@ -359,7 +400,7 @@ export default async function DashboardPage({
                     <>
                       <form action="/api/accounts/sync" method="post">
                         <input type="hidden" name="customerId" value={selectedAccount?.customer_id ?? ''} />
-                        <input type="hidden" name="next" value="/dashboard" />
+                        <input type="hidden" name="next" value={dateRangeHref('/dashboard', requestedRange)} />
                         <PendingSubmitButton pendingLabel="جاري التحديث..." className={buttonClasses({ variant: 'primary' })}>
                           تحديث البيانات الآن
                         </PendingSubmitButton>
@@ -377,7 +418,7 @@ export default async function DashboardPage({
                       <tr>
                         <th className="px-5 py-2.5 text-start font-medium">اسم الحملة</th>
                         <th className="px-3 py-2.5 text-start font-medium">الحالة</th>
-                        <th className="px-3 py-2.5 text-start font-medium">الإنفاق 7 أيام</th>
+                        <th className="px-3 py-2.5 text-start font-medium">الإنفاق — {effectiveRange.label}</th>
                         <th className="px-3 py-2.5 text-start font-medium">التحويلات</th>
                         <th className="px-5 py-2.5 text-start font-medium">ROAS</th>
                       </tr>
@@ -391,10 +432,10 @@ export default async function DashboardPage({
                               {campaignStatusLabel(campaign.status)}
                             </StatusBadge>
                           </td>
-                          <td className="px-3 py-3.5 numeric">{formatCurrency(moneyMetric(campaign.metrics_7d, 'cost'), selectedAccount?.currency_code)}</td>
-                          <td className="px-3 py-3.5 numeric">{formatNumberAr(campaign.metrics_7d?.conversions ?? 0)}</td>
+                          <td className="px-3 py-3.5 numeric">{formatCurrency(moneyMetric(campaign.range_metrics, 'cost'), selectedAccount?.currency_code)}</td>
+                          <td className="px-3 py-3.5 numeric">{formatNumberAr(campaign.range_metrics?.conversions ?? 0)}</td>
                           <td className="px-5 py-3.5 font-bold numeric text-emerald-600 dark:text-emerald-400">
-                            {(campaign.metrics_30d?.roas ?? 0).toFixed(1)}×
+                            {(campaign.range_metrics?.roas ?? 0).toFixed(1)}×
                           </td>
                         </tr>
                       ))}
@@ -412,7 +453,7 @@ export default async function DashboardPage({
                 </span>
                 <div>
                   <div className="font-semibold text-foreground">مو متأكد من أين تبدأ؟</div>
-                  <p className="text-sm text-muted-foreground">اسأل المساعد عن أهم توصية أو حلل الصرف آخر 7 أيام.</p>
+                  <p className="text-sm text-muted-foreground">اسأل المساعد عن أهم توصية أو حلل أداء {effectiveRange.label}.</p>
                 </div>
               </div>
               <Link href="/assistant" className={buttonClasses({ variant: 'primary' })}>

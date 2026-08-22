@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { formatCurrency } from '@/lib/utils';
 
 /**
- * Per-campaign spend distribution (last 7 days), coloured by ROAS.
+ * Per-campaign spend distribution for the selected date range, coloured by ROAS.
  *
  * A hand-built CSS bar chart rather than a charting library: the cache stores
  * 7d/30d aggregates (no daily series), horizontal bars are all this data wants,
@@ -17,9 +17,11 @@ type Row = { id?: string | number; name: string; spend: number; roas: number };
 export function CampaignSpendChart({
   campaigns,
   currencyCode,
+  rangeLabel,
 }: {
   campaigns: Row[];
   currencyCode?: string | null;
+  rangeLabel: string;
 }) {
   const [grown, setGrown] = useState(false);
 
@@ -44,7 +46,7 @@ export function CampaignSpendChart({
           {/* Latin digits, matching the app-wide numerals policy in
               lib/utils.ts — an Eastern-Arabic ٧ next to Latin-digit money is
               exactly the mixed-numeral screen that policy eliminated. */}
-          <p className="mt-1 text-xs text-muted-foreground">آخر 7 أيام — أعلى {data.length} حملات إنفاقاً</p>
+          <p className="mt-1 text-xs text-muted-foreground">{rangeLabel} — أعلى {data.length} حملات إنفاقاً</p>
         </div>
         <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
           <span className="inline-flex items-center gap-1.5">
