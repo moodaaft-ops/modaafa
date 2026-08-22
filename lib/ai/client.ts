@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { isConfiguredEnv } from '@/lib/platform/env';
 
 export type ModelTier = 'opus' | 'sonnet' | 'haiku';
-export type AgentRole = 'audit' | 'builder' | 'optimizer' | 'reporter';
+export type AgentRole = 'audit' | 'assistant' | 'builder' | 'optimizer' | 'reporter';
 
 export type AvailableModel = {
   id: string;
@@ -206,13 +206,16 @@ async function discoverAvailableModels(force = false) {
 }
 
 function tierForAgent(agent: AgentRole): ModelTier {
-  return agent === 'audit' || agent === 'builder' ? 'opus' : 'sonnet';
+  // The conversational assistant makes account-level strategic judgments and
+  // root-cause explanations, so it uses the same reasoning tier as the audit
+  // analyst. Routine scheduled summaries stay on Sonnet to contain cost.
+  return agent === 'audit' || agent === 'assistant' || agent === 'builder' ? 'opus' : 'sonnet';
 }
 
 function modelCandidatesForAgent(agent: AgentRole) {
   const primary = getModelForAgent(agent);
   const compatibilityFallbacks =
-    agent === 'audit' || agent === 'builder'
+    agent === 'audit' || agent === 'assistant' || agent === 'builder'
       ? ['claude-opus-5', 'claude-sonnet-5', 'claude-opus-4-1-20250805']
       : ['claude-sonnet-5', 'claude-opus-5', 'claude-sonnet-4-6-20260217'];
 

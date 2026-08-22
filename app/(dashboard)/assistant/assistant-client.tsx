@@ -9,7 +9,7 @@ import { EmptyState } from '@/lib/ui/empty-state';
 import { Alert } from '@/lib/ui/alert';
 import { buttonClasses } from '@/lib/ui/button';
 import { inputClasses, selectClasses } from '@/lib/ui/field';
-import { cn } from '@/lib/utils';
+import { cn, formatCurrency } from '@/lib/utils';
 
 type Account = {
   customer_id: string;
@@ -24,6 +24,15 @@ type ChatItem = {
   recommendations?: Array<{ title: string; status: string; severity: string; description?: string | null }>;
   aiBackend?: 'model' | 'fallback';
   aiWarning?: string | null;
+  analysisMeta?: {
+    confidence: 'high' | 'medium' | 'limited';
+    confidence_ar: string;
+    sync_state: 'fresh' | 'aging' | 'stale' | 'unknown';
+    sync_age_hours: number | null;
+    audit_age_hours: number | null;
+    sources_ar: string[];
+    gaps_ar: string[];
+  };
 };
 
 const SUGGESTED_PROMPTS = [
@@ -170,6 +179,7 @@ export function AssistantClient({
         recommendations: data.recommendations,
         aiBackend: data.ai_backend,
         aiWarning: data.ai_warning,
+        analysisMeta: data.analysis_meta,
       },
     ]);
   }
@@ -411,6 +421,34 @@ function ChatBubble({ item }: { item: ChatItem }) {
     >
       <div className="whitespace-pre-line">{item.content}</div>
 
+      {item.role === 'assistant' && item.analysisMeta && (
+        <div className="mt-3 border-t border-border/70 pt-2.5 text-[11px] leading-5 text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span
+              className={cn(
+                'rounded-full border px-2 py-0.5 font-semibold',
+                item.analysisMeta.confidence === 'high'
+                  ? 'border-emerald-500/25 bg-emerald-500/[0.08] text-emerald-700 dark:text-emerald-300'
+                  : item.analysisMeta.confidence === 'medium'
+                    ? 'border-amber-500/25 bg-amber-500/[0.08] text-amber-700 dark:text-amber-300'
+                    : 'border-red-500/25 bg-red-500/[0.08] text-red-700 dark:text-red-300'
+              )}
+            >
+              ثقة التحليل: {item.analysisMeta.confidence_ar}
+            </span>
+            <span>{assistantFreshnessText(item.analysisMeta)}</span>
+          </div>
+          {item.analysisMeta.sources_ar.length > 0 && (
+            <div className="mt-1.5">المصادر: {item.analysisMeta.sources_ar.join('، ')}</div>
+          )}
+          {item.analysisMeta.gaps_ar.length > 0 && item.analysisMeta.confidence !== 'high' && (
+            <div className="mt-1 text-amber-700 dark:text-amber-300">
+              ما يحد الدقة: {item.analysisMeta.gaps_ar[0]}
+            </div>
+          )}
+        </div>
+      )}
+
       {item.role === 'assistant' && item.aiBackend === 'fallback' && (
         <div className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/[0.08] px-3 py-2 text-xs leading-6 text-amber-700 dark:text-amber-300">
           {item.aiWarning ?? 'عرضنا تحليلاً احتياطياً لهذه الرسالة لأن المحرك الذكي لم يستجب.'}
@@ -458,13 +496,26 @@ function ChatBubble({ item }: { item: ChatItem }) {
           <div className="text-[13px] font-semibold">{item.draft.name}</div>
           <div className="mt-2 grid gap-1.5 text-xs sm:grid-cols-3">
             <span className="text-muted-foreground">النوع: {campaignTypeLabel(item.draft.type)}</span>
-            <span className="text-muted-foreground">الميزانية: {item.draft.daily_budget_sar} ر.س/يوم</span>
+            <span className="text-muted-foreground">
+              الميزانية: {formatCurrency(
+                Number(item.draft.daily_budget_amount ?? item.draft.daily_budget_sar ?? 0),
+                item.draft.currency_code ?? 'SAR'
+              )}/يوم
+            </span>
             <span className="text-muted-foreground">المزايدة: {biddingLabel(item.draft.bidding_strategy)}</span>
           </div>
         </div>
       )}
     </article>
   );
+}
+
+function assistantFreshnessText(meta: NonNullable<ChatItem['analysisMeta']>) {
+  if (meta.sync_age_hours === null || meta.sync_state === 'unknown') return 'حداثة البيانات غير معروفة';
+  if (meta.sync_age_hours < 1) return 'بيانات Google Ads محدثة خلال الساعة الأخيرة';
+  if (meta.sync_age_hours < 24) return `بيانات Google Ads منذ ${Math.round(meta.sync_age_hours)} ساعة`;
+  const days = Math.max(1, Math.round(meta.sync_age_hours / 24));
+  return `بيانات Google Ads منذ ${days} يوم`;
 }
 
 function TypingIndicator() {
