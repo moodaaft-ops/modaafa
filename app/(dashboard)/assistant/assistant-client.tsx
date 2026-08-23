@@ -7,6 +7,7 @@ import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import {
   appendVoiceTranscript,
   microphoneAccessErrorMessage,
+  requestMicrophoneAccess,
   speechRecognitionErrorMessage,
 } from '@/lib/ai/voice-input';
 import { biddingLabel, campaignTypeLabel } from '@/lib/ui/labels';
@@ -241,8 +242,7 @@ export function AssistantClient({
       }
 
       if (navigator.mediaDevices?.getUserMedia) {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        stream.getTracks().forEach((track) => track.stop());
+        await requestMicrophoneAccess(() => navigator.mediaDevices.getUserMedia({ audio: true }));
       }
 
       if (attempt !== voiceAttemptRef.current) return;

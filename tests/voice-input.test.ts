@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   appendVoiceTranscript,
   microphoneAccessErrorMessage,
+  requestMicrophoneAccess,
   speechRecognitionErrorMessage,
 } from '../lib/ai/voice-input';
 
@@ -27,4 +28,25 @@ test('voice input ignores expected abort events and keeps existing composer text
   assert.equal(speechRecognitionErrorMessage('aborted'), null);
   assert.equal(appendVoiceTranscript('حلل الحساب', 'آخر 30 يوم'), 'حلل الحساب آخر 30 يوم');
   assert.equal(appendVoiceTranscript('', 'أوقف الهدر'), 'أوقف الهدر');
+});
+
+test('voice input stops microphone tracks after a successful permission check', async () => {
+  let stopped = false;
+
+  await requestMicrophoneAccess(async () => ({
+    getTracks: () => [{ stop: () => (stopped = true) }],
+  }));
+
+  assert.equal(stopped, true);
+});
+
+test('voice input times out instead of leaving the composer stuck', async () => {
+  await assert.rejects(
+    requestMicrophoneAccess(() => new Promise(() => undefined), 5),
+    (error: unknown) => {
+      assert.equal(error instanceof Error ? error.name : '', 'MicrophoneTimeoutError');
+      assert.match(microphoneAccessErrorMessage(error), /لم يصل رد من المتصفح/);
+      return true;
+    }
+  );
 });
