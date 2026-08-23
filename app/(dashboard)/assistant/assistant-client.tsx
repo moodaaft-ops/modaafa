@@ -2,8 +2,13 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Link2, Mic, Send, Sparkles, TrendingUp } from 'lucide-react';
+import { Link2, LoaderCircle, Mic, Send, Sparkles, Square, TrendingUp } from 'lucide-react';
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
+import {
+  appendVoiceTranscript,
+  microphoneAccessErrorMessage,
+  speechRecognitionErrorMessage,
+} from '@/lib/ai/voice-input';
 import { biddingLabel, campaignTypeLabel } from '@/lib/ui/labels';
 import { EmptyState } from '@/lib/ui/empty-state';
 import { Alert } from '@/lib/ui/alert';
@@ -70,9 +75,17 @@ export function AssistantClient({
   const [pendingBrief, setPendingBrief] = useState<string | null>(initialBrief);
   const [loading, setLoading] = useState(false);
   const [listening, setListening] = useState(false);
+  const [voiceStarting, setVoiceStarting] = useState(false);
+  const [voiceStatus, setVoiceStatus] = useState('');
   const [error, setError] = useState('');
   const [chat, setChat] = useState<ChatItem[]>([{ role: 'assistant', content: SEED_MESSAGE }]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const recognitionRef = useRef<any>(null);
+  const voiceAttemptRef = useRef(0);
+  const voiceBaseMessageRef = useRef('');
+  const voiceHadResultRef = useRef(false);
+  const voiceHadErrorRef = useRef(false);
+  const voiceStoppedByUserRef = useRef(false);
 
   const selectedAccount = useMemo(
     () => accounts.find((account) => account.customer_id === customerId),
@@ -84,6 +97,15 @@ export function AssistantClient({
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [chat, loading]);
+
+  useEffect(
+    () => () => {
+      voiceAttemptRef.current += 1;
+      recognitionRef.current?.abort?.();
+      recognitionRef.current = null;
+    },
+    []
+  );
 
   async function handleAccountChange(nextCustomerId: string) {
     if (switching) return;
@@ -184,26 +206,102 @@ export function AssistantClient({
     ]);
   }
 
-  function startVoiceInput() {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      setError('المتصفح الحالي لا يدعم الإملاء الصوتي من هذه الصفحة.');
+  function stopVoiceInput() {
+    voiceStoppedByUserRef.current = true;
+    setVoiceStatus('جاري إنهاء الاستماع...');
+    recognitionRef.current?.stop?.();
+  }
+
+  async function startVoiceInput() {
+    if (listening) {
+      stopVoiceInput();
       return;
     }
-    const recognition = new SpeechRecognition();
-    recognition.lang = 'ar-SA';
-    recognition.interimResults = false;
-    recognition.onstart = () => setListening(true);
-    recognition.onend = () => setListening(false);
-    recognition.onerror = () => {
+    if (voiceStarting) return;
+
+    setError('');
+    setVoiceStarting(true);
+    setVoiceStatus('جاري التحقق من الميكروفون...');
+    const attempt = ++voiceAttemptRef.current;
+
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setError('المتصفح الحالي لا يدعم الإملاء الصوتي. افتح المنصة في أحدث إصدار من Chrome أو Edge.');
+      setVoiceStarting(false);
+      setVoiceStatus('');
+      return;
+    }
+
+    try {
+      const permission = await navigator.permissions
+        ?.query({ name: 'microphone' as PermissionName })
+        .catch(() => null);
+      if (permission?.state === 'denied') {
+        throw Object.assign(new Error('Microphone permission denied'), { name: 'NotAllowedError' });
+      }
+
+      if (navigator.mediaDevices?.getUserMedia) {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach((track) => track.stop());
+      }
+
+      if (attempt !== voiceAttemptRef.current) return;
+
+      const recognition = new SpeechRecognition();
+      recognitionRef.current = recognition;
+      voiceBaseMessageRef.current = message;
+      voiceHadResultRef.current = false;
+      voiceHadErrorRef.current = false;
+      voiceStoppedByUserRef.current = false;
+
+      recognition.lang = 'ar-SA';
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 1;
+      recognition.onstart = () => {
+        setListening(true);
+        setVoiceStarting(false);
+        setVoiceStatus('أستمع الآن... تكلم بوضوح');
+      };
+      recognition.onspeechstart = () => setVoiceStatus('وصل صوتك، جاري الكتابة...');
+      recognition.onspeechend = () => setVoiceStatus('جاري تحويل الصوت إلى نص...');
+      recognition.onerror = (event: { error?: string }) => {
+        voiceHadErrorRef.current = true;
+        setListening(false);
+        const nextError = speechRecognitionErrorMessage(event.error ?? '');
+        if (nextError && !voiceStoppedByUserRef.current) setError(nextError);
+      };
+      recognition.onresult = (event: any) => {
+        const transcript = Array.from(event.results ?? [])
+          .map((result: any) => result?.[0]?.transcript ?? '')
+          .join(' ')
+          .trim();
+        if (!transcript) return;
+        voiceHadResultRef.current = true;
+        setMessage(appendVoiceTranscript(voiceBaseMessageRef.current, transcript));
+      };
+      recognition.onend = () => {
+        recognitionRef.current = null;
+        setListening(false);
+        setVoiceStarting(false);
+        setVoiceStatus('');
+        if (!voiceHadResultRef.current && !voiceHadErrorRef.current && !voiceStoppedByUserRef.current) {
+          setError(speechRecognitionErrorMessage('no-speech') ?? '');
+        }
+      };
+
+      recognition.start();
+    } catch (voiceError) {
+      if (attempt !== voiceAttemptRef.current) return;
+      recognitionRef.current = null;
       setListening(false);
-      setError('تعذر التقاط الصوت. جرب الكتابة أو أعد المحاولة.');
-    };
-    recognition.onresult = (event: any) => {
-      const transcript = event.results?.[0]?.[0]?.transcript;
-      if (transcript) setMessage((current) => (current ? `${current} ${transcript}` : transcript));
-    };
-    recognition.start();
+      setError(microphoneAccessErrorMessage(voiceError));
+    } finally {
+      if (attempt === voiceAttemptRef.current && !recognitionRef.current) {
+        setVoiceStarting(false);
+        setVoiceStatus('');
+      }
+    }
   }
 
   if (accounts.length === 0) {
@@ -342,16 +440,24 @@ export function AssistantClient({
             <button
               type="button"
               onClick={startVoiceInput}
+              disabled={voiceStarting}
               className={cn(
-                'flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg border transition-colors duration-150',
+                'flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg border transition-colors duration-150 disabled:cursor-wait disabled:opacity-60',
                 listening
                   ? 'border-primary/50 bg-primary/10 text-primary'
                   : 'border-border bg-background-elevated text-muted-foreground hover:border-border-strong hover:text-foreground'
               )}
-              aria-label="إملاء صوتي"
-              title="إملاء صوتي"
+              aria-label={listening ? 'إيقاف الإملاء الصوتي' : 'بدء الإملاء الصوتي'}
+              aria-pressed={listening}
+              title={listening ? 'إيقاف الاستماع' : 'إملاء صوتي'}
             >
-              <Mic className="h-4 w-4" />
+              {voiceStarting ? (
+                <LoaderCircle className="h-4 w-4 animate-spin" />
+              ) : listening ? (
+                <Square className="h-3.5 w-3.5 fill-current" />
+              ) : (
+                <Mic className="h-4 w-4" />
+              )}
             </button>
             <input
               value={message}
@@ -370,6 +476,15 @@ export function AssistantClient({
               <Send className="h-4 w-4" />
             </button>
           </div>
+          {(voiceStarting || listening) && (
+            <div className="mt-2 flex items-center gap-2 text-xs font-medium text-primary" role="status" aria-live="polite">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-40" />
+                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-primary" />
+              </span>
+              {voiceStatus}
+            </div>
+          )}
         </form>
       </section>
 
