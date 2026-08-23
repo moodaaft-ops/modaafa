@@ -204,7 +204,7 @@ export default async function AuditPage({
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <h2 className="text-lg font-bold text-foreground">{aiNarrative.headline_ar}</h2>
-                  <StatusBadge tone="brand">قراءة Claude للأدلة</StatusBadge>
+                  <StatusBadge tone="brand">قراءة ذكية للأدلة</StatusBadge>
                 </div>
                 {aiNarrative.executive_summary_ar && (
                   <p className="mt-2 max-w-4xl whitespace-pre-line text-sm leading-7 text-muted-foreground">
