@@ -116,6 +116,7 @@ export function AuditRunner({
     setPercent(100);
     setMessage(event.message);
     window.setTimeout(() => {
+      setRunning(false);
       router.push(event.redirect);
       router.refresh();
     }, 700);
