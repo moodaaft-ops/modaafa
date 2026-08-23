@@ -1,4 +1,16 @@
-import { ClipboardCheck, ShieldCheck, Link2, Sparkles, DatabaseZap } from 'lucide-react';
+import {
+  ArrowLeft,
+  CheckCircle2,
+  ChevronDown,
+  ClipboardCheck,
+  DatabaseZap,
+  Eye,
+  Link2,
+  ListChecks,
+  LockKeyhole,
+  ShieldCheck,
+  Sparkles,
+} from 'lucide-react';
 import { redirect } from 'next/navigation';
 import { getRequestAuthContext } from '@/lib/supabase/server';
 import { assertSupabaseRead } from '@/lib/supabase/query-errors';
@@ -16,6 +28,7 @@ import { cn } from '@/lib/utils';
 import { getSubscriptionAccess, featureAccessMessage } from '@/lib/billing/entitlements';
 import { SubscriptionGate } from '@/lib/ui/subscription-gate';
 import { isCurrentAuditEngine } from '@/lib/audit/version';
+import { isRecommendationActionable, orderRecommendationsForGuidance } from '@/lib/audit/guidance';
 import { AuditRunner } from './audit-runner';
 
 type AccountLite = { customer_id: string; customer_name: string | null };
@@ -160,7 +173,12 @@ export default async function AuditPage({
   const recommendations = recommendationsResult.data;
   const latestReport = latestReportResult.data;
 
-  const recs = recommendations ?? [];
+  const recs = orderRecommendationsForGuidance(recommendations ?? []);
+  const actionableRecs = recs.filter(isRecommendationActionable);
+  const primaryRecommendation = actionableRecs[0] ?? null;
+  const remainingRecs = primaryRecommendation
+    ? recs.filter((recommendation: any) => recommendation.id !== primaryRecommendation.id)
+    : recs;
 
   return (
     <>
@@ -181,7 +199,7 @@ export default async function AuditPage({
       <div className="space-y-6 p-4 sm:p-6 lg:p-8">
         {params?.ran && <Alert tone="success">تم تشغيل الفحص وتحديث التوصيات.</Alert>}
         {params?.approved && (
-          <Alert tone="success">تم اعتماد التوصية دون تنفيذ أي تعديل. راجع تفاصيلها في مركز الموافقات.</Alert>
+          <Alert tone="success">تم تجهيز التوصية للمراجعة. لم ننفذ أي تعديل على حسابك، وتقدر تراجع الأرقام قبل التنفيذ في مركز الموافقات.</Alert>
         )}
         {!subscription.active && <SubscriptionGate compact />}
         {params?.error && <Alert tone="danger">{auditErrorMessage(params.error)}</Alert>}
@@ -194,6 +212,32 @@ export default async function AuditPage({
               : null}
           </Alert>
         )}
+
+        {primaryRecommendation ? (
+          <GuidedNextStep
+            recommendation={primaryRecommendation}
+            actionableCount={actionableRecs.length}
+            currencyCode={selectedAccount?.currency_code}
+          />
+        ) : recs.length > 0 ? (
+          <section className="surface-card flex flex-col gap-4 border-emerald-500/25 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+            <div className="flex items-start gap-3">
+              <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg bg-emerald-500/12 text-emerald-600 dark:text-emerald-300">
+                <CheckCircle2 className="h-5 w-5" aria-hidden />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-foreground">خلصت القرارات المطلوبة لهذا الفحص</h2>
+                <p className="mt-1 text-sm leading-7 text-muted-foreground">
+                  ما بقيت توصية تحتاج قراراً منك الآن. راجع ما جهزته سابقاً في مركز الموافقات، ولن يُنفذ أي تعديل من دون تأكيدك.
+                </p>
+              </div>
+            </div>
+            <a href="/optimizer" className={buttonClasses({ variant: 'primary' })}>
+              فتح مركز الموافقات
+              <ArrowLeft className="h-4 w-4" aria-hidden />
+            </a>
+          </section>
+        ) : null}
 
         {aiNarrative?.headline_ar && (
           <section className="surface-card overflow-hidden border-primary/25">
@@ -221,51 +265,74 @@ export default async function AuditPage({
           </section>
         )}
 
-        <div className="grid gap-5 lg:grid-cols-3">
-          <section className="surface-card p-6 lg:col-span-2">
-            <div className="mb-6">
-              <h3 className="text-[15px] font-semibold">تقرير صحة الحساب</h3>
+        <details className="surface-card group overflow-hidden">
+          <summary className="flex cursor-pointer list-none flex-col gap-4 p-5 marker:content-none sm:flex-row sm:items-center sm:justify-between sm:p-6">
+            <div>
+              <div className="text-xs font-semibold text-primary">تفاصيل إضافية</div>
+              <h3 className="mt-1 text-[15px] font-semibold text-foreground">كيف حسبنا صحة الحساب؟</h3>
               <p className="mt-1 text-sm leading-7 text-muted-foreground">
-                {latestReport?.summary_ar ?? 'ملخص الفحص الأخير وتوزيع المخاطر حسب بيانات الحساب.'}
+                الدرجات الفنية مفيدة للتشخيص، لكن خطتك العملية موجودة بالأعلى. افتح هذا القسم إذا حاب تعرف توزيع النتيجة.
               </p>
             </div>
-            <div className="flex flex-col items-center gap-8 sm:flex-row">
-              <HealthGauge score={audit.health_score ?? 0} />
-              <div className="grid flex-1 grid-cols-2 gap-3 sm:grid-cols-3">
-                <CategoryScore label="الكلمات" value={audit.category_scores?.keywords ?? 0} />
-                <CategoryScore label="الإعلانات" value={audit.category_scores?.ad_quality ?? 0} />
-                <CategoryScore label="السلبيات" value={audit.category_scores?.negative_keywords ?? 0} />
-                <CategoryScore label="المزايدة" value={audit.category_scores?.bidding ?? 0} />
-                <CategoryScore label="الميزانية" value={audit.category_scores?.budget ?? 0} />
-                <CategoryScore label="الاستهداف" value={audit.category_scores?.targeting ?? 0} />
-                <CategoryScore label="ثقة البيانات" value={audit.category_scores?.data_confidence ?? 0} />
-              </div>
+            <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
+              <span className="rounded-lg bg-muted px-3 py-2 text-xs font-semibold text-foreground">
+                صحة الحساب <span className="numeric">{audit.health_score ?? 0}/100</span>
+              </span>
+              <span className="rounded-lg bg-muted px-3 py-2 text-xs font-semibold text-foreground">
+                فرصة توفير محتملة {formatCurrency(audit.estimated_monthly_waste ?? 0, selectedAccount?.currency_code)}
+              </span>
+              <ChevronDown className="h-5 w-5 text-muted-foreground transition-transform duration-200 group-open:rotate-180" aria-hidden />
             </div>
-          </section>
+          </summary>
 
-          <section className="surface-raised relative flex flex-col overflow-hidden p-6">
-            <div className="pointer-events-none absolute -end-10 -top-10 h-32 w-32 rounded-full bg-red-500/20 blur-3xl" aria-hidden />
-            <div className="relative text-[13px] text-muted-foreground">تسريب الميزانية الشهري</div>
-            <div className="relative mt-2 text-[2.25rem] font-bold leading-none text-red-500 numeric dark:text-red-400">{formatCurrency(audit.estimated_monthly_waste ?? 0, selectedAccount?.currency_code)}</div>
-            <p className="relative mt-3 flex-1 text-[13px] leading-7 text-muted-foreground">
-              تقدير محافظ لما يمكن توفيره أو إعادة توزيعه بناءً على آخر بيانات محفوظة من إعلانات Google.
-            </p>
-            <a
-              href="#recommendations"
-              className="relative mt-4 inline-flex h-10 items-center justify-center rounded-lg border border-border bg-card px-4 text-[13px] font-semibold text-foreground shadow-soft transition-colors duration-150 hover:border-border-strong hover:bg-surface"
-            >
-              مراجعة التوصيات
-            </a>
-          </section>
-        </div>
+          <div className="grid border-t border-border lg:grid-cols-3">
+            <section className="p-5 sm:p-6 lg:col-span-2 lg:border-e lg:border-border">
+              <div className="mb-6">
+                <h3 className="text-[15px] font-semibold">تقرير صحة الحساب</h3>
+                <p className="mt-1 text-sm leading-7 text-muted-foreground">
+                  {latestReport?.summary_ar ?? 'ملخص الفحص الأخير وتوزيع المخاطر حسب بيانات الحساب.'}
+                </p>
+              </div>
+              <div className="flex flex-col items-center gap-8 sm:flex-row">
+                <HealthGauge score={audit.health_score ?? 0} />
+                <div className="grid flex-1 grid-cols-2 gap-3 sm:grid-cols-3">
+                  <CategoryScore label="الكلمات" value={audit.category_scores?.keywords ?? 0} />
+                  <CategoryScore label="الإعلانات" value={audit.category_scores?.ad_quality ?? 0} />
+                  <CategoryScore label="السلبيات" value={audit.category_scores?.negative_keywords ?? 0} />
+                  <CategoryScore label="المزايدة" value={audit.category_scores?.bidding ?? 0} />
+                  <CategoryScore label="الميزانية" value={audit.category_scores?.budget ?? 0} />
+                  <CategoryScore label="الاستهداف" value={audit.category_scores?.targeting ?? 0} />
+                  <CategoryScore label="ثقة البيانات" value={audit.category_scores?.data_confidence ?? 0} />
+                </div>
+              </div>
+            </section>
+
+            <section className="flex flex-col bg-red-500/[0.035] p-5 sm:p-6">
+              <div className="text-[13px] text-muted-foreground">فرصة توفير شهرية محتملة</div>
+              <div className="mt-2 text-[2.25rem] font-bold leading-none text-red-500 numeric dark:text-red-400">
+                {formatCurrency(audit.estimated_monthly_waste ?? 0, selectedAccount?.currency_code)}
+              </div>
+              <p className="mt-3 flex-1 text-[13px] leading-7 text-muted-foreground">
+                تقدير محافظ لما يمكن توفيره أو إعادة توزيعه. هذا ليس مبلغاً مضموناً، ولن نغيّر الميزانية تلقائياً.
+              </p>
+              <a href="#recommendations" className={cn(buttonClasses({ variant: 'outline' }), 'mt-4')}>
+                عرض خطة التحسين
+              </a>
+            </section>
+          </div>
+        </details>
 
         <section id="recommendations" className="surface-card overflow-hidden">
           <div className="flex items-center justify-between gap-3 border-b border-border p-5">
             <div>
-              <h3 className="text-[14px] font-semibold">التوصيات</h3>
-              <p className="mt-1 text-xs text-muted-foreground">مرتبة من الأحدث، وكل قرار يبقى تحت موافقتك.</p>
+              <h3 className="text-[14px] font-semibold">خطة التحسين</h3>
+              <p className="mt-1 text-xs leading-6 text-muted-foreground">
+                رتبنا القرارات حسب الأولوية. جهّز قراراً واحداً في كل مرة، ثم راجعه قبل التنفيذ.
+              </p>
             </div>
-            <span className="rounded-lg bg-muted px-3 py-1.5 text-sm font-semibold text-muted-foreground">{recs.length}</span>
+            <span className="rounded-lg bg-muted px-3 py-1.5 text-sm font-semibold text-muted-foreground">
+              {actionableRecs.length} تحتاج قرارك
+            </span>
           </div>
 
           {recs.length === 0 ? (
@@ -285,63 +352,91 @@ export default async function AuditPage({
                 </a>
               }
             />
+          ) : remainingRecs.length === 0 ? (
+            <div className="flex flex-col items-center px-5 py-10 text-center">
+              <ListChecks className="h-8 w-8 text-primary" aria-hidden />
+              <h4 className="mt-3 font-semibold text-foreground">ابدأ بالقرار المقترح في أعلى الصفحة</h4>
+              <p className="mt-1 max-w-xl text-sm leading-7 text-muted-foreground">
+                هذا هو القرار الوحيد المطلوب حالياً. بعد تجهيزه ستجده في مركز الموافقات لمراجعة التعديل الفعلي.
+              </p>
+            </div>
           ) : (
             <div className="divide-y divide-border">
-              {recs.map((r: any, idx: number) => {
+              {remainingRecs.map((r: any, idx: number) => {
                 const evidence = Array.isArray(r.action_payload?.evidence_ar)
                   ? r.action_payload.evidence_ar.filter((item: unknown) => typeof item === 'string').slice(0, 5)
                   : [];
                 const confidence = String(r.action_payload?.confidence ?? '');
                 const source = String(r.action_payload?.source ?? '');
+                const actionable = isRecommendationActionable(r);
+                const position = primaryRecommendation ? idx + 2 : idx + 1;
                 return (
-                <div key={r.id} className="flex flex-col gap-4 p-5 sm:flex-row sm:items-start">
-                  <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-muted font-bold text-muted-foreground">
-                    {idx + 1}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-semibold text-foreground">{r.title}</span>
-                      <StatusBadge tone={severityTone(r.severity)}>{severityLabel(r.severity)}</StatusBadge>
-                      <StatusBadge tone={recommendationStatusTone(r.status)}>
-                        {recommendationStatusLabel(r.status)}
-                      </StatusBadge>
-                      {confidence && <StatusBadge tone={confidence === 'high' ? 'success' : confidence === 'medium' ? 'warning' : 'neutral'}>ثقة {confidenceLabelAr(confidence)}</StatusBadge>}
-                      {source && <StatusBadge tone="info">{sourceLabelAr(source)}</StatusBadge>}
-                    </div>
-                    <p className="mt-1.5 text-sm leading-7 text-muted-foreground">{r.description}</p>
-                    {evidence.length > 0 && (
-                      <div className="mt-3 rounded-lg border border-border bg-muted/45 p-3">
-                        <div className="text-xs font-semibold text-foreground">الدليل من الحساب</div>
-                        <ul className="mt-2 space-y-1 text-xs leading-6 text-muted-foreground">
-                          {evidence.map((item: string, evidenceIndex: number) => (
-                            <li key={`${r.id}-evidence-${evidenceIndex}`} className="flex gap-2">
-                              <span className="mt-2 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-primary" aria-hidden />
-                              <span>{item}</span>
-                            </li>
-                          ))}
-                        </ul>
+                  <article key={r.id} className={cn('p-5 sm:p-6', actionable ? 'bg-card' : 'bg-muted/20')}>
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+                      <div className={cn(
+                        'flex h-10 min-w-10 flex-shrink-0 items-center justify-center rounded-lg px-2 text-xs font-bold',
+                        actionable ? 'bg-primary/12 text-primary' : 'bg-muted text-muted-foreground',
+                      )}>
+                        {actionable ? position : 'تم'}
                       </div>
-                    )}
-                    {r.expected_impact?.delta_sar_per_month && (
-                      <p className="mt-2 inline-flex items-center gap-1 rounded-md bg-emerald-50 dark:bg-emerald-500/15 px-2 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-300">
-                        تأثير متوقع: {formatCurrency(r.expected_impact.delta_sar_per_month, selectedAccount?.currency_code)}/شهر
-                      </p>
-                    )}
-                  </div>
-                  <div className="flex flex-shrink-0 gap-2">
-                    {['pending', 'failed'].includes(r.status) && (
-                      <>
-                        <RecommendationAction id={r.id} intent="approve" label="اعتماد" next="/audit" />
-                        <RecommendationAction id={r.id} intent="dismiss" label="تجاهل" next="/audit" secondary />
-                      </>
-                    )}
-                    {r.status === 'approved' && (
-                      <a href="/optimizer" className={buttonClasses({ variant: 'outline', size: 'sm' })}>
-                        مراجعة التنفيذ
-                      </a>
-                    )}
-                  </div>
-                </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-semibold text-foreground">{r.title}</span>
+                          <StatusBadge tone={severityTone(r.severity)}>{severityLabel(r.severity)}</StatusBadge>
+                          <StatusBadge tone={recommendationStatusTone(r.status)}>
+                            {recommendationStatusLabel(r.status)}
+                          </StatusBadge>
+                        </div>
+                        <div className="mt-2 text-xs font-semibold text-primary">ليش هذا مهم؟</div>
+                        <p className="mt-1 text-sm leading-7 text-muted-foreground">{r.description}</p>
+
+                        {(evidence.length > 0 || confidence || source) && (
+                          <details className="group/evidence mt-3">
+                            <summary className="inline-flex cursor-pointer list-none items-center gap-2 text-xs font-semibold text-muted-foreground marker:content-none hover:text-foreground">
+                              <Eye className="h-4 w-4" aria-hidden />
+                              عرض دليل الحساب والتفاصيل الفنية
+                              <ChevronDown className="h-4 w-4 transition-transform group-open/evidence:rotate-180" aria-hidden />
+                            </summary>
+                            <div className="mt-3 rounded-lg border border-border bg-muted/45 p-3">
+                              <div className="flex flex-wrap gap-2">
+                                {confidence && <StatusBadge tone={confidence === 'high' ? 'success' : confidence === 'medium' ? 'warning' : 'neutral'}>ثقة {confidenceLabelAr(confidence)}</StatusBadge>}
+                                {source && <StatusBadge tone="info">{sourceLabelAr(source)}</StatusBadge>}
+                              </div>
+                              {evidence.length > 0 && (
+                                <ul className="mt-2 space-y-1 text-xs leading-6 text-muted-foreground">
+                                  {evidence.map((item: string, evidenceIndex: number) => (
+                                    <li key={`${r.id}-evidence-${evidenceIndex}`} className="flex gap-2">
+                                      <span className="mt-2 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-primary" aria-hidden />
+                                      <span>{item}</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </div>
+                          </details>
+                        )}
+
+                        {r.expected_impact?.delta_sar_per_month > 0 && (
+                          <p className="mt-3 inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
+                            أثر شهري محتمل: {formatCurrency(r.expected_impact.delta_sar_per_month, selectedAccount?.currency_code)}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex flex-shrink-0 flex-wrap gap-2 sm:max-w-48 sm:justify-end">
+                        {actionable && (
+                          <>
+                            <RecommendationAction id={r.id} intent="approve" label="تجهيز للمراجعة" next="/audit" />
+                            <RecommendationAction id={r.id} intent="dismiss" label="ليس الآن" next="/audit" secondary />
+                          </>
+                        )}
+                        {r.status === 'approved' && (
+                          <a href="/optimizer" className={buttonClasses({ variant: 'outline', size: 'sm' })}>
+                            فتح مركز الموافقات
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  </article>
                 );
               })}
             </div>
@@ -349,6 +444,118 @@ export default async function AuditPage({
         </section>
       </div>
     </>
+  );
+}
+
+function GuidedNextStep({
+  recommendation,
+  actionableCount,
+  currencyCode,
+}: {
+  recommendation: any;
+  actionableCount: number;
+  currencyCode?: string | null;
+}) {
+  const evidence = Array.isArray(recommendation.action_payload?.evidence_ar)
+    ? recommendation.action_payload.evidence_ar.find((item: unknown) => typeof item === 'string')
+    : null;
+  const confidence = String(recommendation.action_payload?.confidence ?? '');
+  const monthlyImpact = Number(recommendation.expected_impact?.delta_sar_per_month ?? 0);
+
+  return (
+    <section className="surface-card overflow-hidden border-primary/30">
+      <div className="flex flex-col gap-3 border-b border-primary/20 bg-primary/[0.045] p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusBadge tone="brand">ابدأ هنا</StatusBadge>
+            <span className="text-xs text-muted-foreground">
+              القرار الأول من {actionableCount}
+            </span>
+          </div>
+          <h2 className="mt-2 text-xl font-bold text-foreground">هذه خطوتك التالية لتحسين الحساب</h2>
+          <p className="mt-1 max-w-3xl text-sm leading-7 text-muted-foreground">
+            ما تحتاج تفسّر كل الدرجات. راجع القرار المقترح، جهّزه للموافقة، ثم تأكد من التعديل الفعلي قبل التنفيذ.
+          </p>
+        </div>
+        <div className="flex items-center gap-2 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+          <LockKeyhole className="h-4 w-4" aria-hidden />
+          لا تغيير من دون موافقتك الأخيرة
+        </div>
+      </div>
+
+      <div className="grid lg:grid-cols-[minmax(0,1fr)_22rem]">
+        <div className="p-5 sm:p-6">
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusBadge tone={severityTone(recommendation.severity)}>{severityLabel(recommendation.severity)}</StatusBadge>
+            {confidence && (
+              <StatusBadge tone={confidence === 'high' ? 'success' : confidence === 'medium' ? 'warning' : 'neutral'}>
+                ثقة {confidenceLabelAr(confidence)}
+              </StatusBadge>
+            )}
+          </div>
+          <h3 className="mt-3 text-lg font-bold leading-8 text-foreground">{recommendation.title}</h3>
+          <div className="mt-4 text-xs font-semibold text-primary">ليش نبدأ بهذا القرار؟</div>
+          <p className="mt-1 max-w-4xl text-sm leading-7 text-muted-foreground">{recommendation.description}</p>
+
+          {evidence && (
+            <div className="mt-4 flex items-start gap-2 border-t border-border pt-4 text-sm leading-7 text-muted-foreground">
+              <CheckCircle2 className="mt-1 h-4 w-4 flex-shrink-0 text-primary" aria-hidden />
+              <span><strong className="text-foreground">الدليل من حسابك:</strong> {evidence}</span>
+            </div>
+          )}
+
+          <div className="mt-5 grid border-y border-border sm:grid-cols-3">
+            <GuidanceFact label="الأولوية" value={severityLabel(recommendation.severity)} />
+            <GuidanceFact
+              label="الأثر المتوقع"
+              value={monthlyImpact > 0 ? `${formatCurrency(monthlyImpact, currencyCode)} شهرياً` : 'تحسين جودة الحساب'}
+            />
+            <GuidanceFact label="حالة القرار" value="ينتظر مراجعتك" />
+          </div>
+        </div>
+
+        <aside className="border-t border-border bg-muted/35 p-5 sm:p-6 lg:border-s lg:border-t-0">
+          <h3 className="font-semibold text-foreground">ماذا سيحدث بعد الضغط؟</h3>
+          <ol className="mt-4 space-y-4">
+            <GuidanceStep number="1" text="نجهّز التعديل المقترح بأرقامه وتفاصيله." />
+            <GuidanceStep number="2" text="تراجعه بهدوء داخل مركز الموافقات." />
+            <GuidanceStep number="3" text="التنفيذ يحتاج تأكيداً منفصلاً منك." />
+          </ol>
+          <div className="mt-6 [&>form]:w-full [&_button]:w-full">
+            <RecommendationAction
+              id={recommendation.id}
+              intent="approve"
+              label="تجهيز التعديل للمراجعة"
+              next="/audit"
+              fullWidth
+            />
+          </div>
+          <p className="mt-3 text-center text-xs leading-6 text-muted-foreground">
+            الضغط هنا لا يغيّر الحملة أو الميزانية.
+          </p>
+        </aside>
+      </div>
+    </section>
+  );
+}
+
+function GuidanceFact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="px-3 py-4 first:ps-0 sm:border-s sm:border-border sm:first:border-s-0">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="mt-1 text-sm font-semibold text-foreground">{value}</div>
+    </div>
+  );
+}
+
+function GuidanceStep({ number, text }: { number: string; text: string }) {
+  return (
+    <li className="flex items-start gap-3 text-sm leading-6 text-muted-foreground">
+      <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-primary/12 text-xs font-bold text-primary">
+        {number}
+      </span>
+      <span>{text}</span>
+    </li>
   );
 }
 
@@ -403,7 +610,7 @@ function CategoryScore({ label, value }: { label: string; value: number }) {
   const tone = scoreTone(value);
   const clamped = Math.max(0, Math.min(100, value));
   return (
-    <div className="surface-card overflow-hidden p-3">
+    <div className="overflow-hidden rounded-lg border border-border bg-muted/30 p-3">
       <div className="flex items-baseline justify-between gap-2">
         <span className="text-xs text-muted-foreground">{label}</span>
         <span className={cn('text-lg font-bold numeric', tone.text)}>{value}</span>
@@ -475,12 +682,14 @@ function RecommendationAction({
   label,
   next,
   secondary,
+  fullWidth,
 }: {
   id: string;
   intent: 'approve' | 'dismiss';
   label: string;
   next: string;
   secondary?: boolean;
+  fullWidth?: boolean;
 }) {
   return (
     <form action="/api/recommendations/action" method="post">
@@ -489,8 +698,9 @@ function RecommendationAction({
       <input type="hidden" name="next" value={next} />
       <PendingSubmitButton
         pendingLabel={intent === 'approve' ? 'جاري الموافقة...' : 'جاري التجاهل...'}
-        className={buttonClasses({ variant: secondary ? 'outline' : 'primary', size: 'sm' })}
+        className={cn(buttonClasses({ variant: secondary ? 'outline' : 'primary', size: fullWidth ? 'md' : 'sm' }), fullWidth && 'w-full')}
       >
+        {intent === 'approve' && <ListChecks className="h-4 w-4" aria-hidden />}
         {label}
       </PendingSubmitButton>
     </form>
