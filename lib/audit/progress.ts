@@ -42,7 +42,7 @@ export const AUDIT_PROGRESS_STEPS = [
   {
     id: 'ai_narrative',
     title: 'صياغة القراءة الذكية',
-    runningLabel: 'Claude يرتب الأولويات ويشرح النتائج بلغة عملية',
+    runningLabel: 'نرتب الأولويات ونشرح النتائج بلغة عملية',
     completedLabel: 'اكتملت القراءة الذكية للنتائج',
     startPercent: 82,
     completePercent: 92,
