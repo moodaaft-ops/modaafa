@@ -12,11 +12,11 @@ import { EmptyState } from '@/lib/ui/empty-state';
 import { Alert } from '@/lib/ui/alert';
 import { StatusBadge, recommendationStatusTone, severityTone } from '@/lib/ui/status-badge';
 import { buttonClasses } from '@/lib/ui/button';
-import { selectClasses } from '@/lib/ui/field';
 import { cn } from '@/lib/utils';
 import { getSubscriptionAccess, featureAccessMessage } from '@/lib/billing/entitlements';
 import { SubscriptionGate } from '@/lib/ui/subscription-gate';
 import { isCurrentAuditEngine } from '@/lib/audit/version';
+import { AuditRunner } from './audit-runner';
 
 type AccountLite = { customer_id: string; customer_name: string | null };
 
@@ -466,29 +466,7 @@ function RunAuditForm({
     );
   }
 
-  return (
-    <form action="/api/audit/run" method="post" className="flex items-center gap-2">
-      {accounts.length > 1 ? (
-        <select
-          name="customerId"
-          defaultValue={selectedCustomerId ?? accounts[0].customer_id}
-          className={cn(selectClasses, 'h-10 max-w-[180px]')}
-          aria-label="اختر الحساب للفحص"
-        >
-          {accounts.map((account) => (
-            <option key={account.customer_id} value={account.customer_id}>
-              {googleAdsAccountDisplayName(account)}
-            </option>
-          ))}
-        </select>
-      ) : (
-        <input type="hidden" name="customerId" value={accounts[0].customer_id} />
-      )}
-      <PendingSubmitButton pendingLabel="جاري الفحص..." className={buttonClasses({ variant: 'primary' })}>
-        {label}
-      </PendingSubmitButton>
-    </form>
-  );
+  return <AuditRunner accounts={accounts} selectedCustomerId={selectedCustomerId} label={label} />;
 }
 
 function RecommendationAction({
