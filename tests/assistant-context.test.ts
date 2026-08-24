@@ -117,3 +117,41 @@ test('limits confidence when synchronized data is stale', () => {
   assert.equal(stale.data_quality.sync_state, 'stale');
   assert.equal(stale.data_quality.confidence, 'limited');
 });
+
+test('remembers prior actions and measures the direction between audits', () => {
+  const analysis = buildAssistantAnalysis({
+    business: null,
+    account: {
+      customer_id: '123',
+      customer_name: 'حساب القرار',
+      currency_code: 'SAR',
+      last_synced_at: '2026-08-22T11:30:00.000Z',
+    },
+    campaigns: [campaign()],
+    audit: {
+      health_score: 82,
+      estimated_monthly_waste: 120,
+      ran_at: '2026-08-22T10:00:00.000Z',
+    },
+    auditHistory: [
+      { health_score: 82, estimated_monthly_waste: 120, ran_at: '2026-08-22T10:00:00.000Z' },
+      { health_score: 70, estimated_monthly_waste: 260, ran_at: '2026-08-15T10:00:00.000Z' },
+    ],
+    recommendations: [],
+    actions: [
+      {
+        action_type: 'add_negative_keyword',
+        description_ar: 'إضافة كلمة سلبية',
+        observed_impact: { spend_saved: 44 },
+        created_at: '2026-08-20T10:00:00.000Z',
+      },
+    ],
+    now: NOW,
+  });
+
+  assert.equal(analysis.decision_history.audit_trend?.direction, 'improving');
+  assert.equal(analysis.decision_history.audit_trend?.health_score_delta, 12);
+  assert.equal(analysis.decision_history.audit_trend?.estimated_monthly_waste_delta, -140);
+  assert.match(JSON.stringify(analysis.decision_history.recent_actions), /إضافة كلمة سلبية/);
+  assert.match(JSON.stringify(assistantPromptContext(analysis, 'وش القرار التالي؟')), /spend_saved/);
+});

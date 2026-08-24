@@ -4,6 +4,8 @@ import {
   ArrowLeft,
   CheckCircle2,
   CircleDashed,
+  History,
+  ListChecks,
   Megaphone,
   MessageCircle,
   Plus,
@@ -36,6 +38,12 @@ import {
 } from '@/lib/analytics/date-range';
 import { loadCampaignsForDateRange } from '@/lib/analytics/campaign-performance';
 import { DateRangePicker } from '@/lib/ui/date-range-picker';
+import { buildDailyPlan, type DailyPlanTask } from '@/lib/guidance/daily-plan';
+import {
+  actionHistoryLabel,
+  actionHistoryState,
+  actionHistoryTone,
+} from '@/lib/guidance/action-history';
 
 const starterSteps = [
   {
@@ -103,7 +111,13 @@ export default async function DashboardPage({
   // email address.
   const business = workspaceBusiness;
 
-  const [campaignsResult, auditResult, subscription] = await Promise.all([
+  const [
+    campaignsResult,
+    auditResult,
+    recommendationsResult,
+    actionsResult,
+    subscription,
+  ] = await Promise.all([
     selectedAccount
       ? supabase
           .from('campaigns_cache')
@@ -121,12 +135,41 @@ export default async function DashboardPage({
           .limit(1)
           .maybeSingle()
       : Promise.resolve({ data: null, error: null }),
+    selectedAccount
+      ? supabase
+          .from('recommendations')
+          .select('id,title,status,severity,expected_impact,created_at')
+          .eq('account_id', selectedAccount.id)
+          .in('status', ['pending', 'approved', 'executing', 'failed'])
+          .order('created_at', { ascending: false })
+          .limit(30)
+      : Promise.resolve({ data: [], error: null }),
+    selectedAccount
+      ? supabase
+          .from('ai_actions')
+          .select('id,action_type,description_ar,created_at,result,observed_impact,reverted_at')
+          .eq('account_id', selectedAccount.id)
+          .order('created_at', { ascending: false })
+          .limit(20)
+      : Promise.resolve({ data: [], error: null }),
     getSubscriptionAccess(supabase, user.id, user.email),
   ]);
   assertSupabaseRead(campaignsResult.error, 'load dashboard campaigns');
   assertSupabaseRead(auditResult.error, 'load dashboard audit');
+  assertSupabaseRead(recommendationsResult.error, 'load dashboard recommendations');
+  assertSupabaseRead(actionsResult.error, 'load dashboard actions');
   const cachedCampaigns = campaignsResult.data ?? [];
   const latestAudit = auditResult.data;
+  const dailyPlan = buildDailyPlan({
+    hasAccount: Boolean(selectedAccount),
+    revokedAccounts: revokedAccounts.length,
+    subscriptionActive: subscription.active,
+    campaignCount: cachedCampaigns.length,
+    lastSyncedAt: selectedAccount?.last_synced_at,
+    latestAuditAt: latestAudit?.ran_at,
+    recommendations: recommendationsResult.data ?? [],
+    actions: actionsResult.data ?? [],
+  });
   const requestedRange = resolveDateRange(params, '7d');
   let effectiveRange = requestedRange;
   let rangeLoadError: string | null = null;
@@ -335,6 +378,8 @@ export default async function DashboardPage({
               </section>
             )}
 
+            <DailyActionPlan plan={dailyPlan} />
+
             {/* KPIs */}
             <section className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
               <MetricCard label={`الإنفاق — ${effectiveRange.label}`} value={formatCurrency(totalSpend, selectedAccount?.currency_code)} icon={Wallet} />
@@ -445,6 +490,8 @@ export default async function DashboardPage({
               )}
             </section>
 
+            <ActionHistory actions={actionsResult.data ?? []} />
+
             {/* Quick help strip */}
             <section className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-primary/25 bg-primary/[0.06] p-5">
               <div className="flex items-center gap-3">
@@ -465,4 +512,127 @@ export default async function DashboardPage({
       </div>
     </>
   );
+}
+
+function ActionHistory({ actions }: { actions: any[] }) {
+  const recentActions = actions.slice(0, 4);
+
+  return (
+    <section className="surface-card overflow-hidden" aria-labelledby="action-history-title">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <History className="h-4 w-4 text-primary" aria-hidden />
+            <h2 id="action-history-title" className="text-[14px] font-semibold text-foreground">
+              آخر القرارات والنتائج
+            </h2>
+          </div>
+          <p className="mt-1 text-xs leading-6 text-muted-foreground">
+            تعرف ماذا اعتمدت، وما نُفّذ فعلاً، وهل تحسن الأداء بعده.
+          </p>
+        </div>
+        <Link href="/optimizer" className={buttonClasses({ variant: 'outline', size: 'sm' })}>
+          السجل الكامل
+        </Link>
+      </div>
+
+      {recentActions.length === 0 ? (
+        <div className="px-5 py-5 text-[12.5px] leading-6 text-muted-foreground">
+          لا توجد قرارات بعد. ستظهر هنا كل موافقة أو تعديل مع نتيجته، ولن تُنفذ المنصة شيئاً دون إذنك.
+        </div>
+      ) : (
+        <div className="divide-y divide-border">
+          {recentActions.map((action) => {
+            const state = actionHistoryState(action);
+            return (
+              <div key={action.id} className="flex flex-wrap items-start justify-between gap-3 px-5 py-3.5">
+                <div className="min-w-0 flex-1">
+                  <div className="text-[13px] font-semibold leading-6 text-foreground">
+                    {action.description_ar}
+                  </div>
+                  <div className="mt-0.5 text-[11.5px] text-muted-foreground">
+                    {timeAgoAr(action.created_at)}
+                  </div>
+                </div>
+                <StatusBadge tone={actionHistoryTone(state)}>{actionHistoryLabel(state)}</StatusBadge>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function DailyActionPlan({ plan }: { plan: ReturnType<typeof buildDailyPlan> }) {
+  const primary = plan.primary;
+  const secondary = plan.tasks.slice(1);
+
+  return (
+    <section className="overflow-hidden rounded-lg border border-border bg-card" aria-labelledby="daily-plan-title">
+      <div className="flex flex-wrap items-start justify-between gap-4 border-b border-border px-5 py-4">
+        <div className="flex items-start gap-3">
+          <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <ListChecks className="h-5 w-5" aria-hidden />
+          </span>
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 id="daily-plan-title" className="text-[15px] font-semibold text-foreground">
+                خطتك اليوم
+              </h2>
+              {plan.pendingDecisions > 0 && (
+                <StatusBadge tone="warning">{formatNumberAr(plan.pendingDecisions)} قرار</StatusBadge>
+              )}
+            </div>
+            <p className="mt-1 text-[12.5px] leading-6 text-muted-foreground">{plan.summary}</p>
+          </div>
+        </div>
+        <span className="text-[11.5px] text-muted-foreground">لا يُنفذ أي تعديل من دون موافقتك</span>
+      </div>
+
+      <div className="grid lg:grid-cols-[minmax(0,1.25fr)_minmax(280px,0.75fr)]">
+        <div className={`border-b border-border p-5 lg:border-b-0 lg:border-e ${dailyPlanTone(primary.tone)}`}>
+          <div className="text-[11.5px] font-semibold text-primary">ابدأ من هنا</div>
+          <h3 className="mt-1.5 text-[18px] font-bold text-foreground">{primary.title}</h3>
+          <p className="mt-2 max-w-3xl text-[13px] leading-7 text-muted-foreground">{primary.description}</p>
+          <Link href={primary.href} className={`mt-4 ${buttonClasses({ variant: 'primary' })}`}>
+            {primary.cta}
+            <ArrowLeft className="h-4 w-4" aria-hidden />
+          </Link>
+        </div>
+
+        <div className="divide-y divide-border">
+          {secondary.length > 0 ? (
+            secondary.map((task, index) => (
+              <Link
+                key={task.id}
+                href={task.href}
+                className="group flex items-start gap-3 px-5 py-3.5 transition-colors hover:bg-muted/50"
+              >
+                <span className="mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md bg-muted text-[11px] font-bold text-muted-foreground">
+                  {formatNumberAr(index + 2)}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[13px] font-semibold text-foreground">{task.title}</span>
+                  <span className="mt-0.5 block text-[11.5px] leading-5 text-muted-foreground">{task.cta}</span>
+                </span>
+                <ArrowLeft className="mt-1 h-3.5 w-3.5 flex-shrink-0 text-muted-foreground transition-transform group-hover:-translate-x-0.5 group-hover:text-primary" aria-hidden />
+              </Link>
+            ))
+          ) : (
+            <div className="flex h-full min-h-32 items-center px-5 py-4 text-[12.5px] leading-6 text-muted-foreground">
+              لا توجد خطوات متراكمة. سنضيف هنا أي قرار يحتاج انتباهك فور ظهوره.
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function dailyPlanTone(tone: DailyPlanTask['tone']) {
+  if (tone === 'danger') return 'bg-red-500/[0.045]';
+  if (tone === 'warning') return 'bg-amber-500/[0.05]';
+  if (tone === 'primary') return 'bg-primary/[0.045]';
+  return 'bg-card';
 }

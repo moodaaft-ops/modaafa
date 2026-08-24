@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Building2, Link2, LogOut, Pencil, Settings as SettingsIcon } from 'lucide-react';
+import { Activity, Building2, Link2, LogOut, Pencil, Settings as SettingsIcon } from 'lucide-react';
 import { redirect } from 'next/navigation';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import {
@@ -100,6 +100,12 @@ export default async function SettingsPage({
                 {!item.ok && <p className="mt-3 text-xs leading-6 text-muted-foreground">{item.fix_ar}</p>}
               </div>
             ))}
+          </div>
+          <div className="mt-5 border-t border-border pt-4">
+            <Link href="/operations" className={buttonClasses({ variant: 'outline' })}>
+              <Activity className="h-4 w-4" />
+              فتح مركز التشغيل
+            </Link>
           </div>
         </section>
         )}

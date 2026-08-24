@@ -26,6 +26,8 @@ export type AssistantAuditInput = {
   ran_at?: string | null;
 } | null;
 
+export type AssistantAuditRecordInput = Exclude<AssistantAuditInput, null>;
+
 export type AssistantRecommendationInput = {
   id?: string | null;
   title?: string | null;
@@ -35,6 +37,18 @@ export type AssistantRecommendationInput = {
   action_payload?: unknown;
   status?: string | null;
   created_at?: string | null;
+};
+
+export type AssistantActionInput = {
+  id?: string | null;
+  action_type?: string | null;
+  description_ar?: string | null;
+  reason?: string | null;
+  expected_impact?: unknown;
+  observed_impact?: unknown;
+  result?: unknown;
+  created_at?: string | null;
+  reverted_at?: string | null;
 };
 
 type MetricTotals = {
@@ -128,6 +142,21 @@ export type AssistantAnalysis = {
   };
   campaigns: AssistantCampaignInsight[];
   open_recommendations: unknown[];
+  decision_history: {
+    recent_actions: unknown[];
+    audit_history: Array<{
+      health_score: number | null;
+      estimated_monthly_waste: number | null;
+      ran_at: string | null;
+    }>;
+    audit_trend: {
+      direction: 'improving' | 'declining' | 'stable' | 'unknown';
+      health_score_delta: number | null;
+      estimated_monthly_waste_delta: number | null;
+      from: string | null;
+      to: string | null;
+    } | null;
+  };
 };
 
 export function buildAssistantAnalysis({
@@ -135,7 +164,9 @@ export function buildAssistantAnalysis({
   account,
   campaigns,
   audit,
+  auditHistory = [],
   recommendations,
+  actions = [],
   now = new Date(),
 }: {
   business: BusinessSummary | null;
@@ -147,7 +178,9 @@ export function buildAssistantAnalysis({
   };
   campaigns: AssistantCampaignInput[];
   audit: AssistantAuditInput;
+  auditHistory?: AssistantAuditRecordInput[];
   recommendations: AssistantRecommendationInput[];
+  actions?: AssistantActionInput[];
   now?: Date;
 }): AssistantAnalysis {
   const recent7 = sumCampaignMetrics(campaigns, 'metrics_7d');
@@ -190,6 +223,7 @@ export function buildAssistantAnalysis({
     syncAgeHours === null ? 'unknown' : syncAgeHours <= 24 ? 'fresh' : syncAgeHours <= 72 ? 'aging' : 'stale';
   const confidence = confidenceLevel({ campaigns: campaigns.length, syncState, audit, auditAgeHours, coveragePct });
   const findings = Array.isArray(audit?.findings) ? audit.findings.slice(0, 12).map(compactPromptValue) : [];
+  const normalizedAuditHistory = normalizeAuditHistory(audit, auditHistory);
 
   return {
     business: {
@@ -287,6 +321,28 @@ export function buildAssistantAnalysis({
         created_at: recommendation.created_at,
       })
     ),
+    decision_history: {
+      recent_actions: actions.slice(0, 12).map((action) =>
+        compactPromptValue({
+          id: action.id,
+          action_type: action.action_type,
+          description_ar: action.description_ar,
+          reason: action.reason,
+          expected_impact: action.expected_impact,
+          observed_impact: action.observed_impact,
+          result: action.result,
+          created_at: action.created_at,
+          reverted_at: action.reverted_at,
+          state: action.reverted_at ? 'reverted' : hasMeaningfulValue(action.observed_impact) ? 'measured' : 'awaiting_measurement',
+        })
+      ),
+      audit_history: normalizedAuditHistory.map((item) => ({
+        health_score: finiteNumber(item.health_score),
+        estimated_monthly_waste: finiteNumber(item.estimated_monthly_waste),
+        ran_at: item.ran_at ?? null,
+      })),
+      audit_trend: buildAuditTrend(normalizedAuditHistory),
+    },
   };
 }
 
@@ -301,7 +357,56 @@ export function assistantPromptContext(analysis: AssistantAnalysis, message: str
     data_quality: analysis.data_quality,
     campaigns: selectedCampaigns,
     open_recommendations: analysis.open_recommendations,
+    decision_history: analysis.decision_history,
   });
+}
+
+function normalizeAuditHistory(audit: AssistantAuditInput, history: AssistantAuditRecordInput[]) {
+  const candidates = [...history];
+  if (audit && !candidates.some((item) => item.ran_at && item.ran_at === audit.ran_at)) candidates.push(audit);
+  return candidates
+    .filter((item) => Boolean(item))
+    .sort((left, right) => timestamp(right.ran_at) - timestamp(left.ran_at))
+    .slice(0, 4);
+}
+
+function buildAuditTrend(history: AssistantAuditRecordInput[]): AssistantAnalysis['decision_history']['audit_trend'] {
+  const current = history[0];
+  const previous = history[1];
+  if (!current || !previous) return null;
+  const healthScoreDelta = numericDelta(current.health_score, previous.health_score);
+  const wasteDelta = numericDelta(current.estimated_monthly_waste, previous.estimated_monthly_waste);
+  const direction =
+    healthScoreDelta === null && wasteDelta === null
+      ? 'unknown'
+      : (healthScoreDelta ?? 0) >= 2 || (wasteDelta ?? 0) <= -1
+        ? 'improving'
+        : (healthScoreDelta ?? 0) <= -2 || (wasteDelta ?? 0) >= 1
+          ? 'declining'
+          : 'stable';
+  return {
+    direction,
+    health_score_delta: healthScoreDelta,
+    estimated_monthly_waste_delta: wasteDelta,
+    from: previous.ran_at ?? null,
+    to: current.ran_at ?? null,
+  };
+}
+
+function numericDelta(current: unknown, previous: unknown) {
+  const currentNumber = finiteNumber(current);
+  const previousNumber = finiteNumber(previous);
+  return currentNumber === null || previousNumber === null ? null : round(currentNumber - previousNumber);
+}
+
+function timestamp(value: string | null | undefined) {
+  const parsed = value ? Date.parse(value) : Number.NaN;
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function hasMeaningfulValue(value: unknown) {
+  if (Array.isArray(value)) return value.length > 0;
+  return Boolean(value && typeof value === 'object' && Object.keys(value as Record<string, unknown>).length > 0);
 }
 
 function buildCampaignInsight(campaign: AssistantCampaignInput): AssistantCampaignInsight {
