@@ -1,4 +1,5 @@
-import { createServerClient as createSSRClient, type CookieOptions } from '@supabase/ssr';
+import { createServerClient as createSSRClient } from '@supabase/ssr/dist/module/createServerClient';
+import type { CookieOptions } from '@supabase/ssr/dist/module/types';
 import { cookies } from 'next/headers';
 import { isConfiguredEnv } from '@/lib/platform/env';
 import { requestCache } from '@/lib/platform/request-cache';

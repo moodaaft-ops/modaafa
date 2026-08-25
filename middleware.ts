@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { createServerClient as createSSRClient, type CookieOptions } from '@supabase/ssr';
+import { createServerClient as createSSRClient } from '@supabase/ssr/dist/module/createServerClient';
+import type { CookieOptions } from '@supabase/ssr/dist/module/types';
 import { SUPABASE_COOKIE_OPTIONS } from '@/lib/supabase/cookie-options';
 import { buildContentSecurityPolicy, generateNonce, NONCE_HEADER } from '@/lib/security/csp';
 
