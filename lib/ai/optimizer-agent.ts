@@ -79,10 +79,26 @@ Return ONLY a JSON object (no markdown):
       "params": object,
       "reason_ar": string,
       "reason_en": string,
+      "confidence": number between 0 and 1,
+      "evidence": {
+        "window_days": number,
+        "clicks": number,
+        "conversions": number,
+        "cost_micros": number,
+        "source_resource": string | null,
+        "relevance": "clearly_irrelevant" | "uncertain"
+      },
       "expected_impact": { "metric": string, "delta_pct": number, "delta_sar_per_month": number }
     }
   ]
-}`;
+}
+
+AUTOPILOT EVIDENCE RULES
+- confidence is your confidence in the recommendation, not permission to execute it.
+- evidence numbers MUST be copied from the single matching Google Ads row. Never calculate, estimate, or combine rows.
+- For add_negative_keyword, source_resource is the campaign.resource_name from the same wasted_search_terms row.
+- Set relevance to "clearly_irrelevant" only when the query is unmistakably unrelated to the advertised business. If unsure, use "uncertain".
+- Modaafa independently replaces all numeric evidence with the source row before any automatic decision. Missing or mismatched evidence always requires human review.`;
 
 export type ConversionTrackingStatus = 'healthy' | 'suspect' | 'missing' | 'unknown';
 
@@ -136,6 +152,17 @@ export interface OptimizerAction {
   params: Record<string, unknown>;
   reason_ar: string;
   reason_en: string;
+  /** Model confidence is advisory; deterministic policy decides execution. */
+  confidence?: number;
+  /** Source-row evidence used by the deterministic autopilot policy. */
+  evidence?: {
+    window_days: number;
+    clicks: number;
+    conversions: number;
+    cost_micros: number;
+    source_resource?: string | null;
+    relevance: 'clearly_irrelevant' | 'uncertain';
+  };
   expected_impact: {
     metric: string;
     delta_pct: number;
@@ -191,6 +218,19 @@ const ALLOWED_ACTION_TYPES = new Set([
 ]);
 
 function isWellFormedAction(action: any): action is OptimizerAction {
+  const confidenceValid =
+    action?.confidence === undefined ||
+    (Number.isFinite(Number(action.confidence)) && Number(action.confidence) >= 0 && Number(action.confidence) <= 1);
+  const evidenceValid =
+    action?.evidence === undefined ||
+    (action.evidence &&
+      typeof action.evidence === 'object' &&
+      Number.isFinite(Number(action.evidence.window_days)) &&
+      Number.isFinite(Number(action.evidence.clicks)) &&
+      Number.isFinite(Number(action.evidence.conversions)) &&
+      Number.isFinite(Number(action.evidence.cost_micros)) &&
+      ['clearly_irrelevant', 'uncertain'].includes(action.evidence.relevance));
+
   return Boolean(
     action &&
       typeof action === 'object' &&
@@ -199,7 +239,9 @@ function isWellFormedAction(action: any): action is OptimizerAction {
       typeof action.reason_ar === 'string' &&
       action.reason_ar.trim().length > 0 &&
       action.params &&
-      typeof action.params === 'object'
+      typeof action.params === 'object' &&
+      confidenceValid &&
+      evidenceValid
   );
 }
 

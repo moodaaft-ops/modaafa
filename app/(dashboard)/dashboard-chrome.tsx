@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import {
   BarChart3,
+  Bot,
   CreditCard,
   HelpCircle,
   LayoutDashboard,
@@ -44,6 +45,7 @@ const navGroups: Array<{
       { href: '/assistant', label: 'المساعد الذكي', icon: MessageCircle },
       { href: '/audit', label: 'فحص الحساب', icon: ShieldCheck },
       { href: '/optimizer', label: 'مركز الموافقات', icon: Zap },
+      { href: '/autopilot', label: 'الطيار الآلي', icon: Bot, badge: 'تجريبي' },
     ],
   },
   {
