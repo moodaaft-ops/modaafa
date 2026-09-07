@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type Stripe from 'stripe';
+import { normalizeSubscriptionStatus } from './subscription-status';
 import { createAdminClient } from '@/lib/supabase/server';
 import {
   constructWebhookEvent,
@@ -135,7 +136,7 @@ export function createStripeWebhookHandler(
                 : null,
           });
           if (
-            dependencies.subscriptionEventWasApplied(writeResult) &&
+            writeResult !== 'ignored_deleted_user' &&
             stripeSubscription.trial_end
           ) {
             await dependencies.recordTrialGrant({
@@ -190,7 +191,7 @@ export function createStripeWebhookHandler(
 
           const writeResult = await dependencies.applySubscriptionEvent(supabase, row);
           if (
-            dependencies.subscriptionEventWasApplied(writeResult) &&
+            writeResult !== 'ignored_deleted_user' &&
             userId &&
             subscription.trial_end
           ) {
@@ -325,13 +326,6 @@ async function safeUserEmail(
 function throwOnSupabaseError(operation: string, error: unknown) {
   if (!error) return;
   throw new Error(`Failed to ${operation}`, { cause: error });
-}
-
-function normalizeSubscriptionStatus(status?: string) {
-  const allowed = ['trialing', 'active', 'past_due', 'canceled', 'paused'];
-  if (status && allowed.includes(status)) return status;
-  if (status === 'unpaid' || status === 'incomplete') return 'past_due';
-  return 'paused';
 }
 
 function stripeTimestamp(value?: number | null) {
