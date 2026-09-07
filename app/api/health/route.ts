@@ -154,6 +154,8 @@ async function checkDatabase() {
       { table: 'audits', column: 'id' },
       { table: 'recommendations', column: 'id' },
       { table: 'ai_actions', column: 'id' },
+      { table: 'autopilot_settings', column: 'account_id' },
+      { table: 'autopilot_decisions', column: 'id' },
       { table: 'campaigns_cache', column: 'id' },
       { table: 'chat_sessions', column: 'id' },
       { table: 'chat_messages', column: 'id' },

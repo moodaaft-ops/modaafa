@@ -10,7 +10,7 @@ import { buildContentSecurityPolicy, generateNonce, NONCE_HEADER } from '@/lib/s
  * nonce-based Content-Security-Policy.
  */
 export async function middleware(req: NextRequest) {
-  const protectedPaths = ['/dashboard', '/assistant', '/audit', '/campaigns', '/optimizer', '/reports', '/billing', '/settings', '/onboarding'];
+  const protectedPaths = ['/dashboard', '/assistant', '/audit', '/campaigns', '/optimizer', '/autopilot', '/operations', '/reports', '/billing', '/settings', '/onboarding'];
   const isProtected = protectedPaths.some((p) => req.nextUrl.pathname.startsWith(p));
   const isLogin = req.nextUrl.pathname === '/login';
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -119,6 +119,8 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
+  // Supabase's current SDK uses Node APIs. Supported by stable Next.js 15.5.
+  runtime: 'nodejs',
   // API routes are excluded because they return JSON, never a document, so a
   // script policy has nothing to govern there. The non-CSP security headers in
   // next.config.js still cover them.

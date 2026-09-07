@@ -3,19 +3,17 @@ name: Scheduled production jobs
 on:
   schedule:
     - cron: '17 * * * *'
-    - cron: '47 * * * *'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: scheduled-production-${{ github.event.schedule || 'manual' }}
+  group: scheduled-production
   cancel-in-progress: false
 
 jobs:
   sync-google-ads:
-    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '17 * * * *'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -30,7 +28,7 @@ jobs:
             https://ai.modaafa.com/api/cron/sync-google-ads
 
   optimize:
-    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '47 * * * *'
+    needs: sync-google-ads
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

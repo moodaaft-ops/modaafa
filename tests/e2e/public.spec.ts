@@ -61,10 +61,30 @@ test.describe('public launch surface', () => {
   });
 
   test('protected pages redirect anonymous visitors to login', async ({ page }) => {
-    await page.goto('/dashboard');
+    for (const path of ['/dashboard', '/assistant', '/audit', '/optimizer', '/autopilot', '/operations', '/campaigns', '/reports', '/billing', '/settings', '/onboarding']) {
+      await page.goto(path);
+      await expect(page).toHaveURL(/\/login\?/);
+      await expect(page.getByRole('heading', { name: 'تسجيل الدخول' })).toBeVisible();
+    }
+  });
 
-    await expect(page).toHaveURL(/\/login\?(?:next=%2Fdashboard|error=missing_config)/);
-    await expect(page.getByRole('heading', { name: 'تسجيل الدخول' })).toBeVisible();
+  test('login is readable in both themes with rendered brand assets', async ({ page }, testInfo) => {
+    await page.goto('/login');
+    for (const theme of ['light', 'dark']) {
+      const isDark = await page.locator('html').evaluate((element) => element.classList.contains('dark'));
+      if (isDark !== (theme === 'dark')) {
+        await page.getByRole('button', { name: isDark ? 'الوضع الفاتح' : 'الوضع الداكن' }).first().click();
+      }
+      await expect(page.getByRole('heading', { name: 'تسجيل الدخول' })).toBeVisible();
+      const layout = await page.evaluate(() => ({
+        width: document.documentElement.scrollWidth,
+        viewport: document.documentElement.clientWidth,
+        brokenImages: [...document.images].filter((img) => !img.complete || img.naturalWidth === 0).length,
+      }));
+      expect(layout.width).toBeLessThanOrEqual(layout.viewport + 1);
+      expect(layout.brokenImages).toBe(0);
+      await page.screenshot({ path: testInfo.outputPath(`login-${theme}.png`), fullPage: true, animations: 'disabled' });
+    }
   });
 
   test('document CSP uses a nonce and does not allow inline scripts', async ({ page }) => {

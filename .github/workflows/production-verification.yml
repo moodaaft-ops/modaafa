@@ -40,7 +40,11 @@ jobs:
             ai_ok: .checks.ai.ok,
             operational_email_ok: .checks.operational_email.ok,
             operational_jobs_ok: .checks.database.operational_jobs.ok,
-            job_capacity_ok: .checks.database.job_capacity.ok
+            job_capacity_ok: .checks.database.job_capacity.ok,
+            operational_jobs: [.checks.database.operational_jobs.checks[]? | {
+              job_name, ok, latest_status, age_hours, max_age_hours,
+              processed, error_count
+            }]
           }' "$response"
 
           jq -e '.launch_ready == true' "$response" > /dev/null
