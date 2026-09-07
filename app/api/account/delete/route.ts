@@ -6,6 +6,7 @@ import { revokeRefreshToken } from '@/lib/google-ads/oauth';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 import { clearModaafaCookies } from '@/lib/auth/session-cookies';
 import { isSameOriginRequest } from '@/lib/security/origin';
+import { loadAccountDeletionResources } from '@/lib/accounts/deletion-resources';
 
 const REQUIRED_CONFIRMATION = 'حذف حسابي';
 
@@ -53,17 +54,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.redirect(url, 303);
   }
 
-  const { data: subscriptions, error: subscriptionsError } = await admin
-    .from('subscriptions')
-    .select('id, stripe_subscription_id')
-    .eq('user_id', user.id)
-    .in('status', ['trialing', 'active', 'past_due', 'paused']);
-  if (subscriptionsError) {
-    console.error('Failed to inspect subscriptions before account deletion', subscriptionsError);
-    return deleteError(req, 'billing_check_failed');
+  let resources;
+  try {
+    resources = await loadAccountDeletionResources(admin, user.id);
+  } catch (error) {
+    console.error('Failed to verify account deletion inventory', error);
+    return deleteError(req, 'deletion_inventory_failed');
   }
 
-  for (const subscription of subscriptions ?? []) {
+  for (const subscription of resources.subscriptions) {
     const subscriptionId = subscription.stripe_subscription_id;
     if (!subscriptionId) {
       console.error('Cannot safely delete an account with an untracked live subscription');
@@ -93,21 +92,9 @@ export async function POST(req: NextRequest) {
       .eq('id', subscription.id);
   }
 
-  const { data: businesses } = await admin
-    .from('businesses')
-    .select('id')
-    .eq('user_id', user.id);
-  const businessIds = (businesses ?? []).map((business) => business.id).filter(Boolean);
-  const { data: adAccounts } = businessIds.length
-    ? await admin
-        .from('google_ads_accounts')
-        .select('refresh_token_encrypted')
-        .in('business_id', businessIds)
-    : { data: [] };
-
   const refreshTokens = new Set<string>();
   let decryptFailures = 0;
-  for (const account of adAccounts ?? []) {
+  for (const account of resources.adAccounts) {
     const encrypted = account.refresh_token_encrypted;
     if (!encrypted) continue;
     try {
