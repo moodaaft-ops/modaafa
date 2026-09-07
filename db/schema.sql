@@ -901,8 +901,8 @@ GRANT EXECUTE ON FUNCTION public.consume_rate_limit(TEXT, INTEGER, INTEGER) TO s
 
 -- ============================================================
 -- Metered feature usage (assistant / audit / execute_action).
--- Callable only by the authenticated user for their own id.
--- (Kept in sync with db/migrations/20260721_billing_usage_safety.sql.)
+-- Own-user browser calls and trusted metered background jobs.
+-- Kept in sync with db/migrations/20260907_service_usage_reservation.sql.
 -- ============================================================
 CREATE OR REPLACE FUNCTION public.consume_feature_usage(
   p_user_id UUID,
@@ -922,10 +922,13 @@ DECLARE
   v_used INTEGER;
   v_event_id UUID;
 BEGIN
-  IF auth.uid() IS DISTINCT FROM p_user_id THEN
+  IF p_user_id IS NULL OR (
+    auth.role() IS DISTINCT FROM 'service_role' AND auth.uid() IS DISTINCT FROM p_user_id
+  ) THEN
     RAISE EXCEPTION 'forbidden';
   END IF;
-  IF p_limit < 1 OR p_window_end <= p_window_start THEN
+  IF p_limit IS NULL OR p_limit < 1 OR p_window_start IS NULL OR p_window_end IS NULL
+    OR p_window_end <= p_window_start THEN
     RAISE EXCEPTION 'invalid usage window';
   END IF;
 
@@ -978,7 +981,8 @@ END;
 $$;
 
 REVOKE ALL ON FUNCTION public.consume_feature_usage(UUID, TEXT, UUID, INTEGER, TIMESTAMPTZ, TIMESTAMPTZ, JSONB) FROM public;
-GRANT EXECUTE ON FUNCTION public.consume_feature_usage(UUID, TEXT, UUID, INTEGER, TIMESTAMPTZ, TIMESTAMPTZ, JSONB) TO authenticated;
+REVOKE ALL ON FUNCTION public.consume_feature_usage(UUID, TEXT, UUID, INTEGER, TIMESTAMPTZ, TIMESTAMPTZ, JSONB) FROM anon;
+GRANT EXECUTE ON FUNCTION public.consume_feature_usage(UUID, TEXT, UUID, INTEGER, TIMESTAMPTZ, TIMESTAMPTZ, JSONB) TO authenticated, service_role;
 REVOKE ALL ON FUNCTION public.refund_feature_usage(UUID, UUID) FROM public;
 REVOKE ALL ON FUNCTION public.refund_feature_usage(UUID, UUID) FROM anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.refund_feature_usage(UUID, UUID) TO service_role;

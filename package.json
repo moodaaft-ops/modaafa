@@ -33,6 +33,7 @@
     "tailwindcss-animate": "^1.0.7"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
     "@playwright/test": "1.55.1",
     "@types/node": "^22.7.5",
     "@types/react": "^18.3.11",

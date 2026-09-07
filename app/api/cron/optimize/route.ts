@@ -90,7 +90,13 @@ async function runOptimizerCron(req: NextRequest) {
     );
   }
 
-  const job = await startJobRun(supabase, 'optimize');
+  let job;
+  try {
+    job = await startJobRun(supabase, 'optimize');
+  } catch (error) {
+    console.error('Optimizer reservation failed; no work started', error);
+    return NextResponse.json({ error: 'job_storage_unavailable' }, { status: 503 });
+  }
   if (job.alreadyRunning) {
     // Overlapping optimize runs select the same oldest accounts and double
     // the Anthropic spend; refuse the second invocation honestly.
@@ -167,22 +173,6 @@ async function runOptimizerCron(req: NextRequest) {
         primary_goal: row.primary_goal ?? null,
         monthly_budget: row.monthly_budget ?? null,
       });
-    }
-  }
-
-  const ownerIds = Array.from(
-    new Set(Array.from(businessContextById.values()).map((business) => business.user_id))
-  );
-  const userEmailById = new Map<string, string>();
-  if (ownerIds.length > 0) {
-    const { data: userRows, error: userLookupError } = await supabase
-      .from('users')
-      .select('id, email')
-      .in('id', ownerIds);
-    if (userLookupError) {
-      console.error('Autopilot owner lookup failed; execution will fail closed', userLookupError);
-    } else {
-      for (const row of userRows ?? []) userEmailById.set(row.id, row.email);
     }
   }
 
@@ -270,7 +260,6 @@ async function runOptimizerCron(req: NextRequest) {
       const settings =
         settingsByAccount.get(account.id) ?? normalizeAutopilotSettings(account.id);
       const businessOwnerId = businessContext?.user_id ?? null;
-      const ownerEmail = businessOwnerId ? userEmailById.get(businessOwnerId) ?? null : null;
       const accountHistory = decisionHistory.get(account.id) ?? [];
       const startOfToday = startOfSaudiDayIso();
       const executedBeforeRun = accountHistory.filter(
@@ -402,7 +391,7 @@ async function runOptimizerCron(req: NextRequest) {
           continue;
         }
 
-        if (!businessOwnerId || !ownerEmail) {
+        if (!businessOwnerId) {
           const ownerVerdict = blockedVerdict(
             'owner_identity_missing',
             'تعذر التحقق من صاحب الحساب؛ أوقفنا التنفيذ وحفظنا التوصية للمراجعة.'
@@ -433,7 +422,9 @@ async function runOptimizerCron(req: NextRequest) {
         const usage = await consumeFeatureUsage({
           supabase,
           userId: businessOwnerId,
-          userEmail: ownerEmail,
+          // public.users.email is editable. Background work must never use it
+          // to obtain operator privileges; only a real subscription qualifies.
+          userEmail: null,
           feature: 'execute_action',
           accountId: account.id,
           metadata: {
@@ -480,6 +471,8 @@ async function runOptimizerCron(req: NextRequest) {
           fingerprint,
           ownerUserId: businessOwnerId,
           usageEventId: usage.usageEventId,
+          expectedConfigVersion: settings.config_version,
+          trackingStatus: snapshot.conversion_tracking?.status ?? 'unknown',
         });
 
         if (execution.status === 'executed') {
@@ -550,6 +543,7 @@ async function runOptimizerCron(req: NextRequest) {
             execution_status: execution.status,
           },
         });
+        if (execution.status === 'unverified') break;
       }
 
       if (settingsByAccount.has(account.id)) {

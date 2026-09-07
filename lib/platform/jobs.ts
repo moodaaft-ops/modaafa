@@ -15,12 +15,11 @@ export async function startJobRun(supabase: any, jobName: string) {
   // the first invocation is still executing — two live optimize runs then
   // select the same oldest accounts and double the Anthropic spend. Manual
   // workflow_dispatch runs in a separate concurrency group and can overlap the
-  // schedule too. Best-effort (a storage error must not stop the job); the
-  // check-then-insert race that remains is closed at the DB by the partial
+  // schedule too. The check-then-insert race is closed at the DB by the partial
   // unique index in migration 20260803_full_audit_integrity.sql.
   try {
     const staleCutoff = new Date(startedAt.getTime() - STALE_RUNNING_MS).toISOString();
-    await supabase
+    const { error: cleanupError } = await supabase
       .from('job_runs')
       .update({
         status: 'failed',
@@ -31,8 +30,9 @@ export async function startJobRun(supabase: any, jobName: string) {
       .eq('job_name', jobName)
       .eq('status', 'running')
       .lt('started_at', staleCutoff);
+    if (cleanupError) throw cleanupError;
 
-    const { data: running } = await supabase
+    const { data: running, error: lookupError } = await supabase
       .from('job_runs')
       .select('id')
       .eq('job_name', jobName)
@@ -40,9 +40,10 @@ export async function startJobRun(supabase: any, jobName: string) {
       .gte('started_at', staleCutoff)
       .limit(1)
       .maybeSingle();
+    if (lookupError) throw lookupError;
     if (running) return { id: undefined as string | undefined, startedAt, alreadyRunning: true };
   } catch (error) {
-    console.error('Job overlap guard unavailable; starting anyway', { jobName, error });
+    throw new Error('Job overlap guard unavailable', { cause: error });
   }
 
   const { data, error } = await supabase
@@ -57,8 +58,9 @@ export async function startJobRun(supabase: any, jobName: string) {
     if ((error as { code?: string }).code === '23505') {
       return { id: undefined as string | undefined, startedAt, alreadyRunning: true };
     }
-    console.error('Failed to record job start', { jobName, error });
+    throw new Error('Failed to reserve job execution', { cause: error });
   }
+  if (!data?.id) throw new Error('Job reservation returned no id');
   return { id: data?.id as string | undefined, startedAt, alreadyRunning: false };
 }
 

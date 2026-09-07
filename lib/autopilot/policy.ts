@@ -84,7 +84,7 @@ export function evaluateAutopilotPolicy(
   if (
     !check(
       'confidence_threshold',
-      Number.isFinite(confidence) && confidence >= settings.min_confidence,
+      Number.isFinite(confidence) && confidence <= 1 && confidence >= settings.min_confidence,
       `confidence=${confidence};min=${settings.min_confidence}`
     )
   ) {
@@ -98,6 +98,7 @@ export function evaluateAutopilotPolicy(
   const evidence = action.evidence;
   const evidenceReady = Boolean(
     evidence &&
+      [evidence.window_days, evidence.clicks, evidence.cost_micros, evidence.conversions].every(Number.isFinite) &&
       evidence.window_days >= 14 &&
       evidence.clicks >= 8 &&
       evidence.conversions === 0 &&
