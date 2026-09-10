@@ -1,3 +1,5 @@
+import { measurementState } from '@/lib/guidance/measurement';
+import { recommendationReadiness } from '@/lib/ai/recommendation-readiness';
 import { History, Link2, ShieldCheck, Zap } from 'lucide-react';
 import { redirect } from 'next/navigation';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
@@ -53,9 +55,9 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
   assertSupabaseRead(actionsResult.error, 'load optimizer actions');
   const recommendations = recommendationsResult.data;
   const actions = actionsResult.data;
-  const recs = recommendations ?? [];
-  const pending = recs.filter((item: any) => item.status === 'pending');
-  const approved = recs.filter((item: any) => item.status === 'approved');
+  const recs = (recommendations ?? []).map((item) => ({ ...item, readiness: recommendationReadiness(item, selectedAccount?.customer_id) }));
+  const pending = recs.filter((item: any) => item.status === 'pending' && item.readiness.ready);
+  const approved = recs.filter((item: any) => item.status === 'approved' && item.readiness.ready);
   const accountName = selectedAccount ? googleAdsAccountDisplayName(selectedAccount) : 'الحساب المختار';
 
   return (
@@ -103,7 +105,7 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
                 <div className="border-b border-border px-5 py-4">
                   <div className="text-[14px] font-semibold">التوصيات</div>
                   <p className="mt-1 text-xs leading-6 text-muted-foreground">
-                    أي تعديل على إعلانات Google يبدأ هنا ولا يُنفّذ مباشرة بدون موافقة واضحة.
+                    التعديلات اليدوية تحتاج اعتمادك ثم تأكيد التنفيذ. التشغيل المحافظ الاختياري يلتزم بالأنواع والحدود التي سمحت بها في إعداداته.
                   </p>
                 </div>
                 {recs.length === 0 ? (
@@ -121,7 +123,7 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
                 ) : (
                   <div className="divide-y divide-border">
                     {recs.map((item: any) => (
-                      <div key={item.id} className="p-5">
+                      <div key={item.id} id={`decision-${item.id}`} className="scroll-mt-24 p-5">
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                           <div className="min-w-0">
                             <div className="font-semibold text-foreground">{item.title}</div>
@@ -152,6 +154,11 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
                                 <RecommendationAction id={item.id} intent="dismiss" label="تجاهل" secondary />
                               </div>
                             )
+                          ) : !item.readiness.ready && ['pending', 'approved', 'failed'].includes(item.status) ? (
+                            <div className="flex flex-shrink-0 gap-2">
+                              <a href="/audit" className={buttonClasses({ variant: 'outline', size: 'sm' })}>تحديث الفحص</a>
+                              <RecommendationAction id={item.id} intent="dismiss" label="تجاهل" secondary />
+                            </div>
                           ) : (
                             <>
                               {item.status === 'pending' && (
@@ -174,6 +181,9 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
                           )}
                         </div>
                         {item.description && <p className="mt-2 text-sm leading-7 text-muted-foreground">{item.description}</p>}
+                        {!item.readiness.ready && !isCampaignOpportunity(item) && ['pending', 'approved', 'failed'].includes(item.status) && (
+                          <p className="mt-3 rounded-md bg-amber-50 p-3 text-xs leading-6 text-amber-900 dark:bg-amber-500/10 dark:text-amber-200">{item.readiness.message}</p>
+                        )}
                         <ChangePreview
                           payload={item.action_payload}
                           currencyCode={selectedAccount?.currency_code}
@@ -247,6 +257,8 @@ function optimizerErrorMessage(code: string) {
     return featureAccessMessage(code);
   }
   const messages: Record<string, string> = {
+    recommendation_stale: 'انتهت صلاحية التوصية. أعد فحص الحساب ثم راجع القرار الجديد.',
+    recommendation_incomplete: 'التعديل غير مكتمل أو لا يطابق الحساب، لذلك أوقفنا الموافقة والتنفيذ. أعد فحص الحساب.',
     approve_before_execution: 'اعتمد التوصية أولاً قبل تنفيذها.',
     blocked_by_guardrails: 'أوقفت ضوابط الأمان هذه العملية قبل وصولها إلى إعلانات Google.',
     manual_review_required: 'هذه التوصية وصفية وتحتاج مراجعة يدوية، لذلك لم ننفذها تلقائياً.',
@@ -326,6 +338,10 @@ function ChangePreview({
     add_negative_keyword: 'إضافة كلمة سلبية',
     add_keyword: 'إضافة كلمة رابحة من عبارات البحث',
     build_campaign_opportunity: 'اقتراح حملة جديدة (تُبنى في المساعد)',
+    review_low_quality_keyword: 'مراجعة جودة كلمة مفتاحية',
+    review_wasted_search_term: 'مراجعة عبارة بحث ذات إنفاق غير منتج',
+    setup_conversion_tracking: 'إعداد تتبع التحويلات',
+    audit_conversion_tracking: 'مراجعة صحة تتبع التحويلات',
     manual_campaign_draft: 'مسودة حملة جديدة (تحتاج مراجعة يدوية)',
   };
 
@@ -391,11 +407,11 @@ function ChangePreview({
 
   return (
     <div className="mt-3 rounded-md border border-border bg-muted/50 p-3">
-      <div className="text-xs font-semibold text-foreground">التعديل الفعلي عند التنفيذ</div>
+      <div className="text-xs font-semibold text-foreground">تفاصيل المقترح</div>
       <dl className="mt-2 space-y-1 text-xs text-muted-foreground">
         <div className="flex flex-wrap gap-x-2">
           <dt className="font-medium">نوع العملية:</dt>
-          <dd>{operationLabels[operation] ?? operation ?? 'غير محدد'}</dd>
+          <dd>{operationLabels[operation] ?? 'مراجعة تشخيصية للحساب'}</dd>
         </div>
         {rows.map((row) => (
           <div key={row.label} className="flex flex-wrap gap-x-2">
@@ -407,7 +423,7 @@ function ChangePreview({
         ))}
       </dl>
       <p className="mt-2 text-[11px] leading-5 text-muted-foreground">
-        نتحقق من العملية على Google Ads (validateOnly) قبل تطبيقها فعلياً، ونسجّل نسخة للتراجع.
+        التعديلات المكتملة تمر بفحص الأمان قبل التطبيق، ونحفظ معلومات التراجع متى كان متاحاً.
       </p>
     </div>
   );
@@ -431,7 +447,9 @@ function ObservedImpact({
   actionType: string;
   currencyCode?: string | null;
 }) {
-  if (!impact || impact.status === 'unmeasurable' || !impact.after) return null;
+  const state = measurementState(impact);
+  if (state === 'awaiting') return null;
+  if (state !== 'measured') return <p className="mt-2 text-xs text-muted-foreground">{state === 'unmeasurable' ? 'تعذر قياس الأثر لعدم توفر بيانات المقارنة.' : 'البيانات لا تكفي لحساب أثر موثوق.'}</p>;
   const before = impact.before ?? { cost: 0, conversions: 0 };
   const after = impact.after;
   const delta = impact.delta ?? {};
@@ -440,11 +458,11 @@ function ObservedImpact({
   if (actionType === 'pause_keyword' || actionType === 'pause_ad') {
     // Pauses are savings stories: the spend the entity used to burn weekly.
     if (before.cost > 0) {
-      parts.push(`وفّرنا ~${formatCurrency(before.cost, currencyCode)} أسبوعياً كانت تُصرف بدون نتيجة`);
+      parts.push(`الإنفاق قبل الإيقاف ${formatCurrency(before.cost, currencyCode)} وبعده ${formatCurrency(after.cost, currencyCode)} خلال نافذتي المقارنة`);
     }
   } else if (actionType === 'add_keyword') {
     // Promotions are growth stories: what the new keyword brought in.
-    parts.push(`الكلمة الجديدة جابت ${formatNumberAr(after.clicks ?? 0)} نقرة و${formatNumberAr(after.conversions ?? 0)} تحويل في أسبوعها الأول`);
+    parts.push(`الكلمة الجديدة جابت ${formatNumberAr(after.clicks ?? 0)} نقرة و${formatNumberAr(after.conversions ?? 0)} تحويل في آخر 7 أيام مقاسة`);
   } else {
     if (typeof delta.conversions === 'number' && delta.conversions !== 0) {
       parts.push(`${delta.conversions > 0 ? '+' : ''}${formatNumberAr(delta.conversions)} تحويل/أسبوع`);
@@ -458,8 +476,9 @@ function ObservedImpact({
 
   return (
     <div className="mt-2 inline-flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md bg-primary/[0.08] px-2.5 py-1.5 text-xs font-medium text-primary ring-1 ring-inset ring-primary/20">
-      <span className="font-semibold">النتيجة المقاسة بعد التنفيذ:</span>
+      <span className="font-semibold">مقارنة الأداء بعد التنفيذ:</span>
       <span className="text-foreground-subtle">{parts.join(' · ')}</span>
+      <span className="w-full text-[11px]">مقارنة وصفية بين فترتين؛ لا تثبت أن التعديل وحده سبب التغير.</span>
     </div>
   );
 }

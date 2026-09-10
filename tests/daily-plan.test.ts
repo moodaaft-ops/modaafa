@@ -51,7 +51,7 @@ test('asks for outcome measurement after an applied action has had time to settl
       {
         id: 'action-1',
         description_ar: 'إضافة كلمة سلبية',
-        created_at: '2026-08-22T09:00:00.000Z',
+        created_at: '2026-08-16T09:00:00.000Z',
         observed_impact: null,
       },
     ],
@@ -64,4 +64,9 @@ test('recommends monitoring when the account needs no immediate action', () => {
   const result = plan();
   assert.equal(result.primary.id, 'monitor');
   assert.equal(result.tasks.length, 1);
+});
+
+test('does not request measurement after only one day or for an unmeasurable action', () => {
+  assert.equal(plan({ actions: [{ created_at: '2026-08-23T09:00:00Z' }] }).primary.id, 'monitor');
+  assert.equal(plan({ actions: [{ created_at: '2026-08-01T09:00:00Z', observed_impact: { status: 'unmeasurable' } }] }).primary.id, 'monitor');
 });

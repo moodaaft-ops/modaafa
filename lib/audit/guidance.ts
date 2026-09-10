@@ -1,4 +1,5 @@
 export type GuidanceRecommendation = {
+  action_payload?: { operation?: string } | null;
   status?: string | null;
   severity?: string | null;
   expected_impact?: {
@@ -31,11 +32,14 @@ export function orderRecommendationsForGuidance<T extends GuidanceRecommendation
     const statusDifference = statusRank(left.status) - statusRank(right.status);
     if (statusDifference !== 0) return statusDifference;
 
-    const severityDifference = severityRank(left.severity) - severityRank(right.severity);
-    if (severityDifference !== 0) return severityDifference;
+    const trackingDifference = trackingRank(left) - trackingRank(right);
+    if (trackingDifference !== 0) return trackingDifference;
 
     const impactDifference = impactValue(right) - impactValue(left);
     if (impactDifference !== 0) return impactDifference;
+
+    const severityDifference = severityRank(left.severity) - severityRank(right.severity);
+    if (severityDifference !== 0) return severityDifference;
 
     return createdAtValue(right.created_at) - createdAtValue(left.created_at);
   });
@@ -57,4 +61,8 @@ function impactValue(recommendation: GuidanceRecommendation) {
 function createdAtValue(createdAt?: string | null) {
   const value = createdAt ? Date.parse(createdAt) : 0;
   return Number.isFinite(value) ? value : 0;
+}
+
+function trackingRank(item: GuidanceRecommendation) {
+  return ['setup_conversion_tracking', 'audit_conversion_tracking', 'review_conversion_values'].includes(item.action_payload?.operation ?? '') ? 0 : 1;
 }

@@ -1,4 +1,7 @@
+import { MEASUREMENT_DELAY_MS, measurementState } from './measurement';
+import { orderRecommendationsForGuidance } from '../audit/guidance';
 export type DailyPlanRecommendation = {
+  action_payload?: { operation?: string } | null;
   id?: string | null;
   title?: string | null;
   status?: string | null;
@@ -57,14 +60,15 @@ export function buildDailyPlan({
   const pendingRecommendations = recommendations.filter((item) => item.status === 'pending');
   const failedRecommendations = recommendations.filter((item) => item.status === 'failed');
   const approvedRecommendations = recommendations.filter((item) =>
-    ['approved', 'executing'].includes(String(item.status ?? ''))
+    item.status === 'approved'
   );
+  const executingRecommendations = recommendations.filter((item) => item.status === 'executing');
   const syncAgeHours = ageHours(lastSyncedAt, now);
   const auditAgeHours = ageHours(latestAuditAt, now);
   const actionNeedingMeasurement = actions.find((action) =>
     !action.reverted_at &&
-    !hasObservedImpact(action.observed_impact) &&
-    (ageHours(action.created_at, now) ?? 0) >= 24
+    measurementState(action.observed_impact) === 'awaiting' &&
+    (ageHours(action.created_at, now) ?? 0) >= MEASUREMENT_DELAY_MS / 3_600_000
   );
 
   if (!hasAccount) {
@@ -136,15 +140,21 @@ export function buildDailyPlan({
     });
   }
 
+  if (executingRecommendations.length > 0) {
+    tasks.push({ id: 'executing-recommendations', title: 'نتحقق من نتيجة التنفيذ',
+      description: 'يوجد تعديل قيد التنفيذ أو التحقق. راجع حالته قبل اتخاذ قرار جديد.',
+      href: '/optimizer', cta: 'متابعة التنفيذ', priority: 105, tone: 'warning' });
+  }
+
   if (pendingRecommendations.length > 0) {
-    const top = [...pendingRecommendations].sort(recommendationPriority)[0];
+    const top = orderRecommendationsForGuidance(pendingRecommendations)[0];
     tasks.push({
       id: 'pending-recommendations',
       title: `اتخذ قراراً بشأن ${countLabel(pendingRecommendations.length, 'توصية')}`,
       description: top?.title
         ? `ابدأ بالأهم: ${cleanText(top.title)}. سترى الدليل والتعديل الفعلي قبل اعتماد أي شيء.`
         : 'راجع الدليل والأثر المتوقع، ثم اعتمد المناسب أو تجاهله. لا ينفذ شيء من دون موافقتك.',
-      href: '/audit',
+      href: top?.id ? `/optimizer#decision-${encodeURIComponent(top.id)}` : '/optimizer',
       cta: 'مراجعة التوصيات',
       priority: 80,
       tone: pendingRecommendations.some((item) => item.severity === 'critical') ? 'danger' : 'primary',
@@ -168,8 +178,8 @@ export function buildDailyPlan({
       id: 'measure-action',
       title: 'قِس نتيجة آخر تعديل بدل الاكتفاء بتنفيذه',
       description: actionNeedingMeasurement.description_ar
-        ? `مرّ يوم على «${cleanText(actionNeedingMeasurement.description_ar)}». راجع الأثر الفعلي قبل إجراء تعديل جديد.`
-        : 'مرّ يوم على تعديل مطبق. راجع الأثر الفعلي قبل إجراء تعديل جديد.',
+        ? `اكتملت نافذة الأسبوع الأول على «${cleanText(actionNeedingMeasurement.description_ar)}». راجع توفر المقارنة؛ قد تتأخر التحويلات والمقارنة لا تثبت سببية التغير.`
+        : 'اكتملت نافذة الأسبوع الأول على التعديل. راجع توفر المقارنة؛ قد تتأخر التحويلات والمقارنة لا تثبت سببية التغير.',
       href: '/optimizer',
       cta: 'مراجعة نتيجة التعديل',
       priority: 70,
@@ -180,7 +190,7 @@ export function buildDailyPlan({
   if (tasks.length === 0) {
     tasks.push({
       id: 'monitor',
-      title: 'الحساب مستقر، راقب الاتجاه ولا تغيّر لمجرد التغيير',
+      title: 'لا توجد إجراءات معلّقة حالياً',
       description: 'راجع ملخص الأداء واسأل المساعد عن أكبر فرصة اليوم. أي توصية جديدة ستظهر هنا تلقائياً.',
       href: '/assistant',
       cta: 'اسأل عن فرصة اليوم',
@@ -210,23 +220,6 @@ function ageHours(value: string | null | undefined, now: Date) {
   const timestamp = Date.parse(value);
   if (!Number.isFinite(timestamp)) return null;
   return Math.max(0, (now.getTime() - timestamp) / 3_600_000);
-}
-
-function hasObservedImpact(value: unknown) {
-  return Boolean(value && typeof value === 'object' && Object.keys(value as Record<string, unknown>).length > 0);
-}
-
-function recommendationPriority(left: DailyPlanRecommendation, right: DailyPlanRecommendation) {
-  const severity = { critical: 3, medium: 2, growth: 1 } as const;
-  const severityDifference = (severity[right.severity as keyof typeof severity] ?? 0) -
-    (severity[left.severity as keyof typeof severity] ?? 0);
-  if (severityDifference !== 0) return severityDifference;
-  return impact(right) - impact(left);
-}
-
-function impact(item: DailyPlanRecommendation) {
-  const value = Number(item.expected_impact?.delta_sar_per_month ?? 0);
-  return Number.isFinite(value) ? value : 0;
 }
 
 function cleanText(value: string) {

@@ -16,7 +16,7 @@ test('guidance puts recommendations needing a decision before completed recommen
   assert.deepEqual(recommendations.map((item) => item.id), ['pending', 'failed', 'approved', 'applied']);
 });
 
-test('guidance ranks actionable recommendations by severity then expected monthly impact', () => {
+test('guidance ranks actionable recommendations by expected monthly impact before severity', () => {
   const recommendations = orderRecommendationsForGuidance([
     { id: 'medium-high-impact', status: 'pending', severity: 'medium', expected_impact: { delta_sar_per_month: 900 } },
     { id: 'critical-low-impact', status: 'pending', severity: 'critical', expected_impact: { delta_sar_per_month: 10 } },
@@ -25,10 +25,10 @@ test('guidance ranks actionable recommendations by severity then expected monthl
   ]);
 
   assert.deepEqual(recommendations.map((item) => item.id), [
-    'critical-low-impact',
     'medium-high-impact',
     'medium-low-impact',
     'growth-low-impact',
+    'critical-low-impact',
   ]);
 });
 
@@ -37,4 +37,12 @@ test('only pending and failed recommendations need a customer decision', () => {
   assert.equal(isRecommendationActionable({ status: 'failed' }), true);
   assert.equal(isRecommendationActionable({ status: 'approved' }), false);
   assert.equal(isRecommendationActionable({ status: 'applied' }), false);
+});
+
+ test('broken measurement is reviewed before financial opportunities', () => {
+  const result = orderRecommendationsForGuidance([
+    { id: 'budget', status: 'pending', expected_impact: { delta_sar_per_month: 900 } },
+    { id: 'tracking', status: 'pending', action_payload: { operation: 'audit_conversion_tracking' } },
+  ]);
+  assert.equal(result[0].id, 'tracking');
 });

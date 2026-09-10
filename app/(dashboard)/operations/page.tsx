@@ -1,3 +1,5 @@
+import { getEntitledUserIds, getBillableBusinessIds, getEligibleAccountHealth } from '@/lib/platform/jobs';
+import { summarizeOperationalState, evaluateWebhookLedger } from '@/lib/platform/health';
 import { Activity, Building2, CreditCard, Database, ShieldCheck, Users } from 'lucide-react';
 import { notFound, redirect } from 'next/navigation';
 import { createAdminClient, getRequestAuthContext } from '@/lib/supabase/server';
@@ -29,7 +31,8 @@ export default async function OperationsPage() {
     usersResult,
     businessesResult,
     accountsResult,
-    subscriptionsResult,
+    entitledUserIds,
+    billableBusinessIds,
     auditsResult,
     usageResult,
     jobsResult,
@@ -41,29 +44,26 @@ export default async function OperationsPage() {
       .from('google_ads_accounts')
       .select('id', { count: 'exact', head: true })
       .eq('status', 'active')
-      .eq('is_manager', false),
-    admin
-      .from('subscriptions')
-      .select('id', { count: 'exact', head: true })
-      .in('status', ['active', 'trialing']),
+      .not('is_manager', 'is', true),
+    getEntitledUserIds(admin),
+    getBillableBusinessIds(admin),
     admin.from('audits').select('id', { count: 'exact', head: true }),
     admin.from('usage_events').select('feature').gte('created_at', since).limit(10000),
     admin
       .from('job_runs')
       .select('id,job_name,status,started_at,finished_at,duration_ms,processed,error_count,error_message')
       .order('started_at', { ascending: false })
-      .limit(12),
+      .limit(100),
     admin
       .from('processed_webhook_events')
-      .select('event_id', { count: 'exact', head: true })
-      .eq('status', 'failed')
-      .gte('last_attempt_at', since),
+      .select('status,last_attempt_at')
+      .order('last_attempt_at', { ascending: false })
+      .limit(100),
   ]);
 
   assertSupabaseRead(usersResult.error, 'load operator user count');
   assertSupabaseRead(businessesResult.error, 'load operator business count');
   assertSupabaseRead(accountsResult.error, 'load operator account count');
-  assertSupabaseRead(subscriptionsResult.error, 'load operator subscription count');
   assertSupabaseRead(auditsResult.error, 'load operator audit count');
   assertSupabaseRead(usageResult.error, 'load operator usage');
   assertSupabaseRead(jobsResult.error, 'load operator jobs');
@@ -71,8 +71,14 @@ export default async function OperationsPage() {
 
   const usage = summarizeUsageEvents(usageResult.data ?? []);
   const jobs = jobsResult.data ?? [];
-  const failedJobs = jobs.filter((job) => job.status === 'failed' || job.status === 'partial');
-  const hasOperationalIssue = failedJobs.length > 0 || (failedWebhooksResult.count ?? 0) > 0;
+  const accountFreshness = await getEligibleAccountHealth(admin, billableBusinessIds);
+  const eligibleAccounts = accountFreshness.total;
+  const operational = summarizeOperationalState(jobs, eligibleAccounts);
+  const webhooks = evaluateWebhookLedger(failedWebhooksResult.data ?? []);
+  const hasOperationalIssue = !operational.healthy || !webhooks.ok || !accountFreshness.ok;
+  const statusLabel = hasOperationalIssue ? 'تحتاج مراجعة' : operational.state === 'idle'
+    ? 'المهام تعمل؛ لا حسابات مؤهلة حالياً' : operational.state === 'no_work'
+      ? 'توجد حسابات مؤهلة ولم تُرصد معالجة في آخر تشغيل' : 'التشغيل ومعالجة الحسابات مستقران';
 
   return (
     <>
@@ -87,11 +93,11 @@ export default async function OperationsPage() {
           <div>
             <div className="text-[13px] font-semibold text-foreground">حالة آخر 24 ساعة</div>
             <div className="mt-0.5 text-xs text-muted-foreground">
-              المهام والويبهوكات والتفاعل الفعلي مع ميزات المنتج.
+              المهام وأحداث الدفع والتفاعل الفعلي. حسابات مؤهلة للمعالجة الآن: {formatNumberAr(eligibleAccounts)}. حسابات تأخرت بياناتها أكثر من يوم: {formatNumberAr(accountFreshness.stale)}. آخر سجل لا يثبت اكتمال رحلة دفع.
             </div>
           </div>
-          <StatusBadge tone={hasOperationalIssue ? 'danger' : 'success'}>
-            {hasOperationalIssue ? 'تحتاج مراجعة' : 'التشغيل مستقر'}
+          <StatusBadge tone={hasOperationalIssue ? 'danger' : operational.state === 'healthy' ? 'success' : 'warning'}>
+            {statusLabel}
           </StatusBadge>
         </div>
 
@@ -99,7 +105,7 @@ export default async function OperationsPage() {
           <MetricCard label="المستخدمون" value={formatNumberAr(usersResult.count ?? 0)} icon={Users} />
           <MetricCard label="أنشطة مجهزة" value={formatNumberAr(businessesResult.count ?? 0)} icon={Building2} />
           <MetricCard label="حسابات إعلانية نشطة" value={formatNumberAr(accountsResult.count ?? 0)} icon={Database} />
-          <MetricCard label="اشتراكات وتجارب نشطة" value={formatNumberAr(subscriptionsResult.count ?? 0)} icon={CreditCard} />
+          <MetricCard label="اشتراكات وتجارب نشطة" value={formatNumberAr(entitledUserIds.length)} icon={CreditCard} />
           <MetricCard label="فحوصات مكتملة" value={formatNumberAr(auditsResult.count ?? 0)} icon={ShieldCheck} />
         </section>
 
@@ -124,10 +130,8 @@ export default async function OperationsPage() {
               <h2 id="jobs-title" className="text-[14px] font-semibold text-foreground">آخر المهام الخلفية</h2>
               <p className="mt-1 text-xs text-muted-foreground">المزامنة والتحسين والمهام المجدولة كما سُجلت فعلياً.</p>
             </div>
-            <StatusBadge tone={(failedWebhooksResult.count ?? 0) > 0 ? 'danger' : 'success'}>
-              {(failedWebhooksResult.count ?? 0) > 0
-                ? `${formatNumberAr(failedWebhooksResult.count ?? 0)} ويبهوك فاشل`
-                : 'الويبهوكات سليمة'}
+            <StatusBadge tone={!webhooks.ok ? 'danger' : webhooks.status === 'not_observed' ? 'neutral' : 'success'}>
+              {!webhooks.ok ? 'معالجة المدفوعات تحتاج مراجعة' : webhooks.status === 'not_observed' ? 'لم تُرصد أحداث دفع بعد' : 'أحداث الدفع المرصودة سليمة'}
             </StatusBadge>
           </div>
 
@@ -151,7 +155,7 @@ export default async function OperationsPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {jobs.map((job) => (
+                  {jobs.slice(0, 12).map((job) => (
                     <tr key={job.id} className="hover:bg-muted/40">
                       <td className="px-5 py-3.5 font-medium text-foreground">{job.job_name}</td>
                       <td className="px-3 py-3.5">

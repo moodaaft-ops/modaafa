@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
     supabase,
     userId: user.id,
     customerId,
-    select: 'id, customer_id, customer_name, currency_code, refresh_token_encrypted, manager_id',
+    select: 'id, customer_id, customer_name, currency_code, time_zone, refresh_token_encrypted, manager_id',
   });
 
   if (accountErr || !account) {
@@ -160,6 +160,7 @@ type AuditExecutionAccount = {
   customer_id: string;
   customer_name: string | null;
   currency_code: string | null;
+  time_zone?: string | null;
   refresh_token_encrypted: string;
   manager_id: string | null;
 };
@@ -363,6 +364,8 @@ async function executeAudit({
   }
 
   const { error: reportErr } = await admin.from('reports').insert(buildAuditReportRow({
+    snapshotAt: campaigns?.length && campaigns.every((row) => row.last_synced_at === campaigns[0].last_synced_at) ? campaigns[0].last_synced_at : null,
+    timeZone: account.time_zone,
     accountId: account.id,
     auditId: audit.id,
     summaryAr: result.summary_ar,

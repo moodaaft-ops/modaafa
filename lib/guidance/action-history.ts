@@ -1,7 +1,12 @@
+import { measurementState } from './measurement';
+
 export type ActionHistoryState =
   | 'approved'
   | 'awaiting_measurement'
   | 'measured'
+  | 'unmeasurable'
+  | 'limited'
+  | 'executing'
   | 'failed'
   | 'reverted';
 
@@ -45,7 +50,9 @@ export function actionHistoryState(action: ActionHistoryInput): ActionHistorySta
     return 'approved';
   }
 
-  if (hasObservedImpact(action.observed_impact)) return 'measured';
+  if (['executing', 'unknown', 'mutation_outcome_unknown'].includes(resultStatus)) return 'executing';
+  const measurement = measurementState(action.observed_impact);
+  if (measurement !== 'awaiting') return measurement;
   return 'awaiting_measurement';
 }
 
@@ -53,7 +60,10 @@ export function actionHistoryLabel(state: ActionHistoryState) {
   const labels: Record<ActionHistoryState, string> = {
     approved: 'معتمد وينتظر التنفيذ',
     awaiting_measurement: 'نُفّذ وينتظر قياس الأثر',
-    measured: 'تم قياس النتيجة',
+    measured: 'مقارنة الأداء متاحة',
+    unmeasurable: 'تعذر قياس الأثر',
+    limited: 'البيانات لا تكفي للحكم',
+    executing: 'قيد التحقق من التنفيذ',
     failed: 'لم يُنفّذ',
     reverted: 'تم التراجع',
   };
@@ -63,7 +73,7 @@ export function actionHistoryLabel(state: ActionHistoryState) {
 export function actionHistoryTone(state: ActionHistoryState) {
   if (state === 'measured') return 'success' as const;
   if (state === 'failed') return 'danger' as const;
-  if (state === 'approved' || state === 'awaiting_measurement') return 'warning' as const;
+  if (['approved', 'awaiting_measurement', 'limited', 'executing'].includes(state)) return 'warning' as const;
   return 'neutral' as const;
 }
 
@@ -71,9 +81,4 @@ function readResultStatus(result: unknown) {
   if (!result || typeof result !== 'object' || Array.isArray(result)) return '';
   const status = (result as Record<string, unknown>).status;
   return typeof status === 'string' ? status : '';
-}
-
-function hasObservedImpact(value: unknown) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  return Object.keys(value as Record<string, unknown>).length > 0;
 }

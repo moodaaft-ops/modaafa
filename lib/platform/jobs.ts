@@ -120,7 +120,7 @@ async function selectAllRows<T>(
   return rows;
 }
 
-export async function getBillableBusinessIds(supabase: any) {
+export async function getEntitledUserIds(supabase: any) {
   const now = Date.now();
   const subscriptions = await selectAllRows<Record<string, any>>(supabase, (q) =>
     q
@@ -130,7 +130,7 @@ export async function getBillableBusinessIds(supabase: any) {
       .order('user_id', { ascending: true })
   );
 
-  const userIds = Array.from(
+  return Array.from(
     new Set(
       subscriptions
         .filter((item: any) => isSubscriptionEntitled(item, now))
@@ -138,6 +138,10 @@ export async function getBillableBusinessIds(supabase: any) {
         .filter(Boolean)
     )
   ) as string[];
+}
+
+export async function getBillableBusinessIds(supabase: any) {
+  const userIds = await getEntitledUserIds(supabase);
   if (userIds.length === 0) return [] as string[];
 
   // Chunk the IN list too: thousands of ids in one URL blows the request line.
@@ -160,4 +164,24 @@ function errorText(error: unknown) {
   } catch {
     return String(error);
   }
+}
+
+/** Monitor actual delivery, independently of a cron returning HTTP 200. */
+export async function getEligibleAccountHealth(supabase: any, businessIds: string[], now = Date.now()) {
+  let total = 0;
+  let stale = 0;
+  const cutoff = new Date(now - 24 * 3_600_000).toISOString();
+  for (let index = 0; index < businessIds.length; index += 100) {
+    const scope = () => supabase.from('google_ads_accounts').select('id', { count: 'exact', head: true })
+      .eq('status', 'active').not('is_manager', 'is', true).in('business_id', businessIds.slice(index, index + 100));
+    const [all, overdue] = await Promise.all([
+      scope(),
+      scope().lt('linked_at', cutoff).or(`last_synced_at.is.null,last_synced_at.lt.${cutoff}`),
+    ]);
+    if (all.error) throw all.error;
+    if (overdue.error) throw overdue.error;
+    total += all.count ?? 0;
+    stale += overdue.count ?? 0;
+  }
+  return { ok: stale === 0, total, stale, max_age_hours: 24 };
 }

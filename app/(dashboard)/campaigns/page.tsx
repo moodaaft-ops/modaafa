@@ -52,7 +52,7 @@ export default async function CampaignsPage({
   assertSupabaseRead(campaignsResult.error, 'load campaigns page');
   const cachedCampaigns = campaignsResult.data ?? [];
   const requestedRange = resolveDateRange(params, '30d');
-  let effectiveRange = requestedRange;
+  const effectiveRange = requestedRange;
   let rangeLoadError: string | null = null;
   let campaigns = cachedCampaigns;
 
@@ -66,16 +66,8 @@ export default async function CampaignsPage({
         range: requestedRange,
       });
     } catch {
-      effectiveRange = resolveDateRange(null, '30d');
-      rangeLoadError =
-        'تعذر تحميل الفترة المختارة مباشرة من Google Ads. عرضنا آخر 30 يوماً المحفوظة مؤقتاً، ويمكنك إعادة المحاولة.';
-      campaigns = await loadCampaignsForDateRange({
-        supabase,
-        userId: user.id,
-        selectedAccount,
-        campaigns: cachedCampaigns,
-        range: effectiveRange,
-      });
+      rangeLoadError = 'تعذر جلب أرقام الفترة من Google Ads. الأرقام غير متاحة حالياً؛ بيانات أسماء الحملات وحالاتها أدناه من آخر مزامنة محفوظة. أعد المحاولة أو جدّد الربط من الإعدادات.';
+      campaigns = cachedCampaigns.map((campaign: any) => ({ ...campaign, range_metrics: null }));
     }
   }
 
@@ -187,8 +179,8 @@ export default async function CampaignsPage({
                       </td>
                       <td className="px-3 py-3.5 text-muted-foreground">{campaignTypeLabel(campaign.type)}</td>
                       <td className="px-3 py-3.5 numeric">{formatCurrency(campaign.daily_budget ?? 0, selectedAccount?.currency_code)}</td>
-                      <td className="px-3 py-3.5 numeric">{formatCurrency(moneyMetric(campaign.range_metrics, 'cost'), selectedAccount?.currency_code)}</td>
-                      <td className="px-5 py-3.5 numeric">{formatNumberAr(campaign.range_metrics?.conversions ?? 0)}</td>
+                      <td className="px-3 py-3.5 numeric">{rangeLoadError ? '—' : formatCurrency(moneyMetric(campaign.range_metrics, 'cost'), selectedAccount?.currency_code)}</td>
+                      <td className="px-5 py-3.5 numeric">{rangeLoadError ? '—' : formatNumberAr(campaign.range_metrics?.conversions ?? 0)}</td>
                     </tr>
                   ))}
                 </tbody>

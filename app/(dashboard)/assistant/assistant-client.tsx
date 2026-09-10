@@ -321,7 +321,7 @@ export function AssistantClient({
 
   return (
     <div className="grid gap-5 lg:grid-cols-[1fr_290px]">
-      <section className="flex h-[calc(100dvh-15rem)] min-h-[440px] flex-col overflow-hidden surface-card sm:h-[calc(100dvh-13rem)] sm:min-h-[520px]">
+      <section className="flex h-[calc(100dvh-19rem)] min-h-[320px] flex-col overflow-hidden surface-card sm:h-[calc(100dvh-13rem)] sm:min-h-[520px]">
         {/* Header with account context */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
           <div className="flex min-w-0 items-center gap-2.5">
