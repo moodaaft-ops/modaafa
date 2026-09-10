@@ -23,6 +23,12 @@ export type CampaignWithRangeMetrics = Record<string, any> & {
   range_metrics: CampaignMetrics;
 };
 
+const defaultDependencies = {
+  getLinkedAccount: getLinkedGoogleAdsAccount,
+  decryptToken: decrypt,
+  queryRange: queryCampaignRangePerformanceWithLoginFallback,
+};
+
 export async function loadCampaignsForDateRange({
   supabase,
   userId,
@@ -35,19 +41,8 @@ export async function loadCampaignsForDateRange({
   selectedAccount: AdsAccountSummary;
   campaigns: Record<string, any>[];
   range: DateRangeSelection;
-}): Promise<CampaignWithRangeMetrics[]> {
-  const metricKey = range.metricKey;
-  if (metricKey) {
-    return campaigns.map((campaign) => ({
-      ...campaign,
-      range_metrics: normalizeMetrics(
-        campaign[metricKey],
-        selectedAccount.currency_code
-      ),
-    }));
-  }
-
-  const { account, error } = await getLinkedGoogleAdsAccount({
+}, dependencies = defaultDependencies): Promise<CampaignWithRangeMetrics[]> {
+  const { account, error } = await dependencies.getLinkedAccount({
     supabase,
     userId,
     customerId: selectedAccount.customer_id,
@@ -56,11 +51,11 @@ export async function loadCampaignsForDateRange({
   });
   if (error || !account) throw new Error('Linked Google Ads account not found');
 
-  const cacheKey = [account.id, range.from, range.to].join(':');
+  const cacheKey = [userId, account.id, range.from, range.to].join(':');
   const liveRows = await cachedRangeQuery(cacheKey, () =>
-    queryCampaignRangePerformanceWithLoginFallback({
+    dependencies.queryRange({
       customerId: account.customer_id,
-      refreshToken: decrypt(account.refresh_token_encrypted),
+      refreshToken: dependencies.decryptToken(account.refresh_token_encrypted),
       loginCustomerId: account.manager_id,
       currencyCode: account.currency_code,
       from: range.from,

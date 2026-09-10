@@ -425,7 +425,7 @@ export default async function AuditPage({
                       <div className="flex flex-shrink-0 flex-wrap gap-2 sm:max-w-48 sm:justify-end">
                         {actionable && (
                           <>
-                            <RecommendationAction id={r.id} intent="approve" label="تجهيز للمراجعة" next="/audit" />
+                            <a href={`/optimizer#decision-${encodeURIComponent(r.id)}`} className={buttonClasses({ variant: 'primary', size: 'sm' })}>مراجعة التفاصيل</a>
                             <RecommendationAction id={r.id} intent="dismiss" label="ليس الآن" next="/audit" secondary />
                           </>
                         )}
@@ -517,18 +517,14 @@ function GuidedNextStep({
         <aside className="border-t border-border bg-muted/35 p-5 sm:p-6 lg:border-s lg:border-t-0">
           <h3 className="font-semibold text-foreground">ماذا سيحدث بعد الضغط؟</h3>
           <ol className="mt-4 space-y-4">
-            <GuidanceStep number="1" text="نجهّز التعديل المقترح بأرقامه وتفاصيله." />
+            <GuidanceStep number="1" text="نفتح تفاصيل التوصية ونوضح هل تحتاج مراجعة يدوية أو لها تعديل مكتمل." />
             <GuidanceStep number="2" text="تراجعه بهدوء داخل مركز الموافقات." />
             <GuidanceStep number="3" text="التنفيذ يحتاج تأكيداً منفصلاً منك." />
           </ol>
           <div className="mt-6 [&>form]:w-full [&_button]:w-full">
-            <RecommendationAction
-              id={recommendation.id}
-              intent="approve"
-              label="تجهيز التعديل للمراجعة"
-              next="/audit"
-              fullWidth
-            />
+            <a href={`/optimizer#decision-${encodeURIComponent(recommendation.id)}`} className={buttonClasses({ variant: 'primary', block: true })}>
+              مراجعة التوصية وتفاصيلها
+            </a>
           </div>
           <p className="mt-3 text-center text-xs leading-6 text-muted-foreground">
             الضغط هنا لا يغيّر الحملة أو الميزانية.

@@ -25,6 +25,8 @@ export function parseAutopilotSettingsInput(
   const maxDailyChanges = numberInRange(payload.max_daily_changes, 1, 3, 'invalid_daily_limit');
   const minConfidence = numberInRange(payload.min_confidence, 0.95, 1, 'invalid_confidence');
   const cooldownHours = numberInRange(payload.cooldown_hours, 24, 168, 'invalid_cooldown');
+  if (!Number.isInteger(maxDailyChanges)) throw new Error('invalid_daily_limit');
+  if (!Number.isInteger(cooldownHours)) throw new Error('invalid_cooldown');
   const confirmConservative = toBoolean(payload.confirm_conservative);
   if (mode === 'conservative' && !confirmConservative) {
     throw new Error('confirmation_required');

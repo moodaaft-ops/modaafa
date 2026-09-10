@@ -134,6 +134,47 @@ test('a processing failure marks the claim failed and returns a retryable 500', 
   assert.equal(alerted, true);
 });
 
+for (const status of ['incomplete', 'unpaid']) {
+  test(`subscription webhook stores ${status} without paid grace access`, async () => {
+    const rows: Array<Record<string, unknown>> = [];
+    const handler = handlerFor(
+      event('customer.subscription.updated', { id: 'sub_unpaid' }, `evt_${status}`),
+      {
+        retrieveStripeSubscription: async () => subscription({ status }),
+        applySubscriptionEvent: async (_database, row) => {
+          rows.push(row);
+          return 'updated';
+        },
+      },
+    );
+    assert.equal((await handler(request())).status, 200);
+    assert.equal(rows[0].status, 'paused');
+  });
+}
+
+test('retry repairs a failed durable trial grant even after its subscription snapshot was applied', async () => {
+  let attempts = 0;
+  let completed = 0;
+  const handler = handlerFor(event('customer.subscription.updated', { id: 'sub_trial' }, 'evt_trial_retry'), {
+    retrieveStripeSubscription: async () => subscription({ trial_end: CREATED_AT + 86400 }),
+    applySubscriptionEvent: async () => 'stale_or_missing',
+    recordTrialGrant: async () => {
+      attempts++;
+      if (attempts === 1) throw new Error('ledger temporarily unavailable');
+    },
+    completeStripeWebhookEvent: async () => { completed++; },
+  });
+  const original = console.error;
+  console.error = () => {};
+  try {
+    assert.equal((await handler(request())).status, 500);
+    assert.equal(completed, 0);
+    assert.equal((await handler(request())).status, 200);
+    assert.equal(attempts, 2);
+    assert.equal(completed, 1);
+  } finally { console.error = original; }
+});
+
 function handlerFor(
   stripeEvent: Stripe.Event,
   overrides: Partial<StripeWebhookDependencies> = {},
@@ -191,8 +232,9 @@ function subscription(overrides: Record<string, unknown> = {}) {
     current_period_start: CREATED_AT - 300,
     current_period_end: CREATED_AT + 2_592_000,
     canceled_at: null,
+    lastResponse: { headers: {}, requestId: 'req_test', statusCode: 200 },
     ...overrides,
-  } as unknown as Stripe.Subscription;
+  } as unknown as Stripe.Response<Stripe.Subscription>;
 }
 
 function invoiceDatabase() {

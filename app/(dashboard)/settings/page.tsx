@@ -23,6 +23,7 @@ const deleteErrors: Record<string, string> = {
   confirmation_required: 'اكتب عبارة التأكيد كما هي: حذف حسابي',
   service_role_missing: 'الحذف النهائي يحتاج مفتاح Supabase الإداري في بيئة الإنتاج.',
   billing_check_failed: 'تعذر التأكد من حالة الفوترة، لذلك لم نحذف الحساب حمايةً لك.',
+  deletion_inventory_failed: 'تعذر التحقق من الاشتراكات وروابط Google بالكامل. لم نبدأ حذف الحساب؛ أعد المحاولة بعد قليل.',
   billing_cancellation_required: 'يوجد اشتراك قائم لا يمكن إلغاؤه آلياً. افتح إدارة الاشتراك أو تواصل معنا.',
   billing_cancellation_failed: 'تعذر إلغاء اشتراك Stripe، لذلك لم نحذف حسابك ولم تتأثر بياناتك.',
   profile_delete_failed: 'تعذر حذف بيانات الحساب. أعد المحاولة أو تواصل معنا.',

@@ -11,6 +11,9 @@ import { checkGuardrails, executeAction } from '@/lib/ai/optimizer-agent';
 import { refundFeatureUsage } from '@/lib/billing/entitlements';
 import { sendOpsAlert } from '@/lib/notifications/email';
 import { findBlockingAutopilotRecommendation } from './recommendation-dedupe';
+import { assertAutopilotExecutionAuthorized } from './execution-state';
+import { refreshAutopilotEvidence } from './live-evidence';
+import { autopilotExecutionGloballyEnabled, type AutopilotPolicyContext } from './types';
 
 export type AutopilotExecutionResult = {
   status: 'executed' | 'duplicate' | 'failed' | 'unverified';
@@ -34,6 +37,8 @@ export async function executeAutopilotAction({
   fingerprint,
   ownerUserId,
   usageEventId,
+  expectedConfigVersion,
+  trackingStatus,
 }: {
   supabase: any;
   customer: any;
@@ -44,9 +49,17 @@ export async function executeAutopilotAction({
   fingerprint: string;
   ownerUserId: string;
   usageEventId?: string | null;
+  expectedConfigVersion: number;
+  trackingStatus: AutopilotPolicyContext['trackingStatus'];
 }): Promise<AutopilotExecutionResult> {
   let existing;
   try {
+    if (verdict.outcome !== 'execute') throw new Error('Autopilot policy did not approve execution');
+    action = await refreshAutopilotEvidence(customer, action);
+    verdict = await assertAutopilotExecutionAuthorized({
+      supabase, accountId, action, expectedConfigVersion, trackingStatus,
+      globalExecutionEnabled: autopilotExecutionGloballyEnabled(),
+    });
     existing = await findBlockingAutopilotRecommendation(supabase, accountId, fingerprint);
   } catch (error) {
     await refundFeatureUsage({ userId: ownerUserId, usageEventId });
@@ -147,6 +160,13 @@ export async function executeAutopilotAction({
 
   try {
     await executeAction(preparedAction, customer, { validateOnly: true });
+    // Consent can change while Google validation is in flight. Re-read it at
+    // the last possible boundary before a real mutation is sent.
+    await assertAutopilotExecutionAuthorized({
+      supabase, accountId, action: preparedAction, expectedConfigVersion, trackingStatus,
+      globalExecutionEnabled: autopilotExecutionGloballyEnabled(),
+      currentRecommendationId: recommendation.id,
+    });
   } catch (error) {
     await markFailed(supabase, recommendation.id, accountId, executionKey, error, 'validation_failed');
     await refundFeatureUsage({ userId: ownerUserId, usageEventId });

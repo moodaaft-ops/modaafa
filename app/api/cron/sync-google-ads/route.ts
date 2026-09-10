@@ -47,7 +47,13 @@ async function runSync(req: NextRequest) {
     Math.max(Number(url.searchParams.get('limit') ?? SYNC_ACCOUNT_LIMIT) || SYNC_ACCOUNT_LIMIT, 1),
     SYNC_ACCOUNT_LIMIT
   );
-  const job = await startJobRun(supabase, 'sync-google-ads');
+  let job;
+  try {
+    job = await startJobRun(supabase, 'sync-google-ads');
+  } catch (error) {
+    console.error('Sync reservation failed; no work started', error);
+    return NextResponse.json({ error: 'job_storage_unavailable' }, { status: 503 });
+  }
   if (job.alreadyRunning) {
     // The scheduler's own curl retry (--retry-all-errors --max-time 290) can
     // re-invoke while the first invocation is still executing. 409 tells the

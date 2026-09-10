@@ -278,7 +278,7 @@ export default async function HomePage({
               <div>
                 <SectionLabel>الأمان</SectionLabel>
                 <h2 className="mt-3 text-display-sm font-bold text-balance">
-                  لا تعديل على حسابك قبل موافقتك — بلا استثناء.
+                  التنفيذ تحت موافقتك وحدودك.
                 </h2>
                 <p className="mt-4 max-w-xl text-[14px] leading-8 text-muted-foreground">
                   المهام المجدولة تُجهّز التوصيات فقط. أي تغيير فعلي على Google Ads يمر عبر مركز الموافقات، ويُتحقق منه

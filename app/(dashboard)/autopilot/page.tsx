@@ -52,7 +52,7 @@ export default async function AutopilotPage() {
     );
   }
 
-  const [settingsResult, decisionsResult, subscription] = await Promise.all([
+  const [settingsResult, decisionsResult, subscription, pendingResult] = await Promise.all([
     supabase.from('autopilot_settings').select('*').eq('account_id', account.id).maybeSingle(),
     supabase
       .from('autopilot_decisions')
@@ -61,9 +61,12 @@ export default async function AutopilotPage() {
       .order('created_at', { ascending: false })
       .limit(100),
     getSubscriptionAccess(supabase, user.id, user.email),
+    supabase.from('recommendations').select('id', { count: 'exact', head: true })
+      .eq('account_id', account.id).eq('applied_by', 'autopilot').eq('status', 'executing'),
   ]);
   assertSupabaseRead(settingsResult.error, 'load autopilot settings');
   assertSupabaseRead(decisionsResult.error, 'load autopilot decision ledger');
+  assertSupabaseRead(pendingResult.error, 'load unresolved autopilot executions');
 
   const settings = normalizeAutopilotSettings(account.id, settingsResult.data);
   const accountName = googleAdsAccountDisplayName(account);
@@ -79,6 +82,12 @@ export default async function AutopilotPage() {
       />
 
       <div className="space-y-6 p-4 sm:p-6 lg:p-8">
+        {(pendingResult.count ?? 0) > 0 && (
+          <Alert tone="warning" title="التنفيذ التلقائي متوقف مؤقتاً">
+            يوجد تعديل سابق لم تتأكد نتيجته بعد. لن نرسل تعديلاً آخر حتى تتم مطابقته مع Google Ads.
+            {' '}<Link href="/optimizer" className="font-semibold underline">مراجعة سجل التنفيذ</Link>
+          </Alert>
+        )}
         <Alert tone="info" title="أنت صاحب القرار">
           الوضع الافتراضي متوقف. يمكنك تشغيل المراقبة بلا تغييرات، أو السماح بالتنفيذ المحافظ. الميزانيات والمزايدات
           وإيقاف الحملات تبقى في مركز الموافقات ولا ينفذها الطيار تلقائياً في هذا الإصدار.

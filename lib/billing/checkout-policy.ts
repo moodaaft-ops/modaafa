@@ -104,7 +104,18 @@ export async function recordTrialGrant({
   email?: string | null;
   stripeSubscriptionId?: string | null;
   source: 'checkout_complete' | 'stripe_webhook';
-}) {
+}, adminClient = createAdminClient) {
+  const admin = adminClient();
+  const resolvedEmail = email ?? (await lookupUserEmail(admin, userId));
+  if (!resolvedEmail) throw new Error('Authoritative trial identity unavailable');
+  // Record the durable grant first. Any failure must reach Stripe's retry
+  // path, including retries whose subscription snapshot was already applied.
+  const { error: ledgerError } = await admin.from('billing_trial_ledger').upsert(
+    { email_hash: trialLedgerKey(resolvedEmail), source },
+    { onConflict: 'email_hash', ignoreDuplicates: true }
+  );
+  if (ledgerError) throw ledgerError;
+
   const { error } = await supabase.from('billing_trial_grants').upsert(
     {
       user_id: userId,
@@ -114,37 +125,15 @@ export async function recordTrialGrant({
     { onConflict: 'user_id', ignoreDuplicates: true }
   );
   if (error) throw error;
-
-  const resolvedEmail = email ?? (await lookupUserEmail(supabase, userId));
-  if (!resolvedEmail) return;
-
-  try {
-    const admin = createAdminClient();
-    const { error: ledgerError } = await admin.from('billing_trial_ledger').upsert(
-      { email_hash: trialLedgerKey(resolvedEmail), source },
-      { onConflict: 'email_hash', ignoreDuplicates: true }
-    );
-    if (ledgerError) throw ledgerError;
-  } catch (ledgerError) {
-    // Non-fatal: the per-user grant above is already recorded, so the only
-    // thing lost is protection against delete-and-re-register.
-    console.error('Failed to record durable trial ledger entry', ledgerError);
-  }
 }
 
-async function lookupUserEmail(_supabase: any, userId: string) {
+async function lookupUserEmail(admin: ReturnType<typeof createAdminClient>, userId: string) {
   // Resolve from the AUTHORITATIVE Supabase Auth identity, never from
   // public.users.email. That column is client-writable (RLS `FOR ALL`), so
   // recording the durable trial ledger under a user-chosen address — while the
   // eligibility check reads the real Google identity email — would reopen the
   // delete-and-re-register unlimited-free-trial loop the ledger exists to close.
-  try {
-    const admin = createAdminClient();
-    const { data, error } = await admin.auth.admin.getUserById(userId);
-    if (error) throw error;
-    return (data.user?.email as string | undefined) ?? null;
-  } catch (error) {
-    console.error('Failed to resolve authoritative email for trial ledger', error);
-    return null;
-  }
+  const { data, error } = await admin.auth.admin.getUserById(userId);
+  if (error) throw error;
+  return data.user?.email ?? null;
 }

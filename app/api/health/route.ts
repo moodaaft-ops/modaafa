@@ -5,7 +5,7 @@ import { hasValidHealthAuthorization } from '@/lib/security/cron-auth';
 import { isConfiguredEnv } from '@/lib/platform/env';
 import { checkStripeConfiguration } from '@/lib/billing/stripe';
 import { checkAIConfiguration } from '@/lib/ai/client';
-import { getBillableBusinessIds } from '@/lib/platform/jobs';
+import { getBillableBusinessIds, getEligibleAccountHealth } from '@/lib/platform/jobs';
 import { evaluateJobCapacity } from '@/lib/platform/job-capacity';
 import {
   evaluateOperationalJob,
@@ -154,6 +154,8 @@ async function checkDatabase() {
       { table: 'audits', column: 'id' },
       { table: 'recommendations', column: 'id' },
       { table: 'ai_actions', column: 'id' },
+      { table: 'autopilot_settings', column: 'account_id' },
+      { table: 'autopilot_decisions', column: 'id' },
       { table: 'campaigns_cache', column: 'id' },
       { table: 'chat_sessions', column: 'id' },
       { table: 'chat_messages', column: 'id' },
@@ -215,9 +217,11 @@ async function checkDatabase() {
       : evaluateWebhookLedger(webhookResult.data ?? []);
     let capacityError: string | null = null;
     let activeBillableAccounts = 0;
+    let accountFreshness = { ok: false, total: 0, stale: 0, max_age_hours: 24 };
     try {
       const billableBusinessIds = await getBillableBusinessIds(supabase);
-      activeBillableAccounts = await countActiveAccounts(supabase, billableBusinessIds);
+      accountFreshness = await getEligibleAccountHealth(supabase, billableBusinessIds);
+      activeBillableAccounts = accountFreshness.total;
     } catch (error) {
       capacityError = error instanceof Error ? error.message : String(error);
     }
@@ -239,6 +243,7 @@ async function checkDatabase() {
         !securityError &&
         securityPosture?.ok === true &&
         webhookLedger.ok &&
+        accountFreshness.ok &&
         jobCapacity.ok,
       checks,
       security_posture: securityPosture ?? null,
@@ -249,6 +254,7 @@ async function checkDatabase() {
         ok: !jobsError && operationalJobs.every((job) => job.ok),
         checks: operationalJobs,
       },
+      account_freshness: accountFreshness,
       job_capacity: jobCapacity,
       jobs_error: jobsError?.message ?? null,
     };
@@ -270,20 +276,4 @@ async function checkPublicDatabaseHeartbeat() {
   } catch {
     return false;
   }
-}
-
-async function countActiveAccounts(supabase: any, businessIds: string[]) {
-  let total = 0;
-  for (let index = 0; index < businessIds.length; index += 100) {
-    const chunk = businessIds.slice(index, index + 100);
-    const { count, error } = await supabase
-      .from('google_ads_accounts')
-      .select('id', { count: 'exact', head: true })
-      .eq('status', 'active')
-      .not('is_manager', 'is', true)
-      .in('business_id', chunk);
-    if (error) throw error;
-    total += count ?? 0;
-  }
-  return total;
 }

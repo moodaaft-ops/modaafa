@@ -110,7 +110,7 @@ export async function getSubscriptionAccess(
   query = query.eq('user_id', userId);
 
   const { data: rows, error } = await query;
-  if (error) console.error('Failed to read subscription access', error);
+  if (error) throw new Error('Subscription access could not be verified', { cause: error });
 
   const subscriptions = (rows ?? []) as Array<Record<string, any>>;
   const live = subscriptions.filter((row) => isSubscriptionEntitled(row));
@@ -157,11 +157,11 @@ export function isSubscriptionEntitled(subscription: Record<string, any>, now = 
 
   if (status === 'trialing') {
     const trialEnd = subscription.trial_ends_at ? new Date(subscription.trial_ends_at).getTime() : null;
-    return !trialEnd || trialEnd > now;
+    return trialEnd === null || (Number.isFinite(trialEnd) && trialEnd > now);
   }
 
   if (status === 'active') {
-    return !periodEnd || periodEnd > now;
+    return periodEnd === null || (Number.isFinite(periodEnd) && periodEnd > now);
   }
 
   if (status === 'past_due') {

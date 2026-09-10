@@ -81,13 +81,19 @@ export default async function ReportsPage() {
                       </h2>
                       <span className="text-xs text-muted-foreground">{timeAgoAr(report.generated_at)}</span>
                     </div>
+                    <p className="mt-2 text-xs leading-6 text-muted-foreground">
+                      تقرير محفوظ بتاريخ {new Date(report.generated_at).toLocaleDateString('ar-SA', { dateStyle: 'long', calendar: 'gregory' })}؛ لا يمثل أرقام اليوم.
+                      {report.metrics?.data_windows?.last_30_days
+                        ? ` فترة 30 يوماً: ${report.metrics.data_windows.last_30_days.from} إلى ${report.metrics.data_windows.last_30_days.to}. فترة 7 أيام: ${report.metrics.data_windows.last_7_days.from} إلى ${report.metrics.data_windows.last_7_days.to} (${report.metrics.data_windows.time_zone}).`
+                        : ' لم تُحفظ حدود فترة البيانات لهذا التقرير؛ أعد الفحص للحصول على تقرير مؤرخ.'}
+                    </p>
                     <p className="mt-2 text-sm leading-7 text-muted-foreground">
                       {report.summary_ar ?? 'تقرير محفوظ بدون ملخص.'}
                     </p>
                     <div className="mt-4 grid gap-3 sm:grid-cols-3">
                       <ReportMetric
                         label="صحة الحساب"
-                        value={report.metrics?.health_score ? `${report.metrics.health_score}/100` : '—'}
+                        value={report.metrics?.health_score != null ? `${report.metrics.health_score}/100` : '—'}
                       />
                       <ReportMetric label="عدد التوصيات" value={report.metrics?.recommendations_count ?? '—'} />
                       <ReportMetric

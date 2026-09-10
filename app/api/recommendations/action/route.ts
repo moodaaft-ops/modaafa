@@ -8,6 +8,7 @@ import {
   executeAction,
   type OptimizerAction,
 } from '@/lib/ai/optimizer-agent';
+import { recommendationReadiness } from '@/lib/ai/recommendation-readiness';
 import { buildExecutableAction } from '@/lib/ai/executable-action';
 import {
   isAmbiguousGoogleAdsMutationError,
@@ -57,7 +58,7 @@ export async function POST(req: NextRequest) {
 
   const { data: recommendation, error: recError } = await supabase
     .from('recommendations')
-    .select('id, account_id, title, description, expected_impact, action_payload, status')
+    .select('id, account_id, title, description, expected_impact, action_payload, status, created_at')
     .eq('id', recommendationId)
     .single();
 
@@ -88,6 +89,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.redirect(new URL(`${next}?error=recommendation_locked`, req.url), 303);
     }
     return NextResponse.redirect(new URL(`${next}?updated=1`, req.url), 303);
+  }
+
+  const readiness = recommendationReadiness(recommendation);
+  if (!readiness.ready) {
+    return NextResponse.redirect(new URL(`${next}?error=${readiness.code}`, req.url), 303);
   }
 
   if (intent === 'execute') {

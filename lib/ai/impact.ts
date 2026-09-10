@@ -13,6 +13,8 @@
  * prompts can cite what actually worked on THIS account.
  */
 
+import { MEASUREMENT_DELAY_MS } from '@/lib/guidance/measurement';
+
 export type MetricTotals = { cost: number; clicks: number; conversions: number; conversion_value: number };
 
 type StoredMeasurement = {
@@ -23,7 +25,7 @@ type StoredMeasurement = {
   captured_at?: string;
 };
 
-const MEASURE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
+const MEASURE_AFTER_MS = MEASUREMENT_DELAY_MS;
 const MEASURE_EXPIRY_MS = 45 * 24 * 60 * 60 * 1000;
 
 const LEVEL_QUERIES: Record<StoredMeasurement['level'], { from: string; where: string }> = {
@@ -53,6 +55,8 @@ export function computeObservedImpact(before: MetricTotals | null, after: Metric
   const safeBefore = before ?? { cost: 0, clicks: 0, conversions: 0, conversion_value: 0 };
   return {
     window_days: 7,
+    baseline_available: before !== null,
+    attribution: 'observational_comparison',
     before: safeBefore,
     after,
     delta: {

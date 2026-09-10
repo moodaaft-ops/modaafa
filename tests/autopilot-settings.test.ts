@@ -102,3 +102,9 @@ test('saving settings increments the version and records opt-in or pause timesta
   assert.equal(paused.paused_at, now);
   assert.equal(paused.pause_reason, 'user_disabled');
 });
+
+test('fractional change counts and cooldown hours are rejected before reaching integer columns', () => {
+  const base = { mode: 'observe', max_daily_changes: 2, min_confidence: 0.98, cooldown_hours: 48 };
+  assert.throws(() => parseAutopilotSettingsInput({ ...base, max_daily_changes: 2.5 }), /invalid_daily_limit/);
+  assert.throws(() => parseAutopilotSettingsInput({ ...base, cooldown_hours: 24.5 }), /invalid_cooldown/);
+});

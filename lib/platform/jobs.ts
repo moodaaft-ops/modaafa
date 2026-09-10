@@ -15,12 +15,11 @@ export async function startJobRun(supabase: any, jobName: string) {
   // the first invocation is still executing — two live optimize runs then
   // select the same oldest accounts and double the Anthropic spend. Manual
   // workflow_dispatch runs in a separate concurrency group and can overlap the
-  // schedule too. Best-effort (a storage error must not stop the job); the
-  // check-then-insert race that remains is closed at the DB by the partial
+  // schedule too. The check-then-insert race is closed at the DB by the partial
   // unique index in migration 20260803_full_audit_integrity.sql.
   try {
     const staleCutoff = new Date(startedAt.getTime() - STALE_RUNNING_MS).toISOString();
-    await supabase
+    const { error: cleanupError } = await supabase
       .from('job_runs')
       .update({
         status: 'failed',
@@ -31,8 +30,9 @@ export async function startJobRun(supabase: any, jobName: string) {
       .eq('job_name', jobName)
       .eq('status', 'running')
       .lt('started_at', staleCutoff);
+    if (cleanupError) throw cleanupError;
 
-    const { data: running } = await supabase
+    const { data: running, error: lookupError } = await supabase
       .from('job_runs')
       .select('id')
       .eq('job_name', jobName)
@@ -40,9 +40,10 @@ export async function startJobRun(supabase: any, jobName: string) {
       .gte('started_at', staleCutoff)
       .limit(1)
       .maybeSingle();
+    if (lookupError) throw lookupError;
     if (running) return { id: undefined as string | undefined, startedAt, alreadyRunning: true };
   } catch (error) {
-    console.error('Job overlap guard unavailable; starting anyway', { jobName, error });
+    throw new Error('Job overlap guard unavailable', { cause: error });
   }
 
   const { data, error } = await supabase
@@ -57,8 +58,9 @@ export async function startJobRun(supabase: any, jobName: string) {
     if ((error as { code?: string }).code === '23505') {
       return { id: undefined as string | undefined, startedAt, alreadyRunning: true };
     }
-    console.error('Failed to record job start', { jobName, error });
+    throw new Error('Failed to reserve job execution', { cause: error });
   }
+  if (!data?.id) throw new Error('Job reservation returned no id');
   return { id: data?.id as string | undefined, startedAt, alreadyRunning: false };
 }
 
@@ -118,7 +120,7 @@ async function selectAllRows<T>(
   return rows;
 }
 
-export async function getBillableBusinessIds(supabase: any) {
+export async function getEntitledUserIds(supabase: any) {
   const now = Date.now();
   const subscriptions = await selectAllRows<Record<string, any>>(supabase, (q) =>
     q
@@ -128,7 +130,7 @@ export async function getBillableBusinessIds(supabase: any) {
       .order('user_id', { ascending: true })
   );
 
-  const userIds = Array.from(
+  return Array.from(
     new Set(
       subscriptions
         .filter((item: any) => isSubscriptionEntitled(item, now))
@@ -136,6 +138,10 @@ export async function getBillableBusinessIds(supabase: any) {
         .filter(Boolean)
     )
   ) as string[];
+}
+
+export async function getBillableBusinessIds(supabase: any) {
+  const userIds = await getEntitledUserIds(supabase);
   if (userIds.length === 0) return [] as string[];
 
   // Chunk the IN list too: thousands of ids in one URL blows the request line.
@@ -158,4 +164,24 @@ function errorText(error: unknown) {
   } catch {
     return String(error);
   }
+}
+
+/** Monitor actual delivery, independently of a cron returning HTTP 200. */
+export async function getEligibleAccountHealth(supabase: any, businessIds: string[], now = Date.now()) {
+  let total = 0;
+  let stale = 0;
+  const cutoff = new Date(now - 24 * 3_600_000).toISOString();
+  for (let index = 0; index < businessIds.length; index += 100) {
+    const scope = () => supabase.from('google_ads_accounts').select('id', { count: 'exact', head: true })
+      .eq('status', 'active').not('is_manager', 'is', true).in('business_id', businessIds.slice(index, index + 100));
+    const [all, overdue] = await Promise.all([
+      scope(),
+      scope().lt('linked_at', cutoff).or(`last_synced_at.is.null,last_synced_at.lt.${cutoff}`),
+    ]);
+    if (all.error) throw all.error;
+    if (overdue.error) throw overdue.error;
+    total += all.count ?? 0;
+    stale += overdue.count ?? 0;
+  }
+  return { ok: stale === 0, total, stale, max_age_hours: 24 };
 }

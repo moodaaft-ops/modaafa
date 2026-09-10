@@ -82,3 +82,20 @@ export function evaluateWebhookLedger(
     status: rows.length === 0 ? 'not_observed' : failed || staleProcessing ? 'attention_required' : 'healthy',
   };
 }
+
+export const OPERATIONAL_JOB_EXPECTATIONS = [
+  { jobName: 'sync-google-ads', maxAgeHours: 4 },
+  { jobName: 'optimize', maxAgeHours: 4 },
+];
+
+export function summarizeOperationalState(jobs: JobRunHealthRow[], eligibleAccounts: number, now = Date.now()) {
+  const checks = OPERATIONAL_JOB_EXPECTATIONS.map((expectation) => {
+    const latest = jobs.filter((job) => job.job_name === expectation.jobName)
+      .sort((a, b) => Date.parse(b.started_at ?? '') - Date.parse(a.started_at ?? ''))[0] ?? null;
+    return evaluateOperationalJob(latest, { ...expectation, now });
+  });
+  const healthy = checks.every((check) => check.ok);
+  const workObserved = checks.every((check) => check.processed > 0);
+  const state = !healthy ? 'attention' : eligibleAccounts === 0 ? 'idle' : !workObserved ? 'no_work' : 'healthy';
+  return { checks, state, healthy, workObserved };
+}

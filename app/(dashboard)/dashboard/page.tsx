@@ -171,7 +171,7 @@ export default async function DashboardPage({
     actions: actionsResult.data ?? [],
   });
   const requestedRange = resolveDateRange(params, '7d');
-  let effectiveRange = requestedRange;
+  const effectiveRange = requestedRange;
   let rangeLoadError: string | null = null;
   let campaigns = cachedCampaigns;
 
@@ -185,16 +185,8 @@ export default async function DashboardPage({
         range: requestedRange,
       });
     } catch {
-      effectiveRange = resolveDateRange(null, '7d');
-      rangeLoadError =
-        'تعذر تحميل الفترة المختارة مباشرة من Google Ads. عرضنا آخر 7 أيام المحفوظة مؤقتاً، ويمكنك إعادة المحاولة.';
-      campaigns = await loadCampaignsForDateRange({
-        supabase,
-        userId: user.id,
-        selectedAccount,
-        campaigns: cachedCampaigns,
-        range: effectiveRange,
-      });
+      rangeLoadError = 'تعذر جلب أرقام الفترة من Google Ads. الأرقام غير متاحة حالياً؛ بيانات أسماء الحملات وحالاتها أدناه من آخر مزامنة محفوظة. أعد المحاولة أو جدّد الربط من الإعدادات.';
+      campaigns = cachedCampaigns.map((campaign: any) => ({ ...campaign, range_metrics: null }));
     }
   }
 
@@ -214,8 +206,8 @@ export default async function DashboardPage({
     return moneyMetric(b.range_metrics, 'cost') - moneyMetric(a.range_metrics, 'cost');
   });
   const activeCampaigns = sortedCampaigns.filter((c) => c.status === 'ENABLED');
-  const totalSpend = activeCampaigns.reduce((sum, c) => sum + moneyMetric(c.range_metrics, 'cost'), 0);
-  const totalConversions = activeCampaigns.reduce(
+  const totalSpend = sortedCampaigns.reduce((sum, c) => sum + moneyMetric(c.range_metrics, 'cost'), 0);
+  const totalConversions = sortedCampaigns.reduce(
     (sum, c) => sum + (c.range_metrics?.conversions ?? 0),
     0
   );
@@ -382,8 +374,8 @@ export default async function DashboardPage({
 
             {/* KPIs */}
             <section className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-              <MetricCard label={`الإنفاق — ${effectiveRange.label}`} value={formatCurrency(totalSpend, selectedAccount?.currency_code)} icon={Wallet} />
-              <MetricCard label={`التحويلات — ${effectiveRange.label}`} value={formatNumberAr(totalConversions)} icon={TrendingUp} />
+              <MetricCard label={`الإنفاق — ${effectiveRange.label}`} value={rangeLoadError ? '—' : formatCurrency(totalSpend, selectedAccount?.currency_code)} icon={Wallet} />
+              <MetricCard label={`التحويلات — ${effectiveRange.label}`} value={rangeLoadError ? '—' : formatNumberAr(totalConversions)} icon={TrendingUp} />
               <MetricCard
                 label="صحة الحساب"
                 value={`${latestAudit?.health_score ?? '—'}/100`}
@@ -393,7 +385,7 @@ export default async function DashboardPage({
               />
               <MetricCard
                 label="تسريب الميزانية الشهري"
-                value={formatCurrency(latestAudit?.estimated_monthly_waste ?? 0, selectedAccount?.currency_code)}
+                value={latestAudit ? formatCurrency(latestAudit.estimated_monthly_waste, selectedAccount?.currency_code) : '—'}
                 helper={latestAudit ? 'تقدير محافظ قابل للتوفير' : 'يظهر بعد أول فحص'}
                 tone="danger"
                 icon={Wallet}
@@ -402,11 +394,11 @@ export default async function DashboardPage({
             </section>
 
             {/* Spend distribution chart — only meaningful once there is spend. */}
-            {activeCampaigns.length > 0 && totalSpend > 0 && (
+            {!rangeLoadError && sortedCampaigns.length > 0 && totalSpend > 0 && (
               <CampaignSpendChart
                 currencyCode={selectedAccount?.currency_code}
                 rangeLabel={effectiveRange.label}
-                campaigns={activeCampaigns.map((c) => ({
+                campaigns={sortedCampaigns.filter((c) => moneyMetric(c.range_metrics, 'cost') > 0).map((c) => ({
                   id: c.google_campaign_id ?? c.id,
                   name: c.name ?? 'حملة',
                   spend: moneyMetric(c.range_metrics, 'cost'),
@@ -477,10 +469,10 @@ export default async function DashboardPage({
                               {campaignStatusLabel(campaign.status)}
                             </StatusBadge>
                           </td>
-                          <td className="px-3 py-3.5 numeric">{formatCurrency(moneyMetric(campaign.range_metrics, 'cost'), selectedAccount?.currency_code)}</td>
-                          <td className="px-3 py-3.5 numeric">{formatNumberAr(campaign.range_metrics?.conversions ?? 0)}</td>
+                          <td className="px-3 py-3.5 numeric">{rangeLoadError ? '—' : formatCurrency(moneyMetric(campaign.range_metrics, 'cost'), selectedAccount?.currency_code)}</td>
+                          <td className="px-3 py-3.5 numeric">{rangeLoadError ? '—' : formatNumberAr(campaign.range_metrics?.conversions ?? 0)}</td>
                           <td className="px-5 py-3.5 font-bold numeric text-emerald-600 dark:text-emerald-400">
-                            {(campaign.range_metrics?.roas ?? 0).toFixed(1)}×
+                            {rangeLoadError ? '—' : `${(campaign.range_metrics?.roas ?? 0).toFixed(1)}×`}
                           </td>
                         </tr>
                       ))}

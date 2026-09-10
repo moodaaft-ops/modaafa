@@ -6,6 +6,7 @@ import {
 } from '@/lib/billing/stripe';
 import { createAdminClient, createServerClient } from '@/lib/supabase/server';
 import { recordTrialGrant } from '@/lib/billing/checkout-policy';
+import { normalizeSubscriptionStatus } from '@/lib/billing/subscription-status';
 import {
   applySubscriptionEvent,
   LiveSubscriptionConflictError,
@@ -85,7 +86,7 @@ export async function GET(req: NextRequest) {
       user_id: user.id,
       plan,
       billing_period: period,
-      status: normalizeStatus(subscription.status),
+      status: normalizeSubscriptionStatus(subscription.status),
       stripe_subscription_id: subscription.id,
       stripe_customer_id:
         typeof subscription.customer === 'string'
@@ -141,15 +142,6 @@ async function safeOpsAlert(payload: Parameters<typeof sendOpsAlert>[0]) {
   } catch (error) {
     console.error('Failed to send Stripe subscription-conflict alert', error);
   }
-}
-
-function normalizeStatus(status?: string) {
-  if (status === 'trialing' || status === 'active' || status === 'past_due' || status === 'paused') {
-    return status;
-  }
-  if (status === 'canceled') return 'canceled';
-  if (status === 'unpaid' || status === 'incomplete') return 'past_due';
-  return 'paused';
 }
 
 function stripeTimestamp(value?: number | null) {
