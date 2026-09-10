@@ -321,7 +321,7 @@ export function AssistantClient({
 
   return (
     <div className="grid gap-5 lg:grid-cols-[1fr_290px]">
-      <section className="flex h-[calc(100dvh-19rem)] min-h-[320px] flex-col overflow-hidden surface-card sm:h-[calc(100dvh-13rem)] sm:min-h-[520px]">
+      <section className="flex h-[calc(100dvh-19rem)] min-h-[240px] flex-col overflow-hidden surface-card sm:h-[calc(100dvh-13rem)] sm:min-h-[520px]">
         {/* Header with account context */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
           <div className="flex min-w-0 items-center gap-2.5">
@@ -359,7 +359,7 @@ export function AssistantClient({
         {/* Messages */}
         <div
           ref={scrollRef}
-          className="surface-sunken flex-1 overflow-y-auto rounded-none border-0 p-4 scrollbar-thin sm:p-5"
+          className="surface-sunken min-h-0 flex-1 overflow-y-auto rounded-none border-0 p-4 scrollbar-thin sm:p-5"
         >
           {!started ? (
             <div className="flex h-full flex-col items-center justify-center px-4 py-8 text-center">
