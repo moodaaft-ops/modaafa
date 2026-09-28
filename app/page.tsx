@@ -7,10 +7,8 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
-  LayoutDashboard,
   Layers,
   ListChecks,
-  Lock,
   MessageCircle,
   ShieldCheck,
   Sparkles,
@@ -22,6 +20,7 @@ import { ThemeToggle } from '@/lib/ui/theme-toggle';
 import { getPlanPriceAmounts, type PeriodKey, type PlanKey } from '@/lib/billing/stripe';
 import { cn, formatCurrency } from '@/lib/utils';
 import { Reveal } from './reveal';
+import { HeroVideo } from './hero-video';
 
 const trustPoints = [
   { label: 'موافقة واضحة قبل أي تعديل' },
@@ -201,11 +200,11 @@ export default async function HomePage({
           </div>
 
           <Reveal className="mt-14 sm:mt-16" delay={80}>
-            <ProductPreview />
+            <HeroVideo />
           </Reveal>
 
           {/* Trust strip — a quiet band of proof points directly under the hero
-              product mock, the highest-leverage place for reassurance. */}
+              video, the highest-leverage place for reassurance. */}
           <div className="mx-auto mt-10 flex w-full max-w-4xl flex-wrap items-center justify-center gap-x-6 gap-y-2.5">
             {trustPoints.map((point) => (
               <span key={point.label} className="inline-flex items-center gap-1.5 text-[12.5px] text-muted-foreground">
@@ -516,116 +515,5 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
       <span className="h-1 w-1 rounded-full bg-primary" aria-hidden />
       {children}
     </span>
-  );
-}
-
-/** Hand-built product mock used in the hero. */
-function ProductPreview() {
-  return (
-    <div className="surface-raised mx-auto w-full min-w-0 max-w-full overflow-hidden lg:max-w-5xl">
-      {/* A real app title-bar instead of the fake traffic-light dots that read
-          as a template — the product mark on the start edge, a secure URL pill
-          centred. */}
-      <div className="flex items-center justify-between border-b border-border bg-background-elevated px-4 py-2.5">
-        <div className="flex items-center gap-2">
-          <Image src="/logo-mark.svg" alt="" width={18} height={18} className="h-[18px] w-[18px] rounded-md" />
-          <span className="text-[11.5px] font-semibold text-foreground">مُضاعِف</span>
-        </div>
-        <div className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1 text-[11.5px] text-muted-foreground" dir="ltr">
-          <Lock className="h-3 w-3 text-primary" aria-hidden />
-          ai.modaafa.com
-        </div>
-        <span className="w-14" aria-hidden />
-      </div>
-
-      <div className="grid w-full min-w-0 max-w-full grid-cols-1 md:grid-cols-[200px_minmax(0,1fr)]">
-        <aside className="hidden flex-col gap-0.5 border-e border-border bg-[hsl(var(--sidebar))] p-2.5 md:flex">
-          <div className="mb-2 flex items-center gap-2 rounded-md border border-border bg-card px-2 py-1.5">
-            <Building2 className="h-3.5 w-3.5 flex-shrink-0 text-primary" />
-            <div className="min-w-0">
-              <div className="truncate text-[11.5px] font-semibold">متجر تجريبي</div>
-              <div className="text-[11px] text-muted-foreground numeric" dir="ltr">
-                123-456-7890
-              </div>
-            </div>
-          </div>
-          {[
-            { icon: LayoutDashboard, label: 'لوحة التحكم', active: false },
-            { icon: MessageCircle, label: 'المساعد الذكي', active: true },
-            { icon: ShieldCheck, label: 'فحص الحساب', active: false },
-            { icon: ListChecks, label: 'مركز الموافقات', active: false },
-          ].map((item) => {
-            const Icon = item.icon;
-            return (
-              <div
-                key={item.label}
-                className={`relative flex items-center gap-2 rounded-md px-2 py-1.5 text-[11.5px] ${
-                  item.active ? 'bg-muted font-medium text-foreground' : 'text-muted-foreground'
-                }`}
-              >
-                {item.active && <span className="absolute inset-y-1 start-0 w-[2px] rounded-full bg-primary" />}
-                <Icon className={`h-3.5 w-3.5 ${item.active ? 'text-primary' : 'text-muted-foreground/70'}`} />
-                {item.label}
-              </div>
-            );
-          })}
-        </aside>
-
-        <div className="min-w-0 bg-background p-3 sm:p-5">
-          <div className="grid min-w-0 grid-cols-2 gap-2.5 lg:grid-cols-4">
-            <PreviewMetric label="الصرف 7 أيام" value="8,420 ر.س" />
-            <PreviewMetric label="التحويلات" value="137" />
-            <PreviewMetric label="صحة الحساب" value="74/100" />
-            <PreviewMetric label="تسريب متوقع" value="1,180 ر.س" danger />
-          </div>
-
-          <div className="mt-3 grid min-w-0 gap-2.5 lg:grid-cols-[minmax(0,1fr)_248px]">
-            <div className="surface-card p-4">
-              <div className="flex items-center gap-2 text-[12.5px] font-semibold">
-                <Sparkles className="h-3.5 w-3.5 text-primary" />
-                رد المساعد
-              </div>
-              <p className="mt-2 text-[11.5px] leading-6 text-muted-foreground">
-                أعلى حملة صرفاً تحتاج مراجعة كلمات البحث والميزانية. أقترح إضافة كلمات سلبية وتشغيل فحص قبل أي تعديل.
-              </p>
-            </div>
-
-            <div className="surface-card border-primary/25 bg-primary/[0.06] p-4">
-              <div className="text-[11.5px] font-semibold text-primary">موافقة مطلوبة</div>
-              <p className="mt-2 text-[11px] leading-6 text-foreground-subtle">
-                إيقاف كلمة منخفضة الجودة وتعديل ميزانية حملة البحث.
-              </p>
-              <div className="mt-3 flex gap-1.5">
-                <span className="rounded-md bg-primary px-2 py-1 text-[10.5px] font-semibold text-primary-foreground">
-                  اعتماد
-                </span>
-                <span className="rounded-md border border-border bg-card px-2 py-1 text-[10.5px] font-semibold text-muted-foreground">
-                  تجاهل
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function PreviewMetric({ label, value, danger }: { label: string; value: string; danger?: boolean }) {
-  return (
-    <div className="surface-card relative min-w-0 overflow-hidden p-3">
-      <span
-        className={`absolute inset-x-0 top-0 h-px ${danger ? 'bg-red-500' : 'bg-border-strong'}`}
-        aria-hidden
-      />
-      <div className="text-[11.5px] text-muted-foreground">{label}</div>
-      <div
-        className={`mt-1.5 break-words text-[17px] font-bold leading-tight numeric ${
-          danger ? 'text-red-500 dark:text-red-400' : 'text-foreground'
-        }`}
-      >
-        {value}
-      </div>
-    </div>
   );
 }
