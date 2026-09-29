@@ -268,7 +268,7 @@ export default async function DashboardPage({
         {params?.connected === '1' && (
           <Alert tone="success">
             {params.accounts && Number(params.accounts) > 0
-              ? `تم ربط إعلانات Google بنجاح — ${formatNumberAr(Number(params.accounts))} حساب إعلاني جاهز للعمل.`
+              ? `تم ربط إعلانات Google بنجاح: ${formatNumberAr(Number(params.accounts))} حساب إعلاني جاهز للعمل.`
               : 'تم ربط إعلانات Google بنجاح.'}
           </Alert>
         )}
@@ -382,8 +382,8 @@ export default async function DashboardPage({
 
             {/* KPIs */}
             <section className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-              <MetricCard label={`الإنفاق — ${effectiveRange.label}`} value={formatCurrency(totalSpend, selectedAccount?.currency_code)} icon={Wallet} />
-              <MetricCard label={`التحويلات — ${effectiveRange.label}`} value={formatNumberAr(totalConversions)} icon={TrendingUp} />
+              <MetricCard label={`الإنفاق · ${effectiveRange.label}`} value={formatCurrency(totalSpend, selectedAccount?.currency_code)} icon={Wallet} />
+              <MetricCard label={`التحويلات · ${effectiveRange.label}`} value={formatNumberAr(totalConversions)} icon={TrendingUp} />
               <MetricCard
                 label="صحة الحساب"
                 value={`${latestAudit?.health_score ?? '—'}/100`}
@@ -463,7 +463,7 @@ export default async function DashboardPage({
                       <tr>
                         <th className="px-5 py-2.5 text-start font-medium">اسم الحملة</th>
                         <th className="px-3 py-2.5 text-start font-medium">الحالة</th>
-                        <th className="px-3 py-2.5 text-start font-medium">الإنفاق — {effectiveRange.label}</th>
+                        <th className="px-3 py-2.5 text-start font-medium">الإنفاق · {effectiveRange.label}</th>
                         <th className="px-3 py-2.5 text-start font-medium">التحويلات</th>
                         <th className="px-5 py-2.5 text-start font-medium">ROAS</th>
                       </tr>
