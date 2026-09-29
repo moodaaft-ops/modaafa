@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient, createServerClient } from '@/lib/supabase/server';
-import { cancelStripeSubscription } from '@/lib/billing/stripe';
+import { cancelAllLiveStripeSubscriptionsForUser, cancelStripeSubscription } from '@/lib/billing/stripe';
 import { decrypt } from '@/lib/crypto';
 import { revokeRefreshToken } from '@/lib/google-ads/oauth';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
@@ -91,6 +91,28 @@ export async function POST(req: NextRequest) {
       .from('subscriptions')
       .update({ status: 'canceled', canceled_at: new Date().toISOString() })
       .eq('id', subscription.id);
+  }
+
+  // Our table can miss a live subscription (webhook lag, a second checkout that
+  // raced the first). Ask Stripe directly so nothing keeps billing after the
+  // account is gone.
+  const { data: knownCustomers } = await admin
+    .from('subscriptions')
+    .select('stripe_customer_id')
+    .eq('user_id', user.id);
+  const hadStripeHistory = (knownCustomers ?? []).some((row) => row.stripe_customer_id);
+  if (hadStripeHistory || process.env.STRIPE_SECRET_KEY) {
+    try {
+      await cancelAllLiveStripeSubscriptionsForUser({
+        userId: user.id,
+        knownCustomerIds: (knownCustomers ?? []).map((row) => row.stripe_customer_id),
+      });
+    } catch (error) {
+      if (!isAlreadyCancelledStripeError(error)) {
+        console.error('Failed to sweep Stripe subscriptions before account deletion', error);
+        return deleteError(req, 'billing_cancellation_failed');
+      }
+    }
   }
 
   const { data: businesses } = await admin
