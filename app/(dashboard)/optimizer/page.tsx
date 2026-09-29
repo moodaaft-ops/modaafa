@@ -63,7 +63,7 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
       <PageHeader
         icon={Zap}
         title="مركز الموافقات"
-        description="راجع التوصيات واعتمد ما تريد تنفيذه — لا تعديل قبل موافقتك."
+        description="راجع التوصيات واعتمد ما تريد تنفيذه. لا تعديل قبل موافقتك."
         account={selectedAccount ? { name: accountName, customerId: selectedAccount.customer_id } : null}
       />
       <div className="p-4 sm:p-6 lg:p-8">
@@ -252,7 +252,7 @@ function optimizerErrorMessage(code: string) {
     manual_review_required: 'هذه التوصية وصفية وتحتاج مراجعة يدوية، لذلك لم ننفذها تلقائياً.',
     execution_failed: 'اجتازت العملية المراجعة الأولية لكن تعذر تنفيذها في Google Ads. لم نعتبرها مطبقة.',
     execution_recording_failed: 'تم إرسال التعديل إلى Google Ads لكن تعذر تأكيد حفظ السجل. أوقفنا إعادة التنفيذ وأبلغنا فريق التشغيل للمطابقة اليدوية.',
-    execution_unverified: 'انتهت مهلة إرسال التعديل وقد يكون طُبق فعلاً في Google Ads. أوقفنا إعادة التنفيذ وأبلغنا فريق التشغيل — راجع سجل التغييرات في Google Ads قبل أي محاولة جديدة.',
+    execution_unverified: 'انتهت مهلة إرسال التعديل وقد يكون طُبق فعلاً في Google Ads. أوقفنا إعادة التنفيذ وأبلغنا فريق التشغيل. راجع سجل التغييرات في Google Ads قبل أي محاولة جديدة.',
     already_executing: 'هذه التوصية قيد التنفيذ أو نُفذت بالفعل. حدّث الصفحة لرؤية حالتها الحالية.',
     recommendation_locked: 'لا يمكن تغيير هذه التوصية أثناء التنفيذ أو بعد تطبيقها.',
     invalid_rollback: 'طلب التراجع غير صالح.',
@@ -475,10 +475,10 @@ function actionTypeLabel(value?: string | null) {
     add_negative_keyword: 'إضافة كلمة سلبية',
     add_keyword: 'إضافة كلمة رابحة',
     approval_queued: 'اعتماد توصية',
-    execution_blocked: 'محجوب — يحتاج مراجعة',
+    execution_blocked: 'محجوب: يحتاج مراجعة',
     blocked_by_guardrails: 'محجوب بحواجز الأمان',
     preflight_failed: 'فشل التحقق قبل التنفيذ',
-    resource_account_mismatch: 'محجوب — مورد خارج الحساب',
+    resource_account_mismatch: 'محجوب: مورد خارج الحساب',
     record_failed: 'نُفّذ ولم يُسجّل',
   };
   return labels[value] ?? value;
