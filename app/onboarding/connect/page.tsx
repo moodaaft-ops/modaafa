@@ -29,7 +29,7 @@ const errors: Record<string, string> = {
 };
 
 const points = [
-  { icon: Link2, text: 'موافقة واحدة فقط — لا تحتاج ربط كل حساب على حدة.' },
+  { icon: Link2, text: 'موافقة واحدة فقط، ولا تحتاج ربط كل حساب على حدة.' },
   { icon: Layers, text: 'نسحب الحساب المباشر وكل حساب عميل تحت أي حساب إداري (MCC).' },
   { icon: ShieldCheck, text: 'الصلاحية للقراءة والإدارة فقط، وأي تعديل يمر عبر موافقتك داخل المنصة.' },
 ];
@@ -120,7 +120,7 @@ export default async function ConnectGoogleAdsPage({
             <ConnectGoogleAdsButton label={hasRevokedAccounts ? 'إعادة ربط Google Ads' : undefined} />
             {(hasAccounts || hasRevokedAccounts) && (
               <Link href="/dashboard" className={buttonClasses({ variant: 'ghost' })}>
-                لدي حسابات — انتقل للوحة التحكم
+                لدي حسابات، انتقل للوحة التحكم
               </Link>
             )}
           </div>

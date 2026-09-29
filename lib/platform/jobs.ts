@@ -123,7 +123,7 @@ export async function getBillableBusinessIds(supabase: any) {
   const subscriptions = await selectAllRows<Record<string, any>>(supabase, (q) =>
     q
       .from('subscriptions')
-      .select('user_id, status, trial_ends_at, current_period_end')
+      .select('user_id, status, trial_ends_at, current_period_start, current_period_end')
       .in('status', ['trialing', 'active', 'past_due'])
       .order('user_id', { ascending: true })
   );

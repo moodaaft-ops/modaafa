@@ -91,7 +91,7 @@ const faq = [
   },
   {
     q: 'هل التجربة تحتاج بطاقة؟',
-    a: 'تبدأ التجربة 14 يوماً عبر Stripe، ويمكنك الإلغاء قبل انتهائها من بوابة إدارة الاشتراك دون أي خصم. ننبّهك بالبريد قبل أول تجديد.',
+    a: 'نعم، تُطلب بطاقة عند بدء التجربة عبر Stripe، ولا يُخصم منها شيء خلال 14 يوماً. أول خصم في اليوم الخامس عشر، وتستطيع الإلغاء قبله من بوابة إدارة الاشتراك دون أي خصم. ونرسل لك تنبيهاً بالبريد قبل أول تجديد.',
   },
   {
     q: 'هل أستطيع إدارة أكثر من حساب إعلاني؟',
@@ -186,7 +186,7 @@ export default async function HomePage({
 
             <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
               <Link href="/login" className={buttonClasses({ variant: 'primary', size: 'lg' })}>
-                ابدأ التجربة — 14 يوماً
+                ابدأ التجربة المجانية 14 يوماً
                 <ArrowLeft className="h-4 w-4" aria-hidden />
               </Link>
               <a href="#how" className={buttonClasses({ variant: 'outline', size: 'lg' })}>
@@ -221,7 +221,7 @@ export default async function HomePage({
         <div className="mx-auto w-full max-w-6xl">
           <SectionLabel>كيف تعمل</SectionLabel>
           <h2 className="mt-3 max-w-2xl text-display-sm font-bold text-balance">
-            من تسجيل الدخول إلى أول قرار معتمد — خمس خطوات.
+            خمس خطوات من تسجيل الدخول إلى أول قرار معتمد.
           </h2>
 
           <ol className="mt-10 grid gap-px overflow-hidden rounded-xl border border-border bg-border sm:grid-cols-2 lg:grid-cols-5">
@@ -243,7 +243,7 @@ export default async function HomePage({
         <div className="mx-auto w-full max-w-6xl">
           <SectionLabel>المزايا</SectionLabel>
           <h2 className="mt-3 max-w-2xl text-display-sm font-bold text-balance">
-            كل ما يحتاجه حساب إعلاني — في مكان واحد منظّم.
+            كل ما يحتاجه حسابك الإعلاني في مكان واحد.
           </h2>
 
           <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -277,7 +277,7 @@ export default async function HomePage({
               <div>
                 <SectionLabel>الأمان</SectionLabel>
                 <h2 className="mt-3 text-display-sm font-bold text-balance">
-                  لا تعديل على حسابك قبل موافقتك — بلا استثناء.
+                  لا تعديل على حسابك قبل موافقتك، بلا استثناء.
                 </h2>
                 <p className="mt-4 max-w-xl text-[14px] leading-8 text-muted-foreground">
                   المهام المجدولة تُجهّز التوصيات فقط. أي تغيير فعلي على Google Ads يمر عبر مركز الموافقات، ويُتحقق منه

@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   getSubscriptionAccess,
+  PAST_DUE_GRACE_MS,
   isSubscriptionEntitled,
 } from '../lib/billing/entitlements';
 import { checkGuardrails, type OptimizerAction } from '../lib/ai/optimizer-agent';
@@ -175,4 +176,18 @@ test('target ROAS respects the same bound', async () => {
 
   const bad = bidAction({ current_target_roas: 4, target_roas: 0.001 });
   assert.equal(await checkGuardrails(bad, 'account-1', noopSupabase), null);
+});
+
+test('past_due access is capped to a short dunning grace from the unpaid period start', () => {
+  const periodStart = '2026-08-01T00:00:00.000Z';
+  const periodEnd = '2026-09-01T00:00:00.000Z';
+  const row = { status: 'past_due', current_period_start: periodStart, current_period_end: periodEnd };
+  const day = 24 * 60 * 60 * 1000;
+  const start = new Date(periodStart).getTime();
+
+  assert.equal(isSubscriptionEntitled(row, start + 2 * day), true);
+  assert.equal(isSubscriptionEntitled(row, start + PAST_DUE_GRACE_MS - 1), true);
+  // A card that never recovers must not keep the whole unpaid month.
+  assert.equal(isSubscriptionEntitled(row, start + PAST_DUE_GRACE_MS + 1), false);
+  assert.equal(isSubscriptionEntitled(row, start + 20 * day), false);
 });
