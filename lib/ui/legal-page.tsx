@@ -42,7 +42,7 @@ export function LegalPage({
 
       <footer className="border-t border-border px-4 py-7 text-sm text-muted-foreground sm:px-6">
         <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-4">
-          <span>© 2026 مُضاعِف / Modaafa Ads AI</span>
+          <span>© 2026 مُضاعِف / Modaafa Ads AI · مؤسسة تقنيات أيمن للتسويق الإلكتروني · الرقم الوطني الموحد 7038156571</span>
           <nav className="flex flex-wrap gap-4" aria-label="الصفحات القانونية">
             <Link href="/privacy" className="hover:text-foreground">الخصوصية</Link>
             <Link href="/terms" className="hover:text-foreground">الشروط</Link>
