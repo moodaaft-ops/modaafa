@@ -5,6 +5,7 @@ import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import {
+  Activity,
   BarChart3,
   Bot,
   CreditCard,
@@ -34,10 +35,9 @@ const TOUR_ANCHORS: Record<string, string> = {
   '/assistant': 'nav-assistant',
 };
 
-const navGroups: Array<{
-  label: string;
-  items: Array<{ href: string; label: string; icon: React.ComponentType<{ className?: string }>; badge?: string }>;
-}> = [
+type NavItem = { href: string; label: string; icon: React.ComponentType<{ className?: string }>; badge?: string };
+
+const navGroups: Array<{ label: string; items: NavItem[] }> = [
   {
     label: 'العمل اليومي',
     items: [
@@ -70,6 +70,7 @@ export function DashboardChrome({
   accounts,
   revokedAccounts,
   selectedCustomerId,
+  isOperator = false,
   children,
 }: {
   brandName: string;
@@ -77,9 +78,19 @@ export function DashboardChrome({
   accounts: AdsAccountSummary[];
   revokedAccounts: AdsAccountSummary[];
   selectedCustomerId: string | null;
+  isOperator?: boolean;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  // The operations center is owner-only; the page itself re-checks the
+  // server-side allowlist, this only decides whether to show the link.
+  const visibleNavGroups = isOperator
+    ? navGroups.map((group) =>
+        group.label === 'الحساب'
+          ? { ...group, items: [...group.items, { href: '/operations', label: 'مركز التشغيل', icon: Activity } as NavItem] }
+          : group
+      )
+    : navGroups;
   const [mobileOpen, setMobileOpen] = useState(false);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
@@ -236,7 +247,7 @@ export function DashboardChrome({
         </div>
 
         <nav className="relative flex-1 space-y-5 overflow-y-auto px-2.5 py-4 scrollbar-thin">
-          {navGroups.map((group) => (
+          {visibleNavGroups.map((group) => (
             <div key={group.label}>
               <div className="px-2.5 pb-1.5 text-[10.5px] font-semibold uppercase text-muted-foreground/60">
                 {group.label}

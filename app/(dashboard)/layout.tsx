@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { getRequestAuthContext } from '@/lib/supabase/server';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { DashboardChrome } from './dashboard-chrome';
+import { isModaafaOperator } from '@/lib/platform/operators';
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { user } = await getRequestAuthContext();
@@ -34,6 +35,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       accounts={accounts}
       revokedAccounts={revokedAccounts}
       selectedCustomerId={selectedCustomerId}
+      isOperator={isModaafaOperator(user.email)}
     >
       {children}
     </DashboardChrome>
