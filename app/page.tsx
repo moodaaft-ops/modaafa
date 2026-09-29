@@ -487,7 +487,7 @@ export default async function HomePage({
         <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-4 text-[12.5px] text-muted-foreground">
           <div className="flex items-center gap-2.5">
             <Image src="/logo-mark.svg" alt="" width={22} height={22} className="h-[22px] w-[22px] rounded-md" />
-            <span>© 2026 مُضاعِف · <span dir="ltr">Modaafa Ads AI</span></span>
+            <span>© 2026 مُضاعِف · <span dir="ltr">Modaafa Ads AI</span> · مؤسسة تقنيات أيمن للتسويق الإلكتروني</span>
           </div>
           <div className="flex flex-wrap gap-4">
             <Link href="/privacy" className="transition-colors hover:text-foreground">
