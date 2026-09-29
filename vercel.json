@@ -26,6 +26,12 @@
     },
     "app/api/accounts/repair-names/route.ts": {
       "maxDuration": 300
+    },
+    "app/api/recommendations/action/route.ts": {
+      "maxDuration": 120
+    },
+    "app/api/actions/rollback/route.ts": {
+      "maxDuration": 120
     }
   }
 }
