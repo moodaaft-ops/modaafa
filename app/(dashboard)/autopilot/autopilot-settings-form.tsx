@@ -107,7 +107,8 @@ export function AutopilotSettingsForm({
       <div className="grid gap-3 lg:grid-cols-3" role="radiogroup" aria-label="وضع الطيار الآلي">
         {modes.map((item) => {
           const Icon = item.icon;
-          const disabled = item.value === 'conservative' && !subscriptionActive;
+          const locked = item.value === 'conservative' && !globalExecutionEnabled && mode !== 'conservative';
+          const disabled = locked || (item.value === 'conservative' && !subscriptionActive);
           const active = mode === item.value;
           return (
             <button
@@ -128,7 +129,11 @@ export function AutopilotSettingsForm({
                 {item.title}
               </span>
               <span className="mt-2 block text-xs leading-6 text-muted-foreground">{item.description}</span>
-              {disabled && <span className="mt-2 block text-[11px] font-medium text-amber-600">يحتاج اشتراكاً نشطاً</span>}
+              {locked ? (
+                <span className="mt-2 block text-[11px] font-medium text-amber-600">قريباً</span>
+              ) : (
+                disabled && <span className="mt-2 block text-[11px] font-medium text-amber-600">يحتاج اشتراكاً نشطاً</span>
+              )}
             </button>
           );
         })}
