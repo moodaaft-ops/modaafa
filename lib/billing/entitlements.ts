@@ -103,7 +103,7 @@ export async function getSubscriptionAccess(
   // was locked out of everything.
   let query = supabase
     .from('subscriptions')
-    .select('plan, status, trial_ends_at, current_period_end, created_at')
+    .select('plan, status, trial_ends_at, current_period_start, current_period_end, created_at')
     .order('created_at', { ascending: false })
     .limit(10);
 
@@ -141,10 +141,14 @@ export async function getSubscriptionAccess(
   };
 }
 
+/** Dunning grace for a past_due subscription, from the unpaid period's start. */
+export const PAST_DUE_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
+
 /**
  * Whether a subscription row currently grants access.
  *
- * `past_due` counts until the current period actually ends. Stripe keeps
+ * `past_due` counts for a short grace (PAST_DUE_GRACE_MS) inside the unpaid
+ * period, never past its end. Stripe keeps
  * dunning a card for days after the first failed attempt; revoking the
  * assistant, audits and sync on the very first retry locked out customers who
  * were still paying and still recoverable.
@@ -165,7 +169,19 @@ export function isSubscriptionEntitled(subscription: Record<string, any>, now = 
   }
 
   if (status === 'past_due') {
-    return Boolean(periodEnd && periodEnd > now);
+    if (!periodEnd || periodEnd <= now) return false;
+    // A failed renewal (or a failed first charge after the trial) rolls
+    // current_period_* forward to the NEW, unpaid period. Without a cap, a card
+    // that never recovers kept full paid access for that entire month (and
+    // indefinitely when Stripe leaves the subscription unpaid). Keep a short
+    // dunning grace measured from the start of the unpaid period instead.
+    const periodStart = subscription.current_period_start
+      ? new Date(subscription.current_period_start).getTime()
+      : null;
+    if (periodStart && Number.isFinite(periodStart)) {
+      return now < Math.min(periodEnd, periodStart + PAST_DUE_GRACE_MS);
+    }
+    return true;
   }
 
   return false;
