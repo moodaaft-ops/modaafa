@@ -133,6 +133,19 @@ export function googleAdsAuthNeedsReconnect(error: unknown) {
   return error instanceof GoogleAdsRestError && error.status === 401;
 }
 
+/** OAuth failures that may describe the platform's own client, not one user's grant. */
+export function isOAuthClientLevelError(error: unknown) {
+  return getGoogleAdsErrorCodes(error).some((code) => code === 'INVALID_CLIENT' || code === 'UNAUTHORIZED_CLIENT');
+}
+
+/**
+ * A run where several accounts fail with a client-level OAuth error and not one
+ * account syncs is a platform credential outage, not a wave of revocations.
+ */
+export function shouldTreatAsPlatformAuthOutage(clientLevelFailures: number, processed: number) {
+  return clientLevelFailures >= 2 && processed === 0;
+}
+
 function extractOAuthErrorCode(error: unknown) {
   const data = (error as any)?.response?.data;
   const code = data?.error;
