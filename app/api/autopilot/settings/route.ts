@@ -93,6 +93,23 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Live autopilot execution is not launched yet. Refuse to store a NEW
+  // conservative opt-in while the global switch is off, so flipping the switch
+  // later can never silently activate accounts that opted in during the lock.
+  if (
+    input.mode === 'conservative' &&
+    previousResult.data?.mode !== 'conservative' &&
+    !autopilotExecutionGloballyEnabled()
+  ) {
+    return NextResponse.json(
+      {
+        error: 'execution_not_launched',
+        message: 'التنفيذ المحافظ غير متاح حالياً. يمكنك استخدام وضع المراقبة الآن.',
+      },
+      { status: 409 }
+    );
+  }
+
   if (input.mode === 'conservative' && !access.active) {
     return NextResponse.json(
       {

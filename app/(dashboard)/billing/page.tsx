@@ -264,7 +264,7 @@ export default async function BillingPage({
                     </>
                   ) : (
                     <span className="text-[14px] font-semibold leading-6 text-muted-foreground">
-                      فوترة سنوية — يظهر المبلغ النهائي في صفحة الدفع
+                      فوترة سنوية، ويظهر المبلغ النهائي في صفحة الدفع
                     </span>
                   )}
                 </div>

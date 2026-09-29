@@ -4,6 +4,8 @@ import { decrypt } from '@/lib/crypto';
 import {
   getCustomerMetadataWithFallback,
   googleAdsAuthNeedsReconnect,
+  isOAuthClientLevelError,
+  shouldTreatAsPlatformAuthOutage,
 } from '@/lib/google-ads/client';
 import { ManagerAccountError, syncCampaignCacheWithLoginFallback } from '@/lib/google-ads/sync';
 import { finishJobRun, getBillableBusinessIds, startJobRun } from '@/lib/platform/jobs';
@@ -110,6 +112,7 @@ async function runSync(req: NextRequest) {
   // chance to record progress, so the job stops itself early, reports what it
   // did, and leaves the rest for the next hourly run.
   const budget = createTimeBudget(SYNC_BUDGET_MS);
+  const clientLevelAuthFailures: string[] = [];
   let skippedForTime = 0;
 
   await mapLimit(accounts ?? [], SYNC_ACCOUNT_CONCURRENCY, async (account) => {
@@ -154,7 +157,14 @@ async function runSync(req: NextRequest) {
       // account so the dashboard can ask the owner to reconnect instead of
       // retrying it silently every night forever.
       if (googleAdsAuthNeedsReconnect(err)) {
-        await supabase.from('google_ads_accounts').update({ status: 'revoked' }).eq('id', account.id);
+        if (isOAuthClientLevelError(err)) {
+          // invalid_client / unauthorized_client can mean OUR OAuth client is
+          // broken (rotated secret, disabled client), not this user's grant.
+          // Decide after the run, once we know whether every account failed.
+          clientLevelAuthFailures.push(account.id);
+        } else {
+          await supabase.from('google_ads_accounts').update({ status: 'revoked' }).eq('id', account.id);
+        }
       }
       if (err instanceof ManagerAccountError) {
         // Flag it AND stamp last_synced_at so it drops to the back of the
@@ -181,6 +191,19 @@ async function runSync(req: NextRequest) {
       }
     }
   });
+
+  if (shouldTreatAsPlatformAuthOutage(clientLevelAuthFailures.length, results.processed)) {
+    // Several accounts rejected with a client-level OAuth error and none
+    // synced: this is a platform credential problem. Flagging every account
+    // `revoked` would push every customer to re-consent and drop them from all
+    // jobs, with no way back once the credential is fixed.
+    await safeOpsAlert('رفض Google بيانات OAuth الخاصة بالمنصة', {
+      affected_accounts: clientLevelAuthFailures.length,
+      hint: 'Check GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET in Vercel; no account was marked revoked.',
+    });
+  } else if (clientLevelAuthFailures.length > 0) {
+    await supabase.from('google_ads_accounts').update({ status: 'revoked' }).in('id', clientLevelAuthFailures);
+  }
 
   // Retention for ever-growing operational tables rides along here — the one
   // job guaranteed to run hourly. Best-effort by construction.

@@ -224,7 +224,7 @@ export function createStripeWebhookHandler(
 
         case 'invoice.payment_succeeded': {
           const invoice = event.data.object as any;
-          const subscriptionId = stripeObjectId(invoice.subscription);
+          const subscriptionId = invoiceSubscriptionId(invoice);
           if (!subscriptionId) break;
           const subscription = await dependencies.retrieveStripeSubscription(subscriptionId);
           await dependencies.applySubscriptionEvent(
@@ -250,7 +250,7 @@ export function createStripeWebhookHandler(
 
         case 'invoice.payment_failed': {
           const invoice = event.data.object as any;
-          const subscriptionId = stripeObjectId(invoice.subscription);
+          const subscriptionId = invoiceSubscriptionId(invoice);
           if (!subscriptionId) break;
           const subscription = await dependencies.retrieveStripeSubscription(subscriptionId);
           const writeResult = await dependencies.applySubscriptionEvent(
@@ -375,4 +375,20 @@ function subscriptionSnapshotRow(
 
 function errorText(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * The invoice's subscription id across Stripe API versions. The webhook
+ * payload follows the ENDPOINT's API version, not the SDK pin: from the
+ * 2025-03-31 (basil) versions on, `invoice.subscription` is gone and the id
+ * lives under `parent.subscription_details.subscription`. Reading only the old
+ * field made both invoice handlers silently `break` — no invoice recorded, no
+ * payment-failed email — on a newer endpoint.
+ */
+export function invoiceSubscriptionId(invoice: any): string | null {
+  return (
+    stripeObjectId(invoice?.subscription) ??
+    stripeObjectId(invoice?.parent?.subscription_details?.subscription) ??
+    null
+  );
 }

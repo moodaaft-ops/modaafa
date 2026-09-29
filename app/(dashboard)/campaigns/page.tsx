@@ -172,7 +172,7 @@ export default async function CampaignsPage({
                     <th className="px-3 py-2.5 text-start font-medium">الحالة</th>
                     <th className="px-3 py-2.5 text-start font-medium">النوع</th>
                     <th className="px-3 py-2.5 text-start font-medium">الميزانية</th>
-                    <th className="px-3 py-2.5 text-start font-medium">الصرف — {effectiveRange.label}</th>
+                    <th className="px-3 py-2.5 text-start font-medium">الصرف · {effectiveRange.label}</th>
                     <th className="px-5 py-2.5 text-start font-medium">التحويلات</th>
                   </tr>
                 </thead>

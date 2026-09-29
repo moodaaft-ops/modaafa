@@ -349,7 +349,7 @@ export function AccountSwitcher({
                     {missing && (
                       <span className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-amber-600 dark:text-amber-400">
                         <CircleAlert className="h-3 w-3" />
-                        Google لم ترجع اسماً — سمّه من الإعدادات
+                        Google لم ترجع اسماً، سمّه من الإعدادات
                       </span>
                     )}
                   </span>

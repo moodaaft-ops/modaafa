@@ -46,7 +46,7 @@ export function CampaignSpendChart({
           {/* Latin digits, matching the app-wide numerals policy in
               lib/utils.ts — an Eastern-Arabic ٧ next to Latin-digit money is
               exactly the mixed-numeral screen that policy eliminated. */}
-          <p className="mt-1 text-xs text-muted-foreground">{rangeLabel} — أعلى {data.length} حملات إنفاقاً</p>
+          <p className="mt-1 text-xs text-muted-foreground">{rangeLabel} · أعلى {data.length} حملات إنفاقاً</p>
         </div>
         <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
           <span className="inline-flex items-center gap-1.5">

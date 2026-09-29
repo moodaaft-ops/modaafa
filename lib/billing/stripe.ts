@@ -169,6 +169,46 @@ export async function cancelStripeSubscription(subscriptionId: string) {
   return getStripe().subscriptions.cancel(subscriptionId);
 }
 
+const CANCELLABLE_STRIPE_STATUSES = new Set(['trialing', 'active', 'past_due', 'unpaid', 'incomplete', 'paused']);
+
+/**
+ * Cancels every live Stripe subscription that belongs to this user, read from
+ * STRIPE rather than our table. Account deletion used to cancel only the rows
+ * we had stored, so a subscription whose webhook never landed (or a second one
+ * from a double checkout) kept billing a customer who had deleted the account.
+ * Returns the ids it cancelled. Throws only when a cancellation itself fails.
+ */
+export async function cancelAllLiveStripeSubscriptionsForUser(params: {
+  userId: string;
+  knownCustomerIds?: Array<string | null | undefined>;
+}) {
+  const stripe = getStripe();
+  const customerIds = new Set(
+    (params.knownCustomerIds ?? []).filter((id): id is string => typeof id === 'string' && id.length > 0)
+  );
+  try {
+    const found = await stripe.customers.search({
+      query: `metadata['modaafaUserId']:'${params.userId}'`,
+      limit: 10,
+    });
+    for (const customer of found.data) customerIds.add(customer.id);
+  } catch (error) {
+    // Search is best-effort; the ids we stored are still checked below.
+    console.warn('Stripe customer search unavailable during account deletion', error);
+  }
+
+  const cancelled: string[] = [];
+  for (const customerId of customerIds) {
+    const subscriptions = await stripe.subscriptions.list({ customer: customerId, status: 'all', limit: 100 });
+    for (const subscription of subscriptions.data) {
+      if (!CANCELLABLE_STRIPE_STATUSES.has(subscription.status)) continue;
+      await stripe.subscriptions.cancel(subscription.id);
+      cancelled.push(subscription.id);
+    }
+  }
+  return cancelled;
+}
+
 export async function retrieveStripeSubscription(subscriptionId: string) {
   return getStripe().subscriptions.retrieve(subscriptionId);
 }
