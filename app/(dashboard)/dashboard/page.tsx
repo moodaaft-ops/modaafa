@@ -27,6 +27,7 @@ import { CampaignSpendChart } from './spend-chart';
 import { EmptyState } from '@/lib/ui/empty-state';
 import { StatusBadge, campaignStatusTone } from '@/lib/ui/status-badge';
 import { buttonClasses } from '@/lib/ui/button';
+import { TikTokPixel } from '@/lib/analytics/tiktok-pixel';
 import { PendingSubmitButton } from '@/lib/ui/pending-submit-button';
 import { Alert } from '@/lib/ui/alert';
 import { getSubscriptionAccess } from '@/lib/billing/entitlements';
@@ -261,9 +262,17 @@ export default async function DashboardPage({
             used to redirect back with a query param that no page ever read, so
             the user got no confirmation at the three moments that matter most. */}
         {params?.subscribed === '1' && (
-          <Alert tone="success">
-            تم تفعيل اشتراكك بنجاح. تجد تفاصيل الخطة والفواتير في صفحة الاشتراك.
-          </Alert>
+          <>
+            <Alert tone="success">
+              تم تفعيل اشتراكك بنجاح. تجد تفاصيل الخطة والفواتير في صفحة الاشتراك.
+            </Alert>
+            {/* The one place the pixel loads inside the dashboard: the landing
+                page of Stripe's success redirect. Requiring a live subscription
+                as well keeps a hand-typed `?subscribed=1` from reporting a sale. */}
+            {subscription.active && (
+              <TikTokPixel conversion={{ event: 'Subscribe', userId: user.id }} />
+            )}
+          </>
         )}
         {params?.connected === '1' && (
           <Alert tone="success">
