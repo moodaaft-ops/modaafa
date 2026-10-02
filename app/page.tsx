@@ -16,6 +16,7 @@ import {
   Users,
 } from 'lucide-react';
 import { buttonClasses } from '@/lib/ui/button';
+import { TikTokPixel } from '@/lib/analytics/tiktok-pixel';
 import { ThemeToggle } from '@/lib/ui/theme-toggle';
 import { getPlanPriceAmounts, type PeriodKey, type PlanKey } from '@/lib/billing/stripe';
 import { cn, formatCurrency } from '@/lib/utils';
@@ -118,6 +119,7 @@ export default async function HomePage({
 
   return (
     <main className="min-h-screen w-full max-w-full overflow-x-clip bg-background text-foreground">
+      <TikTokPixel pageView />
       {/* ---------------------------------------------------------------- Nav */}
       <header className="sticky top-0 z-40 border-b border-border bg-background/70 backdrop-blur-xl">
         <div className="mx-auto flex h-14 w-full max-w-6xl items-center justify-between gap-2 px-4 sm:gap-4 sm:px-6">
