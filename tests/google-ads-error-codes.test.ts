@@ -39,3 +39,11 @@ test('retryAfterMs surfaces the server-provided penalty window', () => {
   assert.equal(retryAfterMs(new GoogleAdsRestError(429, 'quota', [], null, null)), null);
   assert.equal(retryAfterMs(new Error('quota')), null);
 });
+
+test('NOT_ADS_USER from Google is recognised as "no Google Ads account"', async () => {
+  const { isNotAdsUserError } = await import('../lib/google-ads/connect-errors');
+  const restError = new GoogleAdsRestError(401, 'The caller does not have permission', ['NOT_ADS_USER']);
+  assert.equal(isNotAdsUserError(restError), true);
+  assert.equal(isNotAdsUserError(new Error('GoogleAdsRestError NOT_ADS_USER: credentials')), true);
+  assert.equal(isNotAdsUserError(new GoogleAdsRestError(401, 'expired', ['INVALID_GRANT'])), false);
+});

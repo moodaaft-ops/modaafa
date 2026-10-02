@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowUpLeft, CheckCircle2, Layers, Link2, ShieldCheck, TriangleAlert } from 'lucide-react';
+import { ArrowUpLeft, CheckCircle2, Layers, Link2, MessageCircle, ShieldCheck, TriangleAlert } from 'lucide-react';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { formatGoogleAdsCustomerId, googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import { getRequestAuthContext } from '@/lib/supabase/server';
@@ -8,6 +8,11 @@ import { Alert } from '@/lib/ui/alert';
 import { buttonClasses } from '@/lib/ui/button';
 import { OnboardingProgress } from '../onboarding-progress';
 import { ConnectGoogleAdsButton } from './connect-google-ads-button';
+import {
+  SUPPORT_WHATSAPP_DISPLAY,
+  whatsappHelpUrl,
+  type WhatsAppHelpReason,
+} from '@/lib/support/contact';
 
 const errors: Record<string, string> = {
   invalid_origin: 'تعذر التحقق من مصدر الطلب. أعد المحاولة من داخل المنصة.',
@@ -18,7 +23,7 @@ const errors: Record<string, string> = {
   missing_params: 'لم تصل بيانات الربط من Google بشكل كامل. أعد المحاولة من زر الربط.',
   access_denied:
     'تم رفض الوصول من Google. إذا ظهرت رسالة أن التطبيق قيد الاختبار، أضف هذا البريد ضمن Test users أو انتظر اكتمال تحقق Google.',
-  oauth_failed: 'فشل إكمال الربط من Google. غالباً السبب أن التطبيق لم يكتمل تحقق Google أو أن الصلاحية لم تُمنح.',
+  oauth_failed: 'تعذر إكمال الربط مع Google. أعد المحاولة من زر الربط، وإذا تكرر الخطأ راسلنا على واتساب من الرابط أسفل الزر.',
   oauth_config_missing: 'إعدادات Google OAuth غير مكتملة في بيئة الإنتاج. راجع جاهزية الإطلاق في الإعدادات.',
   db_error: 'تعذر حفظ حسابات Google Ads في المنصة. أعد المحاولة.',
   session_expired: 'انتهت جلسة اختيار الحسابات. أعد الربط.',
@@ -88,8 +93,8 @@ export default async function ConnectGoogleAdsPage({
           </div>
         )}
 
-        {managerOnly && <ManagerOnlyRecovery />}
-        {noAccounts && <NoAccountsRecovery />}
+        {managerOnly && <ManagerOnlyRecovery email={user.email} />}
+        {noAccounts && <NoAccountsRecovery email={user.email} />}
 
         {hasRevokedAccounts && (
           <div className="mb-5">
@@ -124,13 +129,24 @@ export default async function ConnectGoogleAdsPage({
               </Link>
             )}
           </div>
+          <p className="mt-4 text-[12.5px] leading-6 text-muted-foreground">
+            في شاشة Google اختر البريد الذي يملك حساب Google Ads، وقد يختلف عن بريد دخولك إلى مُضاعِف. ليس لديك
+            حساب إعلاني؟{' '}
+            <a
+              href={whatsappHelpUrl('no_ads_account', user.email)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-semibold text-primary hover:underline"
+            >
+              نفتحه معك مجاناً عبر واتساب
+            </a>
+          </p>
         </section>
 
         <div className="mt-5">
           {googleVerified ? (
             <Alert tone="success" title="مُضاعِف موثّق لدى Google">
-              ستفتح شاشة Google الرسمية لعرض صلاحية Google Ads المطلوبة. اختر البريد الذي يملك أو يدير حساباتك
-              الإعلانية؛ ويمكن أن يكون مختلفاً عن بريد تسجيل الدخول.
+              ستفتح شاشة Google الرسمية لعرض صلاحية Google Ads المطلوبة.
             </Alert>
           ) : (
             <Alert tone="info" title="حالة تحقق Google">
@@ -209,7 +225,7 @@ export default async function ConnectGoogleAdsPage({
  * really does offer the chooser again), create a client account in Google Ads,
  * or leave setup entirely.
  */
-function ManagerOnlyRecovery() {
+function ManagerOnlyRecovery({ email }: { email?: string | null }) {
   const options = [
     {
       title: 'جرّب بريد Google آخر',
@@ -263,6 +279,12 @@ function ManagerOnlyRecovery() {
           </div>
         ))}
       </div>
+      <WhatsAppHelpStrip
+        reason="manager_only"
+        email={email}
+        title="تحتاج مساعدة في إنشاء حساب العميل؟"
+        body="راسلنا على واتساب ونرتّب الحساب معك تحت حسابك الإداري، مجاناً."
+      />
     </section>
   );
 }
@@ -271,26 +293,24 @@ function ManagerOnlyRecovery() {
  * The brand-new-advertiser dead end.
  *
  * `no_accounts` means the Google account that authorised owns no Google Ads
- * account at all — common for a genuinely new advertiser. The old page showed
- * one red line ("لم نجد حسابات…") above an unchanged page, with retrying the
- * same email guaranteed to fail again. Each option here is an actual next step:
- * create a first Google Ads account, or reconnect with the email that owns one.
+ * account at all: either discovery came back empty, or Google answered
+ * NOT_ADS_USER, which the callback now maps here too. Most of these users came
+ * from TikTok and have never opened Google Ads. The block leads with the
+ * cheapest fix (they picked the wrong email), then self-serve creation, and
+ * ends with a free WhatsApp hand-hold for anyone who would rather not do it
+ * alone.
  */
-function NoAccountsRecovery() {
+function NoAccountsRecovery({ email }: { email?: string | null }) {
   const options = [
     {
-      title: 'أنشئ أول حساب إعلاني في Google Ads',
-      body: 'إذا لم تُنشئ حساب Google Ads بعد، أنشئه مجاناً في دقائق. بعد إنشائه ارجع هنا وأعد الربط بنفس البريد.',
+      title: 'حسابك الإعلاني على بريد آخر؟',
+      body: 'اضغط زر الربط بالأسفل، وفي شاشة Google اختر البريد الذي تدخل به إلى ads.google.com. وإذا كان الحساب عند شريكك أو موظفك، اطلب منه إضافة بريدك بصلاحية مسؤول ثم أعد الربط.',
+    },
+    {
+      title: 'ليس لديك حساب إعلاني بعد؟',
+      body: 'افتحه بنفسك من Google Ads، وجهّز بطاقتك البنكية لأن Google تطلب وسيلة دفع قبل تشغيل أي إعلان. بعدها ارجع هنا واربط بنفس البريد.',
       href: 'https://ads.google.com/nav/selectaccount?authuser=0&dst=/aw/campaigns/new',
-      cta: 'إنشاء حساب Google Ads',
-    },
-    {
-      title: 'جرّب بريد Google آخر',
-      body: 'إن كان حسابك الإعلاني على بريد مختلف، اضغط زر الربط بالأسفل واختر البريد الذي يملك الحساب الإعلاني.',
-    },
-    {
-      title: 'اطلب دعوة من مالك الحساب',
-      body: 'إذا كان الحساب عند عميلك أو زميلك، اطلب منه دعوتك بصلاحية إدارة على الحساب ثم أعد الربط.',
+      cta: 'فتح حساب Google Ads',
     },
   ];
 
@@ -302,16 +322,16 @@ function NoAccountsRecovery() {
         </span>
         <div className="min-w-0">
           <h3 className="text-[14px] font-semibold text-amber-900 dark:text-amber-100">
-            لم نجد أي حساب إعلاني على هذا البريد
+            البريد الذي اخترته لا يملك حساب إعلانات Google
           </h3>
           <p className="mt-1 text-[13px] leading-7 text-amber-900/80 dark:text-amber-100/80">
-            منحتنا Google الصلاحية بنجاح، لكن حساب Google الذي اخترته لا يملك أي حساب إعلاني في Google Ads بعد.
-            اختر أحد الحلول التالية ثم أعد الربط من الزر بالأسفل.
+            منحتنا Google الصلاحية، لكن لا يوجد أي حساب إعلاني تحت هذا البريد. يحدث هذا غالباً عندما يكون الحساب
+            على بريد غير بريد تسجيلك في مُضاعِف، أو عندما لم يُفتح حساب من الأساس.
           </p>
         </div>
       </div>
 
-      <div className="grid gap-px bg-amber-500/15 sm:grid-cols-3">
+      <div className="grid gap-px bg-amber-500/15 sm:grid-cols-2">
         {options.map((option) => (
           <div key={option.title} className="flex flex-col bg-background p-5">
             <div className="text-[13px] font-semibold text-foreground">{option.title}</div>
@@ -330,6 +350,50 @@ function NoAccountsRecovery() {
           </div>
         ))}
       </div>
+
+      <WhatsAppHelpStrip
+        reason="no_ads_account"
+        email={email}
+        title="نفتح لك الحساب معك، مجاناً"
+        body="راسلنا على واتساب ونمشي معك خطوة بخطوة حتى يُربط الحساب بمُضاعِف. لا تحتاج أي خبرة سابقة في Google Ads."
+      />
     </section>
+  );
+}
+
+/**
+ * The human fallback at the bottom of a recovery block. Opens WhatsApp with a
+ * prefilled message that already names the problem and the user's email.
+ */
+function WhatsAppHelpStrip({
+  reason,
+  email,
+  title,
+  body,
+}: {
+  reason: WhatsAppHelpReason;
+  email?: string | null;
+  title: string;
+  body: string;
+}) {
+  return (
+    <div className="flex flex-col gap-3 border-t border-amber-500/20 bg-background px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0">
+        <div className="text-[13px] font-semibold text-foreground">{title}</div>
+        <p className="mt-1 text-xs leading-6 text-muted-foreground">{body}</p>
+      </div>
+      <a
+        href={whatsappHelpUrl(reason, email)}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={`${buttonClasses({ variant: 'primary' })} flex-shrink-0`}
+      >
+        <MessageCircle className="h-4 w-4" />
+        واتساب
+        <span dir="ltr" className="numeric">
+          {SUPPORT_WHATSAPP_DISPLAY}
+        </span>
+      </a>
+    </div>
   );
 }

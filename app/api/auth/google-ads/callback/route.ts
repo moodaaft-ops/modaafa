@@ -17,6 +17,7 @@ import { consumeOAuthState } from '@/lib/auth/oauth-state-store';
 import { validateGoogleAdsOAuthState } from '@/lib/auth/oauth-state-validation';
 import { mapLimit } from '@/lib/platform/concurrency';
 import { buildGoogleAdsLinkRows } from '@/lib/google-ads/link-account-rows';
+import { isNotAdsUserError } from '@/lib/google-ads/connect-errors';
 
 export const maxDuration = 300;
 
@@ -99,6 +100,7 @@ export async function GET(req: NextRequest) {
     const accounts = await discoverAccessibleCustomers(refreshToken);
 
     if (accounts.length === 0) {
+      console.warn(`[google-ads/callback] no_ads_account reason=empty_discovery user=${user.id}`);
       return NextResponse.redirect(new URL('/onboarding/connect?error=no_accounts', req.url));
     }
 
@@ -211,6 +213,17 @@ export async function GET(req: NextRequest) {
     }
     return res;
   } catch (err) {
+    // A Google account with no Google Ads account at all comes back as a
+    // NOT_ADS_USER 401 from the very first discovery call. It is the same
+    // situation as an empty discovery, so send it to the same recovery block
+    // instead of the generic failure that blamed Google app verification.
+    // The log line is greppable so we can count these users in Vercel.
+    if (isNotAdsUserError(err)) {
+      console.warn(`[google-ads/callback] no_ads_account reason=not_ads_user user=${user.id}`);
+      const res = NextResponse.redirect(new URL('/onboarding/connect?error=no_accounts', req.url));
+      res.cookies.delete(GOOGLE_ADS_OAUTH_STATE_COOKIE);
+      return res;
+    }
     console.error('OAuth callback error', err);
     return NextResponse.redirect(new URL('/onboarding/connect?error=oauth_failed', req.url));
   }
