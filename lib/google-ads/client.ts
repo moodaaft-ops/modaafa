@@ -108,6 +108,7 @@ export function getGoogleAdsErrorCodes(error: unknown) {
   const message = error instanceof Error ? error.message : String(error ?? '');
   for (const code of [
     'USER_PERMISSION_DENIED',
+    'NOT_ADS_USER',
     'CUSTOMER_NOT_ENABLED',
     'REQUESTED_METRICS_FOR_MANAGER',
     'CUSTOMER_NOT_FOUND',

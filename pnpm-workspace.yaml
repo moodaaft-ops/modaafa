@@ -5,6 +5,7 @@ allowBuilds:
   unrs-resolver: true
 
 overrides:
+  '@grpc/grpc-js': 1.14.5
   brace-expansion@1.1.15: 1.1.18
   brace-expansion@5.0.6: 5.0.9
   js-yaml: 4.3.2
@@ -14,3 +15,12 @@ overrides:
   qs: 6.16.0
   sharp: 0.35.5
   uuid: 11.1.1
+
+# node-forge GHSA-86w9-cpqp-85rv: the advisory lists 1.4.1 as patched but npm
+# has no release past 1.4.0 yet. The only path is google-ads-api >
+# google-auth-library > gtoken > google-p12-pem, which parses .p12 service
+# account keys; the app authenticates with OAuth refresh tokens and never
+# loads a .p12 key. Drop this entry once node-forge 1.4.1 ships.
+auditConfig:
+  ignoreGhsas:
+    - GHSA-86w9-cpqp-85rv
