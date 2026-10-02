@@ -38,6 +38,25 @@ test('the directives that make a nonce meaningful are all present', () => {
   assert.ok(policy.includes('upgrade-insecure-requests'));
 });
 
+test('the TikTok pixel can report, and only to its own two hosts', () => {
+  const policy = buildContentSecurityPolicy('n');
+  const connectSrc = directive(policy, 'connect-src');
+  const imgSrc = directive(policy, 'img-src');
+
+  assert.ok(connectSrc?.includes('https://analytics.tiktok.com'), 'beacons go to analytics.tiktok.com');
+  assert.ok(connectSrc?.includes('https://analytics-ipv6.tiktokw.us'), 'IPv6 enrichment goes to analytics-ipv6.tiktokw.us');
+  assert.ok(imgSrc?.includes('https://analytics.tiktok.com'), 'the image-beacon fallback needs img-src');
+  assert.ok(!imgSrc?.includes('analytics-ipv6.tiktokw.us'), 'the IPv6 host is only ever fetched, never an image');
+
+  // Hosts are named exactly: a wildcard here would let any TikTok subdomain
+  // receive data from the app.
+  assert.ok(!/\*\.tiktok/.test(policy), 'no wildcard TikTok host');
+  // The inline snippet is trusted by its nonce and events.js by strict-dynamic,
+  // so the pixel must NOT widen what scripts may load.
+  assert.ok(!directive(policy, 'script-src')?.includes('tiktok'), 'script-src stays nonce + strict-dynamic only');
+  assert.ok(!directive(policy, 'default-src')?.includes('tiktok'));
+});
+
 test('style-src keeps unsafe-inline deliberately', () => {
   // Next and the font loader emit inline <style> blocks that cannot take a
   // nonce. This asserts the decision so a future tightening is a conscious
