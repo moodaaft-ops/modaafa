@@ -19,6 +19,13 @@
  * `style-src` deliberately keeps `'unsafe-inline'`: Next and the font loader
  * both emit inline `<style>` blocks that are not nonce-able, and an injected
  * stylesheet is a far weaker primitive than an injected script.
+ *
+ * The TikTok Pixel needs no `script-src` entry: its inline base snippet carries
+ * the nonce and events.js is then loaded by that trusted script, which is
+ * exactly what `'strict-dynamic'` allows. What the pixel DOES need is somewhere
+ * to report to — `analytics.tiktok.com` for beacons (with an image fallback)
+ * and `analytics-ipv6.tiktokw.us` for its IPv6 enrichment call. Both are named
+ * exactly, never as a wildcard.
  */
 export function buildContentSecurityPolicy(nonce: string): string {
   return [
@@ -29,9 +36,9 @@ export function buildContentSecurityPolicy(nonce: string): string {
     "object-src 'none'",
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob: https://lh3.googleusercontent.com https://modaafa.com",
+    "img-src 'self' data: blob: https://lh3.googleusercontent.com https://modaafa.com https://analytics.tiktok.com",
     "font-src 'self' data:",
-    "connect-src 'self' https://*.supabase.co wss://*.supabase.co",
+    "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://analytics.tiktok.com https://analytics-ipv6.tiktokw.us",
     'upgrade-insecure-requests',
   ].join('; ');
 }
