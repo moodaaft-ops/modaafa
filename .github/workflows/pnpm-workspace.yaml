@@ -1,0 +1,32 @@
+allowBuilds:
+  esbuild: true
+  protobufjs: true
+  sharp: true
+  unrs-resolver: true
+
+overrides:
+  '@grpc/grpc-js': 1.14.5
+  brace-expansion@1.1.15: 1.1.18
+  brace-expansion@5.0.6: 5.0.9
+  js-yaml: 4.3.2
+  nanoid: 3.3.18
+  postcss: 8.5.23
+  protobufjs: 7.6.5
+  qs: 6.16.0
+  sharp: 0.35.5
+  uuid: 11.1.1
+
+# node-forge GHSA-86w9-cpqp-85rv: the advisory lists 1.4.1 as patched but npm
+# has no release past 1.4.0 yet. The only path is google-ads-api >
+# google-auth-library > gtoken > google-p12-pem, which parses .p12 service
+# account keys; the app authenticates with OAuth refresh tokens and never
+# loads a .p12 key. Drop this entry once node-forge 1.4.1 ships.
+#
+# braces GHSA-vfj7-8cjw-p6xm (2026-10-05): patched in >=3.0.4, but npm's latest
+# braces is 3.0.3. The only path is tailwindcss-animate > tailwindcss >
+# chokidar/micromatch, which expands the project's own build-time globs and
+# never sees user input. Drop this entry once braces 3.0.4 ships.
+auditConfig:
+  ignoreGhsas:
+    - GHSA-86w9-cpqp-85rv
+    - GHSA-vfj7-8cjw-p6xm
