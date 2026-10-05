@@ -7,6 +7,7 @@ import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 import { getBillingCheckoutContext } from '@/lib/billing/checkout-policy';
 import { isSameOriginRequest } from '@/lib/security/origin';
 import { isModaafaOperator } from '@/lib/platform/operators';
+import { hasActiveGoogleAdsAccount } from '@/lib/accounts/selection';
 
 /**
  * POST /api/billing/checkout
@@ -66,6 +67,15 @@ export async function POST(req: NextRequest) {
         return NextResponse.redirect(new URL('/billing?error=already_subscribed', req.url), 303);
       }
       return NextResponse.json({ error: 'already_subscribed' }, { status: 409 });
+    }
+
+    // A trial with no linked, active Google Ads account can never produce a
+    // plan or a recommendation, so it only burns the one-time trial.
+    if (!(await hasActiveGoogleAdsAccount(supabase, user.id))) {
+      if (isForm) {
+        return NextResponse.redirect(new URL('/billing?error=google_ads_account_required', req.url), 303);
+      }
+      return NextResponse.json({ error: 'google_ads_account_required' }, { status: 409 });
     }
 
     // Resolve the Stripe Customer BEFORE creating the session so the session

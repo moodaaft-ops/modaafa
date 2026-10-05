@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createHash } from 'node:crypto';
 import { createAdminClient } from '@/lib/supabase/server';
+import { describeError } from '@/lib/supabase/query-errors';
 import { getCustomer, getGoogleAdsErrorCodes } from '@/lib/google-ads/client';
 import { assertNotManagerAccount } from '@/lib/google-ads/sync';
 import { decrypt } from '@/lib/crypto';
@@ -43,8 +44,9 @@ import {
   generateWeeklyNarrative,
   type CampaignWeekRow,
 } from '@/lib/ai/report-agent';
-import { finishJobRun, getBillableBusinessIds, startJobRun } from '@/lib/platform/jobs';
+import { finishJobRun, getBillableBusinessIds, hasRecentCompletedRun, startJobRun } from '@/lib/platform/jobs';
 import { sendOpsAlert } from '@/lib/notifications/email';
+import { planOpsAlert } from '@/lib/platform/ops-alerts';
 import { hasValidCronAuthorization } from '@/lib/security/cron-auth';
 import { createTimeBudget, mapLimit } from '@/lib/platform/concurrency';
 import {
@@ -85,9 +87,15 @@ async function runOptimizerCron(req: NextRequest) {
     supabase = createAdminClient();
   } catch (error) {
     return NextResponse.json(
-      { error: 'service_role_missing', message: error instanceof Error ? error.message : String(error) },
+      { error: 'service_role_missing', message: describeError(error) },
       { status: 503 }
     );
+  }
+
+  // The scheduler offers several slots per hour; skip quietly (no job_runs row,
+  // no alert) when a run already completed recently. ?force=1 bypasses it.
+  if (req.nextUrl.searchParams.get('force') !== '1' && (await hasRecentCompletedRun(supabase, 'optimize'))) {
+    return NextResponse.json({ skipped: 'recent_run' });
   }
 
   const job = await startJobRun(supabase, 'optimize');
@@ -247,7 +255,7 @@ async function runOptimizerCron(req: NextRequest) {
           );
         } catch (benchmarkError) {
           results.errors.push(
-            `benchmark_lookup:${benchmarkKey}:${benchmarkError instanceof Error ? benchmarkError.message : benchmarkError}`
+            `benchmark_lookup:${benchmarkKey}:${describeError(benchmarkError)}`
           );
           benchmarkCache.set(benchmarkKey, null);
         }
@@ -619,7 +627,14 @@ async function runOptimizerCron(req: NextRequest) {
           results.errors.push(`${account.customer_id}:manager_flag:${managerFlagError.message}`);
         }
       }
-      results.errors.push(`${account.customer_id}: ${err instanceof Error ? err.message : err}`);
+      if (getGoogleAdsErrorCodes(err).includes('CUSTOMER_NOT_ENABLED')) {
+        // Closed/suspended in Google Ads. Not alerted every hour; the sync cron
+        // owns pausing the link because it tries login-customer fallbacks first,
+        // whereas this path uses the stored manager_id and could be a stale one.
+        console.warn(`Skipping ${account.customer_id}: CUSTOMER_NOT_ENABLED`);
+      } else {
+        results.errors.push(`${account.customer_id}: ${describeError(err)}`);
+      }
     } finally {
       const { error: cursorError } = await supabase
         .from('google_ads_accounts')
@@ -640,12 +655,24 @@ async function runOptimizerCron(req: NextRequest) {
     } catch (benchmarkError) {
       console.warn('Sector benchmark refresh failed', benchmarkError);
       results.errors.push(
-        `benchmark_refresh:${benchmarkError instanceof Error ? benchmarkError.message : benchmarkError}`
+        `benchmark_refresh:${describeError(benchmarkError)}`
       );
     }
   }
 
   const status = results.errors.length === 0 ? 'success' : results.processed > 0 ? 'partial' : 'failed';
+  // Decide BEFORE finishJobRun so the fingerprint/alerted flags ride in the
+  // same job_runs.details write instead of a second update.
+  const alertPlan =
+    results.errors.length > 0
+      ? await planOpsAlert({
+          supabase,
+          jobName: 'optimize',
+          errors: results.errors,
+          attemptedAccounts: accounts.length - skippedForTime,
+          processed: results.processed,
+        })
+      : null;
   await finishJobRun({
     supabase,
     job,
@@ -653,6 +680,7 @@ async function runOptimizerCron(req: NextRequest) {
     processed: results.processed,
     errors: results.errors,
     details: {
+      ...(alertPlan?.details ?? {}),
       actions_executed: results.actions_executed,
       recommendations_queued: results.recommendations_queued,
       actions_blocked: results.actions_blocked,
@@ -673,18 +701,18 @@ async function runOptimizerCron(req: NextRequest) {
       concurrency: OPTIMIZE_ACCOUNT_CONCURRENCY,
     },
   });
-  if (results.errors.length > 0) {
-    await safeOpsAlert('مهمة تحسين Google Ads انتهت بأخطاء', results.errors);
+  if (alertPlan?.send) {
+    await safeOpsAlert('مهمة تحسين Google Ads انتهت بأخطاء', results.errors, alertPlan.summaryAr);
   }
 
   return NextResponse.json(results);
 }
 
-async function safeOpsAlert(subject: string, details: unknown) {
+async function safeOpsAlert(subject: string, details: unknown, summary?: string) {
   try {
     await sendOpsAlert({
       subject,
-      message: 'راجع سجل المهام في Supabase وسجلات Vercel لمعرفة الحسابات المتأثرة.',
+      message: `${summary ? `${summary}. ` : ''}راجع سجل المهام في Supabase وسجلات Vercel لمعرفة الحسابات المتأثرة.`,
       details,
     });
   } catch (error) {
@@ -756,7 +784,7 @@ async function safeRecordAutopilotDecision(
     await recordAutopilotDecision(input);
   } catch (error) {
     results.errors.push(
-      `${input.accountId}:autopilot_log:${error instanceof Error ? error.message : String(error)}`
+      `${input.accountId}:autopilot_log:${describeError(error)}`
     );
   }
 }
@@ -931,10 +959,14 @@ async function buildOptimizerSnapshot(
         metrics.conversions, metrics.conversions_value
       FROM search_term_view
       WHERE segments.date DURING LAST_30_DAYS
-        AND metrics.conversions >= 2
+        AND metrics.conversions > 1
       ORDER BY metrics.conversions DESC
       LIMIT 30
-    `),
+    `).then((rows: any[]) =>
+      // GAQL rejects >= on metrics.conversions (OPERATOR_FIELD_MISMATCH), so the
+      // server filters with > 1 and the exact >= 2 cut is applied here.
+      rows.filter((row: any) => Number(row.metrics?.conversions ?? 0) >= 2)
+    ),
     customer.query(`
       SELECT
         ad_group_ad.resource_name,

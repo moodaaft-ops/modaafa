@@ -97,6 +97,7 @@ export const getAccountWorkspace = requestCache(async (userId: string) => {
       business: null,
       accounts: [] as AdsAccountSummary[],
       revokedAccounts: [] as AdsAccountSummary[],
+      pausedAccounts: [] as AdsAccountSummary[],
       selectedAccount: null,
       selectedCustomerId: null,
     };
@@ -108,7 +109,7 @@ export const getAccountWorkspace = requestCache(async (userId: string) => {
       'id, customer_id, customer_name, manager_id, status, is_manager, google_status, currency_code, time_zone, last_synced_at'
     )
     .eq('business_id', business.id)
-    .in('status', ['active', 'revoked'])
+    .in('status', ['active', 'revoked', 'paused'])
     // Manager accounts can never answer a metrics query, so they must not be
     // selectable. The env-based MCC list below only ever knew about Modaafa's
     // own manager — a customer who connected their own agency MCC got no
@@ -121,7 +122,7 @@ export const getAccountWorkspace = requestCache(async (userId: string) => {
     assertSupabaseRead(error, 'load Google Ads accounts');
   }
 
-  const { accounts, revokedAccounts } = partitionGoogleAdsAccounts(
+  const { accounts, revokedAccounts, pausedAccounts } = partitionGoogleAdsAccounts(
     (data ?? []) as AdsAccountSummary[]
   );
 
@@ -135,6 +136,7 @@ export const getAccountWorkspace = requestCache(async (userId: string) => {
     business,
     accounts,
     revokedAccounts,
+    pausedAccounts,
     selectedAccount,
     selectedCustomerId: selectedAccount?.customer_id ?? null,
   };
@@ -154,6 +156,9 @@ export function partitionGoogleAdsAccounts(
   return {
     accounts: clientAccounts.filter((account) => account.status === 'active'),
     revokedAccounts: clientAccounts.filter((account) => account.status === 'revoked'),
+    // Shown for visibility (e.g. closed in Google Ads) but never selectable:
+    // getLinkedGoogleAdsAccount and both crons only accept status 'active'.
+    pausedAccounts: clientAccounts.filter((account) => account.status === 'paused'),
   };
 }
 
@@ -221,6 +226,22 @@ export async function getLinkedGoogleAdsAccount({
     : ((data ?? []) as any[]).find((row) => !managerIds.has(normalizeCustomerId(row.customer_id))) ?? null;
 
   return { business, account, error: account ? null : ('account_not_found' as const) };
+}
+
+/**
+ * Trial/checkout gate: does this user have at least one linked, non-manager
+ * account in status 'active'? Same lookup the dashboard's account actions use.
+ * A failed lookup fails OPEN (true) so a transient DB error never blocks a
+ * payment; only a confirmed "no active account" answer returns false.
+ */
+export async function hasActiveGoogleAdsAccount(supabase: any, userId: string) {
+  const { account, error } = await getLinkedGoogleAdsAccount({
+    supabase,
+    userId,
+    select: 'id, customer_id',
+  });
+  if (account) return true;
+  return error === 'account_lookup_failed';
 }
 
 export function normalizeCustomerId(value: string) {

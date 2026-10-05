@@ -40,7 +40,9 @@ export async function POST(req: NextRequest) {
   const name = String(payload.name ?? '').trim();
   if (!name || name.length > 120) return respond(req, 'business_name_required', 400);
 
-  const website = String(payload.website ?? '').trim();
+  const rawWebsite = String(payload.website ?? '').trim();
+  // People type "example.com"; new URL() rejects it without a scheme.
+  const website = rawWebsite && !/^[a-z][a-z0-9+.-]*:\/\//i.test(rawWebsite) ? `https://${rawWebsite}` : rawWebsite;
   if (website && !isSafeWebsite(website)) {
     return respond(req, 'invalid_website', 400);
   }
