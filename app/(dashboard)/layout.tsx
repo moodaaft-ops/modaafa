@@ -15,7 +15,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // navigation and every router.refresh() (account switch, sync). The business
   // the workspace already resolved is reused for the brand name below.
   const workspace = await getAccountWorkspace(user.id);
-  const { business, accounts, revokedAccounts, selectedCustomerId } = workspace;
+  const { business, accounts, revokedAccounts, pausedAccounts, selectedCustomerId } = workspace;
 
   // Send a first-time user through onboarding.
   //
@@ -34,6 +34,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       userEmail={user.email ?? ''}
       accounts={accounts}
       revokedAccounts={revokedAccounts}
+      pausedAccounts={pausedAccounts}
       selectedCustomerId={selectedCustomerId}
       isOperator={isModaafaOperator(user.email)}
     >

@@ -19,3 +19,25 @@ export function assertSupabaseRead(error: unknown, operation: string): asserts e
   console.error(`Supabase read failed: ${operation}`, error);
   throw new SupabaseReadError(operation, error);
 }
+
+/**
+ * Human-readable text for anything that can be thrown. Supabase/PostgREST
+ * errors are plain objects, not `Error` instances, so `${error}` printed
+ * "[object Object]" and hid the real message from ops alerts.
+ */
+export function describeError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === 'object') {
+    const { code, message, details, hint } = error as Record<string, unknown>;
+    const parts = [code, message, details, hint].filter(
+      (part): part is string | number => typeof part === 'string' || typeof part === 'number'
+    );
+    if (parts.length > 0) return parts.join(' | ');
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return String(error);
+    }
+  }
+  return String(error);
+}

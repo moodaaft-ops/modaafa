@@ -69,6 +69,7 @@ export function DashboardChrome({
   userEmail,
   accounts,
   revokedAccounts,
+  pausedAccounts = [],
   selectedCustomerId,
   isOperator = false,
   children,
@@ -77,6 +78,7 @@ export function DashboardChrome({
   userEmail: string;
   accounts: AdsAccountSummary[];
   revokedAccounts: AdsAccountSummary[];
+  pausedAccounts?: AdsAccountSummary[];
   selectedCustomerId: string | null;
   isOperator?: boolean;
   children: React.ReactNode;
@@ -242,6 +244,7 @@ export function DashboardChrome({
           <AccountSwitcher
             accounts={accounts}
             revokedAccounts={revokedAccounts}
+            pausedAccounts={pausedAccounts}
             selectedCustomerId={selectedCustomerId}
           />
         </div>

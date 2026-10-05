@@ -165,3 +165,17 @@ test('revoked accounts remain visible for reconnect but can never be selected', 
   assert.deepEqual(revokedAccounts.map((account) => account.customer_id), ['2222222222']);
   assert.equal(pickSelectedAdsAccount(accounts, '2222222222', '2222222222')?.id, 'active');
 });
+
+test('paused accounts are listed for visibility but can never be selected', () => {
+  const { accounts, pausedAccounts } = partitionGoogleAdsAccounts(
+    [
+      { id: 'active', customer_id: '111-111-1111', customer_name: 'نشط', status: 'active' },
+      { id: 'paused', customer_id: '333-333-3333', customer_name: 'موقوف', status: 'paused' },
+    ],
+    new Set()
+  );
+
+  assert.deepEqual(accounts.map((account) => account.customer_id), ['1111111111']);
+  assert.deepEqual(pausedAccounts.map((account) => account.customer_id), ['3333333333']);
+  assert.equal(pickSelectedAdsAccount(accounts, '3333333333', '3333333333')?.id, 'active');
+});

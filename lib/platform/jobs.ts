@@ -6,6 +6,39 @@ import { isSubscriptionEntitled } from '@/lib/billing/entitlements';
  */
 const STALE_RUNNING_MS = 10 * 60 * 1000;
 
+/**
+ * Run-level throttle for the hourly crons. The scheduler now offers several
+ * trigger slots per hour (GitHub drops most single slots), so a trigger that
+ * arrives shortly after a run that already completed must be a no-op. Only
+ * the statuses finishJobRun writes for a completed run count ('success' |
+ * 'partial'); 'failed' and 'running' never throttle, so a broken run is
+ * retried on the next slot. Fails open on a lookup error.
+ */
+export const RECENT_RUN_WINDOW_MS = 50 * 60 * 1000;
+
+export async function hasRecentCompletedRun(
+  supabase: any,
+  jobName: string,
+  windowMs = RECENT_RUN_WINDOW_MS,
+  now = Date.now()
+) {
+  try {
+    const { data, error } = await supabase
+      .from('job_runs')
+      .select('id')
+      .eq('job_name', jobName)
+      .in('status', ['success', 'partial'])
+      .gte('started_at', new Date(now - windowMs).toISOString())
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    return Boolean(data);
+  } catch (error) {
+    console.error('Recent-run throttle unavailable; running anyway', { jobName, error });
+    return false;
+  }
+}
+
 export async function startJobRun(supabase: any, jobName: string) {
   const startedAt = new Date();
 

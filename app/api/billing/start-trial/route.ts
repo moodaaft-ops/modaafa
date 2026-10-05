@@ -7,6 +7,7 @@ import { getBillingCheckoutContext } from '@/lib/billing/checkout-policy';
 import { requireAppUrl } from '@/lib/platform/env';
 import { isSameOriginRequest } from '@/lib/security/origin';
 import { isModaafaOperator } from '@/lib/platform/operators';
+import { hasActiveGoogleAdsAccount } from '@/lib/accounts/selection';
 
 const plans = ['starter', 'growth', 'pro'];
 
@@ -48,6 +49,11 @@ export async function POST(req: NextRequest) {
     const billing = await getBillingCheckoutContext(supabase, user.id, user.email);
     if (billing.activeSubscriptionId) {
       return NextResponse.redirect(new URL('/billing?error=already_subscribed', req.url), 303);
+    }
+
+    // No linked, active Google Ads account: starting a trial would only burn it.
+    if (!(await hasActiveGoogleAdsAccount(supabase, user.id))) {
+      return NextResponse.redirect(new URL('/billing?error=google_ads_account_required', req.url), 303);
     }
 
     const baseUrl = requireAppUrl(req.nextUrl.origin);

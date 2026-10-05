@@ -1,16 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/server';
+import { describeError } from '@/lib/supabase/query-errors';
 import { decrypt } from '@/lib/crypto';
 import {
   getCustomerMetadataWithFallback,
+  getGoogleAdsErrorCodes,
   googleAdsAuthNeedsReconnect,
   isOAuthClientLevelError,
   shouldTreatAsPlatformAuthOutage,
 } from '@/lib/google-ads/client';
 import { ManagerAccountError, syncCampaignCacheWithLoginFallback } from '@/lib/google-ads/sync';
-import { finishJobRun, getBillableBusinessIds, startJobRun } from '@/lib/platform/jobs';
+import { finishJobRun, getBillableBusinessIds, hasRecentCompletedRun, startJobRun } from '@/lib/platform/jobs';
 import { pruneOperationalTables } from '@/lib/platform/retention';
 import { sendOpsAlert } from '@/lib/notifications/email';
+import { planOpsAlert } from '@/lib/platform/ops-alerts';
 import { hasValidCronAuthorization } from '@/lib/security/cron-auth';
 import { createTimeBudget, mapLimit } from '@/lib/platform/concurrency';
 import {
@@ -39,7 +42,7 @@ async function runSync(req: NextRequest) {
     supabase = createAdminClient();
   } catch (error) {
     return NextResponse.json(
-      { error: 'service_role_missing', message: error instanceof Error ? error.message : String(error) },
+      { error: 'service_role_missing', message: describeError(error) },
       { status: 503 }
     );
   }
@@ -49,6 +52,17 @@ async function runSync(req: NextRequest) {
     Math.max(Number(url.searchParams.get('limit') ?? SYNC_ACCOUNT_LIMIT) || SYNC_ACCOUNT_LIMIT, 1),
     SYNC_ACCOUNT_LIMIT
   );
+  // The scheduler offers several slots per hour; skip quietly (no job_runs row,
+  // no alert) when a run already completed recently. ?force=1 bypasses it, and
+  // so does an explicit single-account request (?account_id=).
+  if (
+    url.searchParams.get('force') !== '1' &&
+    !requestedAccountId &&
+    (await hasRecentCompletedRun(supabase, 'sync-google-ads'))
+  ) {
+    return NextResponse.json({ skipped: 'recent_run' });
+  }
+
   const job = await startJobRun(supabase, 'sync-google-ads');
   if (job.alreadyRunning) {
     // The scheduler's own curl retry (--retry-all-errors --max-time 290) can
@@ -174,10 +188,26 @@ async function runSync(req: NextRequest) {
           .update({ is_manager: true, last_synced_at: new Date().toISOString() })
           .eq('id', account.id);
       }
-      results.errors.push({
-        customer_id: account.customer_id,
-        message: err instanceof Error ? err.message : String(err),
-      });
+      if (getGoogleAdsErrorCodes(err).includes('CUSTOMER_NOT_ENABLED')) {
+        // Closed/suspended in Google Ads: park the link instead of retrying and
+        // alerting every hour (an OAuth reconnect restores status 'active').
+        console.warn(`Pausing ${account.customer_id}: CUSTOMER_NOT_ENABLED`);
+        const { error: pauseError } = await supabase
+          .from('google_ads_accounts')
+          .update({ status: 'paused', google_status: 'CUSTOMER_NOT_ENABLED' })
+          .eq('id', account.id);
+        if (pauseError) {
+          results.errors.push({
+            customer_id: account.customer_id,
+            message: `pause_not_enabled:${pauseError.message}`,
+          });
+        }
+      } else {
+        results.errors.push({
+          customer_id: account.customer_id,
+          message: describeError(err),
+        });
+      }
     } finally {
       const { error: cursorError } = await supabase
         .from('google_ads_accounts')
@@ -213,6 +243,18 @@ async function runSync(req: NextRequest) {
   }
 
   const status = results.errors.length === 0 ? 'success' : results.processed > 0 ? 'partial' : 'failed';
+  // Decide BEFORE finishJobRun so the fingerprint/alerted flags ride in the
+  // same job_runs.details write instead of a second update.
+  const alertPlan =
+    results.errors.length > 0
+      ? await planOpsAlert({
+          supabase,
+          jobName: 'sync-google-ads',
+          errors: results.errors,
+          attemptedAccounts: (accounts?.length ?? 0) - skippedForTime,
+          processed: results.processed,
+        })
+      : null;
   await finishJobRun({
     supabase,
     job,
@@ -220,6 +262,7 @@ async function runSync(req: NextRequest) {
     processed: results.processed,
     errors: results.errors,
     details: {
+      ...(alertPlan?.details ?? {}),
       updated_campaign_rows: results.updated_campaign_rows,
       active_campaigns: results.active_campaigns,
       retention: retention ?? { skipped: 'time_budget_exhausted' },
@@ -230,18 +273,18 @@ async function runSync(req: NextRequest) {
       concurrency: SYNC_ACCOUNT_CONCURRENCY,
     },
   });
-  if (results.errors.length > 0) {
-    await safeOpsAlert('مهمة مزامنة Google Ads انتهت بأخطاء', results.errors);
+  if (alertPlan?.send) {
+    await safeOpsAlert('مهمة مزامنة Google Ads انتهت بأخطاء', results.errors, alertPlan.summaryAr);
   }
 
   return NextResponse.json(results);
 }
 
-async function safeOpsAlert(subject: string, details: unknown) {
+async function safeOpsAlert(subject: string, details: unknown, summary?: string) {
   try {
     await sendOpsAlert({
       subject,
-      message: 'راجع سجل المهام في Supabase وسجلات Vercel لمعرفة الحسابات المتأثرة.',
+      message: `${summary ? `${summary}. ` : ''}راجع سجل المهام في Supabase وسجلات Vercel لمعرفة الحسابات المتأثرة.`,
       details,
     });
   } catch (error) {

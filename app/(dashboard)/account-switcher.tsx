@@ -26,10 +26,12 @@ import { cn, formatDateShortAr } from '@/lib/utils';
 export function AccountSwitcher({
   accounts,
   revokedAccounts,
+  pausedAccounts = [],
   selectedCustomerId,
 }: {
   accounts: AdsAccountSummary[];
   revokedAccounts: AdsAccountSummary[];
+  pausedAccounts?: AdsAccountSummary[];
   selectedCustomerId: string | null;
 }) {
   const router = useRouter();
@@ -242,6 +244,15 @@ export function AccountSwitcher({
     ? `${googleAdsAccountDisplayName(revokedAccount)} (${formatGoogleAdsCustomerId(revokedAccount.customer_id)})`
     : '';
 
+  const pausedNotice =
+    pausedAccounts.length > 0 ? (
+      <p className="mt-2 text-[11px] leading-5 text-muted-foreground">
+        {`${googleAdsAccountDisplayName(pausedAccounts[0])} (${formatGoogleAdsCustomerId(pausedAccounts[0].customer_id)})`}
+        {pausedAccounts.length > 1 ? ` و${pausedAccounts.length - 1} حساب آخر` : ''}
+        {' غير مفعّل أو متوقف في Google Ads، لذلك أوقفنا تحديثه وتحليله حتى تعيد تفعيله وتعيد الربط.'}
+      </p>
+    ) : null;
+
   if (accounts.length === 0) {
     return (
       <div className="mx-4 mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-500/25 dark:bg-amber-500/15">
@@ -256,6 +267,7 @@ export function AccountSwitcher({
               }. أعد الربط لاستعادة البيانات.`
             : 'اربط إعلانات Google حتى تظهر بيانات الأداء والتوصيات.'}
         </p>
+        {pausedNotice}
         <Link
           href="/onboarding/connect"
           className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/12 px-3 py-2 text-[11.5px] font-semibold text-amber-600 transition-colors hover:bg-amber-500/20 dark:text-amber-300"
@@ -404,6 +416,8 @@ export function AccountSwitcher({
         </div>
       )}
 
+      {pausedNotice}
+
       {selectedMissingName && !open && (
         <div className="mt-2">
           <StatusBadge tone="warning" icon={CircleAlert}>
@@ -482,11 +496,11 @@ function friendlySyncError(message: string) {
   if (normalized.includes('usage_storage_unavailable')) {
     return 'تعذر التحقق من حد الاستخدام بأمان الآن. أعد المحاولة بعد قليل.';
   }
-  if (normalized.includes('user_permission_denied') || normalized.includes('permission')) {
-    return 'Google رفضت قراءة هذا الحساب بهذا الربط. غالباً الحساب تحت مدير مختلف أو البريد لا يملك صلاحية API عليه؛ أعد ربط Google Ads بالبريد/المدير الصحيح أو سمّه يدوياً من الإعدادات.';
-  }
   if (normalized.includes('customer_not_enabled')) {
     return 'هذا الحساب غير مفعّل أو متوقف في Google Ads، لذلك لا يمكن تحديث بياناته الآن.';
+  }
+  if (normalized.includes('user_permission_denied') || normalized.includes('permission')) {
+    return 'Google رفضت قراءة هذا الحساب بهذا الربط. غالباً الحساب تحت مدير مختلف أو البريد لا يملك صلاحية API عليه؛ أعد ربط Google Ads بالبريد/المدير الصحيح أو سمّه يدوياً من الإعدادات.';
   }
   if (normalized.includes('requested_metrics_for_manager')) {
     return 'هذا حساب إداري، اختر حساب عميل غير إداري لقراءة الأداء.';

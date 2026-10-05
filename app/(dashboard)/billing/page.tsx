@@ -12,6 +12,7 @@ import { StatusBadge } from '@/lib/ui/status-badge';
 import { EmptyState } from '@/lib/ui/empty-state';
 import { buttonClasses } from '@/lib/ui/button';
 import { getBillingCheckoutContext } from '@/lib/billing/checkout-policy';
+import { hasActiveGoogleAdsAccount } from '@/lib/accounts/selection';
 import { getSubscriptionAccess } from '@/lib/billing/entitlements';
 import { getPlanPriceAmounts, type PeriodKey, type PlanKey } from '@/lib/billing/stripe';
 
@@ -27,6 +28,7 @@ const billingErrors: Record<string, string> = {
   too_many_requests: 'تم طلب بوابة الفوترة عدة مرات خلال فترة قصيرة. انتظر دقيقة ثم أعد المحاولة.',
   security_service_unavailable: 'تعذر التحقق الآمن من طلب الفوترة الآن. أعد المحاولة بعد قليل.',
   internal_access: 'حساب المالك لديه صلاحية داخلية ولا يحتاج اشتراكاً أو تجربة.',
+  google_ads_account_required: 'اربط حساب إعلانات Google نشطاً أولاً حتى تبدأ التجربة.',
 };
 
 const plans = [
@@ -87,9 +89,10 @@ export default async function BillingPage({
   // durable email ledger (promising a trial checkout would then deny), and
   // "current plan" took the newest row, the exact heuristic entitlements.ts
   // documents as showing a paying customer "no active subscription".
-  const [access, checkout, invoicesResult, priceAmounts] = await Promise.all([
+  const [access, checkout, hasActiveAccount, invoicesResult, priceAmounts] = await Promise.all([
     getSubscriptionAccess(supabase, user.id, user.email),
     getBillingCheckoutContext(supabase, user.id, user.email),
+    hasActiveGoogleAdsAccount(supabase, user.id),
     supabase
       .from('invoices')
       .select('invoice_number, amount_sar, currency, status, invoice_url, created_at')
@@ -105,6 +108,9 @@ export default async function BillingPage({
   const hasInternalAccess = access.status === 'internal';
   const hasLiveSubscription = Boolean(checkout.activeSubscriptionId);
   const currentPlan = hasLiveSubscription || hasInternalAccess ? access.plan : null;
+  // Mirrors the server gate in /api/billing/checkout: no active Google Ads
+  // account means no trial/checkout buttons, just a link to connect one.
+  const needsAccount = !hasLiveSubscription && !hasInternalAccess && !hasActiveAccount;
 
   const buildHref = (nextPeriod: PeriodKey) => {
     const query = new URLSearchParams();
@@ -164,6 +170,12 @@ export default async function BillingPage({
                   إدارة الاشتراك في Stripe
                 </PendingSubmitButton>
               </form>
+            ) : needsAccount ? (
+              <p className="text-[12.5px] leading-6 text-muted-foreground">
+                <Link href="/onboarding/connect" className="font-semibold text-primary underline-offset-4 hover:underline">
+                  اربط حساب إعلانات Google أولاً عشان تبدأ التجربة
+                </Link>
+              </p>
             ) : !hasLiveSubscription ? (
               <form action="/api/billing/checkout" method="post">
                 <input type="hidden" name="plan" value="growth" />
@@ -322,6 +334,12 @@ export default async function BillingPage({
                         التبديل عبر بوابة Stripe
                       </PendingSubmitButton>
                     </form>
+                  ) : needsAccount ? (
+                    <p className="text-center text-[12.5px] leading-6 text-muted-foreground">
+                      <Link href="/onboarding/connect" className="font-semibold text-primary underline-offset-4 hover:underline">
+                        اربط حساب إعلانات Google أولاً عشان تبدأ التجربة
+                      </Link>
+                    </p>
                   ) : (
                     <form action="/api/billing/checkout" method="post">
                       <input type="hidden" name="plan" value={plan.id} />
