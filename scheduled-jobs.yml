@@ -1,0 +1,57 @@
+name: Scheduled production jobs
+
+on:
+  schedule:
+    # GitHub drops many scheduled triggers (observed ~23% delivery), so each job
+    # gets six slots an hour. The routes throttle themselves: a trigger within
+    # 50 minutes of a completed run returns {"skipped":"recent_run"} (HTTP 200).
+    # Minutes never coincide between the two jobs and avoid :00 (most delayed).
+    - cron: '7,17,27,37,47,57 * * * *'
+    - cron: '2,12,22,32,42,52 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scheduled-production-${{ github.event.schedule || 'manual' }}
+  cancel-in-progress: false
+
+jobs:
+  sync-google-ads:
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '7,17,27,37,47,57 * * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Run hourly Google Ads sync
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          test -n "$CRON_SECRET"
+          # Manual dispatch must always run; only scheduled triggers are throttled.
+          FORCE=""
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then FORCE="?force=1"; fi
+          curl --fail-with-body --silent --show-error \
+            --retry 2 --retry-all-errors --max-time 290 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "https://ai.modaafa.com/api/cron/sync-google-ads$FORCE"
+
+  optimize:
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '2,12,22,32,42,52 * * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Run hourly optimization analysis
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          test -n "$CRON_SECRET"
+          # Manual dispatch must always run; only scheduled triggers are throttled.
+          FORCE=""
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then FORCE="?force=1"; fi
+          curl --fail-with-body --silent --show-error \
+            --retry 2 --retry-all-errors --max-time 290 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "https://ai.modaafa.com/api/cron/optimize$FORCE"
