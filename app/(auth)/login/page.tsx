@@ -7,9 +7,12 @@ import { ArrowLeft, Loader2, MailCheck, ShieldCheck } from 'lucide-react';
 import { Alert } from '@/lib/ui/alert';
 import { ThemeToggle } from '@/lib/ui/theme-toggle';
 import { safeLocalPath } from '@/lib/security/redirect';
+import { authErrorFromHash } from '@/lib/auth/email-confirm';
 
 const authErrors: Record<string, string> = {
   auth_callback_failed: 'تعذر إكمال تسجيل الدخول. أعد المحاولة، وإذا تكرر جرّب رابط بريد جديد.',
+  auth_link_expired:
+    'انتهت صلاحية رابط الدخول أو انفتح قبل. اطلب رابطاً جديداً وافتح آخر رسالة وصلتك مرة واحدة فقط.',
   google_state_failed: 'انتهت جلسة الدخول عبر Google قبل إكمالها. أعد المحاولة من زر «الدخول بـ Google».',
   google_login_failed: 'لم يكتمل الدخول عبر Google. تأكد من السماح بالوصول ثم أعد المحاولة.',
   too_many_requests: 'حاولت الدخول عدة مرات خلال فترة قصيرة. انتظر دقيقة ثم أعد المحاولة.',
@@ -50,8 +53,17 @@ export default function LoginPage() {
 
   useEffect(() => {
     const query = new URLSearchParams(window.location.search);
-    const code = query.get('error');
+    // Supabase reports a rejected email link in the URL fragment, which the
+    // server never sees, so it is read here and wins over the generic code.
+    const code = authErrorFromHash(window.location.hash) ?? query.get('error');
     if (code) setAuthError(authErrors[code] ?? 'تعذر تسجيل الدخول. أعد المحاولة.');
+    if (window.location.hash) {
+      window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+    if (code) {
+      const saved = readSavedEmail();
+      if (saved) setEmail((current) => current || saved);
+    }
     if (query.get('account_deleted') === '1') {
       setNotice('تم حذف حسابك وبياناته نهائياً. شكراً لتجربتك مُضاعِف.');
     }
@@ -74,7 +86,10 @@ export default function LoginPage() {
         options: { emailRedirectTo: callbackUrl },
       });
       if (error) setError(arabicSupabaseError(error.message));
-      else setSent(true);
+      else {
+        saveEmail(email);
+        setSent(true);
+      }
     } catch {
       setError('تعذر إرسال رابط الدخول الآن. أعد المحاولة بعد قليل.');
     } finally {
@@ -205,7 +220,7 @@ export default function LoginPage() {
                   <MailCheck className="h-5 w-5" />
                   أرسلنا رابط الدخول إلى بريدك
                 </div>
-                <p className="mt-1">افتح الرابط من نفس هذا الجهاز لإكمال الدخول.</p>
+                <p className="mt-1">افتح آخر رسالة وصلتك واضغط الزر مرة واحدة. لو طلبت أكثر من رابط، يشتغل الأخير بس.</p>
               </Alert>
             ) : (
               <form onSubmit={handleEmailLogin} className="space-y-4">
@@ -264,4 +279,24 @@ function getSafeNextPath() {
   if (typeof window === 'undefined') return '/dashboard';
   const next = new URLSearchParams(window.location.search).get('next');
   return safeLocalPath(next);
+}
+
+const EMAIL_STORAGE_KEY = 'modaafa:last-login-email';
+
+// Storage can be blocked (private window, strict settings); a failure here must
+// never get in the way of signing in.
+function saveEmail(value: string) {
+  try {
+    window.localStorage.setItem(EMAIL_STORAGE_KEY, value.trim());
+  } catch {
+    // ignore
+  }
+}
+
+function readSavedEmail() {
+  try {
+    return window.localStorage.getItem(EMAIL_STORAGE_KEY) ?? '';
+  } catch {
+    return '';
+  }
 }
