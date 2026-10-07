@@ -498,6 +498,9 @@ export default async function HomePage({
             <Link href="/terms" className="transition-colors hover:text-foreground">
               الشروط
             </Link>
+            <Link href="/refund" className="transition-colors hover:text-foreground">
+              الاسترداد
+            </Link>
             <Link href="/data-deletion" className="transition-colors hover:text-foreground">
               حذف البيانات
             </Link>
