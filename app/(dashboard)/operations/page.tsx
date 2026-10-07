@@ -13,6 +13,7 @@ import { MetricCard } from '@/lib/ui/metric-card';
 import { StatusBadge } from '@/lib/ui/status-badge';
 import { EmptyState } from '@/lib/ui/empty-state';
 import { formatDateAr, formatNumberAr, timeAgoAr } from '@/lib/utils';
+import { arabicCount, formatHours } from '@/lib/ui/plural';
 import { planLabel, subscriptionStatusLabel } from '@/lib/ui/labels';
 import { buildOperatorUserRows, sanitizeOperatorSearch } from '@/lib/platform/operator-users';
 
@@ -139,7 +140,7 @@ export default async function OperationsPage({
       <div className="space-y-6 p-4 sm:p-6 lg:p-8">
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3">
           <div>
-            <div className="text-[13px] font-semibold text-foreground">حالة آخر 24 ساعة</div>
+            <div className="text-[13px] font-semibold text-foreground">حالة آخر {formatHours(24)}</div>
             <div className="mt-0.5 text-xs text-muted-foreground">
               المهام والويبهوكات والتفاعل الفعلي مع ميزات المنتج.
             </div>
@@ -244,7 +245,7 @@ export default async function OperationsPage({
 
         <section className="surface-card overflow-hidden" aria-labelledby="usage-title">
           <div className="border-b border-border px-5 py-4">
-            <h2 id="usage-title" className="text-[14px] font-semibold text-foreground">استخدام الميزات خلال 24 ساعة</h2>
+            <h2 id="usage-title" className="text-[14px] font-semibold text-foreground">استخدام الميزات خلال {formatHours(24)}</h2>
             <p className="mt-1 text-xs text-muted-foreground">عدد الطلبات المسجلة، وليس تقديراً للتكلفة المالية.</p>
           </div>
           <div className="grid gap-px bg-border sm:grid-cols-2 lg:grid-cols-5">
@@ -261,11 +262,11 @@ export default async function OperationsPage({
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
             <div>
               <h2 id="jobs-title" className="text-[14px] font-semibold text-foreground">آخر المهام الخلفية</h2>
-              <p className="mt-1 text-xs text-muted-foreground">المزامنة والتحسين والمهام المجدولة كما سُجلت فعلياً.</p>
+              <p className="mt-1 text-xs text-muted-foreground">تحديث البيانات والتحسين والمهام المجدولة كما سُجلت فعلياً.</p>
             </div>
             <StatusBadge tone={(failedWebhooksResult.count ?? 0) > 0 ? 'danger' : 'success'}>
               {(failedWebhooksResult.count ?? 0) > 0
-                ? `${formatNumberAr(failedWebhooksResult.count ?? 0)} ويبهوك فاشل`
+                ? arabicCount(failedWebhooksResult.count ?? 0, FAILED_WEBHOOKS)
                 : 'الويبهوكات سليمة'}
             </StatusBadge>
           </div>
@@ -275,7 +276,7 @@ export default async function OperationsPage({
               bare
               icon={Activity}
               title="لا توجد مهام مسجلة بعد"
-              description="ستظهر هنا نتائج المزامنة والتحسين بمجرد تشغيلها."
+              description="ستظهر هنا نتائج تحديث البيانات والتحسين بمجرد تشغيلها."
             />
           ) : (
             <div className="overflow-x-auto">
@@ -312,6 +313,14 @@ export default async function OperationsPage({
     </>
   );
 }
+
+const FAILED_WEBHOOKS = {
+  one: 'ويبهوك فاشل واحد',
+  two: 'ويبهوكان فاشلان',
+  few: 'ويبهوكات فاشلة',
+  many: 'ويبهوكاً فاشلاً',
+  other: 'ويبهوك فاشل',
+};
 
 function subscriptionTone(status: string) {
   if (status === 'active' || status === 'trialing') return 'success' as const;

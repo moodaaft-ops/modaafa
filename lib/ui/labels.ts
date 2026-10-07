@@ -1,3 +1,35 @@
+/**
+ * Glossary: one name per concept across the product. Screens import these
+ * instead of retyping the words, so the same thing is never called two things.
+ * The right-hand column of the glossary (the names that are retired) must not
+ * come back: منح صلاحية، اربط حسابات، إضافة حساب، المزامنة، تحديث الآن،
+ * إجراء، مركز الموافقات، التسريب، تأثير متوقع، الرئيسية.
+ */
+export const TERMS = {
+  /** Linking a Google Ads account. */
+  connect: 'ربط Google Ads',
+  /** Re-authorizing an existing link. */
+  renewConnection: 'تجديد الربط',
+  /** Pulling fresh numbers from Google Ads. */
+  refreshData: 'تحديث البيانات',
+  /** One AI suggestion. */
+  recommendation: 'توصية',
+  recommendations: 'التوصيات',
+  /** The decisions page. */
+  approvals: 'الموافقات',
+  /** Spend that brings nothing back. */
+  waste: 'الهدر',
+  expectedSaving: 'توفير متوقع شهرياً',
+  expectedGain: 'زيادة متوقعة شهرياً',
+  /** The first page after sign-in. */
+  dashboard: 'لوحة التحكم',
+  /** A feature that is not finished yet. */
+  comingSoon: 'قريباً',
+  /** Reserved for the free trial; never for unfinished features. */
+  trial: 'تجريبي',
+  actions: { approve: 'اعتماد', execute: 'تنفيذ', dismiss: 'تجاهل', undo: 'تراجع' },
+} as const;
+
 const PLAN_LABELS: Record<string, string> = {
   starter: 'البداية',
   growth: 'النمو',
@@ -6,7 +38,7 @@ const PLAN_LABELS: Record<string, string> = {
 
 const SUBSCRIPTION_STATUS_LABELS: Record<string, string> = {
   internal: 'صلاحية داخلية',
-  trialing: 'تجربة',
+  trialing: TERMS.trial,
   active: 'نشط',
   past_due: 'متأخر الدفع',
   canceled: 'ملغي',
@@ -37,7 +69,7 @@ const RECOMMENDATION_STATUS_LABELS: Record<string, string> = {
 const SEVERITY_LABELS: Record<string, string> = {
   critical: 'حرجة',
   medium: 'متوسطة',
-  growth: 'فرصة نمو',
+  growth: 'نمو',
 };
 
 const CAMPAIGN_TYPE_LABELS: Record<string, string> = {
@@ -90,7 +122,7 @@ export function biddingLabel(value?: string | null) {
 }
 
 function labelFrom(labels: Record<string, string>, value?: string | null) {
-  if (!value) return '—';
+  if (!value) return 'غير محدد';
   return labels[value] ?? value;
 }
 

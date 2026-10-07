@@ -10,10 +10,10 @@ import {
 import { syncCampaignCacheWithLoginFallback } from '@/lib/google-ads/sync';
 import {
   consumeFeatureUsage,
-  featureAccessMessage,
   featureAccessStatus,
   refundFeatureUsage,
 } from '@/lib/billing/entitlements';
+import { usageDeniedMessage } from '@/lib/billing/usage-display';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 import { safeLocalPath } from '@/lib/security/redirect';
 import { isSameOriginRequest } from '@/lib/security/origin';
@@ -87,7 +87,7 @@ export async function POST(req: NextRequest) {
       next,
       {
         error: usage.reason,
-        message: featureAccessMessage(usage.reason),
+        message: usageDeniedMessage(usage, 'manual_sync'),
         resets_at: usage.resetsAt,
       },
       featureAccessStatus(usage.reason)

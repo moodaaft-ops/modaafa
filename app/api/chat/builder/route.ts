@@ -6,10 +6,10 @@ import { buildCampaign, shouldRefundBuilderUsage } from '@/lib/ai/builder-agent'
 import { getLinkedGoogleAdsAccount, normalizeCustomerId } from '@/lib/accounts/selection';
 import {
   consumeFeatureUsage,
-  featureAccessMessage,
   featureAccessStatus,
   refundFeatureUsage,
 } from '@/lib/billing/entitlements';
+import { usageDeniedMessage } from '@/lib/billing/usage-display';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 import { isSameOriginRequest } from '@/lib/security/origin';
 
@@ -99,7 +99,7 @@ export async function POST(req: NextRequest) {
   });
   if (!usage.ok) {
     return NextResponse.json(
-      { error: usage.reason, message: featureAccessMessage(usage.reason), resets_at: usage.resetsAt },
+      { error: usage.reason, message: usageDeniedMessage(usage, 'campaign_builder'), resets_at: usage.resetsAt },
       { status: featureAccessStatus(usage.reason) }
     );
   }
