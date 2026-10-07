@@ -27,6 +27,7 @@ import { trapTabKey } from '@/lib/ui/focus-trap';
 import { cn } from '@/lib/utils';
 import { AccountSwitcher } from './account-switcher';
 import { WelcomeTour, startWelcomeTour } from './welcome-tour';
+import { LogoLockup, LogoMark } from '@/lib/ui/logo';
 
 /** Nav hrefs that the first-run tour spotlights, mapped to their anchor id. */
 const TOUR_ANCHORS: Record<string, string> = {
@@ -161,16 +162,8 @@ export function DashboardChrome({
 
   const brand = (
     <Link href="/dashboard" className="group flex min-w-0 items-center gap-2.5">
-      <Image
-        src="/logo-mark.svg"
-        alt="شعار مُضاعِف"
-        width={30}
-        height={30}
-        className="h-[30px] w-[30px] flex-shrink-0 rounded-lg"
-        priority
-      />
-      <span className="min-w-0">
-        <span className="block text-[13px] font-semibold leading-tight text-foreground">مُضاعِف</span>
+      <span className="flex min-w-0 flex-col gap-1">
+        <LogoLockup height={26} alt="مُضاعِف" priority />
         <span className="block truncate text-[11px] leading-tight text-muted-foreground">{brandName}</span>
       </span>
     </Link>
@@ -183,7 +176,7 @@ export function DashboardChrome({
       {/* Mobile overlay */}
       {mobileOpen && (
         <div
-          className="fixed inset-0 z-40 bg-background/70 backdrop-blur-sm lg:hidden"
+          className="fixed inset-0 z-40 bg-background lg:hidden"
           onClick={() => setMobileOpen(false)}
           aria-hidden
         />
@@ -225,7 +218,6 @@ export function DashboardChrome({
       >
         {/* A single faint accent wash at the top of the rail — the only
             decoration in the shell. */}
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-32 bg-brand-soft opacity-60" aria-hidden />
 
         <div className="relative flex h-14 items-center justify-between gap-2 border-b border-border px-3">
           {brand}
@@ -271,7 +263,7 @@ export function DashboardChrome({
                         // than a highlighted link.
                         'group relative flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] transition-colors duration-150',
                         active
-                          ? 'bg-muted font-medium text-foreground shadow-[inset_0_1px_0_0_hsl(var(--edge-highlight))]'
+                          ? 'bg-muted font-medium text-foreground'
                           : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
                       )}
                     >
@@ -289,7 +281,7 @@ export function DashboardChrome({
                       />
                       <span className="truncate">{item.label}</span>
                       {item.badge && (
-                        <span className="ms-auto rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-600 ring-1 ring-inset ring-amber-500/25 dark:text-amber-300">
+                        <span className="ms-auto rounded-full bg-warning/15 px-1.5 py-0.5 text-[10px] font-semibold text-warning ring-1 ring-inset ring-warning/25 dark:text-warning">
                           {item.badge}
                         </span>
                       )}
@@ -340,9 +332,9 @@ export function DashboardChrome({
       {/* Main column */}
       <div ref={mainColumnRef} className="flex min-w-0 flex-1 flex-col">
         {/* Mobile top bar */}
-        <div className="flex h-14 items-center justify-between gap-3 border-b border-border bg-background/80 px-4 backdrop-blur-xl lg:hidden">
+        <div className="flex h-14 items-center justify-between gap-3 border-b border-border bg-background px-4 lg:hidden">
           <Link href="/dashboard" className="flex items-center gap-2">
-            <Image src="/logo-mark.svg" alt="شعار مُضاعِف" width={26} height={26} className="h-[26px] w-[26px] rounded-md" />
+            <LogoMark size={26} alt="شعار مُضاعِف" />
             <span className="text-sm font-semibold">مُضاعِف</span>
           </Link>
           {/* The selected account is the single most important piece of context
@@ -375,7 +367,7 @@ export function DashboardChrome({
         {/* Mobile bottom tab bar — the four daily-work routes one tap away,
             instead of open-drawer → find item. Desktop keeps the sidebar. */}
         <nav
-          className="fixed inset-x-0 bottom-0 z-40 flex items-stretch border-t border-border bg-background/90 backdrop-blur-xl lg:hidden"
+          className="fixed inset-x-0 bottom-0 z-40 flex items-stretch border-t border-border bg-background lg:hidden"
           style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
           aria-label="التنقل السريع"
         >

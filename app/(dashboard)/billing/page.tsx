@@ -134,7 +134,6 @@ export default async function BillingPage({
 
         {/* Current plan */}
         <section className="surface-raised relative overflow-hidden p-6">
-          <div className="canvas-glow pointer-events-none absolute inset-0 opacity-50" aria-hidden />
           <div className="relative flex flex-wrap items-center justify-between gap-4">
             <div>
               <div className="text-[11px] font-medium uppercase text-foreground-subtle">
@@ -281,7 +280,7 @@ export default async function BillingPage({
                   )}
                 </div>
                 {yearlySavings > 0 && (
-                  <p className="mt-1.5 text-[12px] font-medium text-emerald-500">
+                  <p className="mt-1.5 text-[12px] font-medium text-success">
                     وفّر {formatCurrency(yearlySavings, 'SAR')} مقارنة بالدفع الشهري
                   </p>
                 )}
@@ -291,7 +290,7 @@ export default async function BillingPage({
                 <ul className="flex-1 space-y-2.5 text-[13px] text-muted-foreground">
                   {plan.features.map((feature) => (
                     <li key={feature} className="flex items-start gap-2.5 leading-6">
-                      <Check className="mt-1 h-3.5 w-3.5 flex-shrink-0 text-emerald-500" />
+                      <Check className="mt-1 h-3.5 w-3.5 flex-shrink-0 text-success" />
                       {feature}
                     </li>
                   ))}

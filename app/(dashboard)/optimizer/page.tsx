@@ -131,7 +131,7 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
                                 {recommendationStatusLabel(item.status)}
                               </StatusBadge>
                               {item.expected_impact?.delta_sar_per_month ? (
-                                <span className="rounded-md bg-emerald-50 dark:bg-emerald-500/15 px-2 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                                <span className="rounded-md bg-success-soft dark:bg-success/15 px-2 py-1 text-xs font-medium text-success dark:text-success">
                                   {formatCurrency(item.expected_impact.delta_sar_per_month, selectedAccount?.currency_code)}/شهر
                                 </span>
                               ) : null}
@@ -206,7 +206,7 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
                           {actionTypeLabel(action.action_type)} · {timeAgoAr(action.created_at)}
                         </div>
                         {action.expected_impact?.delta_sar_per_month ? (
-                          <div className="mt-2 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                          <div className="mt-2 text-xs font-medium text-success dark:text-success">
                             تأثير متوقع: {formatCurrency(action.expected_impact.delta_sar_per_month, selectedAccount?.currency_code)}/شهر
                           </div>
                         ) : null}

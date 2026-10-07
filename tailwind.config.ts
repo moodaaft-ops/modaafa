@@ -35,12 +35,11 @@ const config: Config = {
         shimmer: 'shimmer 1.6s ease-in-out infinite',
       },
       boxShadow: {
-        // Elevation in a dark UI comes from an inner top highlight plus a very
-        // soft ambient shadow — a plain drop shadow is invisible on near-black.
-        soft: 'inset 0 1px 0 0 hsl(var(--edge-highlight)), 0 1px 2px 0 hsl(222 40% 2% / 0.35)',
-        card: 'inset 0 1px 0 0 hsl(var(--edge-highlight)), 0 1px 2px 0 hsl(222 40% 2% / 0.4), 0 8px 24px -16px hsl(222 60% 2% / 0.6)',
-        pop: 'inset 0 1px 0 0 hsl(var(--edge-highlight-strong)), 0 12px 32px -12px hsl(222 60% 2% / 0.75), 0 2px 8px -3px hsl(222 60% 2% / 0.55)',
-        'glow-brand': '0 0 0 1px hsl(var(--primary) / 0.35), 0 10px 40px -12px hsl(var(--primary) / 0.5)',
+        // Identity is flat: separation comes from hairline borders. `pop` is a
+        // 1px ring for floating layers, not a drop shadow.
+        soft: 'none',
+        card: 'none',
+        pop: '0 0 0 1px hsl(var(--border-strong))',
         'focus-ring': '0 0 0 2px hsl(var(--background)), 0 0 0 4px hsl(var(--ring))',
       },
       fontSize: {
@@ -52,9 +51,21 @@ const config: Config = {
         'display-lg': ['3.5rem', { lineHeight: '1.1', letterSpacing: 'normal' }],
         'display-xl': ['4.25rem', { lineHeight: '1.06', letterSpacing: 'normal' }],
       },
+      borderRadius: {
+        none: '0',
+        sm: '0',
+        DEFAULT: '0',
+        md: '2px',
+        lg: '2px',
+        xl: '2px',
+        '2xl': '4px',
+        '3xl': '4px',
+        full: '9999px',
+      },
       fontFamily: {
         sans: ['var(--font-arabic)', 'system-ui', 'sans-serif'],
-        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+        display: ['var(--font-display)', 'var(--font-arabic)', 'system-ui', 'sans-serif'],
+        mono: ['var(--font-mono)', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
       },
       colors: {
         border: {
@@ -82,29 +93,40 @@ const config: Config = {
           DEFAULT: 'hsl(var(--primary) / <alpha-value>)',
           foreground: 'hsl(var(--primary-foreground) / <alpha-value>)',
         },
+        // Identity v1.0 raw palette (use the semantic tokens above in product UI).
         brand: {
-          50: '#ECFDF5', 100: '#D1FAE5', 200: '#A7F3D0', 300: '#6EE7B7',
-          400: '#34D399', 500: '#10B981', 600: '#059669', 700: '#047857',
-          800: '#065F46', 900: '#064E3B',
-        },
-        ink: {
-          50: '#F8FAFC', 100: '#E2E8F0', 200: '#CBD5E1', 300: '#94A3B8',
-          400: '#64748B', 500: '#475569', 600: '#334155', 700: '#1E293B',
-          800: '#0F172A', 900: '#020617',
+          navy: '#0E1426',
+          paper: '#F4F2EC',
+          slate: '#586174',
+          signal: '#FBBC04',
         },
         signal: {
-          blue: '#2563EB',
-          amber: '#D97706',
-          red: '#DC2626',
-          violet: '#7C3AED',
+          DEFAULT: 'hsl(var(--signal) / <alpha-value>)',
+          foreground: 'hsl(var(--signal-foreground) / <alpha-value>)',
         },
-      },
-      backgroundImage: {
-        // The primary button is a solid accent, not a gradient: gradients on
-        // small controls read cheap, and a solid lets contrast be verified.
-        'brand-gradient': 'linear-gradient(180deg, hsl(var(--primary)) 0%, hsl(var(--primary) / 0.88) 100%)',
-        'brand-soft': 'linear-gradient(135deg, hsl(var(--primary) / 0.14) 0%, hsl(var(--primary) / 0.05) 100%)',
-        'surface-grid': 'radial-gradient(hsl(var(--border) / 0.6) 1px, transparent 1px)',
+        success: {
+          DEFAULT: 'hsl(var(--success) / <alpha-value>)',
+          soft: 'hsl(var(--success-soft) / <alpha-value>)',
+        },
+        warning: {
+          DEFAULT: 'hsl(var(--warning) / <alpha-value>)',
+          soft: 'hsl(var(--warning-soft) / <alpha-value>)',
+        },
+        danger: {
+          DEFAULT: 'hsl(var(--danger) / <alpha-value>)',
+          soft: 'hsl(var(--danger-soft) / <alpha-value>)',
+        },
+        info: {
+          DEFAULT: 'hsl(var(--info) / <alpha-value>)',
+          soft: 'hsl(var(--info-soft) / <alpha-value>)',
+        },
+        // Neutral scale derived from navy and slate, kept so existing ink-*
+        // classes resolve to identity colours while screens migrate.
+        ink: {
+          50: '#F4F2EC', 100: '#E4E3DF', 200: '#CDCFD4', 300: '#9AA0AE',
+          400: '#7A8294', 500: '#586174', 600: '#3F475A', 700: '#2A3144',
+          800: '#171D31', 900: '#0E1426',
+        },
       },
       transitionTimingFunction: {
         // Linear's easing: fast out, settled.

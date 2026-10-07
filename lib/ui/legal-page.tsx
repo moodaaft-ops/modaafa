@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { ThemeToggle } from '@/lib/ui/theme-toggle';
+import { LogoMark } from '@/lib/ui/logo';
 
 export function LegalPage({
   title,
@@ -19,7 +20,7 @@ export function LegalPage({
       <header className="border-b border-border bg-card">
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
           <Link href="/" className="flex items-center gap-3">
-            <Image src="/logo-mark.svg" alt="مُضاعِف" width={38} height={38} className="h-10 w-10 rounded-lg" />
+            <LogoMark size={38} alt="مُضاعِف" />
             <span className="text-[14px] font-semibold">مُضاعِف</span>
           </Link>
           <div className="flex items-center gap-3">

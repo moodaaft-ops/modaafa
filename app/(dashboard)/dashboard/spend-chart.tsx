@@ -54,7 +54,7 @@ export function CampaignSpendChart({
             ROAS ≥ 1×
           </span>
           <span className="inline-flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-sm bg-amber-500" aria-hidden />
+            <span className="h-2.5 w-2.5 rounded-sm bg-warning" aria-hidden />
             دون الهدف
           </span>
         </div>
@@ -82,7 +82,7 @@ export function CampaignSpendChart({
               <div className="h-2.5 w-full overflow-hidden rounded-full bg-muted">
                 <div
                   className={`h-full rounded-full transition-[width] duration-700 ease-snap ${
-                    healthy ? 'bg-primary' : 'bg-amber-500'
+                    healthy ? 'bg-primary' : 'bg-warning'
                   }`}
                   style={{ width: grown ? `${pct}%` : '0%' }}
                   aria-hidden

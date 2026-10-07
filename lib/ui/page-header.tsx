@@ -27,7 +27,7 @@ export function PageHeader({
   return (
     <header
       className={cn(
-        'sticky top-0 z-30 bg-background/70 px-4 pb-3 pt-4 backdrop-blur-xl sm:px-6 lg:px-8',
+        'sticky top-0 z-30 bg-background px-4 pb-3 pt-4 sm:px-6 lg:px-8',
         className
       )}
     >
@@ -62,7 +62,7 @@ export function PageHeader({
 /** Compact pill showing which ad account the page's data belongs to. */
 export function AccountPill({ name, customerId }: { name: string; customerId?: string | null }) {
   return (
-    <span className="inline-flex max-w-[220px] items-center gap-2 surface-card px-2.5 py-1.5 shadow-soft">
+    <span className="inline-flex max-w-[220px] items-center gap-2 surface-card px-2.5 py-1.5">
       <Building2 className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" aria-hidden />
       <span className="min-w-0 leading-tight">
         <span className="block truncate text-xs font-semibold text-foreground">{name}</span>

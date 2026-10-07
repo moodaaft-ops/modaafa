@@ -133,7 +133,7 @@ export default async function AuditPage({
         <div className="p-4 sm:p-6 lg:p-8">
           {params?.error && <Alert tone="danger">{auditErrorMessage(params.error)}</Alert>}
           <section className="surface-card mx-auto flex max-w-3xl flex-col items-center px-5 py-10 text-center sm:px-10">
-            <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-amber-500/12 text-amber-600 dark:text-amber-300">
+            <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-warning/12 text-warning dark:text-warning">
               <DatabaseZap className="h-7 w-7" aria-hidden />
             </div>
             <h2 className="mt-5 text-xl font-bold text-foreground">هذه النتيجة قديمة ولا نعتمدها الآن</h2>
@@ -220,9 +220,9 @@ export default async function AuditPage({
             currencyCode={selectedAccount?.currency_code}
           />
         ) : recs.length > 0 ? (
-          <section className="surface-card flex flex-col gap-4 border-emerald-500/25 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+          <section className="surface-card flex flex-col gap-4 border-success/25 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
             <div className="flex items-start gap-3">
-              <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg bg-emerald-500/12 text-emerald-600 dark:text-emerald-300">
+              <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg bg-success/12 text-success dark:text-success">
                 <CheckCircle2 className="h-5 w-5" aria-hidden />
               </div>
               <div>
@@ -307,9 +307,9 @@ export default async function AuditPage({
               </div>
             </section>
 
-            <section className="flex flex-col bg-red-500/[0.035] p-5 sm:p-6">
+            <section className="flex flex-col bg-danger/[0.035] p-5 sm:p-6">
               <div className="text-[13px] text-muted-foreground">فرصة توفير شهرية محتملة</div>
-              <div className="mt-2 text-[2.25rem] font-bold leading-none text-red-500 numeric dark:text-red-400">
+              <div className="mt-2 text-[2.25rem] font-bold leading-none text-danger numeric dark:text-danger">
                 {formatCurrency(audit.estimated_monthly_waste ?? 0, selectedAccount?.currency_code)}
               </div>
               <p className="mt-3 flex-1 text-[13px] leading-7 text-muted-foreground">
@@ -417,7 +417,7 @@ export default async function AuditPage({
                         )}
 
                         {r.expected_impact?.delta_sar_per_month > 0 && (
-                          <p className="mt-3 inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
+                          <p className="mt-3 inline-flex items-center gap-1 rounded-md bg-success-soft px-2 py-1 text-xs font-medium text-success dark:bg-success/15 dark:text-success">
                             أثر شهري محتمل: {formatCurrency(r.expected_impact.delta_sar_per_month, selectedAccount?.currency_code)}
                           </p>
                         )}
@@ -477,7 +477,7 @@ function GuidedNextStep({
             ما تحتاج تفسّر كل الدرجات. راجع القرار المقترح، جهّزه للموافقة، ثم تأكد من التعديل الفعلي قبل التنفيذ.
           </p>
         </div>
-        <div className="flex items-center gap-2 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+        <div className="flex items-center gap-2 text-xs font-medium text-success dark:text-success">
           <LockKeyhole className="h-4 w-4" aria-hidden />
           لا تغيير من دون موافقتك الأخيرة
         </div>
@@ -571,9 +571,9 @@ function scoreTone(value: number) {
   // Colour comes from `currentColor` (the text class, which HAS dark variants)
   // rather than a hardcoded hex, so the gauge tracks light/dark like the rest
   // of the product instead of staying a fixed emerald/amber/red.
-  if (value >= 80) return { text: 'text-emerald-600 dark:text-emerald-400', badge: 'success' as const };
-  if (value >= 60) return { text: 'text-amber-600 dark:text-amber-400', badge: 'warning' as const };
-  return { text: 'text-red-600 dark:text-red-400', badge: 'danger' as const };
+  if (value >= 80) return { text: 'text-success dark:text-success', badge: 'success' as const };
+  if (value >= 60) return { text: 'text-warning dark:text-warning', badge: 'warning' as const };
+  return { text: 'text-danger dark:text-danger', badge: 'danger' as const };
 }
 
 function HealthGauge({ score }: { score: number }) {

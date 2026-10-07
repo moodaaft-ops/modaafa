@@ -26,15 +26,15 @@ const toneStyles: Record<Tone, { accent: string; label: string; bubble: string; 
     value: 'text-foreground',
   },
   success: {
-    accent: 'bg-emerald-500',
-    label: 'text-emerald-600 dark:text-emerald-400',
-    bubble: 'bg-emerald-500/12 text-emerald-600 ring-1 ring-inset ring-emerald-500/25 dark:text-emerald-400',
+    accent: 'bg-success',
+    label: 'text-success dark:text-success',
+    bubble: 'bg-success/12 text-success ring-1 ring-inset ring-success/25 dark:text-success',
     value: 'text-foreground',
   },
   danger: {
-    accent: 'bg-red-500',
-    label: 'text-red-600 dark:text-red-400',
-    bubble: 'bg-red-500/12 text-red-600 ring-1 ring-inset ring-red-500/25 dark:text-red-400',
+    accent: 'bg-danger',
+    label: 'text-danger dark:text-danger',
+    bubble: 'bg-danger/12 text-danger ring-1 ring-inset ring-danger/25 dark:text-danger',
     value: 'text-foreground',
   },
   dark: {

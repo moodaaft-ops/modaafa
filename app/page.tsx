@@ -22,6 +22,7 @@ import { getPlanPriceAmounts, type PeriodKey, type PlanKey } from '@/lib/billing
 import { cn, formatCurrency } from '@/lib/utils';
 import { Reveal } from './reveal';
 import { HeroVideo } from './hero-video';
+import { LogoLockup, LogoMark } from '@/lib/ui/logo';
 
 const trustPoints = [
   { label: 'موافقة واضحة قبل أي تعديل' },
@@ -121,23 +122,10 @@ export default async function HomePage({
     <main className="min-h-screen w-full max-w-full overflow-x-clip bg-background text-foreground">
       <TikTokPixel pageView />
       {/* ---------------------------------------------------------------- Nav */}
-      <header className="sticky top-0 z-40 border-b border-border bg-background/70 backdrop-blur-xl">
+      <header className="sticky top-0 z-40 border-b border-border bg-background">
         <div className="mx-auto flex h-14 w-full max-w-6xl items-center justify-between gap-2 px-4 sm:gap-4 sm:px-6">
           <Link href="/" className="flex min-w-0 items-center gap-2.5">
-            <Image
-              src="/logo-mark.svg"
-              alt="شعار مُضاعِف"
-              width={30}
-              height={30}
-              className="h-[30px] w-[30px] flex-shrink-0 rounded-lg"
-              priority
-            />
-            <span className="min-w-0">
-              <span className="block text-[13px] font-semibold leading-tight">مُضاعِف</span>
-              <span className="block text-[10px] leading-tight text-muted-foreground" dir="ltr">
-                Modaafa Ads AI
-              </span>
-            </span>
+            <LogoLockup height={32} alt="مُضاعِف" priority />
           </Link>
 
           <nav className="hidden items-center gap-1 md:flex">
@@ -166,12 +154,10 @@ export default async function HomePage({
 
       {/* --------------------------------------------------------------- Hero */}
       <section className="relative overflow-hidden border-b border-border">
-        <div className="canvas-glow pointer-events-none absolute inset-0" aria-hidden />
-        <div className="canvas-grid pointer-events-none absolute inset-0" aria-hidden />
 
         <div className="relative mx-auto w-full max-w-6xl px-4 pb-16 pt-16 sm:px-6 sm:pb-20 sm:pt-24">
           <div className="mx-auto max-w-3xl text-center">
-            <span className="inline-flex items-center gap-2 rounded-full border border-border bg-card/80 px-3 py-1 text-[11.5px] font-medium text-muted-foreground shadow-soft backdrop-blur">
+            <span className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-[11.5px] font-medium text-muted-foreground">
               <Sparkles className="h-3.5 w-3.5 text-primary" aria-hidden />
               ميديا باير ذكي لإعلانات <span dir="ltr">Google</span>
             </span>
@@ -179,7 +165,7 @@ export default async function HomePage({
             <h1 className="mt-6 text-display-md font-bold text-balance sm:text-display-lg">
               يقرأ حسابك، يقترح التحسين،
               <br />
-              <span className="text-gradient-brand">وينتظر موافقتك قبل التنفيذ.</span>
+              <span className="text-foreground">وينتظر موافقتك قبل التنفيذ.</span>
             </h1>
 
             <p className="mx-auto mt-5 max-w-xl text-[15px] leading-8 text-muted-foreground text-balance">
@@ -274,7 +260,6 @@ export default async function HomePage({
       <section className="border-b border-border px-4 py-16 sm:px-6 sm:py-20">
         <div className="mx-auto w-full max-w-6xl">
           <div className="surface-card relative overflow-hidden p-8 sm:p-10">
-            <div className="canvas-glow pointer-events-none absolute inset-0 opacity-70" aria-hidden />
             <div className="relative grid gap-8 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-center">
               <div>
                 <SectionLabel>الأمان</SectionLabel>
@@ -413,7 +398,7 @@ export default async function HomePage({
                     )}
                   </div>
                   {yearlySavings > 0 && (
-                    <p className="mt-1.5 text-[12px] font-medium text-emerald-500">
+                    <p className="mt-1.5 text-[12px] font-medium text-success">
                       وفّر {formatCurrency(yearlySavings, 'SAR')} مقارنة بالدفع الشهري
                     </p>
                   )}
@@ -471,7 +456,6 @@ export default async function HomePage({
 
       {/* ------------------------------------------------------------ Final CTA */}
       <section className="relative overflow-hidden border-b border-border px-4 py-20 sm:px-6">
-        <div className="canvas-glow pointer-events-none absolute inset-0" aria-hidden />
         <div className="relative mx-auto max-w-2xl text-center">
           <h2 className="text-display-sm font-bold text-balance">جاهز تشوف حسابك بعين ثانية؟</h2>
           <p className="mx-auto mt-4 max-w-lg text-[14px] leading-8 text-muted-foreground">
@@ -488,7 +472,7 @@ export default async function HomePage({
       <footer className="px-4 py-10 sm:px-6">
         <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-4 text-[12.5px] text-muted-foreground">
           <div className="flex items-center gap-2.5">
-            <Image src="/logo-mark.svg" alt="" width={22} height={22} className="h-[22px] w-[22px] rounded-md" />
+            <LogoMark size={22} alt="" />
             <span>© 2026 مُضاعِف · <span dir="ltr">Modaafa Ads AI</span> · مؤسسة تقنيات أيمن للتسويق الإلكتروني</span>
           </div>
           <div className="flex flex-wrap gap-4">

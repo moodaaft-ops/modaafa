@@ -62,10 +62,10 @@ export function HeroVideo() {
           className="group absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/25 transition hover:bg-black/35"
           aria-label="شغّل الفيديو"
         >
-          <span className="flex h-20 w-20 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition group-hover:scale-105">
+          <span className="flex h-20 w-20 items-center justify-center rounded-full bg-primary text-primary-foreground transition group-hover:scale-105">
             <Play className="h-9 w-9 translate-x-[-2px]" aria-hidden />
           </span>
-          <span className="rounded-full bg-black/55 px-3.5 py-1.5 text-[13px] font-semibold text-white backdrop-blur">
+          <span className="rounded-full bg-black/55 px-3.5 py-1.5 text-[13px] font-semibold text-white">
             {started ? 'كمّل الفيديو' : 'شوف كيف يشتغل مُضاعِف · 32 ثانية'}
           </span>
         </button>
@@ -76,7 +76,7 @@ export function HeroVideo() {
           <button
             type="button"
             onClick={togglePlay}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur transition hover:bg-black/70"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-black/55 text-white transition hover:bg-black/70"
             aria-label="إيقاف مؤقت"
           >
             <Pause className="h-4 w-4" aria-hidden />
@@ -84,7 +84,7 @@ export function HeroVideo() {
           <button
             type="button"
             onClick={toggleMute}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur transition hover:bg-black/70"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-black/55 text-white transition hover:bg-black/70"
             aria-label={muted ? 'شغّل الصوت' : 'اكتم الصوت'}
           >
             {muted ? <VolumeX className="h-4 w-4" aria-hidden /> : <Volume2 className="h-4 w-4" aria-hidden />}

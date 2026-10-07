@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import { headers } from 'next/headers';
-import { IBM_Plex_Sans_Arabic } from 'next/font/google';
+import { IBM_Plex_Mono, IBM_Plex_Sans_Arabic, Reem_Kufi } from 'next/font/google';
 import { NONCE_HEADER } from '@/lib/security/csp';
 import './globals.css';
 
@@ -15,6 +15,25 @@ const arabic = IBM_Plex_Sans_Arabic({
   fallback: ['system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
 });
 
+// Display face: square-leaning Kufi for headlines, matching the wordmark's
+// geometry. Used only for headings; body and controls stay on the UI face.
+const display = Reem_Kufi({
+  subsets: ['arabic', 'latin'],
+  weight: ['500', '600', '700'],
+  variable: '--font-display',
+  display: 'swap',
+  fallback: ['system-ui', 'sans-serif'],
+});
+
+// Numbers and data: Latin digits in a monospace face, per identity v1.0.
+const mono = IBM_Plex_Mono({
+  subsets: ['latin'],
+  weight: ['400', '500', '600'],
+  variable: '--font-mono',
+  display: 'swap',
+  fallback: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+});
+
 export const metadata: Metadata = {
   title: {
     default: 'مُضاعِف | Modaafa - الميديا باير الذكي لإعلانات جوجل',
@@ -24,11 +43,11 @@ export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? 'https://ai.modaafa.com'),
   icons: {
     icon: [
-      { url: '/favicon.ico?v=20260803', sizes: '48x48' },
-      { url: '/favicon.svg?v=20260803', type: 'image/svg+xml' },
+      { url: '/favicon.ico?v=20261007', sizes: '48x48' },
+      { url: '/favicon.svg?v=20261007', type: 'image/svg+xml' },
     ],
-    shortcut: '/favicon.ico?v=20260803',
-    apple: '/apple-touch-icon.png?v=20260803',
+    shortcut: '/favicon.ico?v=20261007',
+    apple: '/apple-touch-icon.png?v=20261007',
   },
   applicationName: 'Modaafa Ads AI',
   manifest: '/manifest.webmanifest',
@@ -61,23 +80,19 @@ export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   themeColor: [
-    { media: '(prefers-color-scheme: light)', color: '#f8fafc' },
-    { media: '(prefers-color-scheme: dark)', color: '#0a0c11' },
+    { media: '(prefers-color-scheme: light)', color: '#F4F2EC' },
+    { media: '(prefers-color-scheme: dark)', color: '#0E1426' },
   ],
 };
 
-// Dark is the product's default, so <html> ships with the `dark` class from
-// the server and there is no first-paint flash. This script only REMOVES it —
-// for a user who explicitly chose light, OR (when they have made no choice) for
-// one whose operating system is set to light. Running before paint means the
-// OS-light user never sees the dark frame.
+// Light is the default theme (identity v1.0). <html> ships without the `dark`
+// class; this script ADDS it only when the user explicitly chose dark, and it
+// runs before paint so there is no flash.
 const themeScript = `
 (function(){
   try {
-    var stored = localStorage.getItem('modaafa-theme');
-    var prefersLight = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
-    if (stored === 'light' || (!stored && prefersLight)) {
-      document.documentElement.classList.remove('dark');
+    if (localStorage.getItem('modaafa-theme') === 'dark') {
+      document.documentElement.classList.add('dark');
     }
   } catch (e) {}
 })();
@@ -92,7 +107,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const nonce = (await headers()).get(NONCE_HEADER) ?? undefined;
 
   return (
-    <html lang="ar" dir="rtl" className={`${arabic.variable} dark w-full max-w-full overflow-x-hidden`} suppressHydrationWarning>
+    <html lang="ar" dir="rtl" className={`${arabic.variable} ${display.variable} ${mono.variable} w-full max-w-full overflow-x-hidden`} suppressHydrationWarning>
       <body className="w-full max-w-full overflow-x-hidden bg-background font-sans text-foreground antialiased">
         <script nonce={nonce} dangerouslySetInnerHTML={{ __html: themeScript }} />
         {children}

@@ -488,7 +488,7 @@ export default async function DashboardPage({
                           </td>
                           <td className="px-3 py-3.5 numeric">{formatCurrency(moneyMetric(campaign.range_metrics, 'cost'), selectedAccount?.currency_code)}</td>
                           <td className="px-3 py-3.5 numeric">{formatNumberAr(campaign.range_metrics?.conversions ?? 0)}</td>
-                          <td className="px-5 py-3.5 font-bold numeric text-emerald-600 dark:text-emerald-400">
+                          <td className="px-5 py-3.5 font-bold numeric text-success dark:text-success">
                             {(campaign.range_metrics?.roas ?? 0).toFixed(1)}×
                           </td>
                         </tr>
@@ -504,7 +504,7 @@ export default async function DashboardPage({
             {/* Quick help strip */}
             <section className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-primary/25 bg-primary/[0.06] p-5">
               <div className="flex items-center gap-3">
-                <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-card text-primary shadow-soft">
+                <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-card text-primary">
                   <MessageCircle className="h-5 w-5" />
                 </span>
                 <div>
@@ -640,8 +640,8 @@ function DailyActionPlan({ plan }: { plan: ReturnType<typeof buildDailyPlan> }) 
 }
 
 function dailyPlanTone(tone: DailyPlanTask['tone']) {
-  if (tone === 'danger') return 'bg-red-500/[0.045]';
-  if (tone === 'warning') return 'bg-amber-500/[0.05]';
+  if (tone === 'danger') return 'bg-danger/[0.045]';
+  if (tone === 'warning') return 'bg-warning/[0.05]';
   if (tone === 'primary') return 'bg-primary/[0.045]';
   return 'bg-card';
 }

@@ -159,7 +159,7 @@ export default async function ConnectGoogleAdsPage({
         {hasAccounts && (
           <section className="mt-5 surface-card p-5 sm:p-6">
             <div className="mb-4 flex items-center gap-2 text-[13px] font-semibold text-foreground">
-              <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+              <CheckCircle2 className="h-4 w-4 text-success" />
               حسابات مربوطة ({accounts.length})
             </div>
             <div className="grid gap-2 sm:grid-cols-2">
@@ -185,7 +185,7 @@ export default async function ConnectGoogleAdsPage({
 
         {hasRevokedAccounts && (
           <section className="mt-5 surface-card p-5 sm:p-6">
-            <div className="mb-4 flex items-center gap-2 text-[13px] font-semibold text-amber-700 dark:text-amber-300">
+            <div className="mb-4 flex items-center gap-2 text-[13px] font-semibold text-warning dark:text-warning">
               <TriangleAlert className="h-4 w-4" />
               حسابات تحتاج إعادة ربط ({revokedAccounts.length})
             </div>
@@ -193,7 +193,7 @@ export default async function ConnectGoogleAdsPage({
               {revokedAccounts.map((account) => (
                 <div
                   key={account.customer_id}
-                  className="flex items-center justify-between gap-2 rounded-lg border border-amber-500/25 bg-amber-500/[0.06] px-4 py-3 text-[13px]"
+                  className="flex items-center justify-between gap-2 rounded-lg border border-warning/25 bg-warning/[0.06] px-4 py-3 text-[13px]"
                 >
                   <span className="min-w-0 truncate font-medium text-foreground">
                     {googleAdsAccountDisplayName(account)}
@@ -244,23 +244,23 @@ function ManagerOnlyRecovery({ email }: { email?: string | null }) {
   ];
 
   return (
-    <section className="mb-5 overflow-hidden rounded-xl border border-amber-500/25 bg-amber-500/[0.06]">
-      <div className="flex items-start gap-3 border-b border-amber-500/20 px-5 py-4">
-        <span className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-500">
+    <section className="mb-5 overflow-hidden rounded-xl border border-warning/25 bg-warning/[0.06]">
+      <div className="flex items-start gap-3 border-b border-warning/20 px-5 py-4">
+        <span className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg border border-warning/30 bg-warning/10 text-warning">
           <TriangleAlert className="h-4 w-4" />
         </span>
         <div className="min-w-0">
-          <h3 className="text-[14px] font-semibold text-amber-900 dark:text-amber-100">
+          <h3 className="text-[14px] font-semibold text-warning dark:text-warning">
             وجدنا حسابات إدارية فقط (MCC)
           </h3>
-          <p className="mt-1 text-[13px] leading-7 text-amber-900/80 dark:text-amber-100/80">
+          <p className="mt-1 text-[13px] leading-7 text-warning/80 dark:text-warning/80">
             الحسابات الإدارية لا تحتوي على حملات أو بيانات أداء، ولا يمكن قراءة المقاييس منها. نحتاج حساب عميل واحداً
             على الأقل تحت الحساب الإداري، أو حساباً إعلانياً مباشراً.
           </p>
         </div>
       </div>
 
-      <div className="grid gap-px bg-amber-500/15 sm:grid-cols-3">
+      <div className="grid gap-px bg-warning/15 sm:grid-cols-3">
         {options.map((option) => (
           <div key={option.title} className="flex flex-col bg-background p-5">
             <div className="text-[13px] font-semibold text-foreground">{option.title}</div>
@@ -315,23 +315,23 @@ function NoAccountsRecovery({ email }: { email?: string | null }) {
   ];
 
   return (
-    <section className="mb-5 overflow-hidden rounded-xl border border-amber-500/25 bg-amber-500/[0.06]">
-      <div className="flex items-start gap-3 border-b border-amber-500/20 px-5 py-4">
-        <span className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-500">
+    <section className="mb-5 overflow-hidden rounded-xl border border-warning/25 bg-warning/[0.06]">
+      <div className="flex items-start gap-3 border-b border-warning/20 px-5 py-4">
+        <span className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg border border-warning/30 bg-warning/10 text-warning">
           <TriangleAlert className="h-4 w-4" />
         </span>
         <div className="min-w-0">
-          <h3 className="text-[14px] font-semibold text-amber-900 dark:text-amber-100">
+          <h3 className="text-[14px] font-semibold text-warning dark:text-warning">
             البريد الذي اخترته لا يملك حساب إعلانات Google
           </h3>
-          <p className="mt-1 text-[13px] leading-7 text-amber-900/80 dark:text-amber-100/80">
+          <p className="mt-1 text-[13px] leading-7 text-warning/80 dark:text-warning/80">
             منحتنا Google الصلاحية، لكن لا يوجد أي حساب إعلاني تحت هذا البريد. يحدث هذا غالباً عندما يكون الحساب
             على بريد غير بريد تسجيلك في مُضاعِف، أو عندما لم يُفتح حساب من الأساس.
           </p>
         </div>
       </div>
 
-      <div className="grid gap-px bg-amber-500/15 sm:grid-cols-2">
+      <div className="grid gap-px bg-warning/15 sm:grid-cols-2">
         {options.map((option) => (
           <div key={option.title} className="flex flex-col bg-background p-5">
             <div className="text-[13px] font-semibold text-foreground">{option.title}</div>
@@ -377,7 +377,7 @@ function WhatsAppHelpStrip({
   body: string;
 }) {
   return (
-    <div className="flex flex-col gap-3 border-t border-amber-500/20 bg-background px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex flex-col gap-3 border-t border-warning/20 bg-background px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
       <div className="min-w-0">
         <div className="text-[13px] font-semibold text-foreground">{title}</div>
         <p className="mt-1 text-xs leading-6 text-muted-foreground">{body}</p>

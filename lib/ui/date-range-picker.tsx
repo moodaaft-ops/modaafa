@@ -78,7 +78,7 @@ export function DateRangePicker({
     <section
       aria-label="اختيار فترة التقرير"
       className={cn(
-        'rounded-lg border border-border bg-card px-4 py-3.5 shadow-soft',
+        'rounded-lg border border-border bg-card px-4 py-3.5',
         className
       )}
     >
@@ -105,7 +105,7 @@ export function DateRangePicker({
                 className={cn(
                   'h-8 rounded-md px-3 text-xs font-semibold transition-colors disabled:opacity-50',
                   !customOpen && selection.key === preset.key
-                    ? 'bg-card text-foreground shadow-soft'
+                    ? 'bg-card text-foreground'
                     : 'text-muted-foreground hover:text-foreground'
                 )}
               >
@@ -123,7 +123,7 @@ export function DateRangePicker({
               className={cn(
                 'h-8 rounded-md px-3 text-xs font-semibold transition-colors disabled:opacity-50',
                 customOpen
-                  ? 'bg-card text-foreground shadow-soft'
+                  ? 'bg-card text-foreground'
                   : 'text-muted-foreground hover:text-foreground'
               )}
             >
@@ -175,7 +175,7 @@ export function DateRangePicker({
       )}
 
       {displayedError && (
-        <p className="mt-2.5 text-xs font-medium text-red-600 dark:text-red-300" role="alert">
+        <p className="mt-2.5 text-xs font-medium text-danger dark:text-danger" role="alert">
           {displayedError}
         </p>
       )}

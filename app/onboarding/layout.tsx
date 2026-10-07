@@ -5,6 +5,7 @@ import { ThemeToggle } from '@/lib/ui/theme-toggle';
 import { getRequestAuthContext } from '@/lib/supabase/server';
 import { TikTokPixel } from '@/lib/analytics/tiktok-pixel';
 import { isRecentRegistration } from '@/lib/analytics/tiktok';
+import { LogoMark } from '@/lib/ui/logo';
 
 export const metadata: Metadata = {
   title: 'الإعداد الأول',
@@ -26,12 +27,11 @@ export default async function OnboardingLayout({ children }: { children: React.R
       {justRegistered && (
         <TikTokPixel conversion={{ event: 'CompleteRegistration', userId: justRegistered.id }} />
       )}
-      <div className="canvas-glow pointer-events-none absolute inset-x-0 top-0 h-[420px] opacity-70" aria-hidden />
 
-      <header className="sticky top-0 z-30 border-b border-border bg-background/80 backdrop-blur-xl">
+      <header className="sticky top-0 z-30 border-b border-border bg-background">
         <div className="mx-auto flex max-w-4xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
           <Link href="/" className="flex items-center gap-2.5">
-            <Image src="/logo-mark.svg" alt="" width={32} height={32} className="h-8 w-8 rounded-lg" aria-hidden />
+            <LogoMark size={32} alt="" />
             <span className="text-[15px] font-bold text-foreground">مُضاعِف</span>
           </Link>
           {/* The "لوحة التحكم" link used to live here unconditionally, which

@@ -27,7 +27,7 @@ export function EmptyState({
 }) {
   const tile =
     tone === 'warning'
-      ? 'border-amber-500/25 bg-amber-500/10 text-amber-500'
+      ? 'border-warning/25 bg-warning/10 text-warning'
       : tone === 'neutral'
         ? 'border-border-strong bg-muted text-muted-foreground'
         : 'border-primary/25 bg-primary/10 text-primary';
@@ -40,7 +40,6 @@ export function EmptyState({
         className
       )}
     >
-      {!bare && <div className="canvas-glow pointer-events-none absolute inset-0 opacity-60" aria-hidden />}
 
       <div className="relative">
         {Icon && (

@@ -130,9 +130,9 @@ export function AutopilotSettingsForm({
               </span>
               <span className="mt-2 block text-xs leading-6 text-muted-foreground">{item.description}</span>
               {locked ? (
-                <span className="mt-2 block text-[11px] font-medium text-amber-600">قريباً</span>
+                <span className="mt-2 block text-[11px] font-medium text-warning">قريباً</span>
               ) : (
-                disabled && <span className="mt-2 block text-[11px] font-medium text-amber-600">يحتاج اشتراكاً نشطاً</span>
+                disabled && <span className="mt-2 block text-[11px] font-medium text-warning">يحتاج اشتراكاً نشطاً</span>
               )}
             </button>
           );
@@ -193,7 +193,7 @@ export function AutopilotSettingsForm({
       </div>
 
       {mode === 'conservative' && (
-        <label className="flex cursor-pointer gap-3 rounded-lg border border-amber-500/25 bg-amber-500/[0.06] p-4">
+        <label className="flex cursor-pointer gap-3 rounded-lg border border-warning/25 bg-warning/[0.06] p-4">
           <input
             type="checkbox"
             checked={confirmed}
@@ -237,12 +237,12 @@ function SafetyLock({
   description: string;
 }) {
   return (
-    <div className="flex items-start justify-between gap-4 rounded-lg border border-emerald-500/25 bg-emerald-500/[0.06] p-4">
+    <div className="flex items-start justify-between gap-4 rounded-lg border border-success/25 bg-success/[0.06] p-4">
       <span>
         <span className="block text-sm font-semibold text-foreground">{title}</span>
         <span className="mt-1 block text-xs leading-5 text-muted-foreground">{description}</span>
       </span>
-      <LockKeyhole className="mt-0.5 h-4 w-4 flex-shrink-0 text-emerald-600" aria-hidden />
+      <LockKeyhole className="mt-0.5 h-4 w-4 flex-shrink-0 text-success" aria-hidden />
     </div>
   );
 }

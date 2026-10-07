@@ -17,7 +17,7 @@ export default function ErrorPage({
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center bg-background px-6 text-center">
-      <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-red-50 text-red-600 dark:bg-red-950/40 dark:text-red-400">
+      <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-danger-soft text-danger dark:bg-danger/40 dark:text-danger">
         <AlertTriangle className="h-8 w-8" aria-hidden="true" />
       </div>
       <h1 className="mt-6 text-2xl font-bold text-foreground">حدث خطأ غير متوقع</h1>

@@ -104,7 +104,7 @@ export function paymentFailedEmail() {
 }
 
 function emailShell(content: string) {
-  return `<div dir="rtl" style="font-family:Arial,sans-serif;line-height:1.8;color:#0f172a;max-width:640px;margin:auto"><div style="padding:20px 0;font-size:22px;font-weight:700;color:#047857">مُضاعِف</div>${content}<hr style="border:0;border-top:1px solid #e2e8f0;margin:28px 0"><p style="font-size:12px;color:#64748b">هذه رسالة تشغيلية تخص حسابك في منصة مُضاعِف.</p></div>`;
+  return `<div dir="rtl" style="font-family:Arial,sans-serif;line-height:1.8;color:#0E1426;max-width:640px;margin:auto"><div style="padding:20px 0;font-size:22px;font-weight:700;color:#0E1426">مُضاعِف</div>${content}<hr style="border:0;border-top:1px solid #CDCFD4;margin:28px 0"><p style="font-size:12px;color:#586174">هذه رسالة تشغيلية تخص حسابك في منصة مُضاعِف.</p></div>`;
 }
 
 function escapeHtml(value: string) {

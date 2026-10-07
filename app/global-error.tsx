@@ -16,9 +16,9 @@ export default function GlobalError({
         <style>{`
           :root { color-scheme: light dark; }
           @media (prefers-color-scheme: dark) {
-            body { background: #0b1220 !important; color: #e2e8f0 !important; }
-            .modaafa-error-body { color: #94a3b8 !important; }
-            .modaafa-error-digest { color: #64748b !important; }
+            body { background: #0E1426 !important; color: #F4F2EC !important; }
+            .modaafa-error-body { color: #9AA0AE !important; }
+            .modaafa-error-digest { color: #7A8294 !important; }
           }
         `}</style>
       </head>
@@ -29,8 +29,8 @@ export default function GlobalError({
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          background: '#f8fafc',
-          color: '#0f172a',
+          background: '#F4F2EC',
+          color: '#0E1426',
           fontFamily:
             "'IBM Plex Sans Arabic', 'Segoe UI', Tahoma, Arial, sans-serif",
           textAlign: 'center',
@@ -43,14 +43,14 @@ export default function GlobalError({
           </h1>
           <p
             className="modaafa-error-body"
-            style={{ fontSize: '14px', color: '#475569', maxWidth: '420px', lineHeight: 1.8 }}
+            style={{ fontSize: '14px', color: '#586174', maxWidth: '420px', lineHeight: 1.8 }}
           >
             تعذر تحميل مُضاعِف الآن. جرّب إعادة المحاولة، وإذا استمرت المشكلة فأعد فتح الصفحة بعد قليل.
           </p>
           {error?.digest && (
             <p
               className="modaafa-error-digest"
-              style={{ fontSize: '12px', color: '#94a3b8', marginTop: '8px' }}
+              style={{ fontSize: '12px', color: '#9AA0AE', marginTop: '8px' }}
               dir="ltr"
             >
               {error.digest}
@@ -61,10 +61,10 @@ export default function GlobalError({
             onClick={reset}
             style={{
               marginTop: '20px',
-              background: '#047857',
-              color: '#ffffff',
+              background: '#0E1426',
+              color: '#F4F2EC',
               border: 'none',
-              borderRadius: '8px',
+              borderRadius: '0',
               padding: '10px 20px',
               fontSize: '14px',
               fontWeight: 600,

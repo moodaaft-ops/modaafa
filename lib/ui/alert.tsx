@@ -5,23 +5,23 @@ type Tone = 'info' | 'success' | 'warning' | 'danger';
 
 const toneStyles: Record<Tone, { box: string; icon: string; Icon: React.ComponentType<{ className?: string }> }> = {
   info: {
-    box: 'border-blue-500/25 bg-blue-500/[0.08] text-blue-900 dark:text-blue-100',
-    icon: 'text-blue-500',
+    box: 'border-info/25 bg-info/[0.08] text-info dark:text-info',
+    icon: 'text-info',
     Icon: Info,
   },
   success: {
-    box: 'border-emerald-500/25 bg-emerald-500/[0.08] text-emerald-900 dark:text-emerald-100',
-    icon: 'text-emerald-500',
+    box: 'border-success/25 bg-success/[0.08] text-success dark:text-success',
+    icon: 'text-success',
     Icon: CheckCircle2,
   },
   warning: {
-    box: 'border-amber-500/25 bg-amber-500/[0.08] text-amber-900 dark:text-amber-100',
-    icon: 'text-amber-500',
+    box: 'border-warning/25 bg-warning/[0.08] text-warning dark:text-warning',
+    icon: 'text-warning',
     Icon: AlertTriangle,
   },
   danger: {
-    box: 'border-red-500/25 bg-red-500/[0.08] text-red-900 dark:text-red-100',
-    icon: 'text-red-500',
+    box: 'border-danger/25 bg-danger/[0.08] text-danger dark:text-danger',
+    icon: 'text-danger',
     Icon: XCircle,
   },
 };

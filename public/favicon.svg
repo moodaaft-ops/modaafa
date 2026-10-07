@@ -1,6 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="مُضاعِف">
-  <rect x="4" y="4" width="120" height="120" rx="30" fill="#063D35"/>
-  <path d="M31 34L51 54M77 80L96 99" fill="none" stroke="#2DD4A4" stroke-width="16" stroke-linecap="round"/>
-  <path d="M31 97L93 35" fill="none" stroke="#F8FAFC" stroke-width="16" stroke-linecap="round"/>
-  <path d="M78 27H101V50" fill="none" stroke="#F5B63D" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="مُضاعِف"><title>مُضاعِف</title><rect width="64" height="64" fill="#0E1426"/><g transform="translate(14.0 14.0) scale(3.0)"><rect x="4" y="0" width="8" height="8" fill="#F4F2EC"/><rect x="0" y="8" width="4" height="4" fill="#F4F2EC"/><rect x="10" y="0" width="2" height="2" fill="#FBBC04"/></g></svg>

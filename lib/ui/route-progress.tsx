@@ -47,7 +47,7 @@ export function RouteProgress() {
       <div className="h-1 w-full overflow-hidden bg-primary/20">
         <div className="h-full w-1/2 animate-loading-bar rounded-full bg-primary" />
       </div>
-      <div className="mx-auto mt-3 flex w-fit items-center gap-2 surface-card px-4 py-2 text-xs font-semibold text-foreground shadow-soft">
+      <div className="mx-auto mt-3 flex w-fit items-center gap-2 surface-card px-4 py-2 text-xs font-semibold text-foreground">
         <Loader2 className="h-4 w-4 animate-spin text-primary" />
         جاري تحميل الصفحة...
       </div>

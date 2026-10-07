@@ -274,7 +274,7 @@ export function WelcomeTour() {
               <button
                 type="button"
                 onClick={finish}
-                className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-brand-gradient px-4 text-[13px] font-semibold text-primary-foreground shadow-soft transition-transform hover:brightness-105 active:scale-[0.98]"
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-4 text-[13px] font-semibold text-primary-foreground transition-transform active:scale-[0.98]"
               >
                 <Check className="h-4 w-4" />
                 يلا نبدأ
@@ -283,7 +283,7 @@ export function WelcomeTour() {
               <button
                 type="button"
                 onClick={() => setIndex((i) => Math.min(STEPS.length - 1, i + 1))}
-                className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-brand-gradient px-4 text-[13px] font-semibold text-primary-foreground shadow-soft transition-transform hover:brightness-105 active:scale-[0.98]"
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-4 text-[13px] font-semibold text-primary-foreground transition-transform active:scale-[0.98]"
               >
                 التالي
                 <ArrowLeft className="h-3.5 w-3.5" />
