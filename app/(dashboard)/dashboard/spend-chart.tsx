@@ -1,92 +1,67 @@
-'use client';
-
-import { useEffect, useState } from 'react';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, formatNumberAr } from '@/lib/utils';
 
 /**
- * Per-campaign spend distribution for the selected date range, coloured by ROAS.
+ * Per-campaign spend distribution for the selected date range.
  *
- * A hand-built CSS bar chart rather than a charting library: the cache stores
- * 7d/30d aggregates (no daily series), horizontal bars are all this data wants,
- * and this keeps ~100 kB of recharts out of the dashboard bundle while staying
- * fully token-driven, RTL-native, and animated on mount.
+ * A plain CSS bar list rather than a charting library: the cache stores 7d/30d
+ * aggregates (no daily series), horizontal bars are all this data wants, and it
+ * keeps a chart dependency out of the dashboard bundle. One colour on purpose:
+ * the bar length carries the information, and the signal yellow is reserved for
+ * the decision block.
  */
 
-type Row = { id?: string | number; name: string; spend: number; roas: number };
+type Row = { id?: string | number; name: string; spend: number };
 
 export function CampaignSpendChart({
   campaigns,
   currencyCode,
   rangeLabel,
+  totalSpend,
 }: {
   campaigns: Row[];
   currencyCode?: string | null;
   rangeLabel: string;
+  totalSpend: number;
 }) {
-  const [grown, setGrown] = useState(false);
-
   const data = campaigns
     .filter((c) => c.spend > 0)
     .sort((a, b) => b.spend - a.spend)
     .slice(0, 6);
-
-  useEffect(() => {
-    const id = requestAnimationFrame(() => setGrown(true));
-    return () => cancelAnimationFrame(id);
-  }, []);
 
   if (data.length === 0) return null;
   const max = Math.max(...data.map((c) => c.spend)) || 1;
 
   return (
     <section className="surface-card overflow-hidden">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
-        <div>
-          <h3 className="text-[14px] font-semibold">توزيع الإنفاق حسب الحملة</h3>
-          {/* Latin digits, matching the app-wide numerals policy in
-              lib/utils.ts — an Eastern-Arabic ٧ next to Latin-digit money is
-              exactly the mixed-numeral screen that policy eliminated. */}
-          <p className="mt-1 text-xs text-muted-foreground">{rangeLabel} · أعلى {data.length} حملات إنفاقاً</p>
-        </div>
-        <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
-          <span className="inline-flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-sm bg-primary" aria-hidden />
-            ROAS ≥ 1×
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-sm bg-warning" aria-hidden />
-            دون الهدف
-          </span>
-        </div>
+      <div className="border-b border-border px-4 py-4 sm:px-5">
+        <h2 className="text-[14px] font-semibold">توزيع الإنفاق حسب الحملة</h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {rangeLabel} · الحملات الأعلى إنفاقاً
+        </p>
       </div>
 
-      <ul className="space-y-3.5 p-5">
+      <ul className="space-y-3.5 p-4 sm:p-5">
         {data.map((row, index) => {
           const pct = Math.max(3, (row.spend / max) * 100);
-          const healthy = row.roas >= 1;
+          const share = totalSpend > 0 ? Math.round((row.spend / totalSpend) * 100) : 0;
           return (
-            // Key by id when present (two campaigns can share a name — common
-            // with copied campaigns — and a duplicate React key drops a bar);
-            // fall back to name+index otherwise.
+            // Key by id when present: two campaigns can share a name (common
+            // with copied campaigns) and a duplicate key drops a bar.
             <li key={row.id ?? `${row.name}-${index}`}>
               <div className="mb-1.5 flex items-baseline justify-between gap-3">
                 <span className="min-w-0 truncate text-[13px] font-medium text-foreground">{row.name}</span>
                 <span className="flex-shrink-0 text-[12px] text-muted-foreground">
-                  <span className="numeric font-semibold text-foreground">
+                  <span className="font-mono numeric font-semibold text-foreground">
                     {formatCurrency(row.spend, currencyCode)}
                   </span>
-                  <span className="mx-1.5 text-border-strong">·</span>
-                  <span className="numeric">ROAS {row.roas.toFixed(1)}×</span>
+                  <span className="mx-1.5 text-border-strong" aria-hidden>
+                    ·
+                  </span>
+                  <span className="font-mono numeric">{formatNumberAr(share)}%</span>
                 </span>
               </div>
-              <div className="h-2.5 w-full overflow-hidden rounded-full bg-muted">
-                <div
-                  className={`h-full rounded-full transition-[width] duration-700 ease-snap ${
-                    healthy ? 'bg-primary' : 'bg-warning'
-                  }`}
-                  style={{ width: grown ? `${pct}%` : '0%' }}
-                  aria-hidden
-                />
+              <div className="h-2 w-full bg-muted" aria-hidden>
+                <div className="h-full bg-primary" style={{ width: `${pct}%` }} />
               </div>
             </li>
           );
