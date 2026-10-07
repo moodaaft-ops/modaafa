@@ -4,7 +4,9 @@ import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import { getRequestAuthContext } from '@/lib/supabase/server';
 import { assertSupabaseRead } from '@/lib/supabase/query-errors';
-import { formatCurrency, timeAgoAr } from '@/lib/utils';
+import { formatCurrency, formatDateAr, timeAgoAr } from '@/lib/utils';
+import { TERMS } from '@/lib/ui/labels';
+import { priorWeekLabel, reportPeriodLabel } from '@/lib/ui/report-period';
 import { PageHeader } from '@/lib/ui/page-header';
 import { EmptyState } from '@/lib/ui/empty-state';
 import { buttonClasses } from '@/lib/ui/button';
@@ -42,11 +44,11 @@ export default async function ReportsPage() {
         {accounts.length === 0 ? (
           <EmptyState
             icon={Link2}
-            title="اربط حساب إعلانات Google أولاً"
+            title={`${TERMS.connect} أولاً`}
             description="بعد الربط وتشغيل الفحص ستظهر التقارير المحفوظة هنا."
             action={
               <a href="/onboarding/connect" className={buttonClasses({ variant: 'primary', size: 'lg' })}>
-                ربط حساب
+                {TERMS.connect}
               </a>
             }
           />
@@ -74,11 +76,14 @@ export default async function ReportsPage() {
                 ) : (
                   <article key={report.id} className="p-5">
                     <div className="flex items-center justify-between gap-4">
-                      <h2 className="text-[14px] font-semibold">
-                        {report.metrics?.kind === 'audit_summary'
-                          ? 'ملخص فحص الحساب'
-                          : periodLabel(report.period_type)}
-                      </h2>
+                      <div>
+                        <h2 className="text-[14px] font-semibold">
+                          {report.metrics?.kind === 'audit_summary'
+                            ? 'ملخص فحص الحساب'
+                            : periodLabel(report.period_type)}
+                        </h2>
+                        <p className="mt-1 text-xs text-muted-foreground numeric">{coverageLine(report)}</p>
+                      </div>
                       <span className="text-xs text-muted-foreground">{timeAgoAr(report.generated_at)}</span>
                     </div>
                     <p className="mt-2 text-sm leading-7 text-muted-foreground">
@@ -87,18 +92,18 @@ export default async function ReportsPage() {
                     <div className="mt-4 grid gap-3 sm:grid-cols-3">
                       <ReportMetric
                         label="صحة الحساب"
-                        value={report.metrics?.health_score ? `${report.metrics.health_score}/100` : '—'}
+                        value={report.metrics?.health_score ? `${report.metrics.health_score}/100` : 'غير متوفر'}
                       />
-                      <ReportMetric label="عدد التوصيات" value={report.metrics?.recommendations_count ?? '—'} />
+                      <ReportMetric label="عدد التوصيات" value={report.metrics?.recommendations_count ?? 'غير متوفر'} />
                       <ReportMetric
-                        label="تسريب متوقع"
+                        label="الهدر المتوقع شهرياً"
                         value={
                           report.metrics?.estimated_monthly_waste_sar
                             ? formatCurrency(
                                 report.metrics.estimated_monthly_waste_sar,
                                 report.metrics.currency_code ?? selectedAccount?.currency_code
                               )
-                            : '—'
+                            : 'غير متوفر'
                         }
                       />
                     </div>
@@ -126,18 +131,22 @@ function WeeklyPerformanceReport({ report, fallbackCurrency }: { report: any; fa
   const prior = totals.prior_week ?? {};
   const delta = totals.delta ?? {};
   const highlights: string[] = Array.isArray(metrics.highlights_ar) ? metrics.highlights_ar : [];
+  const period = reportPeriodLabel(report.period_start, report.period_end);
+  const priorPeriod = priorWeekLabel(report.period_start);
 
   return (
     <article className="p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <h2 className="text-[14px] font-semibold">التقرير الأسبوعي الذكي</h2>
-          <span className="rounded-full bg-primary/12 px-2 py-0.5 text-[10.5px] font-semibold text-primary ring-1 ring-inset ring-primary/25">
+          <span className="bg-primary/12 px-2 py-0.5 text-[10.5px] font-semibold text-primary ring-1 ring-inset ring-primary/25">
             لماذا تغيّر الأداء؟
           </span>
         </div>
         <span className="text-xs text-muted-foreground">{timeAgoAr(report.generated_at)}</span>
       </div>
+
+      {period && <p className="mt-2 text-xs text-muted-foreground numeric">الفترة: {period}</p>}
 
       <p className="mt-3 text-sm leading-8 text-foreground">{report.summary_ar}</p>
 
@@ -161,7 +170,7 @@ function WeeklyPerformanceReport({ report, fallbackCurrency }: { report: any; fa
           value={
             delta.cpa_this != null
               ? `${formatCurrency(delta.cpa_this, currency)}${delta.cpa_prior != null ? ` (كانت ${formatCurrency(delta.cpa_prior, currency)})` : ''}`
-              : '—'
+              : 'غير متوفر'
           }
         />
       </div>
@@ -170,7 +179,7 @@ function WeeklyPerformanceReport({ report, fallbackCurrency }: { report: any; fa
         <ul className="mt-4 space-y-1.5">
           {highlights.map((item) => (
             <li key={item} className="flex items-start gap-2 text-[13px] leading-7 text-foreground-subtle">
-              <span className="mt-2.5 h-1 w-1 flex-shrink-0 rounded-full bg-primary" aria-hidden />
+              <span className="mt-2.5 h-1 w-1 flex-shrink-0 bg-primary" aria-hidden />
               {item}
             </li>
           ))}
@@ -185,7 +194,10 @@ function WeeklyPerformanceReport({ report, fallbackCurrency }: { report: any; fa
       )}
 
       <div className="mt-3 text-[11px] text-muted-foreground">
-        مقارنة آخر 7 أيام بالأسبوع الذي قبله{prior.cost != null ? ` (إنفاق الأسبوع السابق ${formatCurrency(prior.cost ?? 0, currency)})` : ''}.
+        {period && priorPeriod
+          ? `مقارنة ${period} بالأسبوع الذي قبله، ${priorPeriod}`
+          : 'مقارنة آخر 7 أيام بالأسبوع الذي قبله'}
+        {prior.cost != null ? ` (إنفاق الأسبوع السابق ${formatCurrency(prior.cost ?? 0, currency)})` : ''}.
       </div>
     </article>
   );
@@ -243,4 +255,14 @@ function periodLabel(period?: string) {
     custom: 'تقرير مخصص',
   };
   return labels[period ?? ''] ?? period ?? 'تقرير';
+}
+
+/**
+ * The dates a saved report covers. Reports that carry a period (weekly ones)
+ * print it; the rest (an audit summary has none) print the day they were made.
+ */
+function coverageLine(report: any) {
+  const period = reportPeriodLabel(report.period_start, report.period_end);
+  if (period) return `الفترة: ${period}`;
+  return `أُنشئ في ${formatDateAr(report.generated_at)}`;
 }

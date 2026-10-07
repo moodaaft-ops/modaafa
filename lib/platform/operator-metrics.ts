@@ -23,7 +23,7 @@ const FEATURE_LABELS: Record<UsageFeature, string> = {
   assistant: 'رسائل المساعد',
   campaign_builder: 'مسودات الحملات',
   audit: 'فحوصات الحساب',
-  manual_sync: 'مزامنات يدوية',
+  manual_sync: 'تحديثات البيانات اليدوية',
   execute_action: 'تنفيذات فعلية',
 };
 

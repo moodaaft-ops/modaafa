@@ -212,7 +212,7 @@ test('the trial ledger key is stable, case-insensitive and not reversible', () =
 
 test('a revoked Google grant tells the user to reconnect, not just "try again"', () => {
   const message = syncErrorMessage('invalid_grant');
-  assert.ok(message.includes('أعد منح الصلاحية') || message.includes('ربط إعلانات Google'));
+  assert.ok(message.includes('تجديد الربط'));
   assert.notEqual(message, syncErrorMessage('sync_failed'));
 });
 

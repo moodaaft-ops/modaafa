@@ -15,6 +15,8 @@ import { EmptyState } from '@/lib/ui/empty-state';
 import { PageHeader } from '@/lib/ui/page-header';
 import { StatusBadge, type StatusTone } from '@/lib/ui/status-badge';
 import { timeAgoAr } from '@/lib/utils';
+import { TERMS } from '@/lib/ui/labels';
+import { arabicCount } from '@/lib/ui/plural';
 import { AutopilotSettingsForm } from './autopilot-settings-form';
 
 export const metadata = { title: 'الطيار الآلي' };
@@ -44,8 +46,8 @@ export default async function AutopilotPage() {
           <EmptyState
             icon={CircleDotDashed}
             title="اختر حساباً إعلانياً أولاً"
-            description="اربط حساب Google Ads أو اختر حساباً فعالاً من القائمة الجانبية، ثم اضبط وضع الطيار الآلي له."
-            action={<Link href="/onboarding/connect" className={buttonClasses()}>ربط Google Ads</Link>}
+            description="اربط Google Ads أو اختر حساباً فعالاً من القائمة الجانبية، ثم اضبط وضع الطيار الآلي له."
+            action={<Link href="/onboarding/connect" className={buttonClasses()}>{TERMS.connect}</Link>}
           />
         </div>
       </>
@@ -81,7 +83,7 @@ export default async function AutopilotPage() {
       <div className="space-y-6 p-4 sm:p-6 lg:p-8">
         <Alert tone="info" title="أنت صاحب القرار">
           الوضع الافتراضي متوقف. يمكنك تشغيل المراقبة بلا تغييرات، أو السماح بالتنفيذ المحافظ. الميزانيات والمزايدات
-          وإيقاف الحملات تبقى في مركز الموافقات ولا ينفذها الطيار تلقائياً في هذا الإصدار.
+          وإيقاف الحملات تبقى في الموافقات ولا ينفذها الطيار تلقائياً في هذا الإصدار.
         </Alert>
 
         <section className="surface-card p-5 sm:p-6">
@@ -114,7 +116,11 @@ export default async function AutopilotPage() {
                 في مرحلة لاحقة.
               </p>
             </div>
-            <StatusBadge tone="neutral">آخر {decisions.length} قرار</StatusBadge>
+            {decisions.length > 0 && (
+              <StatusBadge tone="neutral">
+                آخر {arabicCount(decisions.length, DECISION_COUNT)}
+              </StatusBadge>
+            )}
           </div>
 
           {decisions.length === 0 ? (
@@ -167,6 +173,8 @@ export default async function AutopilotPage() {
     </>
   );
 }
+
+const DECISION_COUNT = { one: 'قرار واحد', two: 'قراران', few: 'قرارات', many: 'قراراً', other: 'قرار' };
 
 function modeLabel(mode: string) {
   if (mode === 'conservative') return 'تنفيذ محافظ';

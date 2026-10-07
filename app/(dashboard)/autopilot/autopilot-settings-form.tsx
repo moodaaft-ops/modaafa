@@ -8,6 +8,7 @@ import { Alert } from '@/lib/ui/alert';
 import { Button } from '@/lib/ui/button';
 import { inputClasses } from '@/lib/ui/field';
 import { cn } from '@/lib/utils';
+import { TERMS } from '@/lib/ui/labels';
 
 const modes: Array<{
   value: AutopilotMode;
@@ -24,7 +25,7 @@ const modes: Array<{
   {
     value: 'observe',
     title: 'مراقبة فقط',
-    description: 'يحلل ويشرح قراراته، ويرسل التغييرات لمركز الموافقات.',
+    description: 'يحلل ويشرح قراراته، ويرسل التغييرات إلى الموافقات.',
     icon: Eye,
   },
   {
@@ -130,7 +131,7 @@ export function AutopilotSettingsForm({
               </span>
               <span className="mt-2 block text-xs leading-6 text-muted-foreground">{item.description}</span>
               {locked ? (
-                <span className="mt-2 block text-[11px] font-medium text-warning">قريباً</span>
+                <span className="mt-2 block text-[11px] font-medium text-warning">{TERMS.comingSoon}</span>
               ) : (
                 disabled && <span className="mt-2 block text-[11px] font-medium text-warning">يحتاج اشتراكاً نشطاً</span>
               )}

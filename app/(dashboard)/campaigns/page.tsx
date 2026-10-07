@@ -6,7 +6,7 @@ import { getRequestAuthContext } from '@/lib/supabase/server';
 import { assertSupabaseRead } from '@/lib/supabase/query-errors';
 import { formatCurrency, formatNumberAr } from '@/lib/utils';
 import { moneyMetric } from '@/lib/google-ads/metrics';
-import { campaignStatusLabel, campaignTypeLabel } from '@/lib/ui/labels';
+import { TERMS, campaignStatusLabel, campaignTypeLabel } from '@/lib/ui/labels';
 import { PendingSubmitButton } from '@/lib/ui/pending-submit-button';
 import { PageHeader } from '@/lib/ui/page-header';
 import { EmptyState } from '@/lib/ui/empty-state';
@@ -100,8 +100,8 @@ export default async function CampaignsPage({
             <form action="/api/accounts/sync" method="post">
               <input type="hidden" name="customerId" value={selectedAccount.customer_id} />
               <input type="hidden" name="next" value={dateRangeHref('/campaigns', requestedRange)} />
-              <PendingSubmitButton pendingLabel="جاري التحديث..." className={buttonClasses({ variant: 'primary' })}>
-                تحديث الآن
+              <PendingSubmitButton pendingLabel="جاري تحديث البيانات..." className={buttonClasses({ variant: 'primary' })}>
+                {TERMS.refreshData}
               </PendingSubmitButton>
             </form>
           )
@@ -116,10 +116,10 @@ export default async function CampaignsPage({
           <EmptyState
             icon={Link2}
             title="لم تربط حساباً إعلانياً بعد"
-            description="اربط إعلانات Google لجلب الحملات وعرض أدائها هنا."
+            description="اربط Google Ads لجلب الحملات وعرض أدائها هنا."
             action={
               <a href="/onboarding/connect" className={buttonClasses({ variant: 'primary', size: 'lg' })}>
-                ربط إعلانات Google
+                {TERMS.connect}
               </a>
             }
           />
@@ -127,15 +127,15 @@ export default async function CampaignsPage({
           <EmptyState
             icon={Megaphone}
             title="لا توجد حملات محفوظة للحساب المختار"
-            description="حدّث بيانات الحساب أو شغّل الفحص لجلب الحملات من إعلانات Google."
+            description="حدّث البيانات أو شغّل الفحص لجلب الحملات من Google Ads."
             action={
               <>
                 {selectedAccount && (
                   <form action="/api/accounts/sync" method="post">
                     <input type="hidden" name="customerId" value={selectedAccount.customer_id} />
                     <input type="hidden" name="next" value={dateRangeHref('/campaigns', requestedRange)} />
-                    <PendingSubmitButton pendingLabel="جاري التحديث..." className={buttonClasses({ variant: 'primary' })}>
-                      تحديث البيانات الآن
+                    <PendingSubmitButton pendingLabel="جاري تحديث البيانات..." className={buttonClasses({ variant: 'primary' })}>
+                      {TERMS.refreshData}
                     </PendingSubmitButton>
                   </form>
                 )}
@@ -157,7 +157,7 @@ export default async function CampaignsPage({
               </div>
               <div className="flex gap-2">
                 <a href="/audit" className={buttonClasses({ variant: 'outline', size: 'sm' })}>
-                  تحديث بالفحص
+                  تشغيل الفحص
                 </a>
                 <a href="/assistant" className={buttonClasses({ variant: 'primary', size: 'sm' })}>
                   اسأل المساعد

@@ -3,8 +3,9 @@ import { redirect } from 'next/navigation';
 import { Check, CreditCard, ReceiptText } from 'lucide-react';
 import { getRequestAuthContext } from '@/lib/supabase/server';
 import { assertSupabaseRead } from '@/lib/supabase/query-errors';
-import { cn, formatCurrency, formatDateAr } from '@/lib/utils';
-import { planLabel, subscriptionStatusLabel } from '@/lib/ui/labels';
+import { cn, formatCurrency, formatDateAr, formatNumberAr } from '@/lib/utils';
+import { TERMS, planLabel, subscriptionStatusLabel } from '@/lib/ui/labels';
+import { formatDays } from '@/lib/ui/plural';
 import { PendingSubmitButton } from '@/lib/ui/pending-submit-button';
 import { PageHeader } from '@/lib/ui/page-header';
 import { Alert } from '@/lib/ui/alert';
@@ -14,6 +15,14 @@ import { buttonClasses } from '@/lib/ui/button';
 import { getBillingCheckoutContext } from '@/lib/billing/checkout-policy';
 import { hasActiveGoogleAdsAccount } from '@/lib/accounts/selection';
 import { getSubscriptionAccess } from '@/lib/billing/entitlements';
+import {
+  TRIAL_DAYS,
+  formatResetAr,
+  loadUsageMeters,
+  planFeatureLines,
+  trialDaysLeft,
+  type UsageMeter,
+} from '@/lib/billing/usage-display';
 import { getPlanPriceAmounts, type PeriodKey, type PlanKey } from '@/lib/billing/stripe';
 
 const billingErrors: Record<string, string> = {
@@ -22,15 +31,18 @@ const billingErrors: Record<string, string> = {
   portal_failed: 'تعذر فتح بوابة إدارة الاشتراك الآن. أعد المحاولة بعد قليل.',
   invalid_session: 'جلسة الدفع غير صالحة أو لا تخص هذا الحساب.',
   subscription_missing: 'اكتملت جلسة الدفع لكن لم يصلنا رقم الاشتراك. لم يتم تفعيل الخطة بعد.',
-  activation_failed: 'اكتمل الدفع لكن تعذر تأكيد التفعيل فوراً. سنعيد المزامنة تلقائياً، ويمكنك تحديث الصفحة.',
+  activation_failed: 'اكتمل الدفع لكن تعذر تأكيد التفعيل فوراً. سنعيد المحاولة تلقائياً، ويمكنك تحديث الصفحة.',
   subscription_conflict: 'اكتشفنا اشتراكاً آخر مرتبطاً بحسابك. لم نخفِ المشكلة، وسيراجعها فريق التشغيل قبل أي إجراء.',
   checkout_failed: 'تعذر إنشاء جلسة الدفع. لم يتم خصم أي مبلغ.',
   too_many_requests: 'تم طلب بوابة الفوترة عدة مرات خلال فترة قصيرة. انتظر دقيقة ثم أعد المحاولة.',
   security_service_unavailable: 'تعذر التحقق الآمن من طلب الفوترة الآن. أعد المحاولة بعد قليل.',
   internal_access: 'حساب المالك لديه صلاحية داخلية ولا يحتاج اشتراكاً أو تجربة.',
-  google_ads_account_required: 'اربط حساب إعلانات Google نشطاً أولاً حتى تبدأ التجربة.',
+  google_ads_account_required: 'اربط حساب Google Ads نشطاً أولاً حتى تبدأ التجربة.',
 };
 
+// The limits on each card come from PLAN_LIMITS (planFeatureLines), the same
+// table the server enforces, so a card cannot promise more or less than the
+// plan really allows.
 const plans = [
   {
     id: 'starter' as PlanKey,
@@ -38,7 +50,6 @@ const plans = [
     nameEn: 'Starter',
     monthlyPrice: 500,
     limit: 'للبداية وإدارة العمل اليومي',
-    features: ['20 محادثة ذكية يومياً', 'فحصان أسبوعياً', '5 مزامنات يدوية يومياً'],
   },
   {
     id: 'growth' as PlanKey,
@@ -46,7 +57,6 @@ const plans = [
     nameEn: 'Growth',
     monthlyPrice: 1200,
     limit: 'للشركات النشطة والمتابعة اليومية',
-    features: ['100 محادثة ذكية يومياً', '7 فحوصات أسبوعياً', '20 تنفيذاً ومزامنة يومياً'],
     highlighted: true,
   },
   {
@@ -55,14 +65,13 @@ const plans = [
     nameEn: 'Pro',
     monthlyPrice: 2500,
     limit: 'للوكالات والاستخدام المكثف',
-    features: ['500 محادثة ذكية يومياً', '70 فحصاً أسبوعياً', '100 تنفيذ ومزامنة يومياً'],
   },
 ];
 
 const PLAN_IDS: readonly string[] = ['starter', 'growth', 'pro'];
 
 export const metadata = {
-  title: 'الاشتراك والفوترة',
+  title: 'الفوترة والاشتراك',
 };
 
 export default async function BillingPage({
@@ -105,12 +114,18 @@ export default async function BillingPage({
   assertSupabaseRead(invoicesResult.error, 'load billing invoices');
   const invoices = invoicesResult.data ?? [];
   const trialEligible = checkout.trialEligible;
+  const trialLabel = formatDays(TRIAL_DAYS);
   const hasInternalAccess = access.status === 'internal';
   const hasLiveSubscription = Boolean(checkout.activeSubscriptionId);
   const currentPlan = hasLiveSubscription || hasInternalAccess ? access.plan : null;
   // Mirrors the server gate in /api/billing/checkout: no active Google Ads
   // account means no trial/checkout buttons, just a link to connect one.
   const needsAccount = !hasLiveSubscription && !hasInternalAccess && !hasActiveAccount;
+  const daysLeft = access.status === 'trialing' ? trialDaysLeft(access.trialEndsAt) : null;
+  // Meters only make sense while a plan is in force. A failed read renders as
+  // "could not read usage", never as a row of zeros.
+  const meterPlan = access.active && access.plan && (hasLiveSubscription || hasInternalAccess) ? access.plan : null;
+  const meters = meterPlan ? await loadUsageMeters(supabase, user.id, meterPlan) : null;
 
   const buildHref = (nextPeriod: PeriodKey) => {
     const query = new URLSearchParams();
@@ -155,10 +170,10 @@ export default async function BillingPage({
                 {hasInternalAccess
                   ? 'صلاحية المالك مفعلة للاختبار الداخلي ولا ترتبط بفوترة Stripe.'
                   : access.status === 'trialing' && access.trialEndsAt
-                  ? `تنتهي التجربة في ${formatDateAr(access.trialEndsAt)}`
+                  ? `تنتهي التجربة في ${formatDateAr(access.trialEndsAt)}${daysLeft !== null ? `، وباقي ${formatDays(daysLeft)}` : ''}`
                   : hasLiveSubscription && access.currentPeriodEnd
                     ? `تجديد الاشتراك في ${formatDateAr(access.currentPeriodEnd)}`
-                    : 'اختر خطة بالأسفل لتفعيل الفحص والتنفيذ والمساعد الذكي.'}
+                    : `اختر خطة بالأسفل لتفعيل الفحص والتنفيذ والمساعد الذكي. التجربة المجانية ${trialLabel}.`}
               </p>
             </div>
             {hasInternalAccess ? (
@@ -172,7 +187,7 @@ export default async function BillingPage({
             ) : needsAccount ? (
               <p className="text-[12.5px] leading-6 text-muted-foreground">
                 <Link href="/onboarding/connect" className="font-semibold text-primary underline-offset-4 hover:underline">
-                  اربط حساب إعلانات Google أولاً عشان تبدأ التجربة
+                  {TERMS.connect} أولاً لتبدأ التجربة
                 </Link>
               </p>
             ) : !hasLiveSubscription ? (
@@ -186,6 +201,9 @@ export default async function BillingPage({
             ) : null}
           </div>
         </section>
+
+        {/* Usage: one meter per enforced limit. */}
+        {meterPlan && <UsageSection plan={meterPlan} meters={meters} />}
 
         {/* Billing period toggle — the six Stripe prices include yearly slots
             that were configured, enforced by the readiness check, and
@@ -288,7 +306,7 @@ export default async function BillingPage({
                 <div className="rule-fade my-5 h-px" aria-hidden />
 
                 <ul className="flex-1 space-y-2.5 text-[13px] text-muted-foreground">
-                  {plan.features.map((feature) => (
+                  {planFeatureLines(plan.id).map((feature) => (
                     <li key={feature} className="flex items-start gap-2.5 leading-6">
                       <Check className="mt-1 h-3.5 w-3.5 flex-shrink-0 text-success" />
                       {feature}
@@ -336,7 +354,7 @@ export default async function BillingPage({
                   ) : needsAccount ? (
                     <p className="text-center text-[12.5px] leading-6 text-muted-foreground">
                       <Link href="/onboarding/connect" className="font-semibold text-primary underline-offset-4 hover:underline">
-                        اربط حساب إعلانات Google أولاً عشان تبدأ التجربة
+                        {TERMS.connect} أولاً لتبدأ التجربة
                       </Link>
                     </p>
                   ) : (
@@ -350,7 +368,7 @@ export default async function BillingPage({
                           block: true,
                         })}
                       >
-                        {trialEligible ? 'ابدأ تجربة 14 يوم' : 'اشترك الآن'}
+                        {trialEligible ? `ابدأ تجربة ${trialLabel}` : 'اشترك الآن'}
                       </PendingSubmitButton>
                     </form>
                   )}
@@ -411,5 +429,58 @@ export default async function BillingPage({
         </section>
       </div>
     </>
+  );
+}
+
+function UsageSection({ plan, meters }: { plan: PlanKey; meters: UsageMeter[] | null }) {
+  return (
+    <section className="surface-card overflow-hidden" aria-labelledby="usage-title">
+      <div className="border-b border-border px-5 py-4">
+        <h2 id="usage-title" className="text-[14px] font-semibold">
+          الاستخدام في خطة {planLabel(plan)}
+        </h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          لكل حد فترته الخاصة، ويعود العداد إلى الصفر عند نهايتها.
+        </p>
+      </div>
+      {meters === null ? (
+        <p className="px-5 py-6 text-sm text-muted-foreground">تعذرت قراءة الاستخدام الآن. أعد تحميل الصفحة بعد قليل.</p>
+      ) : (
+        <ul className="divide-y divide-border">
+          {meters.map((meter) => (
+            <li key={meter.feature} className="grid gap-2 px-5 py-4 sm:grid-cols-[200px_1fr_auto] sm:items-center sm:gap-5">
+              <div>
+                <div className="text-[13px] font-semibold text-foreground">{meter.label}</div>
+                <div className="mt-0.5 text-[11px] text-foreground-subtle">الحد {meter.periodLabel}</div>
+              </div>
+              <div
+                role="progressbar"
+                aria-label={meter.label}
+                aria-valuemin={0}
+                aria-valuemax={meter.limit}
+                aria-valuenow={Math.min(meter.used, meter.limit)}
+                className="h-1.5 w-full bg-muted"
+              >
+                <div
+                  className={cn(
+                    'h-full',
+                    meter.tone === 'full' ? 'bg-danger' : meter.tone === 'near' ? 'bg-warning' : 'bg-primary'
+                  )}
+                  style={{ width: `${meter.percent}%` }}
+                />
+              </div>
+              <div className="text-[12px] text-muted-foreground sm:text-end">
+                <span className="font-semibold text-foreground numeric">
+                  {formatNumberAr(meter.used)} من {formatNumberAr(meter.limit)}
+                </span>
+                {meter.tone === 'full' && (
+                  <span className="mt-0.5 block text-danger">يتجدد {formatResetAr(meter.resetsAt)}</span>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }

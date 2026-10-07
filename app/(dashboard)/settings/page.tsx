@@ -17,6 +17,7 @@ import { StatusBadge } from '@/lib/ui/status-badge';
 import { EmptyState } from '@/lib/ui/empty-state';
 import { buttonClasses } from '@/lib/ui/button';
 import { inputClasses } from '@/lib/ui/field';
+import { TERMS } from '@/lib/ui/labels';
 
 const deleteErrors: Record<string, string> = {
   invalid_origin: 'تعذر التحقق من مصدر الطلب. أعد المحاولة من داخل المنصة.',
@@ -148,14 +149,21 @@ export default async function SettingsPage({
         <section className="surface-card p-6">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <h2 className="text-[15px] font-semibold">حسابات إعلانات Google</h2>
+              <h2 className="text-[15px] font-semibold">حسابات Google Ads</h2>
               <p className="mt-1 text-sm text-muted-foreground">
                 سمِّ أي حساب باسم يسهل عليك تمييزه، خاصة الحسابات التي لم ترجع Google اسماً لها.
               </p>
             </div>
-            <Link href="/onboarding/connect" className={buttonClasses({ variant: 'outline', size: 'sm' })}>
-              إضافة حساب
-            </Link>
+            <div className="flex flex-wrap gap-2">
+              {(accounts ?? []).length > 0 && (
+                <Link href="/onboarding/connect" className={buttonClasses({ variant: 'outline', size: 'sm' })}>
+                  {TERMS.renewConnection}
+                </Link>
+              )}
+              <Link href="/onboarding/connect" className={buttonClasses({ variant: 'outline', size: 'sm' })}>
+                {TERMS.connect}
+              </Link>
+            </div>
           </div>
 
           {(accounts ?? []).length === 0 ? (
@@ -164,11 +172,11 @@ export default async function SettingsPage({
                 bare
                 icon={Link2}
                 title="لا توجد حسابات مربوطة"
-                description="اربط إعلانات Google بموافقة واحدة، ونسحب حسابك المباشر وكل حساب عميل تحت أي حساب إداري."
+                description="اربط Google Ads بموافقة واحدة، ونجلب حسابك المباشر وكل حساب عميل تحت أي حساب إداري."
                 className="rounded-lg border border-border bg-background-elevated py-10"
                 action={
                   <Link href="/onboarding/connect" className={buttonClasses({ variant: 'primary' })}>
-                    ربط إعلانات Google
+                    {TERMS.connect}
                   </Link>
                 }
               />
@@ -188,8 +196,8 @@ export default async function SettingsPage({
                           <div className="truncate font-semibold text-foreground">{googleAdsAccountDisplayName(account)}</div>
                           <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                             <span dir="ltr">{formatGoogleAdsCustomerId(account.customer_id)}</span>
-                            <span>· {account.currency_code ?? '—'}</span>
-                            <span>· {account.time_zone ?? '—'}</span>
+                            {account.currency_code && <span>· {account.currency_code}</span>}
+                            {account.time_zone && <span>· {account.time_zone}</span>}
                           </div>
                         </div>
                       </div>
@@ -224,7 +232,7 @@ export default async function SettingsPage({
         </section>
 
         {/* Danger zone */}
-        <section className="rounded-xl border border-danger/25 bg-danger/[0.04] p-6">
+        <section className="rounded-lg border border-danger/25 bg-danger/[0.04] p-6">
           <h2 className="text-[15px] font-semibold text-danger dark:text-danger">
             حذف الحساب نهائياً
           </h2>
@@ -242,7 +250,7 @@ export default async function SettingsPage({
               <span className="mb-2 block text-[13px] font-medium text-foreground">للتأكيد اكتب: حذف حسابي</span>
               <input
                 name="confirmation"
-                className="h-11 w-full rounded-lg border border-danger/30 bg-background-elevated px-3.5 text-sm text-foreground outline-none transition-[border-color,box-shadow] duration-150 placeholder:text-foreground-subtle focus:border-danger/70 focus:ring-4 focus:ring-danger/15"
+                className="h-11 w-full rounded-lg border border-danger/30 bg-background-elevated px-3.5 text-sm text-foreground outline-none placeholder:text-foreground-subtle focus:border-danger/70 focus:ring-2 focus:ring-danger/30"
                 placeholder="حذف حسابي"
                 aria-label="اكتب عبارة التأكيد: حذف حسابي"
                 autoComplete="off"
@@ -265,7 +273,7 @@ function Row({ label, value }: { label: string; value?: string | number | null }
   return (
     <div className="flex justify-between gap-4 border-b border-border pb-3 last:border-0">
       <dt className="text-muted-foreground">{label}</dt>
-      <dd className="min-w-0 truncate font-medium text-foreground">{value ?? '—'}</dd>
+      <dd className="min-w-0 truncate font-medium text-foreground">{value ?? 'غير محدد'}</dd>
     </div>
   );
 }
