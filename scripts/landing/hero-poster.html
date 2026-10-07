@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600&family=IBM+Plex+Mono:wght@500&family=Reem+Kufi:wght@600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      /* Hero still, identity v1.0. Flat navy and paper, one yellow square.
+         Render with: node scripts/landing/render-poster.mjs <abs html> <abs png>  (1920x1080). */
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; }
+      body {
+        font-family: 'IBM Plex Sans Arabic', sans-serif;
+        background: #0E1426;
+        color: #F4F2EC;
+        padding: 120px 140px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+      }
+      .head { display: flex; align-items: center; justify-content: space-between; }
+      .kicker { font-size: 34px; color: #AEB4C2; font-weight: 500; }
+      .sym { width: 84px; height: 84px; }
+      h1 {
+        font-family: 'Reem Kufi', sans-serif;
+        font-weight: 700;
+        font-size: 124px;
+        line-height: 1.16;
+        word-spacing: 0.22em;
+        max-width: 1500px;
+      }
+      .row { display: grid; grid-template-columns: repeat(4, 1fr); border: 2px solid #3A4260; }
+      .step { padding: 40px 36px 44px; border-inline-start: 2px solid #3A4260; min-height: 270px; }
+      .step:first-child { border-inline-start: 0; }
+      .n { font-family: 'IBM Plex Mono', monospace; font-size: 30px; color: #AEB4C2; display: flex; align-items: center; gap: 14px; }
+      .step h2 { margin-top: 26px; font-size: 54px; font-weight: 600; }
+      .step p { margin-top: 14px; font-size: 32px; line-height: 1.6; color: #AEB4C2; }
+      .you { background: #F4F2EC; color: #0E1426; }
+      .you .n, .you p { color: #586174; }
+      .sq { display: inline-block; width: 22px; height: 22px; background: #FBBC04; }
+    </style>
+  </head>
+  <body>
+    <div class="head">
+      <svg class="sym" viewBox="0 0 12 12" aria-hidden="true">
+        <rect x="4" y="0" width="8" height="8" fill="#F4F2EC" />
+        <rect x="0" y="8" width="4" height="4" fill="#F4F2EC" />
+        <rect x="10" y="0" width="2" height="2" fill="#FBBC04" />
+      </svg>
+      <span class="kicker">ميديا باير لإعلانات Google</span>
+    </div>
+    <h1>أربع مراحل<br />والثالثة منها لك</h1>
+    <div class="row">
+      <div class="step"><div class="n">01</div><h2>فحص</h2><p>الصرف والتحويلات وصحة الحساب</p></div>
+      <div class="step"><div class="n">02</div><h2>توصية</h2><p>الحملة المستهدفة والقيمة الجديدة</p></div>
+      <div class="step you"><div class="n">03 <span class="sq"></span></div><h2>موافقتك</h2><p>تعتمد أو تتجاهل</p></div>
+      <div class="step"><div class="n">04</div><h2>تنفيذ</h2><p>مع سجل تراجع للإجراء</p></div>
+    </div>
+  </body>
+</html>
