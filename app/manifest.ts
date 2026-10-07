@@ -11,14 +11,14 @@ export default function manifest(): MetadataRoute.Manifest {
     display: 'standalone',
     dir: 'rtl',
     lang: 'ar',
-    background_color: '#f8fafc',
-    theme_color: '#063d35',
+    background_color: '#F4F2EC',
+    theme_color: '#0E1426',
     icons: [
-      { src: '/favicon.svg?v=20260803', sizes: 'any', type: 'image/svg+xml' },
-      { src: '/icon-192.png?v=20260803', sizes: '192x192', type: 'image/png' },
-      { src: '/icon-512.png?v=20260803', sizes: '512x512', type: 'image/png' },
-      { src: '/icon-maskable-192.png?v=20260803', sizes: '192x192', type: 'image/png', purpose: 'maskable' },
-      { src: '/icon-maskable-512.png?v=20260803', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+      { src: '/favicon.svg?v=20261007', sizes: 'any', type: 'image/svg+xml' },
+      { src: '/icon-192.png?v=20261007', sizes: '192x192', type: 'image/png' },
+      { src: '/icon-512.png?v=20261007', sizes: '512x512', type: 'image/png' },
+      { src: '/icon-maskable-192.png?v=20261007', sizes: '192x192', type: 'image/png', purpose: 'maskable' },
+      { src: '/icon-maskable-512.png?v=20261007', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
     ],
   };
 }

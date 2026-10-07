@@ -136,7 +136,7 @@ export default async function BusinessOnboardingPage({
                       name="primary_goal"
                       value={goal.value}
                       defaultChecked={(business?.primary_goal ?? 'leads') === goal.value}
-                      className="h-4 w-4 accent-brand-600"
+                      className="h-4 w-4 accent-primary"
                     />
                     <span>{goal.label}</span>
                   </label>
@@ -174,7 +174,7 @@ export default async function BusinessOnboardingPage({
           <aside className="space-y-3">
             <div className="surface-card p-5">
               <div className="flex items-center gap-2 text-[13px] font-semibold text-foreground">
-                <Lightbulb className="h-4 w-4 text-amber-500" />
+                <Lightbulb className="h-4 w-4 text-warning" />
                 لماذا نطلب هذا؟
               </div>
               <p className="mt-3 text-[13px] leading-7 text-muted-foreground">
@@ -182,12 +182,12 @@ export default async function BusinessOnboardingPage({
                 لحجم إنفاقك وسوقك.
               </p>
             </div>
-            <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/[0.08] p-5">
-              <div className="flex items-center gap-2 text-[13px] font-semibold text-emerald-700 dark:text-emerald-300">
+            <div className="rounded-xl border border-success/25 bg-success/[0.08] p-5">
+              <div className="flex items-center gap-2 text-[13px] font-semibold text-success dark:text-success">
                 <ShieldCheck className="h-4 w-4" />
                 خطوتك القادمة
               </div>
-              <p className="mt-3 text-[13px] leading-7 text-emerald-800/90 dark:text-emerald-200/80">
+              <p className="mt-3 text-[13px] leading-7 text-success/90 dark:text-success/80">
                 بعد الحفظ ننتقل مباشرة لربط إعلانات Google بموافقة واحدة تسحب كل حساباتك.
               </p>
             </div>

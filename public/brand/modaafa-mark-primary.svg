@@ -1,7 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="مُضاعِف">
-  <rect x="4" y="4" width="120" height="120" rx="30" fill="#063D35"/>
-  <rect x="5" y="5" width="118" height="118" rx="29" fill="none" stroke="#2DD4A4" stroke-opacity=".28" stroke-width="2"/>
-  <path d="M31 34L51 54M77 80L96 99" fill="none" stroke="#2DD4A4" stroke-width="16" stroke-linecap="round"/>
-  <path d="M31 97L93 35" fill="none" stroke="#F8FAFC" stroke-width="16" stroke-linecap="round"/>
-  <path d="M78 27H101V50" fill="none" stroke="#F5B63D" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
-</svg>

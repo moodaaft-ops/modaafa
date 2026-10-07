@@ -64,7 +64,7 @@ export function Field({
         <span>
           {label}
           {required && (
-            <span className="text-red-500" aria-hidden>
+            <span className="text-danger" aria-hidden>
               {' '}
               *
             </span>
@@ -80,13 +80,13 @@ export function Field({
       <span
         className={cn(
           'block',
-          error && '[&_input]:border-red-500/60 [&_select]:border-red-500/60 [&_textarea]:border-red-500/60'
+          error && '[&_input]:border-danger/60 [&_select]:border-danger/60 [&_textarea]:border-danger/60'
         )}
       >
         {children}
       </span>
       {error && (
-        <span className="mt-2 block text-xs font-medium text-red-500" role="alert">
+        <span className="mt-2 block text-xs font-medium text-danger" role="alert">
           {error}
         </span>
       )}

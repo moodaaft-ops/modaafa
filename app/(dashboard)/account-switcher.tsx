@@ -255,12 +255,12 @@ export function AccountSwitcher({
 
   if (accounts.length === 0) {
     return (
-      <div className="mx-4 mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-500/25 dark:bg-amber-500/15">
-        <div className="flex items-center gap-2 text-sm font-semibold text-amber-900 dark:text-amber-200">
+      <div className="mx-4 mt-4 rounded-lg border border-warning/30 bg-warning-soft p-3 dark:border-warning/25 dark:bg-warning/15">
+        <div className="flex items-center gap-2 text-sm font-semibold text-warning dark:text-warning">
           <CircleAlert className="h-4 w-4" />
           {revokedAccount ? 'انتهت صلاحية ربط Google Ads' : 'لا يوجد حساب إعلاني'}
         </div>
-        <p className="mt-1 text-xs leading-5 text-amber-800 dark:text-amber-300">
+        <p className="mt-1 text-xs leading-5 text-warning dark:text-warning">
           {revokedAccount
             ? `انتهت صلاحية الربط لحساب ${revokedAccountLabel}${
                 revokedAccounts.length > 1 ? ` و${revokedAccounts.length - 1} حساب آخر` : ''
@@ -270,7 +270,7 @@ export function AccountSwitcher({
         {pausedNotice}
         <Link
           href="/onboarding/connect"
-          className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/12 px-3 py-2 text-[11.5px] font-semibold text-amber-600 transition-colors hover:bg-amber-500/20 dark:text-amber-300"
+          className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-md border border-warning/30 bg-warning/12 px-3 py-2 text-[11.5px] font-semibold text-warning transition-colors hover:bg-warning/20 dark:text-warning"
         >
           {revokedAccount ? <RefreshCw className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
           {revokedAccount ? 'إعادة ربط Google Ads' : 'ربط حساب'}
@@ -289,7 +289,7 @@ export function AccountSwitcher({
           {busy ? (
             <RefreshCw className="h-3 w-3 animate-spin text-primary" />
           ) : (
-            <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+            <CheckCircle2 className="h-3 w-3 text-success" />
           )}
           {accounts.length} حساب
         </span>
@@ -359,7 +359,7 @@ export function AccountSwitcher({
                       {formatGoogleAdsCustomerId(account.customer_id)}
                     </span>
                     {missing && (
-                      <span className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+                      <span className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-warning dark:text-warning">
                         <CircleAlert className="h-3 w-3" />
                         Google لم ترجع اسماً، سمّه من الإعدادات
                       </span>
@@ -383,7 +383,7 @@ export function AccountSwitcher({
                 type="button"
                 onClick={repairNamesManually}
                 disabled={repairingNames}
-                className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-semibold text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-500/15 disabled:opacity-60"
+                className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-semibold text-warning dark:text-warning hover:bg-warning-soft dark:hover:bg-warning/15 disabled:opacity-60"
               >
                 <RefreshCw className={cn('h-3.5 w-3.5', repairingNames && 'animate-spin')} />
                 جلب أسماء {missingCount} حساب
@@ -395,7 +395,7 @@ export function AccountSwitcher({
       </div>
 
       {revokedAccount && (
-        <div className="mt-3 rounded-md border border-amber-300/70 bg-amber-50 px-2.5 py-2 text-[11px] leading-5 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-200">
+        <div className="mt-3 rounded-md border border-warning/70 bg-warning-soft px-2.5 py-2 text-[11px] leading-5 text-warning dark:border-warning/30 dark:bg-warning/15 dark:text-warning">
           <div className="flex items-start gap-2">
             <CircleAlert className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
             <span>
@@ -408,7 +408,7 @@ export function AccountSwitcher({
           </div>
           <Link
             href="/onboarding/connect"
-            className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-amber-500/35 bg-amber-500/10 px-2.5 py-1.5 font-semibold text-amber-800 transition-colors hover:bg-amber-500/20 dark:text-amber-200"
+            className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-warning/35 bg-warning/10 px-2.5 py-1.5 font-semibold text-warning transition-colors hover:bg-warning/20 dark:text-warning"
           >
             <RefreshCw className="h-3.5 w-3.5" />
             إعادة الربط
@@ -427,7 +427,7 @@ export function AccountSwitcher({
       )}
 
       {(repairingNames || nameRepairMessage) && !open && (
-        <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-100 dark:border-amber-500/25 bg-amber-50 dark:bg-amber-500/15 px-2 py-2 text-[11px] leading-5 text-amber-800 dark:text-amber-300">
+        <div className="mt-2 flex items-start gap-2 rounded-lg border border-warning/30 dark:border-warning/25 bg-warning-soft dark:bg-warning/15 px-2 py-2 text-[11px] leading-5 text-warning dark:text-warning">
           {repairingNames && <RefreshCw className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 animate-spin" />}
           <span>{repairingNames ? 'جاري تحديث أسماء الحسابات من Google...' : nameRepairMessage}</span>
         </div>
@@ -445,7 +445,7 @@ export function AccountSwitcher({
 
       <div className="mt-2 min-h-[1rem] text-[11px] leading-5">
         {syncedJustNow ? (
-          <span className="inline-flex items-center gap-1 font-medium text-emerald-600 dark:text-emerald-400">
+          <span className="inline-flex items-center gap-1 font-medium text-success dark:text-success">
             <CheckCircle2 className="h-3.5 w-3.5" />
             تم تحديث البيانات الآن
           </span>
@@ -459,7 +459,7 @@ export function AccountSwitcher({
       </div>
 
       {error && (
-        <div className="mt-2 flex items-start gap-2 rounded-lg border border-red-100 dark:border-red-500/25 bg-red-50 dark:bg-red-500/15 px-2 py-2 text-[11px] leading-5 text-red-700 dark:text-red-300">
+        <div className="mt-2 flex items-start gap-2 rounded-lg border border-danger/30 dark:border-danger/25 bg-danger-soft dark:bg-danger/15 px-2 py-2 text-[11px] leading-5 text-danger dark:text-danger">
           <CircleAlert className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
           <span>{error}</span>
         </div>

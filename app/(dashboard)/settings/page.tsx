@@ -224,8 +224,8 @@ export default async function SettingsPage({
         </section>
 
         {/* Danger zone */}
-        <section className="rounded-xl border border-red-500/25 bg-red-500/[0.04] p-6">
-          <h2 className="text-[15px] font-semibold text-red-700 dark:text-red-300">
+        <section className="rounded-xl border border-danger/25 bg-danger/[0.04] p-6">
+          <h2 className="text-[15px] font-semibold text-danger dark:text-danger">
             حذف الحساب نهائياً
           </h2>
           <p className="mt-2 max-w-3xl text-[13px] leading-7 text-muted-foreground">
@@ -242,7 +242,7 @@ export default async function SettingsPage({
               <span className="mb-2 block text-[13px] font-medium text-foreground">للتأكيد اكتب: حذف حسابي</span>
               <input
                 name="confirmation"
-                className="h-11 w-full rounded-lg border border-red-500/30 bg-background-elevated px-3.5 text-sm text-foreground outline-none transition-[border-color,box-shadow] duration-150 placeholder:text-foreground-subtle focus:border-red-500/70 focus:ring-4 focus:ring-red-500/15"
+                className="h-11 w-full rounded-lg border border-danger/30 bg-background-elevated px-3.5 text-sm text-foreground outline-none transition-[border-color,box-shadow] duration-150 placeholder:text-foreground-subtle focus:border-danger/70 focus:ring-4 focus:ring-danger/15"
                 placeholder="حذف حسابي"
                 aria-label="اكتب عبارة التأكيد: حذف حسابي"
                 autoComplete="off"

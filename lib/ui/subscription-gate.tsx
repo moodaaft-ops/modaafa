@@ -25,7 +25,7 @@ export function SubscriptionGate({
   }
 
   return (
-    <section className="mx-auto max-w-2xl surface-card p-8 text-center shadow-card">
+    <section className="mx-auto max-w-2xl surface-card p-8 text-center">
       <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-lg bg-primary/10 text-primary dark:bg-primary/15 dark:text-primary">
         <Sparkles className="h-7 w-7" />
       </span>

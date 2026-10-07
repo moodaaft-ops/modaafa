@@ -3,6 +3,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { Alert } from '@/lib/ui/alert';
 import { ConfirmForm } from './confirm-form';
+import { LogoMark } from '@/lib/ui/logo';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,7 +36,7 @@ export default async function AuthConfirmPage({ searchParams }: { searchParams: 
     <main className="flex min-h-screen items-center justify-center bg-background p-4">
       <div className="w-full max-w-md surface-card p-6 sm:p-8">
         <Link href="/" className="mb-7 flex items-center gap-3">
-          <Image src="/logo-mark.svg" alt="مُضاعِف" width={40} height={40} className="h-10 w-10 rounded-xl" />
+          <LogoMark size={40} alt="مُضاعِف" />
           <span className="text-[15px] font-semibold">مُضاعِف</span>
         </Link>
 

@@ -34,7 +34,7 @@ export function ConfirmForm({ tokenHash, type, next, redirectTo }: Props) {
         type="submit"
         disabled={pending}
         aria-busy={pending}
-        className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-primary text-[0.9375rem] font-semibold text-primary-foreground shadow-[inset_0_1px_0_0_hsl(0_0%_100%/0.18)] transition-[background-color,box-shadow] duration-150 hover:bg-primary/90 hover:shadow-glow-brand disabled:opacity-60"
+        className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-primary text-[0.9375rem] font-semibold text-primary-foreground transition-colors duration-150 hover:bg-primary/90 disabled:opacity-60"
       >
         {pending ? <Loader2 className="h-5 w-5 animate-spin" /> : <ArrowLeft className="h-4 w-4" />}
         {pending ? 'جاري الدخول...' : 'أكمل الدخول'}

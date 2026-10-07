@@ -8,6 +8,7 @@ import { Alert } from '@/lib/ui/alert';
 import { ThemeToggle } from '@/lib/ui/theme-toggle';
 import { safeLocalPath } from '@/lib/security/redirect';
 import { authErrorFromHash } from '@/lib/auth/email-confirm';
+import { LogoLockup, LogoMark } from '@/lib/ui/logo';
 
 const authErrors: Record<string, string> = {
   auth_callback_failed: 'تعذر إكمال تسجيل الدخول. أعد المحاولة، وإذا تكرر جرّب رابط بريد جديد.',
@@ -110,23 +111,9 @@ export default function LoginPage() {
             indistinguishable from the card, so the split read as one dead
             rectangle; the ambient glow and grid give it depth instead. */}
         <section className="relative hidden flex-col justify-between overflow-hidden border-e border-border bg-background-elevated p-10 lg:flex">
-          <div className="canvas-glow pointer-events-none absolute inset-0" aria-hidden />
-          <div className="canvas-grid pointer-events-none absolute inset-0" aria-hidden />
           <div className="relative">
             <Link href="/" className="flex items-center gap-2.5">
-              <Image
-                src="/logo-mark.svg"
-                alt="شعار مُضاعِف"
-                width={32}
-                height={32}
-                className="h-8 w-8 rounded-lg"
-              />
-              <span>
-                <span className="block text-[13px] font-semibold leading-tight">مُضاعِف</span>
-                <span className="block text-[10px] leading-tight text-muted-foreground" dir="ltr">
-                  Modaafa Ads AI
-                </span>
-              </span>
+              <LogoLockup height={36} alt="مُضاعِف" priority />
             </Link>
             <h1 className="mt-14 max-w-lg text-display-sm font-bold text-balance">
               اربط حساب إعلانات <span dir="ltr">Google</span>، وخلّي المنصة تطلع لك الفحص والتوصيات ومركز الموافقات.
@@ -159,7 +146,7 @@ export default function LoginPage() {
           </div>
           <div className="w-full">
             <Link href="/" className="mb-8 flex items-center gap-3 lg:hidden">
-              <Image src="/logo-mark.svg" alt="مُضاعِف" width={40} height={40} className="h-10 w-10 rounded-xl" />
+              <LogoMark size={40} alt="مُضاعِف" />
               <span className="text-[15px] font-semibold">مُضاعِف</span>
             </Link>
 
@@ -240,7 +227,7 @@ export default function LoginPage() {
                   type="submit"
                   disabled={sending}
                   aria-busy={sending}
-                  className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-primary text-[0.9375rem] font-semibold text-primary-foreground shadow-[inset_0_1px_0_0_hsl(0_0%_100%/0.18)] transition-[background-color,box-shadow] duration-150 hover:bg-primary/90 hover:shadow-glow-brand disabled:opacity-50"
+                  className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-primary text-[0.9375rem] font-semibold text-primary-foreground transition-colors duration-150 hover:bg-primary/90 disabled:opacity-50"
                 >
                   {sending ? <Loader2 className="h-5 w-5 animate-spin" /> : <ArrowLeft className="h-4 w-4" />}
                   {sending ? 'جاري الإرسال...' : 'إرسال رابط الدخول'}
@@ -250,7 +237,7 @@ export default function LoginPage() {
             )}
 
             <div className="mt-6 flex items-center gap-2 rounded-lg bg-muted px-3 py-2.5 text-xs text-muted-foreground">
-              <ShieldCheck className="h-4 w-4 flex-shrink-0 text-emerald-500" />
+              <ShieldCheck className="h-4 w-4 flex-shrink-0 text-success" />
               دخولك آمن، ولا ننفّذ أي تعديل على إعلاناتك بدون موافقتك.
             </div>
 

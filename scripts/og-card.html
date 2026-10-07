@@ -5,94 +5,60 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600&family=IBM+Plex+Mono:wght@500&family=Reem+Kufi:wght@600;700&display=swap"
       rel="stylesheet"
     />
     <style>
+      /* Identity v1.0: flat navy, paper type, signal yellow as one small mark. */
       * { margin: 0; padding: 0; box-sizing: border-box; }
       html, body { width: 1200px; height: 630px; }
       body {
         font-family: 'IBM Plex Sans Arabic', sans-serif;
-        background:
-          radial-gradient(60rem 34rem at 78% -14%, hsl(158 84% 45% / 0.20), transparent 68%),
-          radial-gradient(44rem 26rem at 12% 116%, hsl(158 84% 45% / 0.10), transparent 70%),
-          #0a0c11;
-        color: #eef2f7;
+        background: #0E1426;
+        color: #F4F2EC;
         position: relative;
         overflow: hidden;
       }
-      .grid {
-        position: absolute; inset: 0;
-        background-image:
-          linear-gradient(to right, hsl(220 12% 100% / 0.04) 1px, transparent 1px),
-          linear-gradient(to bottom, hsl(220 12% 100% / 0.04) 1px, transparent 1px);
-        background-size: 60px 60px;
-        -webkit-mask-image: radial-gradient(closest-side at 70% 20%, #000 45%, transparent 100%);
-      }
       .wrap {
-        position: relative; height: 100%;
+        height: 100%;
         display: flex; flex-direction: column; justify-content: space-between;
-        padding: 72px 80px;
+        padding: 64px 80px;
       }
-      .top { display: flex; align-items: center; gap: 18px; }
-      .mark {
-        width: 76px; height: 76px; border-radius: 20px;
-        box-shadow: 0 0 0 1px hsl(158 72% 45% / 0.35), 0 18px 50px -14px hsl(158 72% 45% / 0.5);
+      .top { display: flex; align-items: center; justify-content: space-between; }
+      .lockup { height: 92px; }
+      .url {
+        font-family: 'IBM Plex Mono', monospace; font-size: 24px; font-weight: 500;
+        color: #9AA0AE; direction: ltr; letter-spacing: 0.04em;
       }
-      .brand { font-size: 40px; font-weight: 700; letter-spacing: 0; }
-      .pill {
-        margin-inline-start: auto;
-        display: inline-flex; align-items: center; gap: 10px;
-        border: 1px solid hsl(220 12% 100% / 0.14);
-        background: hsl(220 14% 100% / 0.04);
-        color: #aeb7c4; font-size: 22px; font-weight: 500;
-        padding: 12px 20px; border-radius: 14px; direction: ltr;
-      }
-      .dot { width: 11px; height: 11px; border-radius: 50%; background: #10b981; box-shadow: 0 0 14px 2px hsl(158 72% 45% / 0.7); }
       h1 {
-        font-size: 74px; line-height: 1.14; font-weight: 700; max-width: 20ch;
+        font-family: 'Reem Kufi', 'IBM Plex Sans Arabic', sans-serif;
+        font-size: 70px; line-height: 1.2; font-weight: 700;
       }
-      h1 .accent { color: #34d399; }
-      .sub {
-        margin-top: 28px; display: flex; align-items: center; gap: 18px;
-        font-size: 30px; color: #aeb7c4; font-weight: 500;
-      }
-      .sep { color: #34d399; font-weight: 700; }
+      .rule { width: 72px; height: 10px; background: #FBBC04; margin-top: 32px; }
+      .sub { margin-top: 30px; font-size: 30px; color: #CDCFD4; font-weight: 500; }
       .foot {
         display: flex; align-items: center; justify-content: space-between;
-        border-top: 1px solid hsl(220 12% 100% / 0.10); padding-top: 26px;
+        border-top: 1px solid #2A3144; padding-top: 24px;
+        font-size: 24px; color: #9AA0AE; font-weight: 500;
       }
-      .url { font-size: 26px; color: #8b95a3; direction: ltr; font-weight: 600; }
-      .tag { font-size: 24px; color: #c6cdd8; font-weight: 500; }
     </style>
   </head>
   <body>
-    <div class="grid"></div>
     <div class="wrap">
       <div class="top">
-        <svg class="mark" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
-          <rect width="128" height="128" rx="28" fill="#064e3b" />
-          <path d="M35 80c0-23 13-37 32-37 16 0 27 10 27 25 0 16-12 28-30 28H35V80Z" fill="#ffffff" />
-          <path d="M51 80h13c9 0 15-5 15-12 0-7-5-11-13-11-10 0-15 8-15 23Z" fill="#10b981" />
-          <circle cx="93" cy="35" r="11" fill="#f59e0b" />
-          <path d="M30 35h35" stroke="#ffffff" stroke-width="10" stroke-linecap="round" />
-        </svg>
-        <span class="brand">مُضاعِف</span>
-        <span class="pill"><span class="dot"></span>ai.modaafa.com</span>
+        <img class="lockup" src="../public/brand/modaafa-lockup-reversed.svg" alt="" />
+        <span class="url">ai.modaafa.com</span>
       </div>
 
       <div>
-        <h1>الميديا باير <span class="accent">الذكي</span> لإعلانات Google</h1>
-        <div class="sub">
-          <span>فحص الحساب</span><span class="sep">·</span>
-          <span>توصيات مرتّبة</span><span class="sep">·</span>
-          <span>موافقة قبل أي تعديل</span>
-        </div>
+        <h1>الميديا باير الذكي لإعلانات Google</h1>
+        <div class="rule"></div>
+        <div class="sub" style="margin-top:24px">فحص للحساب وتوصيات مرتّبة، وموافقتك قبل أي تعديل.</div>
       </div>
 
       <div class="foot">
-        <span class="tag">منصة عربية لإدارة حسابات Google Ads بالذكاء الاصطناعي</span>
-        <span class="url">Modaafa Ads AI</span>
+        <span>منصة عربية لإدارة حسابات Google Ads بالذكاء الاصطناعي</span>
+        <span dir="ltr">Modaafa Ads AI</span>
       </div>
     </div>
   </body>

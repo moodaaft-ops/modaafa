@@ -209,8 +209,8 @@ function WeekDelta({
     direction === 'flat' || neutral
       ? 'text-muted-foreground'
       : direction === 'up'
-        ? 'text-emerald-600 dark:text-emerald-400'
-        : 'text-red-600 dark:text-red-400';
+        ? 'text-success dark:text-success'
+        : 'text-danger dark:text-danger';
   return (
     <div className="rounded-lg border border-border bg-background-elevated px-4 py-3">
       <div className="text-[11px] font-medium text-foreground-subtle">{label}</div>

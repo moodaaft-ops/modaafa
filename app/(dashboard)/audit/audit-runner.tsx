@@ -155,12 +155,12 @@ export function AuditRunner({
       </form>
 
       {(running || error) && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/65 p-4 backdrop-blur-sm" role="presentation">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-foreground/60 p-4" role="presentation">
           <section
             role="dialog"
             aria-modal="true"
             aria-labelledby="audit-progress-title"
-            className="w-full max-w-2xl overflow-hidden rounded-xl border border-border bg-card shadow-2xl"
+            className="w-full max-w-2xl overflow-hidden rounded-xl border border-border bg-card"
           >
             <div className="border-b border-border px-5 py-5 sm:px-7">
               <div className="flex items-start justify-between gap-4">
@@ -173,7 +173,7 @@ export function AuditRunner({
                 </div>
                 <div className={cn(
                   'flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-xl text-lg font-bold numeric',
-                  error ? 'bg-red-500/12 text-red-600 dark:text-red-300' : 'bg-primary/12 text-primary'
+                  error ? 'bg-danger/12 text-danger dark:text-danger' : 'bg-primary/12 text-primary'
                 )}>
                   {error ? <TriangleAlert className="h-6 w-6" aria-hidden /> : `${percent}%`}
                 </div>
@@ -188,7 +188,7 @@ export function AuditRunner({
                 aria-valuenow={percent}
               >
                 <div
-                  className={cn('h-full rounded-full transition-[width] duration-500', error ? 'bg-red-500' : 'bg-primary')}
+                  className={cn('h-full rounded-full transition-[width] duration-500', error ? 'bg-danger' : 'bg-primary')}
                   style={{ width: `${percent}%` }}
                 />
               </div>
@@ -203,7 +203,7 @@ export function AuditRunner({
                   <li key={definition.id} className="flex gap-3 py-3.5">
                     <div className="mt-0.5 flex-shrink-0">
                       {completed ? (
-                        <CheckCircle2 className={cn('h-5 w-5', state.warning ? 'text-amber-500' : 'text-emerald-500')} aria-hidden />
+                        <CheckCircle2 className={cn('h-5 w-5', state.warning ? 'text-warning' : 'text-success')} aria-hidden />
                       ) : active ? (
                         <Loader2 className="h-5 w-5 animate-spin text-primary" aria-hidden />
                       ) : (
@@ -222,7 +222,7 @@ export function AuditRunner({
                             : 'بانتظار اكتمال الخطوة السابقة'}
                       </p>
                       {state?.detail && (
-                        <p className={cn('mt-1 text-xs leading-5', state.warning ? 'text-amber-600 dark:text-amber-300' : 'text-muted-foreground')}>
+                        <p className={cn('mt-1 text-xs leading-5', state.warning ? 'text-warning dark:text-warning' : 'text-muted-foreground')}>
                           {state.detail}
                         </p>
                       )}

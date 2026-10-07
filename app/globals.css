@@ -3,81 +3,100 @@
 @tailwind utilities;
 
 /* =====================================================================
-   مُضاعِف — design tokens
-   Dark-first, in the Linear/Vercel register: near-black canvas, surfaces
-   separated by a hairline border plus a 1px inner highlight rather than a
-   drop shadow, one accent colour used sparingly, and tight typography.
-   Light mode is a full peer, not an afterthought.
+   مُضاعِف — design tokens (identity v1.0, approved 2026-09-29)
+   Flat and sharp: navy on off-white paper, one signal yellow used under 10%
+   of any screen, hairline borders instead of shadows, no gradients, no glow,
+   no purple. Light is the default theme; dark is a peer built from the same
+   navy. Hex source of truth: navy #0E1426, paper #F4F2EC, slate #586174,
+   signal #FBBC04.
    ===================================================================== */
 
 @layer base {
-  /* Light tokens live on :root so every `dark:` utility in the codebase keeps
-     working. Dark is the DEFAULT THEME, applied by the boot script in
-     app/layout.tsx unless the user has explicitly chosen light. */
   :root {
-    --background: 220 20% 98%;
-    --background-elevated: 0 0% 100%;
-    --canvas-glow: 158 70% 40%;
+    --background: 45 27% 94%;            /* paper #F4F2EC */
+    --background-elevated: 45 30% 97%;
+    --canvas-glow: 45 97% 50%;           /* kept only so old references resolve; unused */
 
-    --card: 0 0% 100%;
-    --surface: 220 25% 99%;
-    --elevated: 0 0% 100%;
-    --muted: 220 16% 95%;
-    --muted-foreground: 220 9% 44%;
+    --card: 45 30% 97%;
+    --surface: 45 22% 92%;
+    --elevated: 45 30% 98%;
+    --muted: 45 16% 89%;
+    --muted-foreground: 221 14% 40%;     /* slate #586174 */
 
-    --foreground: 222 40% 9%;
-    --foreground-subtle: 220 12% 34%;
+    --foreground: 225 46% 10%;           /* navy #0E1426 */
+    --foreground-subtle: 224 22% 24%;
 
-    --border: 220 15% 90%;
-    --border-strong: 220 14% 82%;
-    /* Darker than the decorative border so form fields clear 3:1 (1.4.11). */
-    --input: 220 14% 72%;
+    --border: 225 14% 80%;
+    --border-strong: 225 16% 64%;
+    /* Form-control boundary: >= 3:1 on paper (WCAG 1.4.11). */
+    --input: 221 12% 48%;
 
-    --primary: 161 88% 24%;
-    --primary-foreground: 0 0% 100%;
-    --ring: 158 78% 34%;
+    --primary: 225 46% 10%;
+    --primary-foreground: 45 27% 94%;
+    --ring: 225 46% 10%;
 
-    --sidebar: 220 24% 99%;
+    /* Signal yellow: highlights opportunity, never a surface fill for text. */
+    --signal: 45 97% 50%;                /* #FBBC04 */
+    --signal-foreground: 225 46% 10%;
 
-    /* In light mode the "inner highlight" is simply white. */
-    --edge-highlight: 0 0% 100% / 0.9;
-    --edge-highlight-strong: 0 0% 100% / 1;
+    /* Semantic status colours, deliberately outside the brand palette. */
+    --success: 152 52% 24%;
+    --success-soft: 150 30% 90%;
+    --warning: 32 90% 30%;
+    --warning-soft: 45 85% 88%;
+    --danger: 0 62% 40%;
+    --danger-soft: 0 55% 93%;
+    --info: 221 14% 40%;
+    --info-soft: 225 18% 90%;
 
-    --radius: 0.625rem;
+    --sidebar: 45 22% 91%;
+
+    --edge-highlight: 0 0% 0% / 0;
+    --edge-highlight-strong: 0 0% 0% / 0;
+
+    --radius: 2px;
 
     color-scheme: light;
   }
 
-  /* The default theme. Near-black canvas, surfaces lifted by a hairline
-     border plus a 1px inner highlight rather than a drop shadow. */
   .dark {
-    --background: 222 24% 5%;
-    --background-elevated: 222 20% 7%;
-    --canvas-glow: 158 84% 45%;
+    --background: 225 46% 10%;           /* navy */
+    --background-elevated: 225 42% 12%;
+    --canvas-glow: 45 97% 50%;
 
-    --card: 222 18% 8%;
-    --surface: 222 16% 10%;
-    --elevated: 222 15% 13%;
-    --muted: 222 14% 14%;
-    --muted-foreground: 218 12% 62%;
+    --card: 225 40% 13%;
+    --surface: 225 38% 15%;
+    --elevated: 225 36% 17%;
+    --muted: 225 32% 18%;
+    --muted-foreground: 223 14% 66%;
 
-    --foreground: 210 20% 96%;
-    --foreground-subtle: 215 14% 74%;
+    --foreground: 45 27% 94%;
+    --foreground-subtle: 45 14% 78%;
 
-    --border: 220 12% 18%;
-    --border-strong: 220 12% 26%;
-    /* Form-control boundary must clear WCAG 1.4.11 (3:1) against the field
-       fill; 22% read at ~1.6:1 and fields looked borderless until focus. */
-    --input: 220 12% 34%;
+    --border: 225 24% 24%;
+    --border-strong: 225 22% 36%;
+    --input: 224 16% 50%;
 
-    --primary: 158 72% 45%;
-    --primary-foreground: 158 90% 6%;
-    --ring: 158 72% 52%;
+    --primary: 45 27% 94%;
+    --primary-foreground: 225 46% 10%;
+    --ring: 45 97% 50%;
 
-    --sidebar: 222 22% 6%;
+    --signal: 45 97% 50%;
+    --signal-foreground: 225 46% 10%;
 
-    --edge-highlight: 0 0% 100% / 0.055;
-    --edge-highlight-strong: 0 0% 100% / 0.09;
+    --success: 150 45% 62%;
+    --success-soft: 152 30% 16%;
+    --warning: 43 92% 62%;
+    --warning-soft: 40 40% 16%;
+    --danger: 0 80% 72%;
+    --danger-soft: 0 35% 18%;
+    --info: 223 14% 70%;
+    --info-soft: 225 28% 18%;
+
+    --sidebar: 225 46% 8%;
+
+    --edge-highlight: 0 0% 0% / 0;
+    --edge-highlight-strong: 0 0% 0% / 0;
 
     color-scheme: dark;
   }
@@ -113,6 +132,7 @@
   h2,
   h3,
   h4 {
+    font-family: var(--font-display), var(--font-arabic), system-ui, sans-serif;
     letter-spacing: normal;
     line-height: 1.25;
   }
@@ -130,11 +150,11 @@
   :focus-visible {
     outline: 2px solid hsl(var(--ring));
     outline-offset: 2px;
-    border-radius: 6px;
+    border-radius: 0;
   }
 
   ::selection {
-    background: hsl(var(--primary) / 0.28);
+    background: hsl(var(--signal) / 0.45);
     color: hsl(var(--foreground));
   }
 
@@ -155,26 +175,17 @@
 }
 
 @layer components {
-  /* The core surface treatment. A hairline border carries the shape and a 1px
-     inset highlight along the top edge carries the elevation — the same trick
-     Linear and Vercel use, and it survives dark mode where drop shadows die. */
+  /* Flat surfaces: the hairline carries the shape, nothing else. */
   .surface-card {
     background-color: hsl(var(--card));
     border: 1px solid hsl(var(--border));
     border-radius: var(--radius);
-    box-shadow:
-      inset 0 1px 0 0 hsl(var(--edge-highlight)),
-      0 1px 2px 0 hsl(222 40% 2% / 0.4);
   }
 
   .surface-raised {
     background-color: hsl(var(--elevated));
     border: 1px solid hsl(var(--border-strong));
     border-radius: var(--radius);
-    box-shadow:
-      inset 0 1px 0 0 hsl(var(--edge-highlight-strong)),
-      0 8px 24px -12px hsl(222 60% 2% / 0.7),
-      0 2px 6px -2px hsl(222 60% 2% / 0.5);
   }
 
   .surface-sunken {
@@ -183,16 +194,28 @@
     border-radius: var(--radius);
   }
 
-  /* Interactive rows/cards: the border brightens rather than the fill. */
   .surface-interactive {
     transition:
       border-color 150ms ease,
-      background-color 150ms ease,
-      box-shadow 150ms ease;
+      background-color 150ms ease;
   }
   .surface-interactive:hover {
-    border-color: hsl(var(--border-strong));
+    border-color: hsl(var(--foreground));
     background-color: hsl(var(--surface));
+  }
+
+  /* Status square: the brand's own geometry used as a state marker. */
+  .status-square {
+    display: inline-block;
+    width: 0.5rem;
+    height: 0.5rem;
+    background-color: currentColor;
+  }
+
+  /* Numerals in the mono face, Latin digits. */
+  .font-numeric {
+    font-family: var(--font-mono), ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
   }
 }
 
@@ -201,43 +224,20 @@
     text-wrap: balance;
   }
 
+  /* Identity is flat: these legacy helpers stay as no-ops so existing
+     markup keeps compiling while screens are migrated, then they go. */
   .text-gradient-brand {
-    background: linear-gradient(
-      160deg,
-      hsl(var(--foreground)) 0%,
-      hsl(var(--foreground)) 35%,
-      hsl(var(--primary)) 110%
-    );
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
+    color: hsl(var(--foreground));
   }
-
-  /* Ambient light behind the hero and empty states. */
   .canvas-glow {
-    background-image:
-      radial-gradient(60rem 32rem at 50% -10%, hsl(var(--canvas-glow) / 0.16), transparent 70%),
-      radial-gradient(40rem 24rem at 85% 10%, hsl(var(--canvas-glow) / 0.08), transparent 70%);
+    background-image: none;
   }
-
   .canvas-grid {
-    background-image:
-      linear-gradient(to right, hsl(var(--border) / 0.55) 1px, transparent 1px),
-      linear-gradient(to bottom, hsl(var(--border) / 0.55) 1px, transparent 1px);
-    background-size: 56px 56px;
-    -webkit-mask-image: radial-gradient(closest-side at 50% 30%, #000 40%, transparent 100%);
-    mask-image: radial-gradient(closest-side at 50% 30%, #000 40%, transparent 100%);
+    background-image: none;
   }
-
-  /* Hairline that fades at both ends — used under sticky headers. */
   .rule-fade {
-    background: linear-gradient(
-      to left,
-      transparent,
-      hsl(var(--border-strong)) 18%,
-      hsl(var(--border-strong)) 82%,
-      transparent
-    );
+    background: hsl(var(--border-strong));
+    height: 1px;
   }
 
   .scrollbar-thin::-webkit-scrollbar {

@@ -543,10 +543,10 @@ function ChatBubble({ item }: { item: ChatItem }) {
               className={cn(
                 'rounded-full border px-2 py-0.5 font-semibold',
                 item.analysisMeta.confidence === 'high'
-                  ? 'border-emerald-500/25 bg-emerald-500/[0.08] text-emerald-700 dark:text-emerald-300'
+                  ? 'border-success/25 bg-success/[0.08] text-success dark:text-success'
                   : item.analysisMeta.confidence === 'medium'
-                    ? 'border-amber-500/25 bg-amber-500/[0.08] text-amber-700 dark:text-amber-300'
-                    : 'border-red-500/25 bg-red-500/[0.08] text-red-700 dark:text-red-300'
+                    ? 'border-warning/25 bg-warning/[0.08] text-warning dark:text-warning'
+                    : 'border-danger/25 bg-danger/[0.08] text-danger dark:text-danger'
               )}
             >
               ثقة التحليل: {item.analysisMeta.confidence_ar}
@@ -557,7 +557,7 @@ function ChatBubble({ item }: { item: ChatItem }) {
             <div className="mt-1.5">المصادر: {item.analysisMeta.sources_ar.join('، ')}</div>
           )}
           {item.analysisMeta.gaps_ar.length > 0 && item.analysisMeta.confidence !== 'high' && (
-            <div className="mt-1 text-amber-700 dark:text-amber-300">
+            <div className="mt-1 text-warning dark:text-warning">
               ما يحد الدقة: {item.analysisMeta.gaps_ar[0]}
             </div>
           )}
@@ -565,7 +565,7 @@ function ChatBubble({ item }: { item: ChatItem }) {
       )}
 
       {item.role === 'assistant' && item.aiBackend === 'fallback' && (
-        <div className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/[0.08] px-3 py-2 text-xs leading-6 text-amber-700 dark:text-amber-300">
+        <div className="mt-3 rounded-lg border border-warning/25 bg-warning/[0.08] px-3 py-2 text-xs leading-6 text-warning dark:text-warning">
           {item.aiWarning ?? 'عرضنا تحليلاً احتياطياً لهذه الرسالة لأن المحرك الذكي لم يستجب.'}
         </div>
       )}
