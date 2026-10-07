@@ -5,6 +5,7 @@ const publicPages = [
   { path: '/login', heading: 'تسجيل الدخول' },
   { path: '/privacy', heading: /الخصوصية/ },
   { path: '/terms', heading: /شروط/ },
+  { path: '/refund', heading: /الاسترجاع والاسترداد/ },
   { path: '/data-deletion', heading: /حذف الحساب والبيانات/ },
 ];
 

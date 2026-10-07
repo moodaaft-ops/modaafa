@@ -46,6 +46,7 @@ export function LegalPage({
           <nav className="flex flex-wrap gap-4" aria-label="الصفحات القانونية">
             <Link href="/privacy" className="hover:text-foreground">الخصوصية</Link>
             <Link href="/terms" className="hover:text-foreground">الشروط</Link>
+            <Link href="/refund" className="hover:text-foreground">الاسترداد</Link>
             <Link href="/data-deletion" className="hover:text-foreground">حذف البيانات</Link>
           </nav>
         </div>
