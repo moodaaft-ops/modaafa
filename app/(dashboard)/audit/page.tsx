@@ -25,7 +25,8 @@ import { Alert } from '@/lib/ui/alert';
 import { StatusBadge, recommendationStatusTone, severityTone } from '@/lib/ui/status-badge';
 import { buttonClasses } from '@/lib/ui/button';
 import { cn } from '@/lib/utils';
-import { getSubscriptionAccess, featureAccessMessage } from '@/lib/billing/entitlements';
+import { getSubscriptionAccess } from '@/lib/billing/entitlements';
+import { auditErrorSummary } from '@/lib/audit/error-messages';
 import { SubscriptionGate } from '@/lib/ui/subscription-gate';
 import { isCurrentAuditEngine } from '@/lib/audit/version';
 import { isRecommendationActionable, orderRecommendationsForGuidance } from '@/lib/audit/guidance';
@@ -560,11 +561,7 @@ function GuidanceStep({ number, text }: { number: string; text: string }) {
 }
 
 function auditErrorMessage(code: string) {
-  if (['subscription_required', 'quota_exceeded', 'usage_storage_unavailable'].includes(code)) {
-    return featureAccessMessage(code);
-  }
-  if (code === 'account_not_found') return 'لم نجد الحساب الإعلاني المختار. اختر حساباً آخر أو أعد الربط.';
-  return 'تعذر تشغيل الفحص الآن. لم ننفذ أي تعديل على حساب إعلانات Google.';
+  return auditErrorSummary(code);
 }
 
 function scoreTone(value: number) {
