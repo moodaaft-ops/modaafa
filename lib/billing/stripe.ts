@@ -169,6 +169,15 @@ export async function cancelStripeSubscription(subscriptionId: string) {
   return getStripe().subscriptions.cancel(subscriptionId);
 }
 
+/**
+ * Schedules (or undoes) a cancellation at the end of the current period.
+ * During a trial the "period" is the trial itself, so a scheduled cancel ends
+ * the subscription on the trial end date without ever charging the card.
+ */
+export async function setStripeCancelAtPeriodEnd(subscriptionId: string, cancel: boolean) {
+  return getStripe().subscriptions.update(subscriptionId, { cancel_at_period_end: cancel });
+}
+
 const CANCELLABLE_STRIPE_STATUSES = new Set(['trialing', 'active', 'past_due', 'unpaid', 'incomplete', 'paused']);
 
 /**

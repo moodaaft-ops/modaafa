@@ -8,6 +8,7 @@ import {
   googleAdsAccountNameMissing,
 } from '@/lib/accounts/display';
 import { getRequestAuthContext } from '@/lib/supabase/server';
+import { cn } from '@/lib/utils';
 import { getPlatformReadiness, readinessSummary } from '@/lib/platform/readiness';
 import { isModaafaOperator } from '@/lib/platform/operators';
 import { PendingSubmitButton } from '@/lib/ui/pending-submit-button';
@@ -221,6 +222,17 @@ export default async function SettingsPage({
               })}
             </div>
           )}
+        </section>
+
+        {/* Cancel without deleting: the subscription card lives on the billing page. */}
+        <section className="surface-card p-6">
+          <h2 className="text-[15px] font-semibold">إلغاء الاشتراك فقط</h2>
+          <p className="mt-2 max-w-3xl text-[13px] leading-7 text-muted-foreground">
+            تبي توقف الدفع بدون ما تحذف حسابك؟ الإلغاء من صفحة الفوترة، وبياناتك تبقى كما هي.
+          </p>
+          <Link href="/billing#cancel" className={cn(buttonClasses({ variant: 'outline' }), 'mt-4')}>
+            إلغاء الاشتراك
+          </Link>
         </section>
 
         {/* Danger zone */}
