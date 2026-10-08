@@ -219,3 +219,63 @@ function invoiceDatabase() {
     },
   };
 }
+
+function trialEndingDatabase() {
+  const rows: Record<string, Record<string, unknown>> = {
+    subscriptions: { user_id: 'user-1' },
+    users: { email: 'customer@example.com' },
+  };
+  return {
+    from(table: string) {
+      const chain = {
+        select: () => chain,
+        eq: () => chain,
+        maybeSingle: async () => ({ data: rows[table] ?? null, error: null }),
+      };
+      return chain;
+    },
+  };
+}
+
+test('the trial-ending email is skipped when the customer already cancelled', async () => {
+  const sent: Array<{ to: string }> = [];
+  const handler = handlerFor(
+    event('customer.subscription.trial_will_end', { id: 'sub_trial', trial_end: CREATED_AT + 259_200 }, 'evt_trial_cancelled'),
+    {
+      createAdminClient: () => trialEndingDatabase() as any,
+      retrieveStripeSubscription: async () =>
+        subscription({ id: 'sub_trial', status: 'trialing', cancel_at_period_end: true }) as any,
+      sendEmail: (async (message: { to: string }) => {
+        sent.push(message);
+        return { sent: true };
+      }) as any,
+    },
+  );
+
+  const response = await handler(request());
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(sent, []);
+});
+
+test('the trial-ending email is still sent when the customer has not cancelled', async () => {
+  const sent: Array<{ to: string }> = [];
+  const handler = handlerFor(
+    event('customer.subscription.trial_will_end', { id: 'sub_trial', trial_end: CREATED_AT + 259_200 }, 'evt_trial_live'),
+    {
+      createAdminClient: () => trialEndingDatabase() as any,
+      retrieveStripeSubscription: async () =>
+        subscription({ id: 'sub_trial', status: 'trialing', cancel_at_period_end: false }) as any,
+      sendEmail: (async (message: { to: string }) => {
+        sent.push(message);
+        return { sent: true };
+      }) as any,
+    },
+  );
+
+  const response = await handler(request());
+
+  assert.equal(response.status, 200);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].to, 'customer@example.com');
+});

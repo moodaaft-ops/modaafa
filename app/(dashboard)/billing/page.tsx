@@ -14,7 +14,12 @@ import { buttonClasses } from '@/lib/ui/button';
 import { getBillingCheckoutContext } from '@/lib/billing/checkout-policy';
 import { hasActiveGoogleAdsAccount } from '@/lib/accounts/selection';
 import { getSubscriptionAccess } from '@/lib/billing/entitlements';
-import { getPlanPriceAmounts, type PeriodKey, type PlanKey } from '@/lib/billing/stripe';
+import {
+  getPlanPriceAmounts,
+  retrieveStripeSubscription,
+  type PeriodKey,
+  type PlanKey,
+} from '@/lib/billing/stripe';
 
 const billingErrors: Record<string, string> = {
   already_subscribed: 'لديك اشتراك قائم بالفعل. استخدم زر إدارة الاشتراك لتغيير الخطة أو وسيلة الدفع.',
@@ -29,6 +34,9 @@ const billingErrors: Record<string, string> = {
   security_service_unavailable: 'تعذر التحقق الآمن من طلب الفوترة الآن. أعد المحاولة بعد قليل.',
   internal_access: 'حساب المالك لديه صلاحية داخلية ولا يحتاج اشتراكاً أو تجربة.',
   google_ads_account_required: 'اربط حساب إعلانات Google نشطاً أولاً حتى تبدأ التجربة.',
+  no_live_subscription: 'ما لقينا اشتراكاً قائماً على هذا الحساب حتى نلغيه.',
+  cancel_failed: 'تعذر تنفيذ الطلب الآن ولم يتغيّر اشتراكك. أعد المحاولة بعد قليل، ولو تكرر راسلنا.',
+  invalid_origin: 'تعذر التحقق من الطلب. حدّث الصفحة وأعد المحاولة.',
 };
 
 const plans = [
@@ -68,7 +76,7 @@ export const metadata = {
 export default async function BillingPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ error?: string; canceled?: string; plan?: string; period?: string }>;
+  searchParams?: Promise<{ error?: string; canceled?: string; cancel?: string; plan?: string; period?: string }>;
 }) {
   const params = await searchParams;
   const period: PeriodKey = params?.period === 'yearly' ? 'yearly' : 'monthly';
@@ -108,6 +116,21 @@ export default async function BillingPage({
   const hasInternalAccess = access.status === 'internal';
   const hasLiveSubscription = Boolean(checkout.activeSubscriptionId);
   const currentPlan = hasLiveSubscription || hasInternalAccess ? access.plan : null;
+
+  // Our table does not store `cancel_at_period_end`, so read it live from
+  // Stripe. If Stripe is unreachable the page still renders, just without the
+  // "cancellation scheduled" state.
+  let cancelScheduled = false;
+  if (hasLiveSubscription && checkout.activeSubscriptionId) {
+    try {
+      const live = await retrieveStripeSubscription(checkout.activeSubscriptionId);
+      cancelScheduled = Boolean(live.cancel_at_period_end || live.cancel_at);
+    } catch (error) {
+      console.error('Could not read cancellation state from Stripe', error);
+    }
+  }
+  const periodEndIso = access.status === 'trialing' && access.trialEndsAt ? access.trialEndsAt : access.currentPeriodEnd;
+  const periodEndLabel = periodEndIso ? formatDateAr(periodEndIso) : null;
   // Mirrors the server gate in /api/billing/checkout: no active Google Ads
   // account means no trial/checkout buttons, just a link to connect one.
   const needsAccount = !hasLiveSubscription && !hasInternalAccess && !hasActiveAccount;
@@ -131,6 +154,7 @@ export default async function BillingPage({
           </Alert>
         )}
         {params?.canceled && <Alert tone="warning">تم إلغاء عملية الدفع ولم يتغيّر اشتراكك.</Alert>}
+        {params?.cancel === 'resumed' && <Alert tone="success">رجع اشتراكك كما كان، ويتجدد في موعده.</Alert>}
 
         {/* Current plan */}
         <section className="surface-raised relative overflow-hidden p-6">
@@ -154,6 +178,10 @@ export default async function BillingPage({
                     paying customer instead of their renewal date. */}
                 {hasInternalAccess
                   ? 'صلاحية المالك مفعلة للاختبار الداخلي ولا ترتبط بفوترة Stripe.'
+                  : cancelScheduled && periodEndLabel
+                  ? access.status === 'trialing'
+                    ? `ألغيت الاشتراك. تنتهي التجربة في ${periodEndLabel} ولن يُخصم منك شيء.`
+                    : `ألغيت الاشتراك. يبقى شغالاً حتى ${periodEndLabel} ثم يتوقف ولا يتجدد.`
                   : access.status === 'trialing' && access.trialEndsAt
                   ? `تنتهي التجربة في ${formatDateAr(access.trialEndsAt)}`
                   : hasLiveSubscription && access.currentPeriodEnd
@@ -166,7 +194,7 @@ export default async function BillingPage({
             ) : hasLiveSubscription && checkout.stripeCustomerId ? (
               <form action="/api/billing/portal" method="post">
                 <PendingSubmitButton pendingLabel="جاري فتح Stripe..." className={buttonClasses({ variant: 'secondary' })}>
-                  إدارة الاشتراك في Stripe
+                  البطاقة والفواتير
                 </PendingSubmitButton>
               </form>
             ) : needsAccount ? (
@@ -186,6 +214,73 @@ export default async function BillingPage({
             ) : null}
           </div>
         </section>
+
+        {/* Cancellation. Customers reported "there is no way to cancel": the only
+            control was a Stripe-portal button that never said the word. This
+            card names the action, confirms it, and shows the scheduled state. */}
+        {hasLiveSubscription && !hasInternalAccess && (
+          <section id="cancel" className="surface-card scroll-mt-6 p-6">
+            <h2 className="text-[15px] font-semibold">إلغاء الاشتراك</h2>
+            {cancelScheduled ? (
+              <>
+                <p className="mt-2 max-w-3xl text-[13px] leading-7 text-muted-foreground">
+                  {access.status === 'trialing'
+                    ? `ألغيت الاشتراك. تنتهي تجربتك في ${periodEndLabel ?? 'نهاية الفترة'} ولن يُخصم منك أي مبلغ.`
+                    : `ألغيت الاشتراك. يبقى شغالاً حتى ${periodEndLabel ?? 'نهاية الفترة الحالية'} ثم يتوقف ولا يتجدد.`}{' '}
+                  إذا غيّرت رأيك قبل هذا التاريخ، تقدر ترجعه بضغطة وحدة.
+                </p>
+                <form action="/api/billing/cancel" method="post" className="mt-4">
+                  <input type="hidden" name="action" value="resume" />
+                  <PendingSubmitButton pendingLabel="جاري التراجع..." className={buttonClasses({ variant: 'secondary' })}>
+                    تراجع عن الإلغاء
+                  </PendingSubmitButton>
+                </form>
+              </>
+            ) : (
+              <>
+                <p className="mt-2 max-w-3xl text-[13px] leading-7 text-muted-foreground">
+                  {access.status === 'trialing'
+                    ? `أنت في التجربة المجانية وتنتهي في ${periodEndLabel ?? 'نهاية الفترة'}. لو ألغيت قبلها ما ينخصم منك ريال، وتكمل استخدام مُضاعِف حتى آخر يوم في التجربة.`
+                    : `الإلغاء ما يوقف الاشتراك فوراً، يبقى شغالاً حتى ${periodEndLabel ?? 'نهاية الفترة الحالية'} ثم يتوقف ولا يتجدد. مبلغ الفترة الحالية لا يُسترد، وتفاصيل ذلك في `}
+                  {access.status !== 'trialing' && (
+                    <>
+                      <Link href="/refund" className="font-semibold text-primary underline-offset-4 hover:underline">
+                        صفحة الاسترجاع
+                      </Link>
+                      .
+                    </>
+                  )}{' '}
+                  حسابك وبياناتك تبقى كما هي، وتقدر تشترك من جديد وقت ما تبي.
+                </p>
+                <details className="group mt-4">
+                  <summary
+                    className={cn(
+                      buttonClasses({ variant: 'danger-outline' }),
+                      'cursor-pointer list-none [&::-webkit-details-marker]:hidden'
+                    )}
+                  >
+                    إلغاء الاشتراك
+                  </summary>
+                  <div className="mt-4 max-w-xl rounded-xl border border-danger/25 bg-danger/[0.04] p-4">
+                    <p className="text-[13px] font-semibold leading-7">متأكد أنك تبي تلغي؟</p>
+                    <p className="mt-1 text-[12.5px] leading-6 text-muted-foreground">
+                      {access.status === 'trialing'
+                        ? 'ما راح يتحول اشتراكك إلى مدفوع بعد التجربة.'
+                        : 'ما راح يتجدد اشتراكك بعد نهاية الفترة الحالية.'}{' '}
+                      تقدر تتراجع من هذي الصفحة قبل الموعد.
+                    </p>
+                    <form action="/api/billing/cancel" method="post" className="mt-4">
+                      <input type="hidden" name="action" value="cancel" />
+                      <PendingSubmitButton pendingLabel="جاري الإلغاء..." className={buttonClasses({ variant: 'danger' })}>
+                        نعم، ألغِ اشتراكي
+                      </PendingSubmitButton>
+                    </form>
+                  </div>
+                </details>
+              </>
+            )}
+          </section>
+        )}
 
         {/* Billing period toggle — the six Stripe prices include yearly slots
             that were configured, enforced by the readiness check, and
