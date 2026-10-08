@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 const publicPages = [
-  { path: '/', heading: /مضاعف|إعلانات Google/i },
+  { path: '/', heading: /يقرأ حسابك|مضاعف|إعلانات Google/i },
   { path: '/login', heading: 'تسجيل الدخول' },
   { path: '/privacy', heading: /الخصوصية/ },
   { path: '/terms', heading: /شروط/ },
@@ -34,7 +34,7 @@ test.describe('public launch surface', () => {
 
     await expect(page).toHaveTitle(/مُضاعِف|Modaafa/);
     await expect(page.getByRole('link', { name: 'تسجيل الدخول' }).first()).toHaveAttribute('href', '/login');
-    await expect(page.getByRole('link', { name: /ابدأ التجربة/ }).first()).toHaveAttribute('href', '/login');
+    await expect(page.getByRole('link', { name: /ابدأ (التجربة|تجربة)/ }).first()).toHaveAttribute('href', '/login');
   });
 
   test('theme choice persists after reload', async ({ page }) => {
