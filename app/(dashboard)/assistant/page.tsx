@@ -7,6 +7,7 @@ import { PageHeader } from '@/lib/ui/page-header';
 import { AssistantClient } from './assistant-client';
 import { getSubscriptionAccess } from '@/lib/billing/entitlements';
 import { SubscriptionGate } from '@/lib/ui/subscription-gate';
+import type { SuggestionContext } from '@/lib/assistant/chat-ui';
 
 export const metadata = {
   title: 'المساعد الذكي',
@@ -28,6 +29,46 @@ export default async function AssistantPage({
   // a controlled composer the user still has to send themselves.
   const initialBrief = String(params?.brief ?? '').slice(0, 2000);
 
+  // Suggested prompts come from the selected account's latest audit and pending
+  // recommendations. A failed read just means generic prompts: it must never
+  // break the assistant page.
+  let suggestionContext: SuggestionContext | null = null;
+  if (subscription.active && selectedAccount) {
+    const [auditResult, recommendationResult] = await Promise.all([
+      supabase
+        .from('audits')
+        .select('health_score, estimated_monthly_waste, ran_at')
+        .eq('account_id', selectedAccount.id)
+        .order('ran_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      supabase
+        .from('recommendations')
+        .select('id, title, severity')
+        .eq('account_id', selectedAccount.id)
+        .eq('status', 'pending')
+        .order('created_at', { ascending: false })
+        .limit(12),
+    ]);
+    if (!auditResult.error && !recommendationResult.error) {
+      const audit = auditResult.data as
+        | { health_score: number | null; estimated_monthly_waste: number | null; ran_at: string | null }
+        | null;
+      suggestionContext = {
+        latestAudit: audit
+          ? { healthScore: audit.health_score, estimatedWaste: audit.estimated_monthly_waste, ranAt: audit.ran_at }
+          : null,
+        pendingRecommendations: ((recommendationResult.data ?? []) as Array<{
+          id: string;
+          title: string | null;
+          severity: string | null;
+        }>)
+          .filter((item) => item.title)
+          .map((item) => ({ id: item.id, title: item.title as string, severity: item.severity })),
+      };
+    }
+  }
+
   return (
     <>
       <PageHeader
@@ -46,6 +87,8 @@ export default async function AssistantPage({
             accounts={accounts}
             selectedCustomerId={selectedCustomerId}
             initialBrief={initialBrief || null}
+            suggestionContext={suggestionContext}
+            storageScope={user.id}
           />
         ) : (
           <SubscriptionGate

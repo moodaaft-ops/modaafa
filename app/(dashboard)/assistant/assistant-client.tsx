@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Link2, LoaderCircle, Mic, Send, Sparkles, Square, TrendingUp } from 'lucide-react';
+import { Link2, LoaderCircle, Mic, RotateCw, Send, Sparkles, Square, SquarePen, TrendingUp } from 'lucide-react';
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import {
   appendVoiceTranscript,
@@ -10,6 +10,15 @@ import {
   requestMicrophoneAccess,
   speechRecognitionErrorMessage,
 } from '@/lib/ai/voice-input';
+import {
+  buildSuggestedPrompts,
+  chatStorageKey,
+  parseStoredChat,
+  recommendationHref,
+  serializeChat,
+  thinkingStageAt,
+  type SuggestionContext,
+} from '@/lib/assistant/chat-ui';
 import { biddingLabel, campaignTypeLabel } from '@/lib/ui/labels';
 import { EmptyState } from '@/lib/ui/empty-state';
 import { Alert } from '@/lib/ui/alert';
@@ -27,7 +36,7 @@ type ChatItem = {
   content: string;
   cards?: Array<{ label: string; value: string }>;
   draft?: any;
-  recommendations?: Array<{ title: string; status: string; severity: string; description?: string | null }>;
+  recommendations?: Array<{ id?: string | null; title: string; status: string; severity: string; description?: string | null }>;
   aiBackend?: 'model' | 'fallback';
   aiWarning?: string | null;
   analysisMeta?: {
@@ -41,14 +50,13 @@ type ChatItem = {
   };
 };
 
-const SUGGESTED_PROMPTS = [
-  'وش أهم توصية أبدأ فيها؟',
-  'حلل الصرف آخر 7 أيام',
-  'ما الحملات اللي تحتاج إيقاف؟',
-  'اقترح كلمات سلبية محتملة',
-  'هل أرفع الميزانية أو أوقف الهدر أولاً؟',
-  'ابنِ لي مسودة حملة بحث بميزانية 100 ريال يومياً',
-];
+const NON_RETRYABLE_ERRORS = new Set([
+  'subscription_required',
+  'quota_exceeded',
+  'unauthorized',
+  'message_required',
+  'account_not_found',
+]);
 
 const SEED_MESSAGE = 'اختر الحساب واكتب طلبك. أقدر ألخص الأداء، أطلع أولويات، أو أبني مسودة حملة تحتاج موافقتك قبل التنفيذ.';
 
@@ -59,11 +67,17 @@ export function AssistantClient({
   accounts,
   selectedCustomerId,
   initialBrief = null,
+  suggestionContext = null,
+  storageScope = 'anon',
 }: {
   accounts: Account[];
   selectedCustomerId: string | null;
   /** Prefilled composer text (e.g. a campaign-opportunity brief). The user still reviews and sends it. */
   initialBrief?: string | null;
+  /** Latest audit and pending recommendations of the SELECTED account, for suggested prompts. */
+  suggestionContext?: SuggestionContext | null;
+  /** Scopes the saved conversation to the signed-in user so a shared browser never mixes people. */
+  storageScope?: string;
 }) {
   const router = useRouter();
   const [isSwitching, startTransition] = useTransition();
@@ -79,6 +93,13 @@ export function AssistantClient({
   const [voiceStarting, setVoiceStarting] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState('');
   const [error, setError] = useState('');
+  // The question being sent stays visible while we wait; it only joins the
+  // conversation after the reply arrives.
+  const [pendingText, setPendingText] = useState<string | null>(null);
+  const [failed, setFailed] = useState<{ text: string; canResend: boolean } | null>(null);
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const [hydratedKey, setHydratedKey] = useState<string | null>(null);
+  const customerIdRef = useRef(customerId);
   const [chat, setChat] = useState<ChatItem[]>([{ role: 'assistant', content: SEED_MESSAGE }]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const recognitionRef = useRef<any>(null);
@@ -92,7 +113,55 @@ export function AssistantClient({
     () => accounts.find((account) => account.customer_id === customerId),
     [accounts, customerId]
   );
-  const started = chat.some((item) => item.role === 'user');
+  const started = chat.some((item) => item.role === 'user') || pendingText !== null;
+  const storageKey = chatStorageKey(storageScope, customerId);
+  // Specific prompts only when the data belongs to the account on screen.
+  const suggestedPrompts = useMemo(
+    () => buildSuggestedPrompts(customerId === selectedCustomerId ? suggestionContext : null),
+    [customerId, selectedCustomerId, suggestionContext]
+  );
+  const pendingRecommendations =
+    customerId === selectedCustomerId ? suggestionContext?.pendingRecommendations ?? [] : [];
+
+  customerIdRef.current = customerId;
+
+  // Restore this account's conversation after a refresh. Browser storage can be
+  // blocked or full, so every access is guarded and the page works without it.
+  useEffect(() => {
+    let restored: { chat: ChatItem[]; sessionId: string | null } | null = null;
+    try {
+      restored = parseStoredChat<ChatItem>(window.localStorage.getItem(storageKey));
+    } catch {
+      restored = null;
+    }
+    setChat(restored ? restored.chat : [{ role: 'assistant', content: SEED_MESSAGE }]);
+    setSessionId(restored ? restored.sessionId : null);
+    setHydratedKey(storageKey);
+  }, [storageKey]);
+
+  useEffect(() => {
+    if (hydratedKey !== storageKey) return;
+    try {
+      if (chat.some((item) => item.role === 'user')) {
+        window.localStorage.setItem(storageKey, serializeChat(chat, sessionId));
+      } else {
+        window.localStorage.removeItem(storageKey);
+      }
+    } catch {
+      // Storage unavailable: the conversation simply is not kept.
+    }
+  }, [chat, sessionId, hydratedKey, storageKey]);
+
+  // Elapsed time drives the visible thinking stages.
+  useEffect(() => {
+    if (!loading) {
+      setElapsedMs(0);
+      return;
+    }
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => setElapsedMs(Date.now() - startedAt), 500);
+    return () => window.clearInterval(timer);
+  }, [loading]);
 
   // Keep the conversation scrolled to the latest message.
   useEffect(() => {
@@ -112,9 +181,8 @@ export function AssistantClient({
     if (switching) return;
     setSwitching(true);
     setCustomerId(nextCustomerId);
-    setSessionId(null);
     setError('');
-    setChat([{ role: 'assistant', content: SEED_MESSAGE }]);
+    setFailed(null);
 
     let response: Response;
     try {
@@ -142,24 +210,40 @@ export function AssistantClient({
     startTransition(() => router.refresh());
   }
 
-  async function sendMessage(text: string) {
-    const trimmed = text.trim();
-    if (!trimmed || !customerId || loading) return;
-
+  function newConversation() {
+    if (loading) return;
+    setChat([{ role: 'assistant', content: SEED_MESSAGE }]);
+    setSessionId(null);
     setError('');
+    setFailed(null);
+  }
+
+  /** Returns true when the reply was received and saved into the conversation. */
+  async function sendMessage(text: string): Promise<boolean> {
+    const trimmed = text.trim();
+    if (!trimmed || !customerId || loading) return false;
+
+    const sentFor = customerId;
+    setError('');
+    setFailed(null);
     setLoading(true);
+    setPendingText(trimmed);
     const historyPayload = chat
       .filter((item) => item.content && item.content.trim())
       .slice(-8)
       .map((item) => ({ role: item.role, content: item.content }));
-    setChat((items) => [...items, { role: 'user', content: trimmed }]);
-    setMessage('');
+
+    // The composer text is NOT cleared here. It is cleared only after the reply
+    // arrives, so a failed send never costs the user their question.
+    const fail = (messageText: string, canResend = true) => {
+      setPendingText(null);
+      setFailed({ text: trimmed, canResend });
+      setMessage((current) => (current.trim() ? current : trimmed));
+      setError(messageText);
+    };
 
     // `fetch` REJECTS on a dropped connection, DNS failure, or a tab resumed
-    // from sleep. Without try/catch/finally, `setLoading(false)` was never
-    // reached: the typing indicator animated forever, the send button stayed
-    // disabled, and `sendMessage`'s own `loading` guard blocked every retry —
-    // the only way out was a page reload.
+    // from sleep. try/catch/finally guarantees `loading` is always released.
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), ASSISTANT_TIMEOUT_MS);
 
@@ -174,26 +258,34 @@ export function AssistantClient({
       });
       data = await response.json().catch(() => ({}));
     } catch (err) {
-      setError(
+      fail(
         (err as Error)?.name === 'AbortError'
-          ? 'استغرق الرد وقتاً أطول من المتوقع. أعد إرسال السؤال أو اختصره قليلاً.'
-          : 'تعذر الاتصال بالمساعد. تحقق من اتصالك بالإنترنت ثم أعد الإرسال.'
+          ? 'استغرق الرد وقتاً أطول من المتوقع. سؤالك محفوظ في خانة الكتابة، أعد إرساله أو اختصره.'
+          : 'تعذر الاتصال بالمساعد. سؤالك محفوظ في خانة الكتابة، تحقق من اتصالك ثم أعد الإرسال.'
       );
-      return;
+      return false;
     } finally {
       window.clearTimeout(timeout);
       setLoading(false);
     }
 
     if (!response.ok) {
-      setError(errorMessage(data.error));
-      return;
+      fail(errorMessage(data.error), !NON_RETRYABLE_ERRORS.has(String(data.error ?? '')));
+      return false;
+    }
+
+    // The user switched accounts while this was in flight: do not put the
+    // reply into the other account's conversation.
+    if (customerIdRef.current !== sentFor) {
+      setPendingText(null);
+      return false;
     }
 
     if (data.session_id) setSessionId(data.session_id);
 
     setChat((items) => [
       ...items,
+      { role: 'user', content: trimmed },
       {
         role: 'assistant',
         content: data.reply_ar,
@@ -205,6 +297,9 @@ export function AssistantClient({
         analysisMeta: data.analysis_meta,
       },
     ]);
+    setPendingText(null);
+    setMessage((current) => (current.trim() === trimmed ? '' : current));
+    return true;
   }
 
   function stopVoiceInput() {
@@ -337,6 +432,16 @@ export function AssistantClient({
           </div>
           <div className="flex items-center gap-2">
             {(isSwitching || switching) && <span className="text-xs text-muted-foreground">جاري التبديل...</span>}
+            {started && !loading && (
+              <button
+                type="button"
+                onClick={newConversation}
+                className={cn(buttonClasses({ variant: 'outline', size: 'sm' }), 'h-9 gap-1.5 text-[13px]')}
+              >
+                <SquarePen className="h-3.5 w-3.5" aria-hidden />
+                محادثة جديدة
+              </button>
+            )}
             {accounts.length > 1 && (
               <select
                 value={customerId}
@@ -369,12 +474,12 @@ export function AssistantClient({
               <h3 className="mt-5 text-base font-semibold">اسألني عن حسابك</h3>
               <p className="mt-2 max-w-sm text-[13px] leading-7 text-muted-foreground">{SEED_MESSAGE}</p>
               <div className="mt-6 flex flex-wrap justify-center gap-2">
-                {SUGGESTED_PROMPTS.slice(0, 4).map((prompt) => (
+                {suggestedPrompts.slice(0, 4).map((prompt) => (
                   <button
                     key={prompt}
                     type="button"
-                    onClick={() => sendMessage(prompt)}
-                    className="rounded-full border border-border bg-background-elevated px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors duration-150 hover:border-primary/50 hover:bg-primary/10 hover:text-primary"
+                    onClick={() => void sendMessage(prompt)}
+                    className="rounded-md border border-border bg-background-elevated px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors duration-150 hover:border-primary/50 hover:bg-primary/10 hover:text-primary"
                   >
                     {prompt}
                   </button>
@@ -384,9 +489,14 @@ export function AssistantClient({
           ) : (
             <div className="flex flex-col gap-3">
               {chat.map((item, index) => (
-                <ChatBubble key={`${item.role}-${index}`} item={item} />
+                <ChatBubble key={`${item.role}-${index}`} item={item} pendingRecommendations={pendingRecommendations} />
               ))}
-              {loading && <TypingIndicator />}
+              {pendingText !== null && (
+                <article className="max-w-[85%] self-end break-words rounded-xl bg-primary px-4 py-3 text-[13px] leading-7 text-primary-foreground">
+                  <div className="whitespace-pre-line">{pendingText}</div>
+                </article>
+              )}
+              {loading && <ThinkingIndicator elapsedMs={elapsedMs} />}
             </div>
           )}
         </div>
@@ -395,20 +505,35 @@ export function AssistantClient({
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            sendMessage(message);
+            void sendMessage(message);
           }}
           className="border-t border-border bg-card p-3 sm:p-4"
         >
           {error && (
             <div className="mb-3">
-              <Alert tone="danger">{error}</Alert>
+              <Alert tone="danger">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <span>{error}</span>
+                  {failed?.canResend && (
+                    <button
+                      type="button"
+                      disabled={loading}
+                      onClick={() => void sendMessage(failed.text)}
+                      className={cn(buttonClasses({ variant: 'outline', size: 'sm' }), 'gap-1.5')}
+                    >
+                      <RotateCw className="h-3.5 w-3.5" aria-hidden />
+                      إعادة الإرسال
+                    </button>
+                  )}
+                </div>
+              </Alert>
             </div>
           )}
           {pendingBrief && (
             <div className="mb-3 rounded-lg border border-primary/25 bg-primary/[0.06] p-3.5">
               <div className="flex items-center gap-2 text-[12.5px] font-semibold text-primary">
                 <Sparkles className="h-3.5 w-3.5" />
-                طلب بناء حملة من مركز الموافقات
+                طلب بناء حملة من الموافقات
               </div>
               <p className="mt-2 max-h-28 overflow-y-auto text-[12.5px] leading-6 text-foreground-subtle scrollbar-thin">
                 {pendingBrief}
@@ -417,10 +542,10 @@ export function AssistantClient({
                 <button
                   type="button"
                   disabled={loading}
-                  onClick={() => {
+                  onClick={async () => {
+                    // The brief card stays until the send succeeds, so a failure keeps it for resending.
                     const brief = pendingBrief;
-                    setPendingBrief(null);
-                    if (brief) void sendMessage(brief);
+                    if (brief && (await sendMessage(brief))) setPendingBrief(null);
                   }}
                   className={buttonClasses({ variant: 'primary', size: 'sm' })}
                 >
@@ -493,14 +618,14 @@ export function AssistantClient({
         <section className="surface-card overflow-hidden">
           <div className="flex items-center gap-2 border-b border-border px-4 py-3 text-[13px] font-semibold">
             <TrendingUp className="h-3.5 w-3.5 text-primary" />
-            أوامر جاهزة
+            اقتراحات
           </div>
           <div className="grid gap-1.5 p-3">
-            {SUGGESTED_PROMPTS.map((prompt) => (
+            {suggestedPrompts.map((prompt) => (
               <button
                 key={prompt}
                 type="button"
-                onClick={() => sendMessage(prompt)}
+                onClick={() => void sendMessage(prompt)}
                 disabled={loading}
                 className="rounded-lg border border-transparent px-3 py-2.5 text-start text-[13px] leading-6 text-muted-foreground transition-colors duration-150 hover:border-border hover:bg-background-elevated hover:text-foreground disabled:opacity-50"
               >
@@ -510,7 +635,7 @@ export function AssistantClient({
           </div>
         </section>
         <section className="rounded-xl border border-primary/25 bg-primary/[0.06] p-4 text-[13px] leading-7 text-muted-foreground">
-          كل إجراء تنفيذي يبقى في <b className="font-semibold text-foreground">مركز الموافقات</b> قبل أي تعديل مباشر على
+          كل إجراء تنفيذي يبقى في <b className="font-semibold text-foreground">الموافقات</b> قبل أي تعديل مباشر على
           إعلانات Google.
         </section>
       </aside>
@@ -518,7 +643,13 @@ export function AssistantClient({
   );
 }
 
-function ChatBubble({ item }: { item: ChatItem }) {
+function ChatBubble({
+  item,
+  pendingRecommendations,
+}: {
+  item: ChatItem;
+  pendingRecommendations: SuggestionContext['pendingRecommendations'];
+}) {
   const isUser = item.role === 'user';
   return (
     // Alignment follows the universal chat convention rather than the raw
@@ -541,7 +672,7 @@ function ChatBubble({ item }: { item: ChatItem }) {
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
             <span
               className={cn(
-                'rounded-full border px-2 py-0.5 font-semibold',
+                'rounded-md border px-2 py-0.5 font-semibold',
                 item.analysisMeta.confidence === 'high'
                   ? 'border-success/25 bg-success/[0.08] text-success dark:text-success'
                   : item.analysisMeta.confidence === 'medium'
@@ -586,23 +717,26 @@ function ChatBubble({ item }: { item: ChatItem }) {
 
       {item.recommendations && item.recommendations.length > 0 && (
         <div className="mt-3 space-y-2">
-          {item.recommendations.slice(0, 3).map((recommendation) => (
-            <div
-              key={recommendation.title}
-              className="rounded-lg border border-border bg-background-elevated px-3 py-2.5"
-            >
-              <div className="text-[13px] font-semibold text-foreground">{recommendation.title}</div>
-              {recommendation.description && (
-                <div className="mt-1 text-xs leading-6 text-muted-foreground">{recommendation.description}</div>
-              )}
-            </div>
-          ))}
-          <a
-            href="/optimizer"
-            className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline"
-          >
-            فتح مركز الموافقات
-          </a>
+          {item.recommendations.slice(0, 3).map((recommendation) => {
+            // Older saved replies have no id: match by title against the account's pending list.
+            const id =
+              recommendation.id ??
+              pendingRecommendations.find((pending) => pending.title === recommendation.title)?.id ??
+              null;
+            return (
+              <a
+                key={`${id ?? ''}-${recommendation.title}`}
+                href={recommendationHref(id)}
+                className="block rounded-lg border border-border bg-background-elevated px-3 py-2.5 transition-colors duration-150 hover:border-primary/50"
+              >
+                <div className="text-[13px] font-semibold text-foreground">{recommendation.title}</div>
+                {recommendation.description && (
+                  <div className="mt-1 text-xs leading-6 text-muted-foreground">{recommendation.description}</div>
+                )}
+                <div className="mt-1.5 text-xs font-semibold text-primary">فتح هذه التوصية في الموافقات</div>
+              </a>
+            );
+          })}
         </div>
       )}
 
@@ -633,19 +767,36 @@ function assistantFreshnessText(meta: NonNullable<ChatItem['analysisMeta']>) {
   return `بيانات Google Ads منذ ${days} يوم`;
 }
 
-function TypingIndicator() {
+function ThinkingIndicator({ elapsedMs }: { elapsedMs: number }) {
+  const stage = thinkingStageAt(elapsedMs);
   return (
-    <div className="flex items-center gap-2 self-start rounded-xl border border-border bg-card px-4 py-3">
-      <span className="text-xs text-muted-foreground">المساعد يحلّل الحساب</span>
-      <span className="flex gap-1">
-        {[0, 1, 2].map((i) => (
-          <span
-            key={i}
-            className="h-1.5 w-1.5 animate-typing-dot rounded-full bg-primary"
-            style={{ animationDelay: `${i * 0.15}s` }}
-          />
+    <div
+      className="flex max-w-[85%] flex-col gap-1.5 self-start rounded-xl border border-border bg-card px-4 py-3"
+      role="status"
+      aria-live="polite"
+    >
+      <div className="flex items-center gap-2">
+        <span className="text-xs font-medium text-foreground">{stage.label}</span>
+        <span className="flex gap-1" aria-hidden>
+          {[0, 1, 2].map((i) => (
+            <span
+              key={i}
+              className="h-1.5 w-1.5 animate-typing-dot bg-primary"
+              style={{ animationDelay: `${i * 0.15}s` }}
+            />
+          ))}
+        </span>
+      </div>
+      <div className="flex items-center gap-1" aria-hidden>
+        {Array.from({ length: stage.total }).map((_, i) => (
+          <span key={i} className={cn('h-1 w-6 rounded-sm', i <= stage.index ? 'bg-primary' : 'bg-muted')} />
         ))}
-      </span>
+      </div>
+      {stage.slow && (
+        <span className="text-[11px] leading-5 text-muted-foreground">
+          الرد أطول من المعتاد. لا نزال نعمل عليه، وإذا انقطع نحفظ سؤالك لتعيد إرساله.
+        </span>
+      )}
     </div>
   );
 }

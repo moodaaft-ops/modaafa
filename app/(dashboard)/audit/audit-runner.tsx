@@ -1,14 +1,15 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { CheckCircle2, Circle, Loader2, ScanSearch, TriangleAlert } from 'lucide-react';
+import { CheckCircle2, Circle, Loader2, ScanSearch, TriangleAlert, X } from 'lucide-react';
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import {
   AUDIT_PROGRESS_STEPS,
   type AuditProgressEvent,
   type AuditStreamEvent,
 } from '@/lib/audit/progress';
+import { auditErrorInfo, type AuditErrorInfo } from '@/lib/audit/error-messages';
 import { buttonClasses } from '@/lib/ui/button';
 import { selectClasses } from '@/lib/ui/field';
 import { cn } from '@/lib/utils';
@@ -36,7 +37,9 @@ export function AuditRunner({
   const [percent, setPercent] = useState(0);
   const [message, setMessage] = useState('جاري إرسال طلب الفحص إلى الخادم');
   const [steps, setSteps] = useState<Record<string, StepState>>({});
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<AuditErrorInfo | null>(null);
+  const finishedRef = useRef(false);
+  const closeRef = useRef<HTMLButtonElement | null>(null);
 
   const accountName = useMemo(() => {
     const account = accounts.find((item) => item.customer_id === customerId);
@@ -51,6 +54,7 @@ export function AuditRunner({
     setMessage('جاري إرسال طلب الفحص إلى الخادم');
     setSteps({});
     setError(null);
+    finishedRef.current = false;
 
     try {
       const response = await fetch('/api/audit/run', {
@@ -64,7 +68,10 @@ export function AuditRunner({
 
       if (!response.ok || !response.body) {
         const payload = await response.json().catch(() => ({}));
-        throw new Error(auditErrorMessage(String(payload.error ?? 'audit_failed')));
+        finishedRef.current = true;
+        setError(auditErrorInfo(String(payload.error ?? 'audit_failed'), { resetsAt: payload.resets_at }));
+        setRunning(false);
+        return;
       }
 
       const reader = response.body.getReader();
@@ -86,10 +93,26 @@ export function AuditRunner({
       }
 
       if (buffer.trim()) handleEvent(JSON.parse(buffer) as AuditStreamEvent);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'تعذر إكمال الفحص الآن.');
+
+      // The stream closed without a result or an error: the connection dropped.
+      // Without this the dialog would keep spinning with no way out.
+      if (!finishedRef.current) {
+        finishedRef.current = true;
+        setError(auditErrorInfo('audit_failed'));
+        setRunning(false);
+      }
+    } catch {
+      if (!finishedRef.current) {
+        finishedRef.current = true;
+        setError(auditErrorInfo('audit_failed'));
+      }
       setRunning(false);
     }
+  }
+
+  function closeError() {
+    setError(null);
+    setRunning(false);
   }
 
   function handleEvent(event: AuditStreamEvent) {
@@ -108,11 +131,13 @@ export function AuditRunner({
     }
 
     if (event.type === 'error') {
-      setError(event.message);
+      finishedRef.current = true;
+      setError(auditErrorInfo(event.code));
       setRunning(false);
       return;
     }
 
+    finishedRef.current = true;
     setPercent(100);
     setMessage(event.message);
     window.setTimeout(() => {
@@ -121,6 +146,18 @@ export function AuditRunner({
       router.refresh();
     }, 700);
   }
+
+  // The error dialog can always be dismissed: Escape closes it and focus moves
+  // to the close button so keyboard users are never stuck behind it.
+  useEffect(() => {
+    if (!error) return;
+    closeRef.current?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeError();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [error]);
 
   if (accounts.length === 0) return null;
 
@@ -155,7 +192,13 @@ export function AuditRunner({
       </form>
 
       {(running || error) && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-foreground/60 p-4" role="presentation">
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-foreground/60 p-4"
+          role="presentation"
+          onClick={(event) => {
+            if (error && event.target === event.currentTarget) closeError();
+          }}
+        >
           <section
             role="dialog"
             aria-modal="true"
@@ -164,23 +207,45 @@ export function AuditRunner({
           >
             <div className="border-b border-border px-5 py-5 sm:px-7">
               <div className="flex items-start justify-between gap-4">
-                <div>
+                <div className="min-w-0">
                   <div className="text-xs font-medium text-primary">فحص مباشر من Google Ads</div>
                   <h2 id="audit-progress-title" className="mt-1 text-xl font-bold text-foreground">
-                    نفحص {accountName}
+                    {error ? error.title : `نفحص ${accountName}`}
                   </h2>
-                  <p className="mt-2 text-sm text-muted-foreground" aria-live="polite">{error ?? message}</p>
+                  {error ? (
+                    <div className="mt-2 space-y-1.5 text-sm leading-7" aria-live="assertive">
+                      <p className="text-foreground">{error.message}</p>
+                      <p className="text-muted-foreground">
+                        <span className="font-semibold text-foreground">الخطوة الجاية: </span>
+                        {error.nextStep}
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-sm text-muted-foreground" aria-live="polite">{message}</p>
+                  )}
                 </div>
-                <div className={cn(
-                  'flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-xl text-lg font-bold numeric',
-                  error ? 'bg-danger/12 text-danger dark:text-danger' : 'bg-primary/12 text-primary'
-                )}>
-                  {error ? <TriangleAlert className="h-6 w-6" aria-hidden /> : `${percent}%`}
+                <div className="flex flex-shrink-0 items-start gap-2">
+                  <div className={cn(
+                    'flex h-14 w-14 items-center justify-center rounded-xl text-lg font-bold numeric',
+                    error ? 'bg-danger/12 text-danger dark:text-danger' : 'bg-primary/12 text-primary'
+                  )}>
+                    {error ? <TriangleAlert className="h-6 w-6" aria-hidden /> : `${percent}%`}
+                  </div>
+                  {error && (
+                    <button
+                      type="button"
+                      onClick={closeError}
+                      className="flex h-9 w-9 items-center justify-center rounded-lg border border-border text-muted-foreground transition-colors hover:text-foreground"
+                      aria-label="إغلاق"
+                    >
+                      <X className="h-4 w-4" aria-hidden />
+                    </button>
+                  )}
                 </div>
               </div>
 
               <div
-                className="mt-5 h-2 overflow-hidden rounded-full bg-muted"
+                className="mt-5 h-2 overflow-hidden rounded-sm bg-muted"
                 role="progressbar"
                 aria-label="تقدم فحص الحساب"
                 aria-valuemin={0}
@@ -188,17 +253,17 @@ export function AuditRunner({
                 aria-valuenow={percent}
               >
                 <div
-                  className={cn('h-full rounded-full transition-[width] duration-500', error ? 'bg-danger' : 'bg-primary')}
+                  className={cn('h-full rounded-sm transition-[width] duration-500', error ? 'bg-danger' : 'bg-primary')}
                   style={{ width: `${percent}%` }}
                 />
               </div>
             </div>
 
-            <ol className="max-h-[55vh] divide-y divide-border overflow-y-auto px-5 sm:px-7">
+            <ol className="max-h-[45vh] divide-y divide-border overflow-y-auto px-5 sm:px-7">
               {AUDIT_PROGRESS_STEPS.map((definition) => {
                 const state = steps[definition.id];
                 const completed = state?.phase === 'completed';
-                const active = state?.phase === 'started';
+                const active = state?.phase === 'started' && !error;
                 return (
                   <li key={definition.id} className="flex gap-3 py-3.5">
                     <div className="mt-0.5 flex-shrink-0">
@@ -219,7 +284,9 @@ export function AuditRunner({
                           ? definition.runningLabel
                           : completed
                             ? definition.completedLabel
-                            : 'بانتظار اكتمال الخطوة السابقة'}
+                            : error
+                              ? 'لم تبدأ هذه الخطوة'
+                              : 'بانتظار اكتمال الخطوة السابقة'}
                       </p>
                       {state?.detail && (
                         <p className={cn('mt-1 text-xs leading-5', state.warning ? 'text-warning dark:text-warning' : 'text-muted-foreground')}>
@@ -232,18 +299,40 @@ export function AuditRunner({
               })}
             </ol>
 
-            <div className="flex items-center justify-between gap-4 border-t border-border bg-muted/35 px-5 py-4 sm:px-7">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border bg-muted/35 px-5 py-4 sm:px-7">
               <p className="text-xs leading-5 text-muted-foreground">
                 {error ? 'لم يُنفذ الفحص أي تعديل على حسابك.' : 'أبقِ هذه الصفحة مفتوحة حتى نحفظ النتيجة.'}
               </p>
               {error && (
-                <button
-                  type="button"
-                  className={buttonClasses({ variant: 'primary', size: 'sm' })}
-                  onClick={() => void startAudit()}
-                >
-                  إعادة المحاولة
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    ref={closeRef}
+                    className={buttonClasses({ variant: 'outline', size: 'sm' })}
+                    onClick={closeError}
+                  >
+                    إغلاق
+                  </button>
+                  {error.actions.includes('billing') && (
+                    <a href="/billing" className={buttonClasses({ variant: 'primary', size: 'sm' })}>
+                      فتح الفوترة
+                    </a>
+                  )}
+                  {error.actions.includes('connect') && (
+                    <a href="/onboarding/connect" className={buttonClasses({ variant: 'primary', size: 'sm' })}>
+                      تجديد الربط
+                    </a>
+                  )}
+                  {error.actions.includes('retry') && (
+                    <button
+                      type="button"
+                      className={buttonClasses({ variant: 'primary', size: 'sm' })}
+                      onClick={() => void startAudit()}
+                    >
+                      إعادة المحاولة
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           </section>
@@ -251,13 +340,4 @@ export function AuditRunner({
       )}
     </>
   );
-}
-
-function auditErrorMessage(code: string) {
-  if (code === 'subscription_required') return 'تحتاج إلى اشتراك نشط لتشغيل الفحص.';
-  if (code === 'quota_exceeded') return 'وصلت إلى حد الفحوصات في خطتك الحالية.';
-  if (code === 'account_not_found') return 'لم نجد الحساب الإعلاني المختار. اختر حساباً آخر أو أعد الربط.';
-  if (code === 'too_many_requests') return 'تم إرسال عدة طلبات فحص خلال وقت قصير. انتظر قليلاً ثم أعد المحاولة.';
-  if (code === 'security_service_unavailable') return 'تعذر التحقق من أمان الطلب الآن. أعد المحاولة بعد لحظات.';
-  return 'تعذر إكمال الفحص الآن. لم ننفذ أي تعديل على حساب إعلانات Google.';
 }

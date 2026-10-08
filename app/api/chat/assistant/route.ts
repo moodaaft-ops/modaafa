@@ -420,6 +420,7 @@ async function buildReply({
     recommendations: strictOnly
       ? []
       : recommendations.map((recommendation) => ({
+          id: recommendation.id ?? null,
           title: recommendation.title,
           status: recommendation.status,
           severity: recommendation.severity,
