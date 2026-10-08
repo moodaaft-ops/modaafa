@@ -9,6 +9,16 @@ export type BillingCheckoutContext = {
 
 const LIVE_STATUSES = ['trialing', 'active', 'past_due', 'paused'];
 
+/** Length of the one free trial, passed to Stripe as trial_period_days. */
+export const TRIAL_DAYS = 14;
+
+/**
+ * Where a checkout started from inside onboarding comes back to. A fixed
+ * literal, never a caller-supplied URL, so it cannot become an open redirect.
+ */
+export const ONBOARDING_CHECKOUT_RETURN = 'onboarding';
+export const ONBOARDING_CHECKOUT_SUCCESS_PATH = '/onboarding/first-audit?subscribed=1';
+
 /**
  * Stable, non-reversible key for the durable trial ledger.
  *

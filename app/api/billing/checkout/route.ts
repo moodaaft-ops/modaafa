@@ -4,7 +4,7 @@ import { createServerClient } from '@/lib/supabase/server';
 import { createCheckoutSession, ensureStripeCustomer } from '@/lib/billing/stripe';
 import { requireAppUrl } from '@/lib/platform/env';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
-import { getBillingCheckoutContext } from '@/lib/billing/checkout-policy';
+import { getBillingCheckoutContext, TRIAL_DAYS } from '@/lib/billing/checkout-policy';
 import { isSameOriginRequest } from '@/lib/security/origin';
 import { isModaafaOperator } from '@/lib/platform/operators';
 import { hasActiveGoogleAdsAccount } from '@/lib/accounts/selection';
@@ -95,7 +95,7 @@ export async function POST(req: NextRequest) {
       period,
       successUrl: `${baseUrl}/api/billing/checkout/complete?session_id={CHECKOUT_SESSION_ID}`,
       cancelUrl: `${baseUrl}/billing?canceled=1`,
-      trialDays: billing.trialEligible ? 14 : 0,
+      trialDays: billing.trialEligible ? TRIAL_DAYS : 0,
       customerId,
       idempotencyKey: checkoutIdempotencyKey(user.id, plan, period),
     });

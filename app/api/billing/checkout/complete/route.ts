@@ -5,7 +5,11 @@ import {
   retrieveStripeSubscription,
 } from '@/lib/billing/stripe';
 import { createAdminClient, createServerClient } from '@/lib/supabase/server';
-import { recordTrialGrant } from '@/lib/billing/checkout-policy';
+import {
+  ONBOARDING_CHECKOUT_RETURN,
+  ONBOARDING_CHECKOUT_SUCCESS_PATH,
+  recordTrialGrant,
+} from '@/lib/billing/checkout-policy';
 import {
   applySubscriptionEvent,
   LiveSubscriptionConflictError,
@@ -105,7 +109,11 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    return NextResponse.redirect(new URL('/dashboard?subscribed=1', req.url));
+    const successPath =
+      req.nextUrl.searchParams.get('return_to') === ONBOARDING_CHECKOUT_RETURN
+        ? ONBOARDING_CHECKOUT_SUCCESS_PATH
+        : '/dashboard?subscribed=1';
+    return NextResponse.redirect(new URL(successPath, req.url));
   } catch (error) {
     if (error instanceof LiveSubscriptionConflictError) {
       await safeOpsAlert({
