@@ -212,12 +212,24 @@ export function createStripeWebhookHandler(
             .eq('stripe_subscription_id', subscription.id)
             .maybeSingle();
           if (trialing?.user_id) {
-            await safeUserEmail(
-              dependencies,
-              supabase,
-              trialing.user_id,
-              dependencies.trialEndingEmail(stripeTimestamp(subscription.trial_end)),
-            );
+            // The email says the plan "renews automatically". A customer who
+            // already cancelled would read that as the cancel having failed,
+            // so read the live state and stay quiet for them.
+            let cancelScheduled = Boolean(subscription.cancel_at_period_end || subscription.cancel_at);
+            try {
+              const live = await dependencies.retrieveStripeSubscription(subscription.id);
+              cancelScheduled = Boolean(live.cancel_at_period_end || live.cancel_at);
+            } catch (error) {
+              console.error('Could not confirm cancellation state before the trial-ending email', error);
+            }
+            if (!cancelScheduled) {
+              await safeUserEmail(
+                dependencies,
+                supabase,
+                trialing.user_id,
+                dependencies.trialEndingEmail(stripeTimestamp(subscription.trial_end)),
+              );
+            }
           }
           break;
         }
