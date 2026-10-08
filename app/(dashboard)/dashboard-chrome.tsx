@@ -25,6 +25,8 @@ import { RouteProgress } from '@/lib/ui/route-progress';
 import { ThemeToggle } from '@/lib/ui/theme-toggle';
 import { trapTabKey } from '@/lib/ui/focus-trap';
 import { cn } from '@/lib/utils';
+import { trialLabelAr } from '@/lib/ui/plural-ar';
+import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import { AccountSwitcher } from './account-switcher';
 import { WelcomeTour, startWelcomeTour } from './welcome-tour';
 import { LogoLockup, LogoMark } from '@/lib/ui/logo';
@@ -45,8 +47,8 @@ const navGroups: Array<{ label: string; items: NavItem[] }> = [
       { href: '/dashboard', label: 'لوحة التحكم', icon: LayoutDashboard },
       { href: '/assistant', label: 'المساعد الذكي', icon: MessageCircle },
       { href: '/audit', label: 'فحص الحساب', icon: ShieldCheck },
-      { href: '/optimizer', label: 'مركز الموافقات', icon: Zap },
-      { href: '/autopilot', label: 'الطيار الآلي', icon: Bot, badge: 'تجريبي' },
+      { href: '/optimizer', label: 'الموافقات', icon: Zap },
+      { href: '/autopilot', label: 'الطيار الآلي', icon: Bot },
     ],
   },
   {
@@ -73,6 +75,7 @@ export function DashboardChrome({
   pausedAccounts = [],
   selectedCustomerId,
   isOperator = false,
+  trialDaysLeft = null,
   children,
 }: {
   brandName: string;
@@ -82,6 +85,8 @@ export function DashboardChrome({
   pausedAccounts?: AdsAccountSummary[];
   selectedCustomerId: string | null;
   isOperator?: boolean;
+  /** Whole days left in the free trial; null when not trialing. */
+  trialDaysLeft?: number | null;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -152,7 +157,7 @@ export function DashboardChrome({
 
   const selectedAccountLabel = (() => {
     const match = accounts.find((account) => account.customer_id === selectedCustomerId);
-    return match?.customer_name?.trim() || null;
+    return match ? googleAdsAccountDisplayName(match) : null;
   })();
 
   function isActive(href: string) {
@@ -176,7 +181,7 @@ export function DashboardChrome({
       {/* Mobile overlay */}
       {mobileOpen && (
         <div
-          className="fixed inset-0 z-40 bg-background lg:hidden"
+          className="fixed inset-0 z-40 bg-[#0E1426]/60 lg:hidden"
           onClick={() => setMobileOpen(false)}
           aria-hidden
         />
@@ -186,24 +191,16 @@ export function DashboardChrome({
       <aside
         ref={drawerRef}
         className={cn(
-          'z-50 flex w-[268px] flex-shrink-0 flex-col border-e border-border bg-[hsl(var(--sidebar))]',
-          // `start-0`, NOT `end-0`: in RTL the logical start edge is the RIGHT
-          // one, which is the side the menu button lives on and the side a
-          // drawer is expected from. `end-0` anchors it to the left in RTL, so
-          // the closed `translate-x-full` pushed it INTO view instead of out.
-          'fixed inset-y-0 start-0 shadow-pop transition-transform duration-200 ease-out',
-          // `lg:relative`, NOT `lg:static`: the rail's decorative wash below is
-          // `absolute inset-x-0`, and a static aside is not a containing block —
-          // so on desktop the wash escaped the rail, resolved against the page,
-          // and painted a full-width green band across the app just under the
-          // sticky header (obvious in light mode, muddy in dark). `relative`
-          // lays out identically to `static` here and re-anchors the child.
-          'lg:relative lg:z-auto lg:w-[252px] lg:shadow-none lg:transition-none',
-          // `max-lg:` scopes the drawer transform to small screens only.
-          // Using `rtl:` + `lg:translate-x-0` did NOT work: the rtl variant
-          // compiles to `[dir=rtl] .rtl\:…`, whose specificity beats the
-          // media-query-only `lg:` rule, so the sidebar stayed translated off
-          // screen on desktop and the whole rail disappeared.
+          // The sidebar is navy in both themes: the `dark` class re-scopes the
+          // colour tokens for everything inside it (switcher, logo, buttons).
+          'dark z-50 flex w-[268px] flex-shrink-0 flex-col border-e border-border bg-background text-foreground',
+          // `start-0`, not `end-0`: in RTL the logical start edge is the right
+          // one, which is where a drawer is expected from.
+          'fixed inset-y-0 start-0 transition-transform duration-200 ease-out',
+          // `lg:relative` keeps the rail in normal flow on desktop.
+          'lg:relative lg:z-auto lg:w-[252px] lg:transition-none',
+          // `max-lg:` scopes the drawer transform to small screens only; an
+          // `rtl:` variant out-ranks the plain `lg:` rule and hid the desktop rail.
           mobileOpen
             ? 'translate-x-0'
             : 'max-lg:rtl:translate-x-full max-lg:ltr:-translate-x-full'
@@ -216,9 +213,6 @@ export function DashboardChrome({
         role={mobileOpen ? 'dialog' : undefined}
         aria-modal={mobileOpen ? true : undefined}
       >
-        {/* A single faint accent wash at the top of the rail — the only
-            decoration in the shell. */}
-
         <div className="relative flex h-14 items-center justify-between gap-2 border-b border-border px-3">
           {brand}
           <button
@@ -258,30 +252,23 @@ export function DashboardChrome({
                       aria-current={active ? 'page' : undefined}
                       data-tour={TOUR_ANCHORS[item.href]}
                       className={cn(
-                        // The active item is a raised surface, not a coloured
-                        // block: it reads as the selected row of a tool rather
-                        // than a highlighted link.
                         'group relative flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] transition-colors duration-150',
                         active
                           ? 'bg-muted font-medium text-foreground'
                           : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
                       )}
                     >
-                      {active && (
-                        <span
-                          className="absolute inset-y-1.5 start-0 w-[2px] rounded-full bg-primary"
-                          aria-hidden
-                        />
-                      )}
+                      {/* Signal marker: the current page, and the only yellow in the rail. */}
+                      {active && <span className="absolute inset-y-0 start-0 w-[3px] bg-signal" aria-hidden />}
                       <Icon
                         className={cn(
                           'h-4 w-4 flex-shrink-0 transition-colors duration-150',
-                          active ? 'text-primary' : 'text-muted-foreground/70 group-hover:text-foreground'
+                          active ? 'text-foreground' : 'text-muted-foreground/70 group-hover:text-foreground'
                         )}
                       />
                       <span className="truncate">{item.label}</span>
                       {item.badge && (
-                        <span className="ms-auto rounded-full bg-warning/15 px-1.5 py-0.5 text-[10px] font-semibold text-warning ring-1 ring-inset ring-warning/25 dark:text-warning">
+                        <span className="ms-auto rounded-md border border-border-strong px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
                           {item.badge}
                         </span>
                       )}
@@ -294,8 +281,20 @@ export function DashboardChrome({
         </nav>
 
         <div className="relative border-t border-border p-2.5">
+          {trialDaysLeft !== null && (
+            <Link
+              href="/billing"
+              className="mb-2 flex items-center gap-2 rounded-md border border-border-strong px-2.5 py-2 text-[12px] leading-5 text-foreground transition-colors hover:bg-muted"
+            >
+              <span className="status-square flex-shrink-0 text-signal" aria-hidden />
+              <span className="min-w-0">
+                <span className="block font-semibold">تجربة مجانية</span>
+                <span className="block text-[11px] text-muted-foreground">{trialLabelAr(trialDaysLeft)}</span>
+              </span>
+            </Link>
+          )}
           <div className="mb-2 flex items-center gap-2 rounded-md px-1.5 py-1.5">
-            <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md bg-primary/15 text-[10px] font-bold text-primary ring-1 ring-inset ring-primary/25">
+            <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md bg-muted text-[10px] font-bold text-foreground">
               {(brandName || 'M').trim().charAt(0).toUpperCase()}
             </span>
             <span
@@ -340,10 +339,19 @@ export function DashboardChrome({
           {/* The selected account is the single most important piece of context
               in the product; on mobile it was only reachable through the
               drawer. */}
-          {selectedAccountLabel && (
-            <span className="min-w-0 flex-1 truncate px-2 text-center text-[11px] text-muted-foreground">
-              {selectedAccountLabel}
-            </span>
+          {selectedAccountLabel ? (
+            <button
+              type="button"
+              onClick={() => setMobileOpen(true)}
+              data-tour="account-switcher"
+              className="flex min-w-0 flex-1 items-center justify-center gap-1.5 truncate px-2 text-[12px] font-medium text-foreground"
+              aria-label={`الحساب الإعلاني: ${selectedAccountLabel}. اضغط للتبديل`}
+            >
+              <span className="status-square flex-shrink-0 text-signal" aria-hidden />
+              <span className="truncate">{selectedAccountLabel}</span>
+            </button>
+          ) : (
+            <span className="flex-1" />
           )}
           <div className="flex flex-shrink-0 items-center gap-1.5">
             <ThemeToggle className="h-9 w-9" />
@@ -372,7 +380,7 @@ export function DashboardChrome({
           aria-label="التنقل السريع"
         >
           {[
-            { href: '/dashboard', label: 'الرئيسية', icon: LayoutDashboard },
+            { href: '/dashboard', label: 'لوحة التحكم', icon: LayoutDashboard },
             { href: '/assistant', label: 'المساعد', icon: MessageCircle },
             { href: '/audit', label: 'الفحص', icon: ShieldCheck },
             { href: '/optimizer', label: 'الموافقات', icon: Zap },
@@ -384,12 +392,14 @@ export function DashboardChrome({
                 key={item.href}
                 href={item.href}
                 aria-current={active ? 'page' : undefined}
+                data-tour={TOUR_ANCHORS[item.href]}
                 className={cn(
-                  'flex flex-1 flex-col items-center justify-center gap-1 py-2.5 text-[10.5px] font-medium transition-colors',
-                  active ? 'text-primary' : 'text-muted-foreground'
+                  'relative flex flex-1 flex-col items-center justify-center gap-1 py-2.5 text-[10.5px] font-medium transition-colors',
+                  active ? 'text-foreground' : 'text-muted-foreground'
                 )}
               >
-                <Icon className={cn('h-5 w-5', active ? 'text-primary' : 'text-muted-foreground/80')} />
+                {active && <span className="absolute inset-x-4 top-0 h-[3px] bg-signal" aria-hidden />}
+                <Icon className={cn('h-5 w-5', active ? 'text-foreground' : 'text-muted-foreground/80')} />
                 {item.label}
               </Link>
             );

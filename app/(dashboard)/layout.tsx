@@ -1,8 +1,10 @@
 import { redirect } from 'next/navigation';
-import { getRequestAuthContext } from '@/lib/supabase/server';
+import { getRequestAuthContext, getRequestServerClient } from '@/lib/supabase/server';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { DashboardChrome } from './dashboard-chrome';
 import { isModaafaOperator } from '@/lib/platform/operators';
+import { getSubscriptionAccess } from '@/lib/billing/entitlements';
+import { daysUntil } from '@/lib/ui/plural-ar';
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { user } = await getRequestAuthContext();
@@ -28,6 +30,17 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // business for them.
   if (!business) redirect('/onboarding');
 
+  // Trial badge for the sidebar. A failed read must never break the shell, so
+  // it simply shows no badge.
+  let trialDaysLeft: number | null = null;
+  try {
+    const supabase = await getRequestServerClient();
+    const access = await getSubscriptionAccess(supabase, user.id, user.email);
+    if (access.status === 'trialing') trialDaysLeft = daysUntil(access.trialEndsAt);
+  } catch {
+    trialDaysLeft = null;
+  }
+
   return (
     <DashboardChrome
       brandName={business?.name ?? user.email ?? 'مساحة العمل'}
@@ -37,6 +50,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       pausedAccounts={pausedAccounts}
       selectedCustomerId={selectedCustomerId}
       isOperator={isModaafaOperator(user.email)}
+      trialDaysLeft={trialDaysLeft}
     >
       {children}
     </DashboardChrome>
