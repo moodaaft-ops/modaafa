@@ -186,7 +186,7 @@ export type VoiceCaps = {
 
 /** Default is Fahad (library voice, Saudi Arabic). Never a cloned voice. */
 export const DEFAULT_VOICE_MODEL = 'eleven_flash_v2_5';
-export const DEFAULT_STT_MODEL = 'scribe_v1';
+export const DEFAULT_STT_MODEL = 'scribe_v2';
 
 function intFrom(value: string | undefined, fallback: number, min: number, max: number) {
   const n = Number.parseInt(String(value ?? ''), 10);
@@ -269,6 +269,7 @@ export type VoiceErrorCode =
   | 'unauthorized'
   | 'subscription_required'
   | 'session_expired'
+  | 'session_ended'
   | 'session_limit'
   | 'daily_limit'
   | 'too_many_requests'
@@ -306,6 +307,8 @@ export function voiceErrorMessage(code: string | undefined, status: number | nul
       return 'لم أسمع كلاماً واضحاً. اضغط التحدث وأعد المحاولة.';
     case 'voice_plan_required':
       return 'الصوت المختار غير متاح على خطة مزود الصوت. الرد مكتوب فوق.';
+    case 'session_ended':
+      return 'انتهت هذي المكالمة. ابدأ مكالمة جديدة لو تبي تكمل.';
     case 'account_changed':
       return 'تغيّر الحساب الإعلاني أثناء المكالمة، فانتهت. ابدأ مكالمة جديدة على الحساب الحالي.';
     case 'account_not_found':

@@ -47,6 +47,43 @@ export async function checkRateLimit({
   };
 }
 
+/**
+ * Read-only look at a counter in the same shared store that consume_rate_limit
+ * writes (same key derivation), without consuming anything. Used for markers
+ * that mean "this already happened" (for example an ended voice session).
+ * Throws when storage is down so callers fail closed.
+ */
+export async function peekRateLimitWindow({
+  scope,
+  identifier,
+  windowSeconds,
+  client,
+  nowMs = Date.now(),
+}: {
+  scope: string;
+  identifier: string;
+  windowSeconds: number;
+  /** Test seam; production uses the service-role client. */
+  client?: any;
+  nowMs?: number;
+}): Promise<{ count: number }> {
+  const digest = createHash('sha256').update(identifier.trim()).digest('hex');
+  const supabase = client ?? createAdminClient();
+  const { data, error } = await supabase
+    .from('rate_limit_windows')
+    .select('window_start, request_count')
+    .eq('key', `${scope}:${digest}`)
+    .maybeSingle();
+  if (error) {
+    console.error('Rate limit storage unavailable', { scope, error });
+    throw new Error('rate_limit_unavailable');
+  }
+  if (!data) return { count: 0 };
+  const startMs = new Date(String((data as any).window_start)).getTime();
+  if (!Number.isFinite(startMs) || startMs + windowSeconds * 1000 <= nowMs) return { count: 0 };
+  return { count: Math.max(0, Number((data as any).request_count ?? 0)) };
+}
+
 export function rateLimitHeaders(result: RateLimitResult) {
   return {
     'Retry-After': String(result.retryAfterSeconds),

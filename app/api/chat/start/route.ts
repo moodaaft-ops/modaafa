@@ -13,7 +13,7 @@ import type { ModelCall } from '@/lib/chat-first/understand';
 import { createMessageForAgent, hasAIBackend } from '@/lib/ai/client';
 import { readVoiceConfig } from '@/lib/ai/voice-session';
 import { grantSpeech, verifyChatVoiceTicket } from '@/lib/ai/voice-server';
-import { voiceLimiter } from '@/lib/ai/voice-route-deps';
+import { voiceLimiter, voiceSessionStore } from '@/lib/ai/voice-route-deps';
 
 const MAX_MESSAGE = 1000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -94,7 +94,7 @@ export async function POST(req: NextRequest) {
   if (voiceTicket) {
     if (action || !message) return NextResponse.json({ error: 'ticket_invalid' }, { status: 403 });
     voiceCheck = await verifyChatVoiceTicket(
-      { config: voiceConfig, nowMs: () => Date.now(), limit: voiceLimiter(req) },
+      { config: voiceConfig, nowMs: () => Date.now(), limit: voiceLimiter(req), sessions: voiceSessionStore(req, voiceConfig) },
       user.id,
       voiceTicket,
       message,

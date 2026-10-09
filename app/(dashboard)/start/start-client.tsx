@@ -128,6 +128,10 @@ export function StartClient({
         assistant('تغيّر الحساب أثناء المكالمة، فانتهت. ابدأ مكالمة جديدة على الحساب الحالي.');
         return { reply: '', hasDraft: false, fatal: 'account_changed' };
       }
+      if (voiceTicket && res.status === 401 && data.error === 'session_ended') {
+        assistant('انتهت المكالمة. ابدأ مكالمة جديدة لو تبي تكمل صوتياً.');
+        return { reply: '', hasDraft: false, fatal: 'session_ended' };
+      }
       if (!res.ok) {
         const msg =
           res.status === 404

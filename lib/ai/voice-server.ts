@@ -84,6 +84,22 @@ export type VoiceProvider = {
   speak(text: string, signal?: AbortSignal): Promise<{ ok: true; body: ReadableStream<Uint8Array> | ArrayBuffer; contentType: string } | { ok: false; status: number }>;
 };
 
+/**
+ * Server-side end marker for a call, kept in the shared limits store so every
+ * serverless instance sees it. A token alone cannot be revoked (it is
+ * stateless); every voice request asks this before touching the provider.
+ * Both methods throw when storage is down and callers fail closed (503).
+ */
+export type VoiceSessions = {
+  isEnded(sessionId: string): Promise<boolean>;
+  end(sessionId: string): Promise<void>;
+};
+
+/** Longer than any token the call can still hold: session max plus the two chained 180 s tickets. */
+export function endMarkerWindowSeconds(config: VoiceConfig) {
+  return config.caps.sessionMaxSeconds + 600;
+}
+
 export type VoiceDeps = {
   config: VoiceConfig;
   nowMs: () => number;
@@ -96,6 +112,7 @@ export type VoiceDeps = {
   /** Rate limiter. Throws when storage is down; handlers turn that into 503. */
   limit: (key: string, limit: number, windowSeconds: number) => Promise<LimitResult>;
   provider: VoiceProvider;
+  sessions: VoiceSessions;
 };
 
 export type VoiceResult =
@@ -121,6 +138,47 @@ async function guarded(
     if (!result.allowed) return fail(429, code, { retry_after: result.retryAfterSeconds ?? null });
   }
   return null;
+}
+
+/**
+ * The call must still be live and still belong to the account it was opened
+ * on, checked before any counter or provider request. An account switch ends
+ * the call for good on the server, not only in the browser.
+ */
+async function sessionGate(
+  deps: Pick<VoiceDeps, 'sessions'>,
+  sessionId: string,
+  boundAccount: string | undefined,
+  currentAccount: string
+): Promise<VoiceResult | null> {
+  try {
+    if (await deps.sessions.isEnded(sessionId)) return fail(401, 'session_ended');
+    if ((boundAccount ?? '-') !== currentAccount) {
+      await deps.sessions.end(sessionId);
+      return fail(409, 'account_changed');
+    }
+  } catch {
+    return fail(503, 'security_service_unavailable');
+  }
+  return null;
+}
+
+/** POST /api/voice/end: the person ended the call (or switched account). Idempotent. */
+export async function endVoiceSession(deps: VoiceDeps, input: { sessionToken: string | null }): Promise<VoiceResult> {
+  const early = preflight(deps);
+  if (early) return early;
+  const user = deps.user!;
+  // An expired token has nothing left to revoke; the owner check still applies.
+  const session = verifyVoiceToken(input.sessionToken, deps.config.ticketSecret!, { kind: 'session', userId: user.id }, deps.nowMs());
+  if (!session) return { status: 200, json: { ended: true, already: true } };
+  const blocked = await guarded(deps, [[`voice_end_rl:${user.id}`, 60, 600, 'too_many_requests']]);
+  if (blocked) return blocked;
+  try {
+    await deps.sessions.end(session.s);
+  } catch {
+    return fail(503, 'security_service_unavailable');
+  }
+  return { status: 200, json: { ended: true } };
 }
 
 function preflight(deps: VoiceDeps): VoiceResult | null {
@@ -177,7 +235,7 @@ const ALLOWED_AUDIO = /^audio\/(webm|mp4|ogg|mpeg|wav|x-m4a|aac)(;.*)?$/i;
 /** POST /api/voice/transcribe: one recorded question in, text and a turn ticket out. */
 export async function transcribeVoiceTurn(
   deps: VoiceDeps,
-  input: { sessionToken: string | null; mime: string; readAudio: () => Promise<ArrayBuffer | null>; declaredBytes: number | null }
+  input: { sessionToken: string | null; mime: string; readAudio: () => Promise<ArrayBuffer | null>; declaredBytes: number | null; accountKey: string }
 ): Promise<VoiceResult> {
   const early = preflight(deps);
   if (early) return early;
@@ -188,6 +246,8 @@ export async function transcribeVoiceTurn(
   const now = deps.nowMs();
   const session = verifyVoiceToken(input.sessionToken, secret, { kind: 'session', userId: user.id }, now);
   if (!session) return fail(401, 'session_expired');
+  const gone = await sessionGate(deps, session.s, session.a, input.accountKey);
+  if (gone) return gone;
 
   const caps = capsForPlan(deps.config.caps, deps.planAssistantDailyLimit);
 
@@ -227,7 +287,7 @@ export async function transcribeVoiceTurn(
 /** POST /api/voice/speak: text to audio, only for a reply the chat route itself granted. */
 export async function speakVoiceTurn(
   deps: VoiceDeps,
-  input: { ticket: string | null; text: unknown; signal?: AbortSignal }
+  input: { ticket: string | null; text: unknown; signal?: AbortSignal; accountKey: string }
 ): Promise<VoiceResult> {
   const early = preflight(deps);
   if (early) return early;
@@ -237,6 +297,8 @@ export async function speakVoiceTurn(
   const now = deps.nowMs();
   const ticket = verifyVoiceToken(input.ticket, deps.config.ticketSecret!, { kind: 'speak', userId: user.id }, now);
   if (!ticket) return fail(403, 'ticket_invalid');
+  const gone = await sessionGate(deps, ticket.s, ticket.a, input.accountKey);
+  if (gone) return gone;
 
   const checked = validateTtsText(input.text);
   if (!checked.ok) {
@@ -375,7 +437,7 @@ export type ChatVoiceCheck =
  * and can be used for one chat call.
  */
 export async function verifyChatVoiceTicket(
-  deps: Pick<VoiceDeps, 'config' | 'nowMs' | 'limit'>,
+  deps: Pick<VoiceDeps, 'config' | 'nowMs' | 'limit' | 'sessions'>,
   userId: string,
   ticket: string,
   message: string,
@@ -386,9 +448,18 @@ export async function verifyChatVoiceTicket(
   if (!payload || !payload.h || payload.h !== textFingerprint(message)) {
     return { ok: false, status: 403, error: 'ticket_invalid' };
   }
-  // The call belongs to the account it was opened on. Switching accounts
-  // mid-call ends it: the old ticket never speaks for the new account.
-  if ((payload.a ?? '-') !== accountKey) return { ok: false, status: 409, error: 'account_changed' };
+  // The call must be live and belong to the account it was opened on.
+  // Switching accounts mid-call ends it on the server: the old ticket never
+  // speaks for the new account, and neither does any other ticket of the call.
+  try {
+    if (await deps.sessions.isEnded(payload.s)) return { ok: false, status: 401, error: 'session_ended' };
+    if ((payload.a ?? '-') !== accountKey) {
+      await deps.sessions.end(payload.s);
+      return { ok: false, status: 409, error: 'account_changed' };
+    }
+  } catch {
+    return { ok: false, status: 503, error: 'security_service_unavailable' };
+  }
   try {
     const used = await deps.limit(`voice_chat:${payload.i}`, 1, 300);
     if (!used.allowed) return { ok: false, status: 403, error: 'ticket_invalid' };

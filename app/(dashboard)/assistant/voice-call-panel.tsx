@@ -26,7 +26,7 @@ export type VoiceTurnResult = {
   hasDraft: boolean;
   speech?: { spokenText: string; speakTicket: string } | null;
   /** The server ended the call for a reason the person must see (for example the account changed). */
-  fatal?: 'account_changed' | 'session_expired';
+  fatal?: 'account_changed' | 'session_expired' | 'session_ended';
 } | null;
 
 const TICK_MS = 50;
@@ -86,6 +86,7 @@ export function VoiceCallPanel({
   const listenVadRef = useRef(createVad(LISTEN_VAD));
   const bargeVadRef = useRef(createVad(BARGE_VAD));
   const sessionRef = useRef<{ token: string; maxSeconds: number } | null>(null);
+  const serverEndedRef = useRef<string | null>(null);
   const turnRef = useRef(0);
   const idleTimerRef = useRef<number | null>(null);
   const endedRef = useRef(false);
@@ -145,16 +146,30 @@ export function VoiceCallPanel({
     setUserSpeaking(false);
   }, [discardRecorder]);
 
+  /**
+   * Tells the server the call is over so the session token and every ticket
+   * under it stop working there too, not only in this tab. Best effort: if it
+   * cannot be sent (offline, tab closing) the short token lifetime still ends it.
+   */
+  const endOnServer = useCallback(() => {
+    const token = sessionRef.current?.token;
+    if (!token || serverEndedRef.current === token) return;
+    serverEndedRef.current = token;
+    void fetch('/api/voice/end', { method: 'POST', headers: { 'x-voice-session': token }, keepalive: true }).catch(() => undefined);
+  }, []);
+
   const endCall = useCallback(() => {
     if (endedRef.current) return;
     endedRef.current = true;
     turnRef.current += 1;
+    abortRef.current?.abort();
+    endOnServer();
     clearIdleTimer();
     releaseMic();
     stopPlayback();
     dispatch('end_call');
     onCloseRef.current();
-  }, [releaseMic, stopPlayback]);
+  }, [endOnServer, releaseMic, stopPlayback]);
 
   // Hard ceiling on a call, plus cleanup when the panel unmounts for any reason.
   useEffect(() => {
@@ -163,10 +178,18 @@ export function VoiceCallPanel({
       window.clearTimeout(ceiling);
       clearIdleTimer();
       turnRef.current += 1;
+      abortRef.current?.abort();
+      endOnServer();
       releaseMic();
       stopPlayback();
     };
-  }, [endCall, releaseMic, stopPlayback]);
+  }, [endCall, endOnServer, releaseMic, stopPlayback]);
+
+  // Closing or leaving the tab also ends the call on the server.
+  useEffect(() => {
+    window.addEventListener('pagehide', endOnServer);
+    return () => window.removeEventListener('pagehide', endOnServer);
+  }, [endOnServer]);
 
   // Switching ad account mid-call ends it: the open session, any ticket in
   // flight and the mic all belong to the old account.
@@ -218,7 +241,7 @@ export function VoiceCallPanel({
   const failWith = useCallback(
     (code: string | undefined, status: number | null, turn: number) => {
       if (turn !== turnRef.current) return;
-      if (code === 'session_expired' || code === 'unauthorized') sessionRef.current = null;
+      if (code === 'session_expired' || code === 'unauthorized' || code === 'session_ended' || code === 'account_changed') sessionRef.current = null;
       setError(voiceErrorMessage(code, status));
       const retryable = ['no_speech', 'too_many_requests', 'session_expired', 'audio_too_large'];
       if (code && retryable.includes(code) && streamRef.current) {
@@ -246,7 +269,10 @@ export function VoiceCallPanel({
       try {
         const response = await fetch('/api/voice/speak', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(customerRef.current ? { 'x-voice-customer': customerRef.current } : {}),
+          },
           body: JSON.stringify({ text: speech.spokenText, ticket: speech.speakTicket }),
           signal: controller.signal,
         });
@@ -254,6 +280,11 @@ export function VoiceCallPanel({
           const data = await response.json().catch(() => ({}));
           // The answer is already written in the chat. A failed voice leg does not end the call.
           if (turn !== turnRef.current) return;
+          if (data?.error === 'session_ended' || data?.error === 'account_changed') {
+            // The server closed this call: do not keep a live mic on a dead session.
+            failWith(data.error, response.status, turn);
+            return;
+          }
           setError(voiceErrorMessage(data?.error, response.status));
           dispatch('audio_finished');
           beginListening();
@@ -290,7 +321,7 @@ export function VoiceCallPanel({
         beginListening();
       }
     },
-    [beginListening, stopPlayback]
+    [beginListening, failWith, stopPlayback]
   );
 
   const handleRecording = useCallback(
@@ -306,7 +337,11 @@ export function VoiceCallPanel({
       try {
         const response = await fetch('/api/voice/transcribe', {
           method: 'POST',
-          headers: { 'Content-Type': mime.split(';')[0] || 'audio/webm', 'x-voice-session': sessionRef.current?.token ?? '' },
+          headers: {
+            'Content-Type': mime.split(';')[0] || 'audio/webm',
+            'x-voice-session': sessionRef.current?.token ?? '',
+            ...(customerRef.current ? { 'x-voice-customer': customerRef.current } : {}),
+          },
           body: blob,
           signal: controller.signal,
         });
@@ -340,6 +375,7 @@ export function VoiceCallPanel({
       }
       if (result.fatal) {
         // The server refused the ticket for this account or session. Nothing was spoken.
+        endOnServer();
         sessionRef.current = null;
         setError(voiceErrorMessage(result.fatal, 409));
         releaseMic();
@@ -357,7 +393,7 @@ export function VoiceCallPanel({
       }
       await playReply(result.speech, turn);
     },
-    [beginListening, failWith, playReply, releaseMic]
+    [beginListening, endOnServer, failWith, playReply, releaseMic]
   );
 
   /** The person stopped talking: close this recording and send it. */

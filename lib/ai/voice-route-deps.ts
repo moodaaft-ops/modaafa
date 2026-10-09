@@ -1,9 +1,19 @@
 import type { NextRequest } from 'next/server';
 import { createServerClient } from '@/lib/supabase/server';
 import { getSubscriptionAccess, PLAN_LIMITS } from '@/lib/billing/entitlements';
-import { checkRateLimit } from '@/lib/security/rate-limit';
+import { checkRateLimit, peekRateLimitWindow } from '@/lib/security/rate-limit';
+import { SELECTED_ADS_ACCOUNT_COOKIE } from '@/lib/accounts/selection';
+import { loadChatState } from '@/lib/chat-first/state';
 import { readVoiceConfig } from '@/lib/ai/voice-session';
-import { createElevenLabsProvider, createMockProvider, type VoiceDeps, type VoiceResult } from '@/lib/ai/voice-server';
+import {
+  createElevenLabsProvider,
+  createMockProvider,
+  endMarkerWindowSeconds,
+  type VoiceDeps,
+  type VoiceResult,
+  type VoiceSessions,
+} from '@/lib/ai/voice-server';
+import type { VoiceConfig } from '@/lib/ai/voice-session';
 import { NextResponse } from 'next/server';
 
 /** Wires the injectable voice handlers to Supabase, the rate limiter and the provider. */
@@ -44,6 +54,7 @@ export async function buildVoiceDeps(req: NextRequest): Promise<VoiceDeps & { su
     planAssistantDailyLimit,
     tier,
     provider,
+    sessions: voiceSessionStore(req, config),
     limit: async (key, limit, windowSeconds) => {
       const idx = key.indexOf(':');
       const result = await checkRateLimit({
@@ -78,4 +89,54 @@ export function voiceJson(result: VoiceResult) {
     status: 200,
     headers: { 'Content-Type': result.audio.contentType, 'Cache-Control': 'no-store' },
   });
+}
+
+/**
+ * End markers live in the shared limits table (rate_limit_windows), the same
+ * store every serverless instance already uses for the other voice counters.
+ * `end` writes the marker (limit 1, so it is a single idempotent row); `isEnded`
+ * reads it without consuming anything.
+ */
+export function voiceSessionStore(req: NextRequest, config: VoiceConfig): VoiceSessions {
+  const windowSeconds = endMarkerWindowSeconds(config);
+  return {
+    async end(sessionId) {
+      await checkRateLimit({ req, scope: 'voice_end', identifier: sessionId, limit: 1, windowSeconds });
+    },
+    async isEnded(sessionId) {
+      const { count } = await peekRateLimitWindow({ scope: 'voice_end', identifier: sessionId, windowSeconds });
+      return count > 0;
+    },
+  };
+}
+
+/**
+ * The ad account this request is on, resolved by the same function the chat
+ * entry uses. The browser may name the account it believes it is on; the
+ * server only accepts it if it is linked to this user, and the call is bound
+ * to whatever the server resolves, never to what the browser claims.
+ */
+export async function resolveVoiceAccountKey(
+  deps: VoiceDeps & { supabase: any },
+  req: NextRequest
+): Promise<{ ok: true; key: string } | { ok: false; response: NextResponse }> {
+  if (!deps.user) return { ok: true, key: '-' };
+  const loaded = await loadChatState({
+    supabase: deps.supabase,
+    userId: deps.user.id,
+    userEmail: deps.user.email,
+    requestedCustomerId: req.headers.get('x-voice-customer'),
+    cookieCustomerId: req.cookies.get(SELECTED_ADS_ACCOUNT_COOKIE)?.value ?? null,
+  });
+  if (!loaded.ok) {
+    const notFound = loaded.error === 'account_not_found';
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: notFound ? 'account_not_found' : 'security_service_unavailable' },
+        { status: notFound ? 404 : 503, headers: { 'Cache-Control': 'no-store' } }
+      ),
+    };
+  }
+  return { ok: true, key: loaded.accountId ?? '-' };
 }
