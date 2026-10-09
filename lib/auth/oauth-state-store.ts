@@ -78,13 +78,14 @@ export async function persistOAuthState(params: {
 /**
  * Atomically consume a state: marks it used only if it exists,
  * is unused, and has not expired. Then verifies it belongs to the
- * logged-in user.
+ * logged-in user. `consentAt` is when the state was issued (the moment the user
+ * started consenting), used to order competing connect jobs.
  */
-export async function consumeOAuthState(params: {
+export async function consumeOAuthStateWithTime(params: {
   userId: string;
   state: string;
   purpose: OAuthStatePurpose;
-}): Promise<ConsumeOAuthStateResult> {
+}): Promise<{ result: ConsumeOAuthStateResult; consentAt: string | null }> {
   try {
     const admin = createAdminClient();
 
@@ -95,19 +96,27 @@ export async function consumeOAuthState(params: {
       .eq('purpose', params.purpose)
       .is('used_at', null)
       .gt('expires_at', new Date().toISOString())
-      .select('user_id');
+      .select('user_id, created_at');
 
     if (error) {
       console.warn('OAuth state storage unavailable (consume)', error);
-      return 'unavailable';
+      return { result: 'unavailable', consentAt: null };
     }
 
     const row = data?.[0];
-    if (!row) return 'not_found';
-    if (row.user_id !== params.userId) return 'user_mismatch';
-    return 'ok';
+    if (!row) return { result: 'not_found', consentAt: null };
+    if (row.user_id !== params.userId) return { result: 'user_mismatch', consentAt: null };
+    return { result: 'ok', consentAt: typeof row.created_at === 'string' ? row.created_at : null };
   } catch (error) {
     console.warn('OAuth state storage unavailable (consume)', error);
-    return 'unavailable';
+    return { result: 'unavailable', consentAt: null };
   }
+}
+
+export async function consumeOAuthState(params: {
+  userId: string;
+  state: string;
+  purpose: OAuthStatePurpose;
+}): Promise<ConsumeOAuthStateResult> {
+  return (await consumeOAuthStateWithTime(params)).result;
 }
