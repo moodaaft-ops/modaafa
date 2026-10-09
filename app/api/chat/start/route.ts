@@ -6,10 +6,29 @@ import { isSameOriginRequest } from '@/lib/security/origin';
 import { isChatFirstEnabled } from '@/lib/chat-first/flag';
 import { loadChatState } from '@/lib/chat-first/state';
 import { planApply, planTurn } from '@/lib/chat-first/orchestrator';
-import type { ChatTurn } from '@/lib/chat-first/contracts';
+import { LANGUAGE_ALLOWANCE, type ChatLanguageMeta, type ChatTurn } from '@/lib/chat-first/contracts';
+import { resolveLanguage } from '@/lib/chat-first/language';
+import type { ModelCall } from '@/lib/chat-first/understand';
+import { createMessageForAgent, hasAIBackend } from '@/lib/ai/client';
 
 const MAX_MESSAGE = 1000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Existing model path (assistant role). No new model, no Opus. */
+const callAssistantModel: ModelCall = async ({ system, user, maxTokens }) => {
+  const response = await createMessageForAgent('assistant', {
+    max_tokens: maxTokens,
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+  return (
+    response.content
+      ?.filter((part: any) => part.type === 'text')
+      .map((part: any) => part.text)
+      .join('\n')
+      .trim() ?? null
+  );
+};
 
 async function authed(req: NextRequest) {
   if (!isChatFirstEnabled()) return { res: NextResponse.json({ error: 'not_found' }, { status: 404 }) };
@@ -67,6 +86,7 @@ export async function POST(req: NextRequest) {
 
   let turn: ChatTurn;
   let userText = message;
+  let language: ChatLanguageMeta = { source: 'rules' };
   if (action?.type === 'request_apply' || action?.type === 'show_recommendation') {
     // Recommendation ids are only resolved inside the caller's own loaded
     // state, so another account's recommendation id is simply not found.
@@ -80,7 +100,30 @@ export async function POST(req: NextRequest) {
       userText = userText || 'وريني أهم توصية';
     }
   } else {
-    turn = planTurn(message, state);
+    const resolved = await resolveLanguage({
+      message,
+      state,
+      hasBackend: hasAIBackend(),
+      call: callAssistantModel,
+      checkAllowance: async (scope) => {
+        const r = await checkRateLimit({
+          req,
+          scope: `chat_start_language_${scope}`,
+          limit: LANGUAGE_ALLOWANCE[scope],
+          windowSeconds: LANGUAGE_ALLOWANCE.windowSeconds,
+          identifier: user.id,
+        });
+        return { allowed: r.allowed, resetsAt: r.resetAt };
+      },
+    });
+    language = resolved.meta;
+    turn = planTurn(message, state, resolved.understood);
+    if (resolved.meta.limited) {
+      turn = {
+        ...turn,
+        reply: `${turn.reply}\n\n(وصلت حد الأسئلة الحرة لهذا اليوم، تبقى الأزرار والردود الجاهزة شغالة وترجع الأسئلة الحرة بعد التجديد.)`,
+      };
+    }
   }
 
   let sid = sessionId;
@@ -107,9 +150,9 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     console.error('chat-first persistence failed', err);
     // The answer is still correct; history just did not save.
-    return NextResponse.json({ sessionId: sid, turn, saved: false });
+    return NextResponse.json({ sessionId: sid, turn, saved: false, language });
   }
-  return NextResponse.json({ sessionId: sid, turn, saved: true });
+  return NextResponse.json({ sessionId: sid, turn, saved: true, language });
 }
 
 export async function GET(req: NextRequest) {

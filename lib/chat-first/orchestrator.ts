@@ -6,6 +6,7 @@ import type {
   ChatState,
   ChatTurn,
 } from './contracts';
+import type { Understanding } from './understand';
 
 const AR_DIGITS = /[٠-٩]/g;
 function normalize(text: string) {
@@ -23,12 +24,17 @@ const RERUN = /(اعد|عيد|مره ثانيه|مرة ثانية|من جديد|
 const RESULT = /(وش (طلع|النتيجه|وضع)|النتيجه|نتيجه|وضع|وضعي|كيف حسابي|كيف الحساب|ملخص|result|status)/;
 const RECOMMEND = /(توصي|اقتراح|وش اسوي|ايش اسوي|وش افعل|ابدا|الخطوه|حسن|تحسين|اصلح|يوفر|هدر)/;
 const APPLY = /(طبق|نفذ|فعل التوصي|وافق|apply|execute|approve)/;
+const EXPLAIN = /(ليش|لماذا|وش يعني|ايش يعني|اشرح|فهمني|وضحلي|وضح لي|ما معنى|why|explain)/;
+const BULK = /(كل |الكل|جميع|كلها|كلهم|all)/;
+/** A bare yes is never an approval: approval is a button on a previewed change. */
+const BARE_CONFIRM = /^(اوافق|وافقت|موافق|نعم|ايوه|اي|اكيد|تمام|نفذ|نفذها|طبق|طبقها|ok|yes)[ .!؟?]*$/;
 
 export function classify(message: string): ChatIntent {
   const m = normalize(message);
   if (!m) return 'ambiguous';
   // Apply wins over everything: a state change must be explicit.
   if (APPLY.test(m)) return 'apply';
+  if (EXPLAIN.test(m)) return 'explain';
   if (RERUN.test(m) && AUDIT.test(m)) return 'rerun';
   if (AUDIT.test(m)) return 'run_audit';
   if (RECOMMEND.test(m)) return 'recommend';
@@ -90,8 +96,24 @@ const NO_ACCOUNT: ChatTurn = {
  * never mutates anything. Every state change is a button the user presses,
  * executed by the existing guarded routes.
  */
-export function planTurn(message: string, state: ChatState): ChatTurn {
-  const intent = classify(message);
+export function planTurn(message: string, state: ChatState, understood?: Understanding | null): ChatTurn {
+  const intent: ChatIntent =
+    understood && understood.intent !== 'ambiguous' ? understood.intent : classify(message);
+  const pickIndex = understood?.recommendationIndex ?? 0;
+
+  // Guidance needs no account: it is general marketing help, answered once and
+  // followed by the honest next step.
+  if (intent === 'guidance' && understood?.answer) {
+    const linked = state.accountLinked && state.customerId;
+    return {
+      intent,
+      reply: understood.answer,
+      cards: [],
+      actions: linked
+        ? [{ label: 'وش وضع حسابي؟', action: { type: 'say', text: 'وش وضع حسابي' } }, DASH]
+        : [{ label: 'اربط حساب Google Ads', action: { type: 'connect_account', href: '/onboarding' } }],
+    };
+  }
 
   if (!state.accountLinked || !state.customerId) {
     // Even "apply" without an account is answered with the truth, not a result.
@@ -183,8 +205,34 @@ export function planTurn(message: string, state: ChatState): ChatTurn {
     };
   }
 
+  if (intent === 'explain') {
+    const target = pending[pickIndex] ?? pending[0];
+    const a = state.latestAudit;
+    const reply =
+      understood?.answer ??
+      (target
+        ? `«${target.title}»: ${target.description?.trim() || 'التفاصيل الكاملة في لوحة التفاصيل.'} هذا شرح للقراءة فقط، ما تغيّر شيء في حسابك.`
+        : `صحة الحساب ${a?.healthScore ?? 'غير محسوبة'} من 100 و${a?.findingsCount ?? 0} ملاحظة. ما عندي توصية معلقة أشرحها الحين.`);
+    return {
+      intent,
+      reply,
+      cards: target ? [recCard(target)] : [result],
+      actions: target
+        ? [{ label: 'أبي أطبقها', action: { type: 'request_apply', recommendationId: target.id } }, DASH]
+        : [runAudit, DASH],
+    };
+  }
+
   if (intent === 'apply') {
-    const target = pending[0];
+    // "نفذ كل شي": one change per confirmation, never a bulk run.
+    if (BULK.test(normalize(message)) && pending.length > 1) {
+      return {
+        ...planApply(state, pending[0]),
+        reply:
+          'أنفذ توصية وحدة كل مرة وبمعاينة قبلها، عشان ما يتغير حسابك بشي ما شفته. نبدأ بأهم وحدة:',
+      };
+    }
+    const target = pending[pickIndex] ?? pending[0];
     if (!target) {
       return {
         intent,
@@ -193,7 +241,14 @@ export function planTurn(message: string, state: ChatState): ChatTurn {
         actions: [runAudit, DASH],
       };
     }
-    return planApply(state, target);
+    const planned = planApply(state, target);
+    if (BARE_CONFIRM.test(normalize(message))) {
+      return {
+        ...planned,
+        reply: `الموافقة عندي بالزر مو بالكلام، حماية لحسابك. ${planned.reply}`,
+      };
+    }
+    return planned;
   }
 
   // Ambiguous: ask, do nothing, offer the three real paths.

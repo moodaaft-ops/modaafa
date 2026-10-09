@@ -141,16 +141,49 @@ export function StartClient({ customerId, notice }: { customerId: string | null;
         signal: ac.signal,
       });
       const data = await res.json().catch(() => ({}));
+      // PR #57 contract (docs/free-audit-contract.md): the code, not the
+      // status alone, decides the wording.
       if (res.status === 402) {
-        assistant(data.message || 'الفحص يحتاج اشتراك أو تجربة نشطة حالياً.', [
-          { kind: 'subscription_required', reason: 'subscription_required' },
-        ], [{ label: 'فعّل الاشتراك', action: { type: 'subscribe', href: '/billing' } }]);
+        const exhausted = data.error === 'free_audits_exhausted';
+        assistant(
+          data.message ||
+            (exhausted
+              ? 'خلصت الفحوصات المجانية لهذا الحساب. تقدر تشوف نتيجة آخر فحص، وفعّل الاشتراك لو تبي فحص جديد.'
+              : 'الفحص يحتاج اشتراك أو تجربة نشطة حالياً.'),
+          [{ kind: 'subscription_required', reason: exhausted ? 'free_audits_exhausted' : 'subscription_required' }],
+          [
+            { label: 'فعّل الاشتراك', action: { type: 'subscribe', href: '/billing' } },
+            ...(exhausted ? [{ label: 'وريني آخر نتيجة', action: { type: 'say' as const, text: 'وش وضع حسابي' } }] : []),
+          ]
+        );
+        return;
+      }
+      if (res.status === 409) {
+        assistant(data.message || 'فيه فحص شغال على هذا الحساب الحين. انتظر دقائق وأعرض لك النتيجة.', [], [
+          { label: 'شيّك على النتيجة', action: { type: 'say', text: 'وش وضع حسابي' } },
+        ]);
+        return;
+      }
+      if (res.status === 429) {
+        assistant(data.message || 'وصلت حد الاستخدام الحالي. جرب بعد ما يتجدد، وما انخصم منك شيء.');
+        return;
+      }
+      if (res.status === 503) {
+        assistant(data.message || 'تعذر نتحقق من رصيد الفحوصات الحين، فما بدأت الفحص عشان ما ينخصم منك شيء. جرب بعد دقيقة.');
+        setFailed(() => () => runAudit(targetCustomerId));
         return;
       }
       if (!res.ok) {
         assistant(data.message || 'الفحص ما كمل. ما انخصم منك شيء، جرب مرة ثانية.');
         setFailed(() => () => runAudit(targetCustomerId));
         return;
+      }
+      if (data?.usage?.source === 'free' && typeof data.usage.remaining === 'number') {
+        assistant(
+          data.usage.remaining > 0
+            ? `هذا فحص مجاني. باقي لك ${data.usage.remaining} لهذا الحساب.`
+            : 'هذا آخر فحص مجاني لهذا الحساب.'
+        );
       }
       assistant('خلص الفحص. أعرض لك النتيجة:');
       await send({ message: 'وش وضع حسابي' }, '');

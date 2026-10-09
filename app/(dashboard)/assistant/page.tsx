@@ -7,6 +7,7 @@ import { PageHeader } from '@/lib/ui/page-header';
 import { AssistantClient } from './assistant-client';
 import { getSubscriptionAccess } from '@/lib/billing/entitlements';
 import { SubscriptionGate } from '@/lib/ui/subscription-gate';
+import { isChatFirstEnabled } from '@/lib/chat-first/flag';
 
 export const metadata = {
   title: 'المساعد الذكي',
@@ -15,9 +16,12 @@ export const metadata = {
 export default async function AssistantPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ brief?: string }>;
+  searchParams?: Promise<{ brief?: string; from?: string }>;
 }) {
   const params = await searchParams;
+  // Task 02 links new users here with ?from=onboarding as a stopgap. With the
+  // chat-first flag on, that entry belongs to /start; flag off, nothing changes.
+  if (isChatFirstEnabled() && params?.from === 'onboarding' && !params?.brief) redirect('/start');
   const { supabase, user } = await getRequestAuthContext();
   if (!user) redirect('/login');
   const [{ accounts, selectedAccount, selectedCustomerId }, subscription] = await Promise.all([

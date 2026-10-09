@@ -78,7 +78,18 @@ export type ChatIntent =
   | 'recommend'
   | 'apply'
   | 'rerun'
+  | 'explain'
+  | 'guidance'
   | 'ambiguous';
+
+/** How a turn was understood, so the UI and tests can tell rules from model. */
+export type ChatLanguageMeta = {
+  source: 'rules' | 'model';
+  /** Set when the free/subscriber language allowance stopped the model. */
+  limited?: { scope: 'free' | 'subscriber'; resetsAt: string | null };
+  /** Set when the model path failed and the rules answered instead. */
+  degraded?: boolean;
+};
 
 /**
  * Task 04 contract. The chat promises: the first full audit and ONE re-run per
@@ -89,3 +100,10 @@ export type ChatIntent =
  * has to change when it lands.
  */
 export const FREE_AUDIT_POLICY = { freeFullAudits: 1, freeReruns: 1, applyRequiresSubscription: true } as const;
+
+/**
+ * Server-side allowance for the language layer (model calls) per user per
+ * 24 hours. Free users still get every button and every rule-based answer
+ * after the allowance ends, so the chat never closes before first value.
+ */
+export const LANGUAGE_ALLOWANCE = { free: 12, subscriber: 80, windowSeconds: 86_400 } as const;
