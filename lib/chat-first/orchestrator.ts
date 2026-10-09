@@ -121,10 +121,15 @@ export function planTurn(message: string, state: ChatState, understood?: Underst
   }
 
   const account = state.accountName ? `حساب «${state.accountName}»` : 'حسابك';
-  const runAudit: ChatQuickAction = {
-    label: state.latestAudit ? 'أعد الفحص' : 'ابدأ الفحص المجاني',
-    action: { type: 'run_audit', customerId: state.customerId },
-  };
+  const exhausted = !state.subscriptionActive && state.freeAudit === 'exhausted';
+  const runAudit: ChatQuickAction = exhausted
+    ? { label: 'فعّل الاشتراك لفحص جديد', action: { type: 'subscribe', href: '/billing' } }
+    : !state.subscriptionActive && state.freeAudit === 'in_progress'
+      ? { label: 'شيّك على النتيجة', action: { type: 'say', text: 'وش وضع حسابي' } }
+      : {
+          label: state.latestAudit ? 'أعد الفحص' : 'ابدأ الفحص المجاني',
+          action: { type: 'run_audit', customerId: state.customerId },
+        };
 
   if (intent === 'connect') {
     return {
@@ -136,6 +141,22 @@ export function planTurn(message: string, state: ChatState, understood?: Underst
   }
 
   if (intent === 'run_audit' || intent === 'rerun') {
+    if (exhausted) {
+      return {
+        intent,
+        reply: `خلصت الفحوصات المجانية لـ${account}، وهذي آخر نتيجة عندنا. القراءة والشرح تبقى مجانية، والفحص الجديد يحتاج اشتراك.`,
+        cards: state.latestAudit ? [auditCard(state)!] : [],
+        actions: [runAudit, DASH],
+      };
+    }
+    if (!state.subscriptionActive && state.freeAudit === 'in_progress') {
+      return {
+        intent,
+        reply: `فيه فحص شغال الحين على ${account}. انتظر دقائق وأعرض لك النتيجة.`,
+        cards: [],
+        actions: [runAudit],
+      };
+    }
     if (intent === 'run_audit' && state.latestAudit) {
       const card = auditCard(state)!;
       return {
