@@ -28,8 +28,37 @@ export function parseDbTarget(connectionString: string): TestTarget {
   } catch {
     throw new Error('SUPABASE_DB_URL is not a valid connection URL.');
   }
+  // libpq lets the query string override the host (?host=, ?hostaddr=, ?service=), so a URL that looks
+  // local in its authority can still connect somewhere else. Only harmless parameters are accepted.
+  for (const key of url.searchParams.keys()) {
+    if (!SAFE_URL_PARAMETERS.has(key.toLowerCase())) {
+      throw new Error(`The connection string has the parameter "${key.toLowerCase()}", which could change where it connects. Remove it.`);
+    }
+  }
+  if (url.hostname.includes(',')) throw new Error('A list of hosts in the connection string is not accepted.');
   return { host: url.hostname.toLowerCase(), user: decodeURIComponent(url.username).toLowerCase() };
 }
+
+const SAFE_URL_PARAMETERS = new Set(['sslmode', 'connect_timeout', 'application_name']);
+
+/**
+ * Environment variables libpq reads that can move the connection even when the URL is fine:
+ * PGHOSTADDR picks the real address, PGSERVICE / PGSERVICEFILE load a service definition.
+ */
+export function assertSafeConnectionEnv(env: Record<string, string | undefined>): void {
+  for (const name of ['PGHOSTADDR', 'PGSERVICE', 'PGSERVICEFILE']) {
+    if (env[name]) throw new Error(`${name} is set and can redirect the connection. Unset it and run again.`);
+  }
+}
+
+/**
+ * Read-only server check for a LOCAL database, run before any write. A localhost port that is really
+ * an SSH tunnel to a hosted project looks local in the URL; a hosted Supabase server still has its
+ * own roles and extensions. Returns the number of hosted markers (0 for a plain local Postgres).
+ */
+export const HOSTED_MARKER_SQL = `select
+    (select count(*) from pg_roles where rolname in ('supabase_admin','supabase_read_only_user','supabase_replication_admin','pgbouncer'))
+  + (select count(*) from pg_extension where extname in ('pg_net','pg_cron','supabase_vault','pgsodium','pg_graphql'));`;
 
 /** True when the connection is exactly this project: direct host or pooler user. */
 export function connectionIsProject(target: TestTarget, ref: string): boolean {

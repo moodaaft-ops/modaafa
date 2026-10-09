@@ -3,7 +3,14 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import test from 'node:test';
 
-import { KNOWN_PRODUCTION_REF, assertTestTarget, productionCallReason, redactSecrets, selectSkippedMigrations } from '../lib/ops/test-env-guard';
+import {
+  KNOWN_PRODUCTION_REF,
+  assertSafeConnectionEnv,
+  assertTestTarget,
+  productionCallReason,
+  redactSecrets,
+  selectSkippedMigrations,
+} from '../lib/ops/test-env-guard';
 
 const REF = 'abcdefghijklmnopqrst';
 const PROD = 'zyxwvutsrqponmlkjihg';
@@ -91,4 +98,26 @@ test('the real migrations skip exactly the pg_cron scheduler today', () => {
 
 test('db/schema.sql itself does not call production', () => {
   assert.equal(productionCallReason(readFileSync(resolve(process.cwd(), 'db/schema.sql'), 'utf8')), null);
+});
+
+test('a localhost URL cannot be redirected with host, hostaddr or service parameters', () => {
+  for (const query of ['?host=db.xxnkubcfwabesungeskz.supabase.co', '?hostaddr=203.0.113.9', '?service=prod', '?HOST=203.0.113.9', '?dbname=x&host=h']) {
+    assert.throws(() => assertTestTarget({ connectionString: `postgresql://u:p@127.0.0.1:5432/db${query}`, testRef: 'local' }), /parameter/);
+  }
+  // the same applies to a remote test project
+  assert.throws(() => assertTestTarget({ connectionString: `${direct(REF)}?host=203.0.113.9`, testRef: REF, productionRef: PROD }), /parameter/);
+  // harmless parameters still work
+  assert.doesNotThrow(() => assertTestTarget({ connectionString: `${direct(REF)}?sslmode=require`, testRef: REF, productionRef: PROD }));
+  assert.doesNotThrow(() => assertTestTarget({ connectionString: 'postgresql://u:p@127.0.0.1:5432/db?sslmode=disable', testRef: 'local' }));
+});
+
+test('a list of hosts is refused', () => {
+  assert.throws(() => assertTestTarget({ connectionString: 'postgresql://u:p@127.0.0.1,db.x.supabase.co:5432/db', testRef: 'local' }), /list of hosts/);
+});
+
+test('PGHOSTADDR, PGSERVICE and PGSERVICEFILE in the environment are refused', () => {
+  for (const name of ['PGHOSTADDR', 'PGSERVICE', 'PGSERVICEFILE']) {
+    assert.throws(() => assertSafeConnectionEnv({ [name]: 'x' }), new RegExp(name));
+  }
+  assert.doesNotThrow(() => assertSafeConnectionEnv({ PATH: '/usr/bin', PGHOST: '127.0.0.1' }));
 });

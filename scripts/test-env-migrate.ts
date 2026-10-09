@@ -13,7 +13,14 @@
 import { spawnSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { assertTestTarget, productionCallReason, redactSecrets, selectSkippedMigrations } from '../lib/ops/test-env-guard';
+import {
+  HOSTED_MARKER_SQL,
+  assertSafeConnectionEnv,
+  assertTestTarget,
+  productionCallReason,
+  redactSecrets,
+  selectSkippedMigrations,
+} from '../lib/ops/test-env-guard';
 
 const databaseUrl = process.env.SUPABASE_DB_URL;
 const dryRun = process.argv.includes('--dry-run');
@@ -29,6 +36,7 @@ function fail(message: string): never {
 
 if (!databaseUrl) fail('Set SUPABASE_DB_URL to the TEST database connection string.');
 try {
+  assertSafeConnectionEnv(process.env);
   assertTestTarget({
     connectionString: databaseUrl,
     testRef: process.env.TEST_ENV_PROJECT_REF,
@@ -67,6 +75,13 @@ function psql(sql: string, tuplesOnly = false): string {
 }
 
 if (spawnSync('psql', ['--version'], { encoding: 'utf8' }).status !== 0) fail('psql is required.');
+
+// A localhost target must also look like a plain local Postgres (read only, before any write).
+if ((process.env.TEST_ENV_PROJECT_REF ?? '').trim().toLowerCase() === 'local') {
+  if (psql(HOSTED_MARKER_SQL, true).trim() !== '0') {
+    fail('The localhost database looks like a hosted Supabase server (an SSH tunnel to a real project?). Refusing. Nothing was changed.');
+  }
+}
 
 // Existing scheduled jobs are checked before anything is migrated.
 function assertNoCronJobs(stage: string): void {
