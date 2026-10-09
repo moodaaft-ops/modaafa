@@ -3,7 +3,7 @@
 import { useRef, useState } from 'react';
 import { PlayCircle, X } from 'lucide-react';
 import { buttonClasses } from '@/lib/ui/button';
-import type { GuideVideo } from '@/lib/onboarding/ads-guide';
+import { GUIDE_REGION_NOTICE, type GuideVideo } from '@/lib/onboarding/ads-guide';
 
 /**
  * Opens the explainer in a native <dialog>: the browser handles focus trapping
@@ -58,9 +58,20 @@ export function GuideVideoButton({ video }: { video: GuideVideo }) {
             />
           )}
         </div>
-        <p className="px-4 py-3 text-[12.5px] leading-6 text-muted-foreground">
-          ما اشتغل الفيديو أو طلع مختلف عن شاشتك؟ الخطوات المكتوبة تحت الفيديو تكفي وحدها. أغلق النافذة وكمّل منها.
-        </p>
+        <div className="space-y-2 px-4 py-3 text-[12.5px] leading-6 text-muted-foreground">
+          <p className="text-foreground">{GUIDE_REGION_NOTICE}</p>
+          <p>
+            المقطع يغطي فتح الحساب فقط. لو استمر الفيديو بعد ما يخلص أو طلع شكل Google مختلف عن شاشتك، أغلق النافذة وكمّل من الخطوات المكتوبة، فهي تكفي وحدها.
+          </p>
+          <div className="flex flex-wrap gap-2 pt-1">
+            <button type="button" onClick={hide} className={buttonClasses({ variant: 'outline' })}>
+              أغلق وارجع للخطوات
+            </button>
+            <a href="/onboarding/connect" className={buttonClasses({ variant: 'primary' })}>
+              فتحت الحساب، أبغى أربطه
+            </a>
+          </div>
+        </div>
       </dialog>
     </>
   );

@@ -35,15 +35,44 @@ export const GUIDE_STEPS: GuideStep[] = [
 export const GUIDE_LIMIT_NOTE =
   'حد صريح: حساب جديد بدون حملات ما عنده بيانات نقرأها، فالفحص الأول يطلع قصير. الفحص يفيدك أكثر لما تكون عندك حملات تشتغل.';
 
-export type GuideVideo = { id: string; title: string; embedUrl: string };
+export type GuideVideoSegment = { start: number; end: number };
+
+export type GuideVideo = {
+  id: string;
+  title: string;
+  embedUrl: string;
+  segment: GuideVideoSegment;
+};
+
+/**
+ * Only videos a person on the team has reviewed may be embedded, and each one
+ * carries its own cut. Any other id fails closed: the video is hidden and the
+ * written steps stand alone. An unreviewed id must never inherit the timestamps
+ * of a different video.
+ *
+ * G9tynCxUlg4: the account-opening part only, 1:16 to 2:05. The same video goes
+ * on to build a campaign from 2:20, which a new customer should not follow. The
+ * numbers come from the owner's review of the transcript. Whether the on-screen
+ * Google UI still matches today's screens is reviewed by a person before the
+ * env variable is turned on.
+ */
+export const REVIEWED_GUIDE_VIDEOS: Readonly<Record<string, GuideVideoSegment>> = {
+  G9tynCxUlg4: { start: 76, end: 125 },
+};
+
+/** Shown on the guide page and again under the video. */
+export const GUIDE_REGION_NOTICE =
+  'اختر البلد والتوقيت والعملة حسب نشاط عملك. لو تبيع داخل السعودية، فاختر السعودية وتوقيت الرياض والريال السعودي. العملة والتوقيت ما يتغيّرون بعد إنشاء الحساب، فراجعهم قبل الإرسال.';
 
 const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
 
 /**
  * The embedded explainer is configured, not hard-coded: the id comes from
- * NEXT_PUBLIC_ADS_GUIDE_VIDEO_ID so the team can swap it without a deploy of
- * code, and a missing or malformed id simply hides the video. The written steps
- * above always stand alone. No autoplay, and the privacy-enhanced host is used.
+ * NEXT_PUBLIC_ADS_GUIDE_VIDEO_ID. A missing, malformed or unreviewed id hides
+ * the video. The written steps above always stand alone. No autoplay, the
+ * privacy-enhanced host is used, and the player keeps its normal controls and
+ * keyboard so the customer can pause, replay a step and change the volume. The
+ * end parameter stops playback; it does not stop someone from seeking on.
  */
 export function resolveGuideVideo(
   id: string | undefined | null,
@@ -51,10 +80,21 @@ export function resolveGuideVideo(
 ): GuideVideo | null {
   const clean = (id ?? '').trim();
   if (!VIDEO_ID.test(clean)) return null;
+  if (!Object.prototype.hasOwnProperty.call(REVIEWED_GUIDE_VIDEOS, clean)) return null;
+  const segment = REVIEWED_GUIDE_VIDEOS[clean];
+  const params = [
+    'autoplay=0',
+    'rel=0',
+    'modestbranding=1',
+    'playsinline=1',
+    `start=${segment.start}`,
+    `end=${segment.end}`,
+  ];
   return {
     id: clean,
     title,
-    embedUrl: `https://www.youtube-nocookie.com/embed/${clean}?autoplay=0&rel=0&modestbranding=1`,
+    embedUrl: `https://www.youtube-nocookie.com/embed/${clean}?${params.join('&')}`,
+    segment,
   };
 }
 

@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { GUIDE_STEPS, NO_ACCOUNT_PATH, resolveGuideVideo } from '../lib/onboarding/ads-guide';
+import {
+  GUIDE_REGION_NOTICE,
+  GUIDE_STEPS,
+  NO_ACCOUNT_PATH,
+  REVIEWED_GUIDE_VIDEOS,
+  resolveGuideVideo,
+} from '../lib/onboarding/ads-guide';
 import { CHAT_HANDOFF_PATH } from '../lib/onboarding/chat-handoff';
 import { classifyAuditStartError } from '../lib/onboarding/first-opportunities';
 import { nextStepAfterConnect, safeOnboardingNext } from '../lib/onboarding/connect-progress';
@@ -19,6 +25,38 @@ test('the guide video embeds without autoplay on the privacy host', () => {
   assert.match(video.embedUrl, /^https:\/\/www\.youtube-nocookie\.com\/embed\/G9tynCxUlg4\?/);
   assert.match(video.embedUrl, /autoplay=0/);
   assert.doesNotMatch(video.embedUrl, /autoplay=1/);
+});
+
+test('the reviewed video is cut to the account-opening segment only', () => {
+  assert.deepEqual(REVIEWED_GUIDE_VIDEOS.G9tynCxUlg4, { start: 76, end: 125 });
+  const video = resolveGuideVideo('G9tynCxUlg4');
+  assert.ok(video);
+  assert.match(video.embedUrl, /[?&]start=76(&|$)/);
+  assert.match(video.embedUrl, /[?&]end=125(&|$)/);
+  assert.match(video.embedUrl, /autoplay=0/);
+  assert.doesNotMatch(video.embedUrl, /autoplay=1/);
+  // 2:20 is where campaign building starts, so the cut must end before it.
+  assert.ok(video.segment.end < 140);
+});
+
+test('the player keeps its controls and keyboard', () => {
+  const video = resolveGuideVideo('G9tynCxUlg4');
+  assert.ok(video);
+  assert.doesNotMatch(video.embedUrl, /controls=0/);
+  assert.doesNotMatch(video.embedUrl, /disablekb/);
+});
+
+test('an unreviewed id fails closed instead of borrowing another video\'s cut', () => {
+  for (const id of ['AAAAAAAAAAA', 'dQw4w9WgXcQ', '__proto__', 'constructor', 'toString']) {
+    assert.equal(resolveGuideVideo(id), null);
+  }
+});
+
+test('the region notice names Saudi Arabia, Riyadh and the riyal, without long dashes', () => {
+  assert.match(GUIDE_REGION_NOTICE, /السعودية/);
+  assert.match(GUIDE_REGION_NOTICE, /الرياض/);
+  assert.match(GUIDE_REGION_NOTICE, /الريال/);
+  assert.doesNotMatch(GUIDE_REGION_NOTICE, /[—–]|,/);
 });
 
 test('the written guide stands alone and promises nothing about the video', () => {
