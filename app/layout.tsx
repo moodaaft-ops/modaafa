@@ -22,6 +22,7 @@ const display = Reem_Kufi({
   weight: ['500', '600', '700'],
   variable: '--font-display',
   display: 'swap',
+  preload: false,
   fallback: ['system-ui', 'sans-serif'],
 });
 

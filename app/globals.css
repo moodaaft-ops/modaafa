@@ -132,10 +132,14 @@
   h2,
   h3,
   h4 {
-    font-family: var(--font-display), var(--font-arabic), system-ui, sans-serif;
+    font-family: var(--font-arabic), system-ui, sans-serif;
+    font-weight: 700;
     letter-spacing: normal;
-    line-height: 1.25;
+    line-height: 1.4;
   }
+
+  /* Reem Kufi is a display face. It stays available as `font-display` for
+     brand moments (logo lockup, hero), never for functional UI text. */
 
   /* Arabic body copy wants more leading than Latin at the same size. */
   p {
@@ -270,6 +274,29 @@
   .numeric {
     font-variant-numeric: tabular-nums;
     font-feature-settings: 'tnum';
+  }
+}
+
+/* ---------------------------------------------------------------------
+   Legibility floor (transitional). Several screens still use arbitrary
+   sizes of 10 to 11.5px, which are too small for connected Arabic script.
+   These rules sit outside any @layer and use a higher specificity than the
+   utilities so they win. Remove once the screens are migrated to the
+   Tailwind scale in tailwind.config.ts.
+   --------------------------------------------------------------------- */
+html [class*='text-[10px]'],
+html [class*='text-[10.5px]'],
+html [class*='text-[11px]'],
+html [class*='text-[11.5px]'] {
+  font-size: 12px;
+}
+
+/* iOS Safari zooms into any focused field under 16px. */
+@media (max-width: 767px) {
+  html input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  html select,
+  html textarea {
+    font-size: 16px;
   }
 }
 
