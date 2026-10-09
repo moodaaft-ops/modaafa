@@ -243,7 +243,7 @@ export function WelcomeTour() {
             type="button"
             onClick={finish}
             aria-label="إغلاق الجولة"
-            className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
             <X className="h-4 w-4" />
           </button>
@@ -302,7 +302,7 @@ export function WelcomeTour() {
           <button
             type="button"
             onClick={finish}
-            className="mt-3 w-full text-center text-[12px] text-muted-foreground transition-colors hover:text-foreground"
+            className="mt-3 min-h-10 w-full text-center text-[12px] text-muted-foreground transition-colors hover:text-foreground"
           >
             تخطّي الجولة
           </button>

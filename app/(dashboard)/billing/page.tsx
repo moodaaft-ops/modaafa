@@ -292,7 +292,7 @@ export default async function BillingPage({
               href={buildHref('monthly')}
               aria-current={period === 'monthly' ? 'true' : undefined}
               className={cn(
-                'rounded-md px-3.5 py-1.5 font-medium transition-colors',
+                'inline-flex min-h-10 items-center rounded-md px-3.5 font-medium transition-colors',
                 period === 'monthly' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
               )}
             >
@@ -302,7 +302,7 @@ export default async function BillingPage({
               href={buildHref('yearly')}
               aria-current={period === 'yearly' ? 'true' : undefined}
               className={cn(
-                'rounded-md px-3.5 py-1.5 font-medium transition-colors',
+                'inline-flex min-h-10 items-center rounded-md px-3.5 font-medium transition-colors',
                 period === 'yearly' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
               )}
             >
