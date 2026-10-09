@@ -8,6 +8,7 @@ import { loadChatState } from '@/lib/chat-first/state';
 import { planApply, planTurn } from '@/lib/chat-first/orchestrator';
 import { LANGUAGE_ALLOWANCE, type ChatLanguageMeta, type ChatTurn } from '@/lib/chat-first/contracts';
 import { resolveLanguage } from '@/lib/chat-first/language';
+import { loadScopedHistory, sessionBelongsTo } from '@/lib/chat-first/sessions';
 import type { ModelCall } from '@/lib/chat-first/understand';
 import { createMessageForAgent, hasAIBackend } from '@/lib/ai/client';
 
@@ -73,15 +74,12 @@ export async function POST(req: NextRequest) {
   }
   const { state, accountId } = loaded;
 
-  // Owner check on the session: a foreign or unknown id is the same 404.
-  if (sessionId) {
-    const { data: s } = await supabase
-      .from('chat_sessions')
-      .select('id')
-      .eq('id', sessionId)
-      .eq('user_id', user.id)
-      .maybeSingle();
-    if (!s) return NextResponse.json({ error: 'session_not_found' }, { status: 404 });
+  // Owner AND account check on the session. A session is bound to the account
+  // it was created for: the same user switching from account A to B must not
+  // continue A's conversation (A's reports and cards would mix into B). A
+  // foreign, unknown or other-account id all get the same 404.
+  if (sessionId && !(await sessionBelongsTo({ supabase, userId: user.id, sessionId, accountId }))) {
+    return NextResponse.json({ error: 'session_not_found' }, { status: 404 });
   }
 
   let turn: ChatTurn;
@@ -162,20 +160,24 @@ export async function GET(req: NextRequest) {
   const wanted = req.nextUrl.searchParams.get('sessionId');
   if (wanted && !UUID.test(wanted)) return NextResponse.json({ error: 'session_not_found' }, { status: 404 });
 
-  let query = supabase.from('chat_sessions').select('id').eq('user_id', user.id);
-  query = wanted ? query.eq('id', wanted) : query.order('updated_at', { ascending: false }).limit(1);
-  const { data: rows } = await query;
-  const session = rows?.[0];
-  if (!session) {
+  // History is scoped to the selected account, never just the user.
+  const loaded = await loadChatState({
+    supabase,
+    userId: user.id,
+    userEmail: user.email,
+    requestedCustomerId: req.nextUrl.searchParams.get('customerId'),
+    cookieCustomerId: req.cookies.get(SELECTED_ADS_ACCOUNT_COOKIE)?.value ?? null,
+  });
+  if (!loaded.ok) {
+    return NextResponse.json({ error: loaded.error }, { status: loaded.error === 'account_not_found' ? 404 : 503 });
+  }
+  const { accountId } = loaded;
+
+  const result = await loadScopedHistory({ supabase, userId: user.id, accountId, wantedSessionId: wanted });
+  if (!result.found) {
     return wanted
       ? NextResponse.json({ error: 'session_not_found' }, { status: 404 })
       : NextResponse.json({ sessionId: null, messages: [] });
   }
-  const { data: messages } = await supabase
-    .from('chat_messages')
-    .select('role, content, tool_results, seq')
-    .eq('session_id', session.id)
-    .order('seq', { ascending: true })
-    .limit(200);
-  return NextResponse.json({ sessionId: session.id, messages: messages ?? [] });
+  return NextResponse.json({ sessionId: result.sessionId, messages: result.messages });
 }

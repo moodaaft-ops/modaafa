@@ -41,12 +41,20 @@ export function StartClient({ customerId, notice }: { customerId: string | null;
 
   useEffect(() => endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' }), [items, busy]);
 
-  // Restore this user's own history; the API filters by owner.
+  // Restore this account's own history; the API filters by owner AND account.
+  // Switching account starts a fresh session: never carry A's sessionId, items
+  // or pending retry over to B.
   useEffect(() => {
     let live = true;
+    abortRef.current?.abort();
+    setSessionId(null);
+    setItems([]);
+    setFailed(null);
+    setBusy(null);
     (async () => {
       try {
-        const res = await fetch('/api/chat/start', { cache: 'no-store' });
+        const qs = customerId ? `?customerId=${encodeURIComponent(customerId)}` : '';
+        const res = await fetch(`/api/chat/start${qs}`, { cache: 'no-store' });
         if (!res.ok) return;
         const data = await res.json();
         if (!live) return;
@@ -81,7 +89,7 @@ export function StartClient({ customerId, notice }: { customerId: string | null;
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [customerId]);
 
   async function send(body: Record<string, unknown>, shown: string) {
     abortRef.current?.abort();
@@ -98,6 +106,12 @@ export function StartClient({ customerId, notice }: { customerId: string | null;
         signal: ac.signal,
       });
       const data = await res.json().catch(() => ({}));
+      if (res.status === 404 && data.error === 'session_not_found') {
+        // The session belongs to another account (or is gone): start clean.
+        setSessionId(null);
+        assistant('بدأت لك محادثة جديدة لهذا الحساب. أعد سؤالك.');
+        return;
+      }
       if (!res.ok) {
         const msg =
           res.status === 404
