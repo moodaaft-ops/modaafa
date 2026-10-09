@@ -4,8 +4,8 @@ import test from 'node:test';
 import {
   GUIDE_REGION_NOTICE,
   GUIDE_STEPS,
-  GUIDE_VIDEO_SEGMENT,
   NO_ACCOUNT_PATH,
+  REVIEWED_GUIDE_VIDEOS,
   resolveGuideVideo,
 } from '../lib/onboarding/ads-guide';
 import { CHAT_HANDOFF_PATH } from '../lib/onboarding/chat-handoff';
@@ -27,28 +27,28 @@ test('the guide video embeds without autoplay on the privacy host', () => {
   assert.doesNotMatch(video.embedUrl, /autoplay=1/);
 });
 
-test('the guide video is cut to the account-opening segment only', () => {
-  assert.deepEqual(GUIDE_VIDEO_SEGMENT, { start: 76, end: 125 });
-  const video = resolveGuideVideo('G9tynCxUlg4', 'x', GUIDE_VIDEO_SEGMENT);
+test('the reviewed video is cut to the account-opening segment only', () => {
+  assert.deepEqual(REVIEWED_GUIDE_VIDEOS.G9tynCxUlg4, { start: 76, end: 125 });
+  const video = resolveGuideVideo('G9tynCxUlg4');
   assert.ok(video);
   assert.match(video.embedUrl, /[?&]start=76(&|$)/);
   assert.match(video.embedUrl, /[?&]end=125(&|$)/);
   assert.match(video.embedUrl, /autoplay=0/);
   assert.doesNotMatch(video.embedUrl, /autoplay=1/);
   // 2:20 is where campaign building starts, so the cut must end before it.
-  assert.ok(GUIDE_VIDEO_SEGMENT.end < 140);
+  assert.ok(video.segment.end < 140);
 });
 
-test('a malformed segment hides the video instead of embedding the whole thing', () => {
-  for (const bad of [
-    { start: 125, end: 76 },
-    { start: 76, end: 76 },
-    { start: -1, end: 10 },
-    { start: 1.5, end: 10 },
-    { start: 0, end: Number.NaN },
-    { start: 0, end: 99999 },
-  ]) {
-    assert.equal(resolveGuideVideo('G9tynCxUlg4', 'x', bad), null);
+test('the player keeps its controls and keyboard', () => {
+  const video = resolveGuideVideo('G9tynCxUlg4');
+  assert.ok(video);
+  assert.doesNotMatch(video.embedUrl, /controls=0/);
+  assert.doesNotMatch(video.embedUrl, /disablekb/);
+});
+
+test('an unreviewed id fails closed instead of borrowing another video\'s cut', () => {
+  for (const id of ['AAAAAAAAAAA', 'dQw4w9WgXcQ', '__proto__', 'constructor', 'toString']) {
+    assert.equal(resolveGuideVideo(id), null);
   }
 });
 

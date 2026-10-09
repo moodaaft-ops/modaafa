@@ -41,18 +41,24 @@ export type GuideVideo = {
   id: string;
   title: string;
   embedUrl: string;
-  segment: GuideVideoSegment | null;
+  segment: GuideVideoSegment;
 };
 
 /**
- * Only the account-opening part of the explainer is shown: from 1:16 to 2:05.
- * The same video goes on to build a campaign from 2:20, which is not what a
- * new customer should follow. These two numbers come from the owner's review of
- * the transcript; whether the on-screen Google UI still matches today's
- * screens has NOT been checked here and is reviewed by a person before the
+ * Only videos a person on the team has reviewed may be embedded, and each one
+ * carries its own cut. Any other id fails closed: the video is hidden and the
+ * written steps stand alone. An unreviewed id must never inherit the timestamps
+ * of a different video.
+ *
+ * G9tynCxUlg4: the account-opening part only, 1:16 to 2:05. The same video goes
+ * on to build a campaign from 2:20, which a new customer should not follow. The
+ * numbers come from the owner's review of the transcript. Whether the on-screen
+ * Google UI still matches today's screens is reviewed by a person before the
  * env variable is turned on.
  */
-export const GUIDE_VIDEO_SEGMENT: GuideVideoSegment = { start: 76, end: 125 };
+export const REVIEWED_GUIDE_VIDEOS: Readonly<Record<string, GuideVideoSegment>> = {
+  G9tynCxUlg4: { start: 76, end: 125 },
+};
 
 /** Shown on the guide page and again under the video. */
 export const GUIDE_REGION_NOTICE =
@@ -62,34 +68,34 @@ const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
 
 /**
  * The embedded explainer is configured, not hard-coded: the id comes from
- * NEXT_PUBLIC_ADS_GUIDE_VIDEO_ID so the team can swap it without a deploy of
- * code, and a missing or malformed id simply hides the video. The written steps
- * above always stand alone. No autoplay, and the privacy-enhanced host is used.
+ * NEXT_PUBLIC_ADS_GUIDE_VIDEO_ID. A missing, malformed or unreviewed id hides
+ * the video. The written steps above always stand alone. No autoplay, the
+ * privacy-enhanced host is used, and the player keeps its normal controls and
+ * keyboard so the customer can pause, replay a step and change the volume. The
+ * end parameter stops playback; it does not stop someone from seeking on.
  */
 export function resolveGuideVideo(
   id: string | undefined | null,
-  title = 'شرح فتح حساب Google Ads',
-  segment: GuideVideoSegment | null = null
+  title = 'شرح فتح حساب Google Ads'
 ): GuideVideo | null {
   const clean = (id ?? '').trim();
   if (!VIDEO_ID.test(clean)) return null;
-  if (segment && !validSegment(segment)) return null;
-  const params = ['autoplay=0', 'rel=0', 'modestbranding=1', 'playsinline=1'];
-  if (segment) {
-    // controls=0 and disablekb=1 keep the viewer from scrubbing past the end
-    // into the campaign-building part. It is a nudge, not a lock.
-    params.push(`start=${segment.start}`, `end=${segment.end}`, 'controls=0', 'disablekb=1');
-  }
+  if (!Object.prototype.hasOwnProperty.call(REVIEWED_GUIDE_VIDEOS, clean)) return null;
+  const segment = REVIEWED_GUIDE_VIDEOS[clean];
+  const params = [
+    'autoplay=0',
+    'rel=0',
+    'modestbranding=1',
+    'playsinline=1',
+    `start=${segment.start}`,
+    `end=${segment.end}`,
+  ];
   return {
     id: clean,
     title,
     embedUrl: `https://www.youtube-nocookie.com/embed/${clean}?${params.join('&')}`,
     segment,
   };
-}
-
-function validSegment({ start, end }: GuideVideoSegment): boolean {
-  return Number.isInteger(start) && Number.isInteger(end) && start >= 0 && end > start && end <= 3600;
 }
 
 /** Where the connect step sends someone who has no ads account. */

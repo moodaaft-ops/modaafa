@@ -59,9 +59,7 @@ export function GuideVideoButton({ video }: { video: GuideVideo }) {
           )}
         </div>
         <div className="space-y-2 px-4 py-3 text-[12.5px] leading-6 text-muted-foreground">
-          {video.segment && (
-            <p className="text-foreground">{GUIDE_REGION_NOTICE}</p>
-          )}
+          <p className="text-foreground">{GUIDE_REGION_NOTICE}</p>
           <p>
             المقطع يغطي فتح الحساب فقط. لو استمر الفيديو بعد ما يخلص أو طلع شكل Google مختلف عن شاشتك، أغلق النافذة وكمّل من الخطوات المكتوبة، فهي تكفي وحدها.
           </p>

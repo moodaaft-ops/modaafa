@@ -9,7 +9,6 @@ import {
   ADS_SIGNUP_URL,
   GUIDE_LIMIT_NOTE,
   GUIDE_REGION_NOTICE,
-  GUIDE_VIDEO_SEGMENT,
   GUIDE_STEPS,
   resolveGuideVideo,
 } from '@/lib/onboarding/ads-guide';
@@ -29,8 +28,7 @@ export default async function AdsGuidePage() {
 
   const video = resolveGuideVideo(
     process.env.NEXT_PUBLIC_ADS_GUIDE_VIDEO_ID,
-    'فتح حساب Google Ads (مقطع إنشاء الحساب فقط)',
-    GUIDE_VIDEO_SEGMENT
+    'مقطع فتح حساب Google Ads'
   );
 
   return (
