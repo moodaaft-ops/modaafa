@@ -50,6 +50,14 @@ const config: Config = {
         'display-md': ['2.75rem', { lineHeight: '1.16', letterSpacing: 'normal' }],
         'display-lg': ['3.5rem', { lineHeight: '1.1', letterSpacing: 'normal' }],
         'display-xl': ['4.25rem', { lineHeight: '1.06', letterSpacing: 'normal' }],
+        // Arabic-first body scale: larger sizes and more leading than Latin.
+        xs: ['0.8125rem', { lineHeight: '1.35rem' }],
+        sm: ['0.9375rem', { lineHeight: '1.65rem' }],
+        base: ['1rem', { lineHeight: '1.85rem' }],
+        lg: ['1.125rem', { lineHeight: '1.9rem' }],
+        xl: ['1.25rem', { lineHeight: '1.95rem' }],
+        '2xl': ['1.5rem', { lineHeight: '2.2rem' }],
+        '3xl': ['1.875rem', { lineHeight: '2.5rem' }],
       },
       borderRadius: {
         none: '0',
