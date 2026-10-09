@@ -92,8 +92,8 @@ const faq = [
     a: 'صلاحية Google Ads فقط (نطاق adwords) عبر شاشة موافقة Google الرسمية. لا نطلب كلمة مرورك، ونشفّر رمز الوصول في قاعدة البيانات. تستطيع سحب الصلاحية في أي وقت من إعدادات حساب Google أو بحذف حسابك لدينا.',
   },
   {
-    q: 'هل التجربة تحتاج بطاقة؟',
-    a: 'نعم، تُطلب بطاقة عند بدء التجربة عبر Stripe، ولا يُخصم منها شيء خلال 14 يوماً. أول خصم في اليوم الخامس عشر، وتستطيع الإلغاء قبله من زر «إلغاء الاشتراك» في صفحة الفوترة دون أي خصم. ونرسل لك تنبيهاً بالبريد قبل أول تجديد.',
+    q: 'هل أحتاج بطاقة قبل ما أشوف النتيجة؟',
+    a: 'لا. تربط حسابك وتشغّل فحصاً كاملاً وتقرأ توصياته بدون بطاقة، ولكل حساب إعلاني إعادة فحص واحدة مجانية بعده. الاشتراك يُطلب فقط حين تضغط تنفيذ توصية على حسابك، أو حين تبغى فحصاً جديداً بعد الفحصين. وقتها تُطلب البطاقة عبر Stripe، ومن لم يستخدم تجربة الـ14 يوماً قبل لا يُخصم منه شيء خلالها، ويلغي قبل أول خصم من صفحة الفوترة.',
   },
   {
     q: 'هل أستطيع إدارة أكثر من حساب إعلاني؟',
@@ -174,7 +174,7 @@ export default async function HomePage({
 
             <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
               <Link href="/login" className={buttonClasses({ variant: 'primary', size: 'lg' })}>
-                ابدأ التجربة المجانية 14 يوماً
+                افحص حسابك مجاناً
                 <ArrowLeft className="h-4 w-4" aria-hidden />
               </Link>
               <a href="#how" className={buttonClasses({ variant: 'outline', size: 'lg' })}>
@@ -183,7 +183,7 @@ export default async function HomePage({
             </div>
 
             <p className="mt-4 text-xs text-muted-foreground">
-              تلغي متى شئت قبل نهاية التجربة · لا تعديل على حساباتك بدون موافقتك
+              فحص كامل وإعادة واحدة بدون بطاقة · الاشتراك عند تنفيذ التوصيات فقط · لا تعديل على حساباتك بدون موافقتك
             </p>
           </div>
 
@@ -316,7 +316,7 @@ export default async function HomePage({
             <SectionLabel>الأسعار</SectionLabel>
             <h2 className="mt-3 text-display-sm font-bold">خطة لكل حجم عمل.</h2>
             <p className="mx-auto mt-3 max-w-lg text-[13.5px] leading-7 text-muted-foreground">
-              كل الخطط تبدأ بتجربة 14 يوماً. الأسعار بالريال السعودي قبل الضريبة.
+              الفحص الأول وإعادته مجانيان بدون بطاقة، والخطة تبدأ حين تنفّذ توصية (تجربة 14 يوماً لمن لم يستخدمها). الأسعار بالريال السعودي قبل الضريبة.
             </p>
             <div
               className="mt-5 inline-flex items-center rounded-lg border border-border bg-background-elevated p-1 text-[13px]"
