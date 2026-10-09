@@ -19,7 +19,9 @@
 -- when the callback happened to reach the server. A callback that arrives late
 -- for an older consent is refused (connect_job_start returns null) and never
 -- opens a job. When no consent time is available (state storage down, cookie
--- fallback) ordering falls back to job start time, i.e. callback arrival order.
+-- fallback) the order cannot be proven, so the start FAILS CLOSED when any
+-- connect job began in the last 60 minutes (the state lifetime): the user is
+-- asked to restart the link instead of "last arrival wins".
 --
 -- Everything below runs in ONE transaction, so no function is ever visible with
 -- the default PUBLIC execute grant between create and revoke.
@@ -40,7 +42,7 @@ create or replace function public.connect_job_start(
   p_user_id uuid,
   p_consent_at timestamptz default null
 )
-returns uuid
+returns jsonb
 language plpgsql
 set search_path = public, pg_temp
 as $$
@@ -50,14 +52,28 @@ declare
 begin
   perform pg_advisory_xact_lock(hashtextextended(v_name, 0));
 
-  -- A newer consent already has (or had) a job: this callback is stale.
-  if p_consent_at is not null and exists (
-    select 1 from public.job_runs
-     where job_name = v_name
-       and details ? 'consent_at'
-       and (details ->> 'consent_at')::timestamptz > p_consent_at
-  ) then
-    return null;
+  if p_consent_at is not null then
+    -- A newer consent already has (or had) a job: this callback is stale.
+    if exists (
+      select 1 from public.job_runs
+       where job_name = v_name
+         and details ? 'consent_at'
+         and (details ->> 'consent_at')::timestamptz > p_consent_at
+    ) then
+      return jsonb_build_object('status', 'stale');
+    end if;
+  else
+    -- No trusted consent time (state storage was down, only the browser cookie
+    -- vouched for the state). Order cannot be proven, so fail closed: refuse if
+    -- any connect job started inside the state lifetime (60 min). Otherwise a
+    -- late callback for an older consent could replace a newer link.
+    if exists (
+      select 1 from public.job_runs
+       where job_name = v_name
+         and started_at > now() - interval '60 minutes'
+    ) then
+      return jsonb_build_object('status', 'untrusted_time');
+    end if;
   end if;
 
   update public.job_runs
@@ -70,7 +86,7 @@ begin
   values (v_name, 'running', now(), jsonb_build_object('stage', 'discover', 'consent_at', p_consent_at))
   returning id into v_id;
 
-  return v_id;
+  return jsonb_build_object('status', 'started', 'id', v_id);
 end;
 $$;
 

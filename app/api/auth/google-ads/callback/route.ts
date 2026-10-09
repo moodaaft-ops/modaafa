@@ -111,22 +111,26 @@ export async function GET(req: NextRequest) {
     return failureRedirect(req, '/onboarding/business?error=no_business');
   }
 
-  let job;
+  let started;
   try {
-    job = await startConnectJob(admin, user.id, consentAt);
+    started = await startConnectJob(admin, user.id, consentAt);
   } catch (err) {
     console.error('Google Ads connect job could not start', err instanceof Error ? err.message : 'unknown');
     return failureRedirect(req, '/onboarding/connect?error=db_error');
   }
 
-  if (!job) {
-    // A newer consent already owns the connection: this callback is the late
-    // arrival of an older one. Its token is discarded unwritten; the user is
-    // shown the newer job's progress.
-    const res = NextResponse.redirect(new URL('/onboarding/preparing', req.url));
+  if (!started.ok) {
+    // stale: a newer consent already owns the connection and this is the late
+    // arrival of an older one, so its token is discarded unwritten and the user
+    // sees the newer job's progress.
+    // untrusted_time: no server-side state time to order by and a recent job
+    // exists, so fail closed and ask for a fresh link instead of guessing.
+    const target = started.reason === 'stale' ? '/onboarding/preparing' : '/onboarding/connect?error=restart_link';
+    const res = NextResponse.redirect(new URL(target, req.url));
     res.cookies.delete(GOOGLE_ADS_OAUTH_STATE_COOKIE);
     return res;
   }
+  const job = started;
 
   const encryptedRefreshToken = encrypt(refreshToken);
   // Discovery, metadata, linking and the first data read used to run here

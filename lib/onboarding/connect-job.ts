@@ -31,17 +31,26 @@ export type ConnectJobDeps = {
   ) => Promise<Record<string, number | null>>;
 };
 
+export type StartConnectJobResult =
+  | { ok: true; id: string; startedAt: string; consentAt: string | null }
+  | { ok: false; reason: 'stale' | 'untrusted_time' };
+
 /**
  * Records the start of a connect job. The retire-old-and-insert-new step is one
  * SQL function (`connect_job_start`) under a per-user advisory lock: two
  * simultaneous consents cannot both end up `running`.
  *
- * Ordering is by `consentAt` (when the user consented) when it is known, so a
- * callback that reaches the server late for an OLDER consent returns `null`
- * (stale) and never opens a job. Without a consent time the order is job start
- * time, i.e. callback arrival order.
+ * Ordering is by `consentAt` (when the user consented, from the server-side
+ * OAuth state). A callback for an OLDER consent returns `stale` and never opens
+ * a job. Without a trusted consent time the order cannot be proven, so the start
+ * fails closed (`untrusted_time`) when a connect job began in the last 60
+ * minutes; the user restarts the link instead of "last arrival wins".
  */
-export async function startConnectJob(admin: any, userId: string, consentAt?: string | null) {
+export async function startConnectJob(
+  admin: any,
+  userId: string,
+  consentAt?: string | null
+): Promise<StartConnectJobResult> {
   const startedAt = new Date().toISOString();
   const { data, error } = await admin.rpc('connect_job_start', {
     p_user_id: userId,
@@ -50,9 +59,13 @@ export async function startConnectJob(admin: any, userId: string, consentAt?: st
   if (error) {
     throw new Error(`Failed to record Google Ads connect job: ${error.code ?? 'unknown'}`);
   }
-  if (data === null || data === undefined) return null;
-  if (typeof data !== 'string') throw new Error('Failed to record Google Ads connect job: no id returned');
-  return { id: data, startedAt, consentAt: consentAt ?? null };
+  if (data?.status === 'stale' || data?.status === 'untrusted_time') {
+    return { ok: false, reason: data.status };
+  }
+  if (data?.status !== 'started' || typeof data.id !== 'string') {
+    throw new Error('Failed to record Google Ads connect job: no id returned');
+  }
+  return { ok: true, id: data.id, startedAt, consentAt: consentAt ?? null };
 }
 
 /**
