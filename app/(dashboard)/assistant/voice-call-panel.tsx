@@ -14,6 +14,7 @@ import {
   type VoiceCallEvent,
   type VoiceCallState,
 } from '@/lib/ai/voice-session';
+import { runCallStart } from '@/lib/ai/voice-call-start';
 import { PcmCapture } from '@/lib/ai/voice-pcm';
 import { BARGE_VAD, createVad, LISTEN_VAD } from '@/lib/ai/voice-vad';
 import { Alert } from '@/lib/ui/alert';
@@ -86,6 +87,8 @@ export function VoiceCallPanel({
   const bargeVadRef = useRef(createVad(BARGE_VAD));
   const sessionRef = useRef<{ token: string; maxSeconds: number } | null>(null);
   const serverEndedRef = useRef<string | null>(null);
+  /** Bumped whenever a call ends or the panel unmounts; an attempt that started earlier is then stale. */
+  const genRef = useRef(0);
   const turnRef = useRef(0);
   const idleTimerRef = useRef<number | null>(null);
   const endedRef = useRef(false);
@@ -144,14 +147,20 @@ export function VoiceCallPanel({
    * under it stop working there too, not only in this tab. Best effort: if it
    * cannot be sent (offline, tab closing) the short token lifetime still ends it.
    */
-  const endOnServer = useCallback(() => {
-    const token = sessionRef.current?.token;
-    if (!token || serverEndedRef.current === token) return;
+  const sendEndToken = useCallback((token: string) => {
+    if (serverEndedRef.current === token) return;
     serverEndedRef.current = token;
     void fetch('/api/voice/end', { method: 'POST', headers: { 'x-voice-session': token }, keepalive: true }).catch(() => undefined);
   }, []);
 
+  const endOnServer = useCallback(() => {
+    const token = sessionRef.current?.token;
+    if (token) sendEndToken(token);
+  }, [sendEndToken]);
+
   const endCall = useCallback(() => {
+    // Invalidate any start that is still waiting on the session or the mic prompt.
+    genRef.current += 1;
     if (endedRef.current) return;
     endedRef.current = true;
     turnRef.current += 1;
@@ -170,6 +179,7 @@ export function VoiceCallPanel({
     return () => {
       window.clearTimeout(ceiling);
       clearIdleTimer();
+      genRef.current += 1;
       turnRef.current += 1;
       abortRef.current?.abort();
       endOnServer();
@@ -224,6 +234,8 @@ export function VoiceCallPanel({
   const failWith = useCallback(
     (code: string | undefined, status: number | null, turn: number) => {
       if (turn !== turnRef.current) return;
+      // Close the server side first: clearing the token before this would lose the end request.
+      if (code === 'session_ended' || code === 'account_changed') endOnServer();
       if (code === 'session_expired' || code === 'unauthorized' || code === 'session_ended' || code === 'account_changed') sessionRef.current = null;
       setError(voiceErrorMessage(code, status));
       const retryable = ['no_speech', 'too_many_requests', 'session_expired', 'audio_too_large'];
@@ -241,7 +253,7 @@ export function VoiceCallPanel({
       setStarted(false);
       dispatch('fail');
     },
-    [beginListening, releaseMic]
+    [beginListening, endOnServer, releaseMic]
   );
 
   const playReply = useCallback(
@@ -436,26 +448,6 @@ export function VoiceCallPanel({
     }
   }
 
-  async function ensureSession(): Promise<boolean> {
-    if (sessionRef.current) return true;
-    const response = await fetch('/api/voice/session', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ customerId: customerRef.current }),
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok || !data.session_token) {
-      setError(voiceErrorMessage(data?.error, response.status));
-      return false;
-    }
-    sessionRef.current = {
-      token: data.session_token,
-      maxSeconds: Math.min(Number(data.caps?.max_audio_seconds) || 30, 60),
-    };
-    setProvider(data.provider === 'mock' ? 'mock' : 'elevenlabs');
-    return true;
-  }
-
   /** Plays a short silence inside the tap so Safari/iOS allows the reply later. */
   function unlockAudio() {
     try {
@@ -487,43 +479,84 @@ export function VoiceCallPanel({
       setStarting(false);
       return;
     }
-    // Created inside the tap: iOS keeps the context suspended otherwise.
-    const ctx: AudioContext = new AudioCtx();
-    ctxRef.current = ctx;
-    try {
-      if (!(await ensureSession())) {
-        releaseMic();
-        dispatch('fail');
-        return;
-      }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      });
-      streamRef.current = stream;
-      await ctx.resume();
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 1024;
-      const source = ctx.createMediaStreamSource(stream);
-      source.connect(analyser);
-      analyserRef.current = analyser;
-      // Raw samples for the 16-bit PCM WAV that is uploaded. The node's own output is
-      // never written, so connecting it to the destination plays silence.
-      const processor = ctx.createScriptProcessor(4096, 1, 1);
-      processor.onaudioprocess = (event) => recorderRef.current?.push(event.inputBuffer.getChannelData(0));
-      source.connect(processor);
-      processor.connect(ctx.destination);
-      processorRef.current = processor;
-      endedRef.current = false;
-      setStarted(true);
-      beginListening();
-      tickRef.current = window.setInterval(onTick, TICK_MS);
-    } catch (voiceError) {
-      releaseMic();
-      setError(microphoneAccessErrorMessage(voiceError));
+    const gen = ++genRef.current;
+    let opened: { token: string; maxSeconds: number; provider: 'mock' | 'elevenlabs' } | null = null;
+    let sessionFailure: { code?: string; status: number } | null = null;
+    const result = await runCallStart<AudioContext, MediaStream>({
+      isCurrent: () => gen === genRef.current,
+      // Created inside the tap: iOS keeps the context suspended otherwise.
+      createContext: () => {
+        const created: AudioContext = new AudioCtx();
+        ctxRef.current = created;
+        return created;
+      },
+      closeContext: (created) => {
+        if (ctxRef.current === created) ctxRef.current = null;
+        if (created.state !== 'closed') void created.close().catch(() => undefined);
+      },
+      openSession: async () => {
+        if (sessionRef.current) return { ok: true, token: sessionRef.current.token };
+        const response = await fetch('/api/voice/session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ customerId: customerRef.current }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.session_token) {
+          sessionFailure = { code: data?.error, status: response.status };
+          return { ok: false };
+        }
+        opened = {
+          token: data.session_token,
+          maxSeconds: Math.min(Number(data.caps?.max_audio_seconds) || 30, 60),
+          provider: data.provider === 'mock' ? 'mock' : 'elevenlabs',
+        };
+        return { ok: true, token: data.session_token };
+      },
+      endSessionOnServer: sendEndToken,
+      acquireMic: () =>
+        navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        }),
+      stopStream: (stream) => stream.getTracks().forEach((track) => track.stop()),
+      resumeContext: (created) => created.resume(),
+      commit: ({ ctx, stream, token }) => {
+        if (opened) {
+          sessionRef.current = { token: opened.token, maxSeconds: opened.maxSeconds };
+          setProvider(opened.provider);
+        } else if (!sessionRef.current) {
+          sessionRef.current = { token, maxSeconds: 30 };
+        }
+        streamRef.current = stream;
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 1024;
+        const source = ctx.createMediaStreamSource(stream);
+        source.connect(analyser);
+        analyserRef.current = analyser;
+        // Raw samples for the 16-bit PCM WAV that is uploaded. The node's own output is
+        // never written, so connecting it to the destination plays silence.
+        const processor = ctx.createScriptProcessor(4096, 1, 1);
+        processor.onaudioprocess = (event) => recorderRef.current?.push(event.inputBuffer.getChannelData(0));
+        source.connect(processor);
+        processor.connect(ctx.destination);
+        processorRef.current = processor;
+        endedRef.current = false;
+        setStarted(true);
+        beginListening();
+        tickRef.current = window.setInterval(onTick, TICK_MS);
+      },
+    });
+    if (result.status === 'session_failed') {
+      const failure = sessionFailure as { code?: string; status: number } | null;
+      setError(voiceErrorMessage(failure?.code, failure?.status ?? null));
       dispatch('fail');
-    } finally {
-      setStarting(false);
+    } else if (result.status === 'failed') {
+      setError(microphoneAccessErrorMessage(result.error));
+      dispatch('fail');
     }
+    // 'cancelled': the call was ended while it was opening. Everything this attempt
+    // acquired has already been released and nothing is shown.
+    setStarting(false);
   }
 
   function toggleMute() {
