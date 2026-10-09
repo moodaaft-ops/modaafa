@@ -1,117 +1,155 @@
 -- Free audits per Google Ads account (task 04: free audit, subscription on apply).
 --
--- Every Google Ads customer id gets FREE_AUDITS_PER_ACCOUNT full audits (the
--- first run plus one retry) without a subscription. The ledger is keyed by the
--- Google customer id, NOT by google_ads_accounts.id or user id, so deleting the
--- account row, unlinking, relinking or switching the platform user cannot reset
--- the allowance. There is deliberately no foreign key to google_ads_accounts.
+-- Every Google customer id gets 2 full audits (the first run plus one retry)
+-- without a subscription. The ledger is keyed by the Google customer id, NOT by
+-- google_ads_accounts.id or user id, so deleting the account row, unlinking,
+-- relinking or switching the platform user cannot reset the allowance. There is
+-- deliberately no foreign key to google_ads_accounts.
 --
--- NOT applied to production by this PR. Review, then run through the normal
--- migration process. Additive only: no existing table, price, subscription,
--- trial or charge date is touched.
+-- Hardening (review of PR #57): the caller supplies NOTHING but the account id.
+-- The customer id is read inside SQL from an account the caller owns
+-- (google_ads_accounts -> businesses.user_id = auth.uid()), and the limit (2)
+-- and the lease (15 minutes, longer than the 300s audit maxDuration) are
+-- constants in the function bodies, not parameters. No RLS or grant is widened:
+-- the table stays unreadable to anon and authenticated.
+--
+-- NOT applied to production by this PR. Additive only: no existing table,
+-- price, subscription, trial or charge date is touched.
 
 create table if not exists public.free_audit_ledger (
   id uuid primary key default gen_random_uuid(),
   customer_id text not null check (customer_id ~ '^[0-9]{3,20}$'),
   user_id uuid not null,
   account_id uuid,
-  status text not null default 'reserved' check (status in ('reserved', 'completed')),
-  metadata jsonb not null default '{}'::jsonb,
+  -- reserved: audit running under a lease. completed: finished, counts against
+  -- the limit. abandoned: lease expired without completion (server crash), never
+  -- counts, so our failure cannot burn a customer's two audits.
+  status text not null default 'reserved' check (status in ('reserved', 'completed', 'abandoned')),
+  lease_expires_at timestamptz not null default (now() + interval '15 minutes'),
   created_at timestamptz not null default now(),
   completed_at timestamptz
 );
 
 create index if not exists free_audit_ledger_customer_idx
-  on public.free_audit_ledger (customer_id, created_at);
+  on public.free_audit_ledger (customer_id, status);
 
 -- Server-only table: RLS on, no policies. Access goes through the functions below
 -- and through the service role.
 alter table public.free_audit_ledger enable row level security;
 revoke all on public.free_audit_ledger from anon, authenticated;
 
--- Reserve one free audit. Serialised per customer id with an advisory lock so
--- concurrent requests cannot overshoot the limit. A second run is refused while
--- a first one is still in progress (reserved within the last p_inflight_seconds),
--- which also blocks retry spam; a stuck reservation stops blocking after that.
-create or replace function public.consume_free_audit(
-  p_user_id uuid,
-  p_customer_id text,
-  p_account_id uuid,
-  p_limit integer,
-  p_inflight_seconds integer default 600,
-  p_metadata jsonb default '{}'::jsonb
-)
+-- Reserve one free audit for an account the caller owns. Serialised per customer
+-- id with an advisory lock so concurrent requests cannot overshoot the limit.
+-- Returns (allowed, reason, used, event_id).
+create or replace function public.consume_free_audit(p_account_id uuid)
 returns table (allowed boolean, reason text, used integer, event_id uuid)
 language plpgsql
 security definer
 set search_path = public, pg_temp
 as $$
 declare
-  v_used integer;
-  v_inflight integer;
+  c_limit constant integer := 2;
+  c_lease constant interval := interval '15 minutes';
+  v_user uuid := auth.uid();
+  v_customer text;
+  v_completed integer;
+  v_running integer;
   v_event_id uuid;
 begin
-  if auth.uid() is distinct from p_user_id then
+  if v_user is null then
     raise exception 'forbidden';
   end if;
-  if p_limit < 1 or p_customer_id !~ '^[0-9]{3,20}$' then
-    raise exception 'invalid free audit request';
+
+  -- Ownership + customer id come from the database, never from the caller.
+  select a.customer_id into v_customer
+  from public.google_ads_accounts a
+  join public.businesses b on b.id = a.business_id
+  where a.id = p_account_id
+    and b.user_id = v_user
+    and a.status = 'active'
+    and a.is_manager is not true;
+
+  if v_customer is null or v_customer !~ '^[0-9]{3,20}$' then
+    raise exception 'forbidden';
   end if;
 
-  perform pg_advisory_xact_lock(hashtextextended('free_audit:' || p_customer_id, 0));
+  perform pg_advisory_xact_lock(hashtextextended('free_audit:' || v_customer, 0));
 
-  select count(*)::integer into v_used
+  -- A reservation whose lease ran out was abandoned (crash). It stops counting
+  -- and stops blocking.
+  update public.free_audit_ledger
+  set status = 'abandoned'
+  where customer_id = v_customer and status = 'reserved' and lease_expires_at <= now();
+
+  select count(*)::integer into v_completed
   from public.free_audit_ledger
-  where customer_id = p_customer_id;
+  where customer_id = v_customer and status = 'completed';
 
-  if v_used >= p_limit then
-    return query select false, 'free_audits_exhausted'::text, v_used, null::uuid;
+  if v_completed >= c_limit then
+    return query select false, 'free_audits_exhausted'::text, v_completed, null::uuid;
     return;
   end if;
 
-  select count(*)::integer into v_inflight
+  select count(*)::integer into v_running
   from public.free_audit_ledger
-  where customer_id = p_customer_id
-    and status = 'reserved'
-    and created_at > now() - make_interval(secs => greatest(p_inflight_seconds, 1));
+  where customer_id = v_customer and status = 'reserved';
 
-  if v_inflight > 0 then
-    return query select false, 'audit_in_progress'::text, v_used, null::uuid;
+  if v_running > 0 then
+    return query select false, 'audit_in_progress'::text, v_completed, null::uuid;
     return;
   end if;
 
-  insert into public.free_audit_ledger (customer_id, user_id, account_id, metadata)
-  values (p_customer_id, p_user_id, p_account_id, coalesce(p_metadata, '{}'::jsonb))
+  insert into public.free_audit_ledger (customer_id, user_id, account_id, lease_expires_at)
+  values (v_customer, v_user, p_account_id, now() + c_lease)
   returning id into v_event_id;
 
-  return query select true, null::text, v_used + 1, v_event_id;
+  return query select true, null::text, v_completed + 1, v_event_id;
 end;
 $$;
 
--- Mark a reservation as a finished audit (it keeps counting against the limit).
-create or replace function public.complete_free_audit(p_user_id uuid, p_event_id uuid)
-returns boolean
+-- Finish a reservation. Idempotent: completing twice is fine. A reservation whose
+-- lease already expired is NOT completed (it was abandoned), so a late or
+-- replayed call can never push the count past the limit.
+-- Returns 'completed' | 'already_completed' | 'expired' | 'not_found'.
+create or replace function public.complete_free_audit(p_event_id uuid)
+returns text
 language plpgsql
 security definer
 set search_path = public, pg_temp
 as $$
 declare
-  v_id uuid;
+  v_user uuid := auth.uid();
+  v_row public.free_audit_ledger%rowtype;
 begin
-  if auth.uid() is distinct from p_user_id then
+  if v_user is null then
     raise exception 'forbidden';
   end if;
+
+  select * into v_row from public.free_audit_ledger where id = p_event_id and user_id = v_user;
+  if not found then
+    return 'not_found';
+  end if;
+
+  perform pg_advisory_xact_lock(hashtextextended('free_audit:' || v_row.customer_id, 0));
+  select * into v_row from public.free_audit_ledger where id = p_event_id;
+
+  if v_row.status = 'completed' then
+    return 'already_completed';
+  end if;
+  if v_row.status = 'abandoned' or v_row.lease_expires_at <= now() then
+    update public.free_audit_ledger set status = 'abandoned' where id = p_event_id and status = 'reserved';
+    return 'expired';
+  end if;
+
   update public.free_audit_ledger
   set status = 'completed', completed_at = now()
-  where id = p_event_id and user_id = p_user_id and status = 'reserved'
-  returning id into v_id;
-  return v_id is not null;
+  where id = p_event_id and status = 'reserved';
+  return 'completed';
 end;
 $$;
 
 -- Give the allowance back when the audit itself failed (our fault, not the
--- customer's). Server-owned: only the service role may call it, so a browser
--- session can never delete its own ledger rows.
+-- customer's). Server-owned: only the service role may call it.
 create or replace function public.refund_free_audit(p_event_id uuid)
 returns boolean
 language plpgsql
@@ -128,9 +166,13 @@ begin
 end;
 $$;
 
-revoke all on function public.consume_free_audit(uuid, text, uuid, integer, integer, jsonb) from public;
-grant execute on function public.consume_free_audit(uuid, text, uuid, integer, integer, jsonb) to authenticated;
-revoke all on function public.complete_free_audit(uuid, uuid) from public;
-grant execute on function public.complete_free_audit(uuid, uuid) to authenticated;
+-- Drop the earlier, wider signatures if a reviewer already ran the first draft.
+drop function if exists public.consume_free_audit(uuid, text, uuid, integer, integer, jsonb);
+drop function if exists public.complete_free_audit(uuid, uuid);
+
+revoke all on function public.consume_free_audit(uuid) from public;
+grant execute on function public.consume_free_audit(uuid) to authenticated;
+revoke all on function public.complete_free_audit(uuid) from public;
+grant execute on function public.complete_free_audit(uuid) to authenticated;
 revoke all on function public.refund_free_audit(uuid) from public, anon, authenticated;
 grant execute on function public.refund_free_audit(uuid) to service_role;

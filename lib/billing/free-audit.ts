@@ -121,12 +121,10 @@ export async function reserveAuditAccess({
     };
   }
 
+  // The database derives the customer id from an account this user owns and
+  // enforces the limit (2) and the lease itself; the client sends nothing else.
   const { data, error } = await supabase.rpc('consume_free_audit', {
-    p_user_id: userId,
-    p_customer_id: customerId,
     p_account_id: accountId,
-    p_limit: FREE_AUDITS_PER_ACCOUNT,
-    p_metadata: { source: 'audit_run' },
   });
   if (error) {
     console.error('Failed to reserve a free audit', error);
@@ -150,14 +148,33 @@ export async function reserveAuditAccess({
   };
 }
 
-/** The audit finished: keep the reservation counted. */
-export async function completeAuditAccess(supabase: any, userId: string, access: AuditAccess) {
-  if (!access.ok || access.source !== 'free') return;
-  const { error } = await supabase.rpc('complete_free_audit', {
-    p_user_id: userId,
+export type CompleteResult = 'completed' | 'already_completed' | 'expired' | 'not_found' | 'error' | 'noop';
+
+/**
+ * The audit finished: keep the reservation counted. The audit result is already
+ * saved, so a failure here must never fail the request; it is returned (and
+ * logged) instead of thrown. Consequence of a lost completion: the reservation
+ * lapses after its lease and stops counting, so the customer keeps the
+ * allowance rather than losing it to our fault.
+ */
+export async function completeAuditAccess(
+  supabase: any,
+  _userId: string,
+  access: AuditAccess
+): Promise<CompleteResult> {
+  if (!access.ok || access.source !== 'free') return 'noop';
+  const { data, error } = await supabase.rpc('complete_free_audit', {
     p_event_id: access.freeEventId,
   });
-  if (error) console.error('Failed to complete free audit reservation', error);
+  if (error) {
+    console.error('Failed to complete free audit reservation', error);
+    return 'error';
+  }
+  const result = String(data ?? '');
+  if (result === 'expired') console.error('Free audit lease expired before completion', access.freeEventId);
+  return (['completed', 'already_completed', 'expired', 'not_found'] as const).includes(result as any)
+    ? (result as CompleteResult)
+    : 'error';
 }
 
 /** The audit failed on our side: give the allowance back. */

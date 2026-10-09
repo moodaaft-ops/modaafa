@@ -6,29 +6,41 @@ import {
   FREE_AUDITS_PER_ACCOUNT,
   auditAccessMessage,
   auditAccessStatus,
+  completeAuditAccess,
   reserveAuditAccess,
 } from '../lib/billing/free-audit';
 
 /** In-memory twin of consume_free_audit (db/migrations/20261009_free_audit_quota.sql). */
-function fakeSupabase() {
+function fakeSupabase(accountCustomer: Record<string, string> = { acc1: '1234567890', 'brand-new-row': '1234567890', acc9: '9876543210' }) {
   const ledger: { id: string; customer: string; status: string }[] = [];
+  const calls: any[] = [];
   let seq = 0;
   return {
     ledger,
+    calls,
     async rpc(name: string, args: any) {
-      assert.equal(name, 'consume_free_audit');
-      // The real function takes an advisory lock; the single-threaded twin
-      // evaluates each call atomically, which is the same observable contract.
-      const rows = ledger.filter((r) => r.customer === args.p_customer_id);
-      if (rows.length >= args.p_limit) {
-        return { data: [{ allowed: false, reason: 'free_audits_exhausted', used: rows.length, event_id: null }], error: null };
+      calls.push({ name, args });
+      if (name === 'complete_free_audit') {
+        const row = ledger.find((r) => r.id === args.p_event_id);
+        if (!row) return { data: 'not_found', error: null };
+        if (row.status === 'completed') return { data: 'already_completed', error: null };
+        if (row.status === 'abandoned') return { data: 'expired', error: null };
+        row.status = 'completed';
+        return { data: 'completed', error: null };
       }
-      if (rows.some((r) => r.status === 'reserved')) {
-        return { data: [{ allowed: false, reason: 'audit_in_progress', used: rows.length, event_id: null }], error: null };
+      assert.equal(name, 'consume_free_audit');
+      assert.deepEqual(Object.keys(args), ['p_account_id'], 'the client sends only the account id');
+      const customer = accountCustomer[args.p_account_id] ?? args.p_customer_id;
+      const completed = ledger.filter((r) => r.customer === customer && r.status === 'completed').length;
+      if (completed >= 2) {
+        return { data: [{ allowed: false, reason: 'free_audits_exhausted', used: completed, event_id: null }], error: null };
+      }
+      if (ledger.some((r) => r.customer === customer && r.status === 'reserved')) {
+        return { data: [{ allowed: false, reason: 'audit_in_progress', used: completed, event_id: null }], error: null };
       }
       const id = `evt-${++seq}`;
-      ledger.push({ id, customer: args.p_customer_id, status: 'reserved' });
-      return { data: [{ allowed: true, reason: null, used: rows.length + 1, event_id: id }], error: null };
+      ledger.push({ id, customer, status: 'reserved' });
+      return { data: [{ allowed: true, reason: null, used: completed + 1, event_id: id }], error: null };
     },
   };
 }
@@ -78,7 +90,7 @@ test('relinking or another login on the same Google account does not reset the a
   }
   const relinked = await reserveAuditAccess({ ...base, accountId: 'brand-new-row', userId: 'u2', supabase, deps: deps(inactive) });
   assert.equal(relinked.ok, false);
-  const other = await reserveAuditAccess({ ...base, customerId: '9876543210', supabase, deps: deps(inactive) });
+  const other = await reserveAuditAccess({ ...base, accountId: 'acc9', customerId: '9876543210', supabase, deps: deps(inactive) });
   assert.ok(other.ok, 'a different Google account has its own allowance');
 });
 
@@ -98,6 +110,17 @@ test('expired and cancelled subscriptions fall back to the free allowance, not t
   assert.equal(isSubscriptionEntitled({ status: 'active', current_period_end: '2026-09-01T00:00:00Z' }, now), false);
   // Scheduled cancel (cancel_at_period_end) still entitles until the period ends.
   assert.equal(isSubscriptionEntitled({ status: 'active', current_period_end: '2026-10-20T00:00:00Z' }, now), true);
+});
+
+test('completion errors are swallowed but reported, never thrown', async () => {
+  const supabase = fakeSupabase();
+  const access = await reserveAuditAccess({ ...base, supabase, deps: deps(inactive) });
+  assert.equal(await completeAuditAccess(supabase, 'u1', access), 'completed');
+  assert.equal(await completeAuditAccess(supabase, 'u1', access), 'already_completed');
+  const broken = { rpc: async () => ({ data: null, error: { message: 'down' } }) };
+  assert.equal(await completeAuditAccess(broken, 'u1', access), 'error');
+  const sub = { ok: true as const, source: 'subscription' as const, remaining: 1, resetsAt: 'x', usageEventId: 'u' };
+  assert.equal(await completeAuditAccess(broken, 'u1', sub), 'noop');
 });
 
 test('storage errors fail closed with a retryable reason', async () => {
