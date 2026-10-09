@@ -3,6 +3,7 @@ import { getRequestAuthContext } from '@/lib/supabase/server';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { DashboardChrome } from './dashboard-chrome';
 import { isModaafaOperator } from '@/lib/platform/operators';
+import { isChatFirstEnabled } from '@/lib/chat-first/flag';
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { user } = await getRequestAuthContext();
@@ -37,6 +38,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       pausedAccounts={pausedAccounts}
       selectedCustomerId={selectedCustomerId}
       isOperator={isModaafaOperator(user.email)}
+      chatFirst={isChatFirstEnabled()}
     >
       {children}
     </DashboardChrome>
