@@ -16,6 +16,7 @@ import {
   Menu,
   Settings,
   ShieldCheck,
+  Sparkles,
   X,
   Zap,
 } from 'lucide-react';
@@ -73,6 +74,7 @@ export function DashboardChrome({
   pausedAccounts = [],
   selectedCustomerId,
   isOperator = false,
+  chatFirst = false,
   children,
 }: {
   brandName: string;
@@ -82,18 +84,27 @@ export function DashboardChrome({
   pausedAccounts?: AdsAccountSummary[];
   selectedCustomerId: string | null;
   isOperator?: boolean;
+  /** CHAT_FIRST_ENTRY: adds the single /start entry; off keeps the shell exactly as it was. */
+  chatFirst?: boolean;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
   // The operations center is owner-only; the page itself re-checks the
   // server-side allowlist, this only decides whether to show the link.
+  const withStart = chatFirst
+    ? navGroups.map((group, index) =>
+        index === 0 && !group.items.some((item) => item.href === '/start')
+          ? { ...group, items: [{ href: '/start', label: 'ابدأ بمحادثة', icon: Sparkles } as NavItem, ...group.items] }
+          : group
+      )
+    : navGroups;
   const visibleNavGroups = isOperator
-    ? navGroups.map((group) =>
+    ? withStart.map((group) =>
         group.label === 'الحساب'
           ? { ...group, items: [...group.items, { href: '/operations', label: 'مركز التشغيل', icon: Activity } as NavItem] }
           : group
       )
-    : navGroups;
+    : withStart;
   const [mobileOpen, setMobileOpen] = useState(false);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
@@ -381,7 +392,9 @@ export function DashboardChrome({
         >
           {[
             { href: '/dashboard', label: 'الرئيسية', icon: LayoutDashboard },
-            { href: '/assistant', label: 'المساعد', icon: MessageCircle },
+            chatFirst
+              ? { href: '/start', label: 'ابدأ', icon: Sparkles }
+              : { href: '/assistant', label: 'المساعد', icon: MessageCircle },
             { href: '/audit', label: 'الفحص', icon: ShieldCheck },
             { href: '/optimizer', label: 'الموافقات', icon: Zap },
           ].map((item) => {

@@ -3,7 +3,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase/server';
 import { createCheckoutSession, ensureStripeCustomer } from '@/lib/billing/stripe';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
-import { getBillingCheckoutContext } from '@/lib/billing/checkout-policy';
+import {
+  getBillingCheckoutContext,
+  ONBOARDING_CHECKOUT_RETURN,
+  TRIAL_DAYS,
+} from '@/lib/billing/checkout-policy';
 import { requireAppUrl } from '@/lib/platform/env';
 import { isSameOriginRequest } from '@/lib/security/origin';
 import { isModaafaOperator } from '@/lib/platform/operators';
@@ -40,20 +44,23 @@ export async function POST(req: NextRequest) {
   const form = await req.formData();
   const plan = String(form.get('plan') ?? 'starter');
   const period = String(form.get('period') ?? 'monthly');
+  // The onboarding trial step returns to its own screens instead of /billing.
+  const fromOnboarding = form.get('return_to') === ONBOARDING_CHECKOUT_RETURN;
+  const errorBase = fromOnboarding ? '/onboarding/trial' : '/billing';
 
   if (!plans.includes(plan) || !['monthly', 'yearly'].includes(period)) {
-    return NextResponse.redirect(new URL('/billing?error=invalid_plan', req.url), 303);
+    return NextResponse.redirect(new URL(`${errorBase}?error=invalid_plan`, req.url), 303);
   }
 
   try {
     const billing = await getBillingCheckoutContext(supabase, user.id, user.email);
     if (billing.activeSubscriptionId) {
-      return NextResponse.redirect(new URL('/billing?error=already_subscribed', req.url), 303);
+      return NextResponse.redirect(new URL(`${errorBase}?error=already_subscribed`, req.url), 303);
     }
 
     // No linked, active Google Ads account: starting a trial would only burn it.
     if (!(await hasActiveGoogleAdsAccount(supabase, user.id))) {
-      return NextResponse.redirect(new URL('/billing?error=google_ads_account_required', req.url), 303);
+      return NextResponse.redirect(new URL(`${errorBase}?error=google_ads_account_required`, req.url), 303);
     }
 
     const baseUrl = requireAppUrl(req.nextUrl.origin);
@@ -69,9 +76,11 @@ export async function POST(req: NextRequest) {
       email: user.email!,
       plan: plan as 'starter' | 'growth' | 'pro',
       period: period as 'monthly' | 'yearly',
-      successUrl: `${baseUrl}/api/billing/checkout/complete?session_id={CHECKOUT_SESSION_ID}`,
-      cancelUrl: `${baseUrl}/billing?canceled=1`,
-      trialDays: billing.trialEligible ? 14 : 0,
+      successUrl: fromOnboarding
+        ? `${baseUrl}/api/billing/checkout/complete?session_id={CHECKOUT_SESSION_ID}&return_to=${ONBOARDING_CHECKOUT_RETURN}`
+        : `${baseUrl}/api/billing/checkout/complete?session_id={CHECKOUT_SESSION_ID}`,
+      cancelUrl: fromOnboarding ? `${baseUrl}/onboarding/trial?canceled=1` : `${baseUrl}/billing?canceled=1`,
+      trialDays: billing.trialEligible ? TRIAL_DAYS : 0,
       customerId,
       idempotencyKey: checkoutIdempotencyKey(user.id, plan, period),
     });
@@ -80,7 +89,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.redirect(session.url, 303);
   } catch (error) {
     console.error('Failed to create trial checkout', error);
-    return NextResponse.redirect(new URL('/billing?error=checkout_failed', req.url), 303);
+    return NextResponse.redirect(new URL(`${errorBase}?error=checkout_failed`, req.url), 303);
   }
 }
 

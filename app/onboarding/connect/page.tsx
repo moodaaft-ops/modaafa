@@ -6,6 +6,8 @@ import { formatGoogleAdsCustomerId, googleAdsAccountDisplayName } from '@/lib/ac
 import { getRequestAuthContext } from '@/lib/supabase/server';
 import { Alert } from '@/lib/ui/alert';
 import { buttonClasses } from '@/lib/ui/button';
+import { accountsCountLabel } from '@/lib/onboarding/account-choice';
+import { NO_ACCOUNT_PATH } from '@/lib/onboarding/ads-guide';
 import { OnboardingProgress } from '../onboarding-progress';
 import { ConnectGoogleAdsButton } from './connect-google-ads-button';
 import {
@@ -22,9 +24,11 @@ const errors: Record<string, string> = {
     'بدأت عملية الربط بحساب مستخدم مختلف على هذا المتصفح. سجّل الدخول بالحساب الصحيح ثم أعد الربط من هذا الزر.',
   missing_params: 'لم تصل بيانات الربط من Google بشكل كامل. أعد المحاولة من زر الربط.',
   access_denied:
-    'تم رفض الوصول من Google. إذا ظهرت رسالة أن التطبيق قيد الاختبار، أضف هذا البريد ضمن Test users أو انتظر اكتمال تحقق Google.',
-  oauth_failed: 'تعذر إكمال الربط مع Google. أعد المحاولة من زر الربط، وإذا تكرر الخطأ راسلنا على واتساب من الرابط أسفل الزر.',
-  oauth_config_missing: 'إعدادات Google OAuth غير مكتملة في بيئة الإنتاج. راجع جاهزية الإطلاق في الإعدادات.',
+    'ما اكتملت الموافقة في شاشة Google. اضغط ربط Google Ads من جديد وكمّل الموافقة للنهاية.',
+  oauth_failed: 'تعذر إكمال الربط مع Google. اضغط ربط Google Ads من جديد، وإذا تكرر الخطأ راسلنا على واتساب من الرابط أسفل الزر.',
+  oauth_config_missing: 'الربط مع Google متوقف مؤقتاً من جهتنا. راسلنا على واتساب من الرابط أسفل الزر ونرتبه لك.',
+  restart_link:
+    'ما قدرنا نتأكد من ترتيب طلبات الربط لأن بيان الموافقة ما انحفظ عندنا. اضغط ربط Google Ads من جديد وكمّل الموافقة للنهاية. وإذا كنت فاتح أكثر من تبويب للربط، كمّل في تبويب واحد.',
   db_error: 'تعذر حفظ حسابات Google Ads في المنصة. أعد المحاولة.',
   session_expired: 'انتهت جلسة اختيار الحسابات. أعد الربط.',
   session_create_failed:
@@ -67,9 +71,9 @@ export default async function ConnectGoogleAdsPage({
         <OnboardingProgress active="connect" showDashboardLink={hasAccounts || hasRevokedAccounts} />
 
         <div className="mb-6 mt-8">
-          <h2 className="text-[26px] font-bold leading-tight sm:text-3xl">اربط إعلانات Google</h2>
+          <h2 className="text-[26px] font-bold leading-tight sm:text-3xl">ربط Google Ads</h2>
           <p className="mt-2 max-w-2xl text-sm leading-7 text-muted-foreground">
-            موافقة واحدة تكفي لسحب كل حساباتك، ثم تختار الحساب الذي تعمل عليه من لوحة التحكم.
+            موافقة واحدة تكفي لسحب كل حساباتك، وبعدها تختار الحساب الذي نبدأ به.
           </p>
         </div>
 
@@ -82,8 +86,8 @@ export default async function ConnectGoogleAdsPage({
                 بالبريد <span dir="ltr">{user.email}</span>
               </>
             ) : null}
-            . تسجيل الدخول منحنا اسمك وبريدك فقط؛ أما هذه الخطوة فتطلب من Google صلاحية Google Ads حتى تستطيع
-            المنصة قراءة حساباتك ومزامنتها.
+            . تسجيل الدخول منحنا اسمك وبريدك فقط، أما هذه الخطوة فتطلب من Google صلاحية Google Ads حتى تستطيع
+            المنصة قراءة حساباتك وتحديث بياناتها.
           </Alert>
         </div>
 
@@ -99,20 +103,22 @@ export default async function ConnectGoogleAdsPage({
         {hasRevokedAccounts && (
           <div className="mb-5">
             <Alert tone="warning" title="انتهت صلاحية بعض الحسابات المربوطة">
-              أعد الربط من الزر أدناه لاستعادة {revokedAccounts.length === 1 ? 'الحساب' : `${revokedAccounts.length} حسابات`}.
+              اضغط تجديد الربط بالأسفل لاستعادة {revokedAccounts.length === 1 ? 'الحساب' : accountsCountLabel(revokedAccounts.length)}.
               لن تكون هذه الحسابات قابلة للاختيار أو التعديل حتى تمنح Google Ads الصلاحية مجدداً.
             </Alert>
           </div>
         )}
 
         <section className="surface-card p-5 sm:p-6">
+          {!googleVerified && <UnverifiedAppExplainer />}
+
           <h3 className="text-[15px] font-semibold">ربط تلقائي لكل الحسابات</h3>
           <ul className="mt-4 space-y-3">
             {points.map((point) => {
               const Icon = point.icon;
               return (
                 <li key={point.text} className="flex items-start gap-3 text-[13px] leading-7 text-foreground">
-                  <span className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg border border-primary/25 bg-primary/10 text-primary">
+                  <span className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center border border-border text-foreground">
                     <Icon className="h-3.5 w-3.5" />
                   </span>
                   {point.text}
@@ -122,7 +128,12 @@ export default async function ConnectGoogleAdsPage({
           </ul>
 
           <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-border pt-5">
-            <ConnectGoogleAdsButton label={hasRevokedAccounts ? 'إعادة ربط Google Ads' : undefined} />
+            <ConnectGoogleAdsButton label={hasRevokedAccounts ? 'تجديد الربط' : undefined} />
+            {!hasAccounts && (
+              <Link href={NO_ACCOUNT_PATH} className={buttonClasses({ variant: 'outline' })}>
+                ما عندي حساب إعلانات
+              </Link>
+            )}
             {(hasAccounts || hasRevokedAccounts) && (
               <Link href="/dashboard" className={buttonClasses({ variant: 'ghost' })}>
                 لدي حسابات، انتقل للوحة التحكم
@@ -143,18 +154,13 @@ export default async function ConnectGoogleAdsPage({
           </p>
         </section>
 
-        <div className="mt-5">
-          {googleVerified ? (
+        {googleVerified && (
+          <div className="mt-5">
             <Alert tone="success" title="مُضاعِف موثّق لدى Google">
               ستفتح شاشة Google الرسمية لعرض صلاحية Google Ads المطلوبة.
             </Alert>
-          ) : (
-            <Alert tone="info" title="حالة تحقق Google">
-              خلال الاختبار الداخلي يستطيع فقط المستخدمون المضافون كمختبرين إكمال الربط. أما الإطلاق العام فيبدأ بعد
-              موافقة Google على شاشة الصلاحيات؛ إذا منعتك Google فلا تكرر المحاولة وانتظر اكتمال المراجعة.
-            </Alert>
-          )}
-        </div>
+          </div>
+        )}
 
         {hasAccounts && (
           <section className="mt-5 surface-card p-5 sm:p-6">
@@ -187,7 +193,7 @@ export default async function ConnectGoogleAdsPage({
           <section className="mt-5 surface-card p-5 sm:p-6">
             <div className="mb-4 flex items-center gap-2 text-[13px] font-semibold text-warning dark:text-warning">
               <TriangleAlert className="h-4 w-4" />
-              حسابات تحتاج إعادة ربط ({revokedAccounts.length})
+              حسابات تحتاج تجديد الربط ({revokedAccounts.length})
             </div>
             <div className="grid gap-2 sm:grid-cols-2">
               {revokedAccounts.map((account) => (
@@ -208,6 +214,60 @@ export default async function ConnectGoogleAdsPage({
         )}
       </div>
     </main>
+  );
+}
+
+/**
+ * Google shows its "unverified app" interstitial until the OAuth review is
+ * approved. Users who were never told about it read it as a scam warning and
+ * leave, so the path through it sits ABOVE the button, before they meet it.
+ * The mock is drawn, not a screenshot, and keeps Google's English labels next
+ * to the Arabic because Google shows whichever language the browser uses.
+ */
+function UnverifiedAppExplainer() {
+  const steps = [
+    { label: 'خيارات متقدمة', en: 'Advanced', body: 'تحت رسالة التحذير اضغط هذا الرابط الصغير' },
+    { label: 'المتابعة', en: 'Go to', body: 'ثم اضغط رابط المتابعة إلى مُضاعِف ووافق على صلاحية Google Ads' },
+  ];
+  return (
+    <div className="mb-6 border border-border bg-background-elevated p-4 sm:p-5">
+      <h3 className="text-[14px] font-semibold text-foreground">قبل ما تضغط: Google بيعرض لك تحذير</h3>
+      <p className="mt-1 text-[13px] leading-7 text-muted-foreground">
+        تحقق Google من مُضاعِف ما اكتمل بعد، فتطلع لك شاشة تقول إن التطبيق غير موثّق. هذا متوقع، وتكمل منها بخطوتين.
+      </p>
+      <div className="mt-4 grid gap-4 sm:grid-cols-[minmax(0,240px)_1fr] sm:items-start">
+        <div className="border border-border bg-card p-3 text-start" dir="ltr" aria-hidden>
+          <div className="text-[11px] font-semibold text-muted-foreground">Google</div>
+          <div className="mt-2 text-[12px] font-semibold leading-5 text-foreground">Google hasn’t verified this app</div>
+          <div className="mt-2 h-1.5 w-11/12 bg-muted" />
+          <div className="mt-1 h-1.5 w-8/12 bg-muted" />
+          <div className="mt-3 flex items-center gap-1.5 text-[11px] font-semibold text-foreground">
+            <span className="flex h-4 w-4 items-center justify-center bg-signal text-[10px] text-signal-foreground">1</span>
+            <span className="underline">Advanced</span>
+          </div>
+          <div className="mt-1.5 flex items-center gap-1.5 text-[11px] font-semibold text-foreground">
+            <span className="flex h-4 w-4 items-center justify-center bg-signal text-[10px] text-signal-foreground">2</span>
+            <span className="underline">Go to … (unsafe)</span>
+          </div>
+        </div>
+        <ol className="space-y-3">
+          {steps.map((step, index) => (
+            <li key={step.en} className="flex items-start gap-2.5 text-[13px] leading-7 text-foreground">
+              <span className="mt-1 flex h-5 w-5 flex-shrink-0 items-center justify-center bg-signal text-[11px] font-bold text-signal-foreground">
+                {index + 1}
+              </span>
+              <span>
+                <span className="font-semibold">«{step.label}»</span>{' '}
+                <span className="text-muted-foreground" dir="ltr">
+                  ({step.en})
+                </span>
+                <span className="block text-[12.5px] text-muted-foreground">{step.body}</span>
+              </span>
+            </li>
+          ))}
+        </ol>
+      </div>
+    </div>
   );
 }
 

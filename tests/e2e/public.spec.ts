@@ -34,7 +34,7 @@ test.describe('public launch surface', () => {
 
     await expect(page).toHaveTitle(/مُضاعِف|Modaafa/);
     await expect(page.getByRole('link', { name: 'تسجيل الدخول' }).first()).toHaveAttribute('href', '/login');
-    await expect(page.getByRole('link', { name: /ابدأ التجربة/ }).first()).toHaveAttribute('href', '/login');
+    await expect(page.getByRole('link', { name: /افحص حسابك مجاناً/ }).first()).toHaveAttribute('href', '/login');
   });
 
   test('theme choice persists after reload', async ({ page }) => {

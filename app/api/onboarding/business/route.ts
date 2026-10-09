@@ -2,6 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient, createServerClient } from '@/lib/supabase/server';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 import { isSameOriginRequest } from '@/lib/security/origin';
+import {
+  BUSINESS_GOALS,
+  BUSINESS_NAME_MAX,
+  isSafeWebsite,
+  normalizeWebsiteInput,
+  parseMonthlyBudget,
+  parseTargetRegions,
+} from '@/lib/onboarding/business-form';
 
 export async function POST(req: NextRequest) {
 
@@ -38,20 +46,19 @@ export async function POST(req: NextRequest) {
       : Object.fromEntries((await req.formData()).entries());
 
   const name = String(payload.name ?? '').trim();
-  if (!name || name.length > 120) return respond(req, 'business_name_required', 400);
+  if (!name || name.length > BUSINESS_NAME_MAX) return respond(req, 'business_name_required', 400);
 
-  const rawWebsite = String(payload.website ?? '').trim();
-  // People type "example.com"; new URL() rejects it without a scheme.
-  const website = rawWebsite && !/^[a-z][a-z0-9+.-]*:\/\//i.test(rawWebsite) ? `https://${rawWebsite}` : rawWebsite;
+  // Same rules the form runs in the browser (lib/onboarding/business-form.ts).
+  const website = normalizeWebsiteInput(String(payload.website ?? ''));
   if (website && !isSafeWebsite(website)) {
     return respond(req, 'invalid_website', 400);
   }
-  const monthlyBudget = Number(payload.monthly_budget || 0);
-  if (!Number.isFinite(monthlyBudget) || monthlyBudget < 0 || monthlyBudget > 1_000_000_000) {
+  const monthlyBudget = parseMonthlyBudget(String(payload.monthly_budget ?? ''));
+  if (monthlyBudget === null) {
     return respond(req, 'invalid_monthly_budget', 400);
   }
   const primaryGoal = String(payload.primary_goal ?? 'leads');
-  if (!['leads', 'conversions', 'traffic', 'awareness'].includes(primaryGoal)) {
+  if (!(BUSINESS_GOALS as readonly string[]).includes(primaryGoal)) {
     return respond(req, 'invalid_primary_goal', 400);
   }
 
@@ -84,11 +91,7 @@ export async function POST(req: NextRequest) {
     website: website || null,
     primary_goal: primaryGoal,
     monthly_budget: monthlyBudget || null,
-    target_regions: String(payload.target_regions ?? '')
-      // Support Arabic comma (،) and newlines in addition to the Latin comma.
-      .split(/[,،\n]/)
-      .map((item) => item.trim())
-      .filter(Boolean),
+    target_regions: parseTargetRegions(String(payload.target_regions ?? '')),
   };
 
   // One workspace per user, enforced by the unique index on
@@ -128,13 +131,4 @@ function respond(
     return NextResponse.redirect(url, 303);
   }
   return NextResponse.json({ error }, { status, headers });
-}
-
-function isSafeWebsite(value: string) {
-  try {
-    const url = new URL(value);
-    return ['http:', 'https:'].includes(url.protocol) && Boolean(url.hostname);
-  } catch {
-    return false;
-  }
 }

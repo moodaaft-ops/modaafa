@@ -1,37 +1,29 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { after, NextRequest, NextResponse } from 'next/server';
 import { exchangeCodeForTokens } from '@/lib/google-ads/oauth';
-import { discoverAccessibleCustomers, getCustomerMetadataWithFallback } from '@/lib/google-ads/client';
 import { encrypt } from '@/lib/crypto';
 import { createAdminClient, createServerClient } from '@/lib/supabase/server';
-import {
-  normalizeCustomerId,
-  pickPersistedOrPreferredGoogleAdsAccount,
-  SELECTED_ADS_ACCOUNT_COOKIE,
-} from '@/lib/accounts/selection';
-import { syncCampaignCacheWithLoginFallback } from '@/lib/google-ads/sync';
 import { handleGoogleLoginCallback, isGoogleLoginCallback } from '@/lib/auth/google-login-callback';
-import {
-  GOOGLE_ADS_OAUTH_STATE_COOKIE,
-} from '@/lib/auth/google-ads-oauth-state';
-import { consumeOAuthState } from '@/lib/auth/oauth-state-store';
+import { GOOGLE_ADS_OAUTH_STATE_COOKIE } from '@/lib/auth/google-ads-oauth-state';
+import { consumeOAuthStateWithTime } from '@/lib/auth/oauth-state-store';
 import { validateGoogleAdsOAuthState } from '@/lib/auth/oauth-state-validation';
-import { mapLimit } from '@/lib/platform/concurrency';
-import { buildGoogleAdsLinkRows } from '@/lib/google-ads/link-account-rows';
-import { isNotAdsUserError } from '@/lib/google-ads/connect-errors';
+import { runConnectJob, startConnectJob } from '@/lib/onboarding/connect-job';
 
+// The background half (after()) shares this budget. The preparing screen
+// treats a job still running past CONNECT_TIMEOUT_MS as killed.
 export const maxDuration = 300;
-
-/** Google Ads enforces a per-developer-token QPS ceiling; stay well under it. */
-const METADATA_CONCURRENCY = 6;
 
 /**
  * Step 2: Google redirects back here after the user consents.
  *
- * We:
- * 1. Verify the CSRF state matches
- * 2. Exchange the code for tokens (we get a refresh_token)
- * 3. List which Google Ads customers this token can access
- * 4. Auto-link every non-manager customer account and let the user switch inside the dashboard.
+ * In the request:
+ * 1. Verify the CSRF state (server-side single-use state, cookie fallback only
+ *    when storage is down)
+ * 2. Exchange the code for tokens (the code is single-use)
+ * 3. Resolve the business and record a connect job
+ * 4. Redirect at once to /onboarding/preparing
+ *
+ * After the response (lib/onboarding/connect-job.ts): discover accounts, read
+ * names and statuses, link them, read 30-day spend, first data sync.
  */
 export async function GET(req: NextRequest) {
   if (isGoogleLoginCallback(req)) {
@@ -71,7 +63,7 @@ export async function GET(req: NextRequest) {
   // the same browser before A finished consenting, A's refresh token and A's
   // ad accounts were written into B's business. That is a cross-tenant
   // credential leak, so those two results are now fatal.
-  const serverStateResult = await consumeOAuthState({
+  const { result: serverStateResult, consentAt } = await consumeOAuthStateWithTime({
     userId: user.id,
     state,
     purpose: 'google_ads_connect',
@@ -91,142 +83,81 @@ export async function GET(req: NextRequest) {
       return res;
   }
 
+  // Service client first: linking writes are service-owned, and the
+  // background job needs it after the response is gone.
+  let admin;
   try {
-    // Exchange code → tokens
-    const tokens = await exchangeCodeForTokens(code);
-    const refreshToken = tokens.refresh_token!;
-
-    // Discover direct accounts and MCC children without pulling manager metrics.
-    const accounts = await discoverAccessibleCustomers(refreshToken);
-
-    if (accounts.length === 0) {
-      console.warn(`[google-ads/callback] no_ads_account reason=empty_discovery user=${user.id}`);
-      return NextResponse.redirect(new URL('/onboarding/connect?error=no_accounts', req.url));
-    }
-
-    await ensureUserProfile(user);
-    const business = await getOrCreateUserBusiness(supabase, user);
-    if (!business) {
-      return NextResponse.redirect(new URL('/onboarding/business?error=no_business', req.url));
-    }
-
-    const encryptedRefreshToken = encrypt(refreshToken);
-    const enrichedAccounts = await enrichLinkableAccounts(
-      refreshToken,
-      accounts.filter((account) => !account.is_manager),
-      accounts
-    );
-
-    // Re-apply the manager filter AFTER enrichment: metadata read during
-    // enrichment can reveal that an account discovery flagged as a client is
-    // in fact an MCC. Linking one means every later sync asks Google for
-    // metrics on a manager and gets REQUESTED_METRICS_FOR_MANAGER forever.
-    const linkableAccounts = enrichedAccounts.filter((account) => account.is_manager !== true);
-
-    if (linkableAccounts.length === 0) {
-      return NextResponse.redirect(new URL('/onboarding/connect?error=no_client_accounts', req.url));
-    }
-
-    const existingMetadata = await loadExistingAccountMetadata(supabase, business.id);
-    const rows = buildGoogleAdsLinkRows({
-      businessId: business.id,
-      encryptedRefreshToken,
-      accounts: linkableAccounts,
-      existingMetadata,
-    });
-
-    let admin;
-    try {
-      admin = createAdminClient();
-    } catch (adminError) {
-      console.error('Google Ads linking service is unavailable', adminError);
-      return NextResponse.redirect(
-        new URL('/onboarding/connect?error=security_service_unavailable', req.url)
-      );
-    }
-
-    // Account creation and credential/link-state updates are service-owned.
-    // Browser roles only retain RLS-scoped access to harmless display/sync
-    // metadata after the security-hardening migration.
-    const { data: savedAccounts, error: linkError } = await admin
-      .from('google_ads_accounts')
-      .upsert(rows, { onConflict: 'business_id,customer_id' })
-      .select('id, customer_id, customer_name, manager_id, currency_code, refresh_token_encrypted');
-
-    if (linkError) {
-      console.error('Failed to auto-link Google Ads accounts', linkError);
-      return NextResponse.redirect(new URL('/onboarding/connect?error=db_error', req.url));
-    }
-
-    const selectedAccount = pickPersistedOrPreferredGoogleAdsAccount(
-      savedAccounts,
-      business.selected_google_ads_customer_id,
-      linkableAccounts
-    );
-    if (selectedAccount) {
-      if (!business.selected_google_ads_customer_id) {
-        const selectedCustomerId = normalizeCustomerId(selectedAccount.customer_id);
-        const { error: preferenceError } = await supabase
-          .from('businesses')
-          .update({ selected_google_ads_customer_id: selectedCustomerId })
-          .eq('id', business.id)
-          .eq('user_id', user.id);
-        if (preferenceError) {
-          console.warn('Unable to persist initial Google Ads account selection', preferenceError);
-        } else {
-          business.selected_google_ads_customer_id = selectedCustomerId;
-        }
-      }
-
-      try {
-        const syncResult = await syncCampaignCacheWithLoginFallback({
-          supabase: admin,
-          customerId: selectedAccount.customer_id,
-          refreshToken,
-          accountId: selectedAccount.id,
-          currencyCode: selectedAccount.currency_code,
-          loginCustomerIds: [selectedAccount.manager_id],
-        });
-        if (syncResult.loginCustomerId) {
-          await admin
-            .from('google_ads_accounts')
-            .update({ manager_id: syncResult.loginCustomerId })
-            .eq('id', selectedAccount.id);
-        }
-      } catch (syncError) {
-        console.warn(`Initial campaign sync failed for ${selectedAccount.customer_id}`, syncError);
-      }
-    }
-
-    const res = NextResponse.redirect(
-      new URL(`/dashboard?connected=1&accounts=${savedAccounts?.length ?? linkableAccounts.length}`, req.url)
-    );
-    res.cookies.delete(GOOGLE_ADS_OAUTH_STATE_COOKIE);
-    if (selectedAccount?.customer_id) {
-      res.cookies.set(SELECTED_ADS_ACCOUNT_COOKIE, normalizeCustomerId(selectedAccount.customer_id), {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        maxAge: 60 * 60 * 24 * 90,
-        path: '/',
-      });
-    }
-    return res;
-  } catch (err) {
-    // A Google account with no Google Ads account at all comes back as a
-    // NOT_ADS_USER 401 from the very first discovery call. It is the same
-    // situation as an empty discovery, so send it to the same recovery block
-    // instead of the generic failure that blamed Google app verification.
-    // The log line is greppable so we can count these users in Vercel.
-    if (isNotAdsUserError(err)) {
-      console.warn(`[google-ads/callback] no_ads_account reason=not_ads_user user=${user.id}`);
-      const res = NextResponse.redirect(new URL('/onboarding/connect?error=no_accounts', req.url));
-      res.cookies.delete(GOOGLE_ADS_OAUTH_STATE_COOKIE);
-      return res;
-    }
-    console.error('OAuth callback error', err);
-    return NextResponse.redirect(new URL('/onboarding/connect?error=oauth_failed', req.url));
+    admin = createAdminClient();
+  } catch (adminError) {
+    console.error('Google Ads linking service is unavailable', adminError instanceof Error ? adminError.message : 'unknown');
+    return failureRedirect(req, '/onboarding/connect?error=security_service_unavailable');
   }
+
+  let refreshToken: string;
+  try {
+    // The authorization code is single-use and short-lived, so the exchange
+    // stays inside the request. Everything slow happens after the redirect.
+    const tokens = await exchangeCodeForTokens(code);
+    if (!tokens.refresh_token) throw new Error('Google returned no refresh token');
+    refreshToken = tokens.refresh_token;
+  } catch (err) {
+    console.error('OAuth code exchange failed', err instanceof Error ? err.message : 'unknown');
+    return failureRedirect(req, '/onboarding/connect?error=oauth_failed');
+  }
+
+  await ensureUserProfile(user);
+  const business = await getOrCreateUserBusiness(supabase, user);
+  if (!business) {
+    return failureRedirect(req, '/onboarding/business?error=no_business');
+  }
+
+  let started;
+  try {
+    started = await startConnectJob(admin, user.id, consentAt);
+  } catch (err) {
+    console.error('Google Ads connect job could not start', err instanceof Error ? err.message : 'unknown');
+    return failureRedirect(req, '/onboarding/connect?error=db_error');
+  }
+
+  if (!started.ok) {
+    // stale: a newer consent already owns the connection and this is the late
+    // arrival of an older one, so its token is discarded unwritten and the user
+    // sees the newer job's progress.
+    // untrusted_time: no server-side state time to order by and a recent job
+    // exists, so fail closed and ask for a fresh link instead of guessing.
+    const target = started.reason === 'stale' ? '/onboarding/preparing' : '/onboarding/connect?error=restart_link';
+    const res = NextResponse.redirect(new URL(target, req.url));
+    res.cookies.delete(GOOGLE_ADS_OAUTH_STATE_COOKIE);
+    return res;
+  }
+  const job = started;
+
+  const encryptedRefreshToken = encrypt(refreshToken);
+  // Discovery, metadata, linking and the first data read used to run here
+  // before the redirect, up to the 300s function limit, with the user staring
+  // at Google's blank tab and, on timeout, a raw Vercel error page. They now
+  // run after the response; /onboarding/preparing polls the job row.
+  after(() =>
+    runConnectJob({
+      admin,
+      job,
+      userId: user.id,
+      business,
+      refreshToken,
+      encryptedRefreshToken,
+    })
+  );
+
+  const res = NextResponse.redirect(new URL('/onboarding/preparing', req.url));
+  res.cookies.delete(GOOGLE_ADS_OAUTH_STATE_COOKIE);
+  return res;
+}
+
+function failureRedirect(req: NextRequest, path: string) {
+  const res = NextResponse.redirect(new URL(path, req.url));
+  // The state was consumed above; a stale cookie must not stay replayable.
+  res.cookies.delete(GOOGLE_ADS_OAUTH_STATE_COOKIE);
+  return res;
 }
 
 async function getOrCreateUserBusiness(
@@ -305,88 +236,4 @@ async function ensureUserProfile(user: { id: string; email?: string | null; user
   } catch (error) {
     console.warn('Unable to ensure public user profile before Google Ads linking', error);
   }
-}
-
-async function enrichLinkableAccounts(
-  refreshToken: string,
-  linkableAccounts: Awaited<ReturnType<typeof discoverAccessibleCustomers>>,
-  allAccounts: Awaited<ReturnType<typeof discoverAccessibleCustomers>>
-) {
-  const loginCandidates = [
-    ...allAccounts
-      .flatMap((account) => [account.manager_id, account.is_manager ? account.customer_id : null])
-      .filter((value): value is string => Boolean(value)),
-  ].filter((value, index, values) => values.indexOf(value) === index);
-
-  return mapLimit(linkableAccounts, METADATA_CONCURRENCY, async (account) => {
-      if (account.customer_name && account.currency_code && account.time_zone) return account;
-
-      try {
-        const normalizedCustomerId = normalizeCustomerId(account.customer_id);
-        const { metadata, loginCustomerId } = await getCustomerMetadataWithFallback(
-          refreshToken,
-          normalizedCustomerId,
-          [account.manager_id, ...loginCandidates].filter((value): value is string => Boolean(value))
-        );
-
-        return {
-          ...account,
-          customer_id: metadata.customer_id,
-          customer_name: account.customer_name ?? metadata.customer_name,
-          manager_id:
-            account.manager_id ??
-            (loginCustomerId && loginCustomerId !== normalizedCustomerId ? loginCustomerId : null),
-          // `account.is_manager` is always a boolean coming out of discovery,
-          // so `??` never fires. Take the freshly-read metadata whenever it
-          // says "manager" — that is the value we then filter on.
-          is_manager: metadata.is_manager || account.is_manager || false,
-          currency_code: account.currency_code ?? metadata.currency_code,
-          time_zone: account.time_zone ?? metadata.time_zone,
-        };
-      } catch (error) {
-        console.warn(`Failed to enrich Google Ads account ${account.customer_id} during OAuth callback`, error);
-        return account;
-      }
-    });
-}
-
-/**
- * Reads the metadata already stored for this business so a re-connect
- * never blanks a name the user typed by hand.
- *
- * Deliberately throws instead of returning an empty map: swallowing the
- * error meant a transient read failure wrote NULL over every
- * `customer_name`, `manager_id`, `currency_code` and `time_zone` in the
- * upsert that follows. Also pages explicitly — the PostgREST default of
- * 1000 rows silently truncated large agency accounts into the same wipe.
- */
-async function loadExistingAccountMetadata(supabase: any, businessId: string) {
-  const pageSize = 500;
-  const result = new Map<string, any>();
-
-  for (let from = 0; ; from += pageSize) {
-    const { data, error } = await supabase
-      .from('google_ads_accounts')
-      .select('customer_id, customer_name, manager_id, currency_code, time_zone')
-      .eq('business_id', businessId)
-      .order('customer_id', { ascending: true })
-      .range(from, from + pageSize - 1);
-
-    if (error) {
-      throw new Error(`Failed to load existing Google Ads account metadata: ${error.message ?? error}`);
-    }
-
-    for (const account of data ?? []) {
-      result.set(normalizeCustomerId(account.customer_id), {
-        customer_name: account.customer_name ?? null,
-        manager_id: account.manager_id ?? null,
-        currency_code: account.currency_code ?? null,
-        time_zone: account.time_zone ?? null,
-      });
-    }
-
-    if (!data || data.length < pageSize) break;
-  }
-
-  return result;
 }
