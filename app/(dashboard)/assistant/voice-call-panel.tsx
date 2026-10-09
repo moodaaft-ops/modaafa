@@ -3,17 +3,14 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Keyboard, LoaderCircle, Mic, PhoneOff, Square } from 'lucide-react';
-import {
-  appendVoiceTranscript,
-  microphoneAccessErrorMessage,
-  requestMicrophoneAccess,
-  speechRecognitionErrorMessage,
-} from '@/lib/ai/voice-input';
+import { microphoneAccessErrorMessage } from '@/lib/ai/voice-input';
 import {
   looksLikeVoiceApproval,
+  MIN_RECORDING_BYTES,
   nextVoiceCallState,
+  pickRecorderMime,
   prepareSpokenText,
-  ttsFailureMessage,
+  voiceErrorMessage,
   VOICE_APPROVAL_NOTICE,
   VOICE_LIMITS,
   type VoiceCallEvent,
@@ -58,10 +55,16 @@ export function VoiceCallPanel({
 
   const stateRef = useRef<VoiceCallState>('idle');
   stateRef.current = state;
-  const recognitionRef = useRef<any>(null);
+  // One element for the whole call: iOS only lets an element that was started
+  // inside a tap play later without another tap.
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioUrlRef = useRef<string | null>(null);
-  const ttsAbortRef = useRef<AbortController | null>(null);
+  const unlockedRef = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const recordTimerRef = useRef<number | null>(null);
+  const sessionRef = useRef<{ token: string; maxSeconds: number } | null>(null);
   const turnRef = useRef(0);
   const idleTimerRef = useRef<number | null>(null);
   const endedRef = useRef(false);
@@ -78,32 +81,36 @@ export function VoiceCallPanel({
   };
 
   const stopPlayback = useCallback(() => {
-    ttsAbortRef.current?.abort();
-    ttsAbortRef.current = null;
+    abortRef.current?.abort();
+    abortRef.current = null;
     const audio = audioRef.current;
     if (audio) {
       audio.onended = null;
       audio.onerror = null;
       audio.pause();
-      audio.removeAttribute('src');
     }
-    audioRef.current = null;
     if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
     audioUrlRef.current = null;
   }, []);
 
-  const stopRecognition = useCallback(() => {
-    const recognition = recognitionRef.current;
-    recognitionRef.current = null;
-    if (!recognition) return;
-    recognition.onresult = null;
-    recognition.onerror = null;
-    recognition.onend = null;
-    try {
-      recognition.abort();
-    } catch {
-      /* already stopped */
+  /** Releases the mic completely. Called on every path out of recording. */
+  const releaseMic = useCallback(() => {
+    if (recordTimerRef.current) window.clearTimeout(recordTimerRef.current);
+    recordTimerRef.current = null;
+    const recorder = recorderRef.current;
+    recorderRef.current = null;
+    if (recorder) {
+      recorder.ondataavailable = null;
+      recorder.onstop = null;
+      recorder.onerror = null;
+      try {
+        if (recorder.state !== 'inactive') recorder.stop();
+      } catch {
+        /* already stopped */
+      }
     }
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
   }, []);
 
   const endCall = useCallback(() => {
@@ -111,11 +118,11 @@ export function VoiceCallPanel({
     endedRef.current = true;
     turnRef.current += 1;
     clearIdleTimer();
-    stopRecognition();
+    releaseMic();
     stopPlayback();
     dispatch('end_call');
     onCloseRef.current();
-  }, [stopPlayback, stopRecognition]);
+  }, [releaseMic, stopPlayback]);
 
   // Hard ceiling on a call, plus cleanup when the panel unmounts for any reason.
   useEffect(() => {
@@ -124,10 +131,10 @@ export function VoiceCallPanel({
       window.clearTimeout(ceiling);
       clearIdleTimer();
       turnRef.current += 1;
-      stopRecognition();
+      releaseMic();
       stopPlayback();
     };
-  }, [endCall, stopPlayback, stopRecognition]);
+  }, [endCall, releaseMic, stopPlayback]);
 
   const armIdleTimer = useCallback(() => {
     clearIdleTimer();
@@ -139,36 +146,79 @@ export function VoiceCallPanel({
     else clearIdleTimer();
   }, [state, armIdleTimer]);
 
+  /** Plays a silent clip inside the tap so Safari/iOS allows the reply later. */
+  function unlockAudio() {
+    if (unlockedRef.current) return;
+    try {
+      const audio = audioRef.current ?? new Audio();
+      audioRef.current = audio;
+      const silent = new Blob([silentWav()], { type: 'audio/wav' });
+      const url = URL.createObjectURL(silent);
+      audio.src = url;
+      void audio
+        .play()
+        .catch(() => undefined)
+        .finally(() => URL.revokeObjectURL(url));
+      unlockedRef.current = true;
+    } catch {
+      /* playback may still work; failure shows as text later */
+    }
+  }
+
+  async function ensureSession(): Promise<string | null> {
+    if (sessionRef.current) return sessionRef.current.token;
+    const response = await fetch('/api/voice/session', { method: 'POST' });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.session_token) {
+      setError(voiceErrorMessage(data?.error, response.status));
+      dispatch('fail');
+      return null;
+    }
+    sessionRef.current = {
+      token: data.session_token,
+      maxSeconds: Math.min(Number(data.caps?.max_audio_seconds) || 30, 60),
+    };
+    return data.session_token;
+  }
+
+  const failWith = useCallback((code: string | undefined, status: number | null, turn: number) => {
+    if (turn !== turnRef.current) return;
+    if (code === 'session_expired' || code === 'unauthorized') sessionRef.current = null;
+    setError(voiceErrorMessage(code, status));
+    // Limits and a missing feature end the voice leg; everything else lets the person retry.
+    const retryable = ['no_speech', 'too_many_requests', 'session_expired', 'audio_too_large'];
+    dispatch(code && retryable.includes(code) ? 'stop_listening' : 'fail');
+  }, []);
+
   const speak = useCallback(
-    async (reply: string, turn: number) => {
+    async (reply: string, ticket: string, turn: number) => {
       const spoken = prepareSpokenText(reply);
       if (!spoken) {
         dispatch('audio_finished');
         return;
       }
       const controller = new AbortController();
-      ttsAbortRef.current = controller;
+      abortRef.current = controller;
       dispatch('reply_ready');
       try {
         const response = await fetch('/api/voice/speak', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: spoken }),
+          body: JSON.stringify({ text: spoken, ticket }),
           signal: controller.signal,
         });
         if (!response.ok) {
-          if (turn === turnRef.current) {
-            setError(ttsFailureMessage(response.status));
-            dispatch('fail');
-          }
+          const data = await response.json().catch(() => ({}));
+          failWith(data?.error, response.status, turn);
           return;
         }
         const blob = await response.blob();
         if (turn !== turnRef.current) return;
         const url = URL.createObjectURL(blob);
         audioUrlRef.current = url;
-        const audio = new Audio(url);
+        const audio = audioRef.current ?? new Audio();
         audioRef.current = audio;
+        audio.src = url;
         audio.onended = () => {
           if (turn !== turnRef.current) return;
           stopPlayback();
@@ -177,8 +227,7 @@ export function VoiceCallPanel({
         audio.onerror = () => {
           if (turn !== turnRef.current) return;
           stopPlayback();
-          setError(ttsFailureMessage(500));
-          dispatch('fail');
+          failWith(undefined, 500, turn);
         };
         await audio.play();
         if (turn === turnRef.current) dispatch('audio_started');
@@ -187,19 +236,44 @@ export function VoiceCallPanel({
         stopPlayback();
         // `play()` is rejected when the browser blocks audio, a dropped
         // connection rejects `fetch`; both end in text, never in a stuck panel.
-        setError(
-          (err as Error)?.name === 'NotAllowedError' ? ttsFailureMessage(500) : ttsFailureMessage(null)
-        );
-        dispatch('fail');
+        failWith(undefined, (err as Error)?.name === 'NotAllowedError' ? 500 : null, turn);
       }
     },
-    [stopPlayback]
+    [failWith, stopPlayback]
   );
 
-  const handleTranscript = useCallback(
-    async (transcript: string, turn: number) => {
-      setHeard(transcript);
+  const handleRecording = useCallback(
+    async (blob: Blob, mime: string, turn: number) => {
+      if (blob.size < MIN_RECORDING_BYTES) {
+        failWith('no_speech', 422, turn);
+        return;
+      }
       dispatch('speech_final');
+      const controller = new AbortController();
+      abortRef.current = controller;
+      let transcript = '';
+      let ticket = '';
+      try {
+        const response = await fetch('/api/voice/transcribe', {
+          method: 'POST',
+          headers: { 'Content-Type': mime.split(';')[0] || 'audio/webm', 'x-voice-session': sessionRef.current?.token ?? '' },
+          body: blob,
+          signal: controller.signal,
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.text || !data.ticket) {
+          failWith(data?.error, response.status, turn);
+          return;
+        }
+        transcript = String(data.text);
+        ticket = String(data.ticket);
+      } catch (err) {
+        if ((err as Error)?.name === 'AbortError') return;
+        failWith(undefined, null, turn);
+        return;
+      }
+      if (turn !== turnRef.current) return;
+      setHeard(transcript);
       // A spoken "yes" is only ever a message to the assistant. It never
       // reaches the approval path, and the person is told where the real
       // confirm button lives.
@@ -213,9 +287,9 @@ export function VoiceCallPanel({
       }
       setDraftPending(result.hasDraft);
       if (result.hasDraft) setApprovalNotice(true);
-      await speak(result.reply, turn);
+      await speak(result.reply, ticket, turn);
     },
-    [speak]
+    [failWith, speak]
   );
 
   // The mic opens ONLY from this function, and it is only called by a tap.
@@ -230,63 +304,55 @@ export function VoiceCallPanel({
 
     setError('');
     setApprovalNotice(false);
+    unlockAudio();
     const turn = ++turnRef.current;
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      setError('متصفحك ما يدعم التعرف على الصوت. جرّب Chrome أو Safari، أو كمّل كتابة.');
+
+    if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      setError('متصفحك ما يدعم تسجيل الصوت. حدّثه أو كمّل كتابة.');
+      dispatch('fail');
+      return;
+    }
+    const mime = pickRecorderMime((m) => MediaRecorder.isTypeSupported(m));
+    if (!mime) {
+      setError(voiceErrorMessage('unsupported_audio', 415));
       dispatch('fail');
       return;
     }
 
     try {
-      const permission = await navigator.permissions
-        ?.query({ name: 'microphone' as PermissionName })
-        .catch(() => null);
-      if (permission?.state === 'denied') {
-        throw Object.assign(new Error('Microphone permission denied'), { name: 'NotAllowedError' });
-      }
-      if (navigator.mediaDevices?.getUserMedia) {
-        await requestMicrophoneAccess(() => navigator.mediaDevices.getUserMedia({ audio: true }));
-      }
-      if (turn !== turnRef.current) return;
+      const token = await ensureSession();
+      if (!token || turn !== turnRef.current) return;
 
-      const recognition = new SpeechRecognition();
-      recognitionRef.current = recognition;
-      recognition.lang = 'ar-SA';
-      recognition.continuous = false;
-      recognition.interimResults = true;
-      recognition.maxAlternatives = 1;
-
-      let finalText = '';
-      let sawError = false;
-      recognition.onstart = () => dispatch('start_listening');
-      recognition.onresult = (event: any) => {
-        const transcript = Array.from(event.results as ArrayLike<any>)
-          .map((result: any) => result[0]?.transcript ?? '')
-          .join(' ');
-        finalText = appendVoiceTranscript('', transcript);
-        setHeard(finalText);
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (turn !== turnRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      streamRef.current = stream;
+      const recorder = new MediaRecorder(stream, { mimeType: mime });
+      recorderRef.current = recorder;
+      const chunks: Blob[] = [];
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) chunks.push(event.data);
       };
-      recognition.onerror = (event: any) => {
-        sawError = true;
-        const message = speechRecognitionErrorMessage(event?.error);
-        if (message) setError(message);
-        // A hard failure moves to text. A quiet "no speech" just goes back to idle.
-        if (event?.error === 'no-speech' || event?.error === 'aborted') dispatch('stop_listening');
-        else dispatch('fail');
+      recorder.onerror = () => {
+        releaseMic();
+        failWith(undefined, 500, turn);
       };
-      recognition.onend = () => {
-        recognitionRef.current = null;
-        if (turn !== turnRef.current || sawError) return;
-        if (!finalText.trim()) {
-          setError('لم أسمع كلاماً واضحاً. اضغط الميكروفون وأعد المحاولة.');
-          dispatch('stop_listening');
-          return;
-        }
-        void handleTranscript(finalText.trim(), turn);
+      recorder.onstop = () => {
+        const type = recorder.mimeType || mime;
+        releaseMic();
+        if (turn !== turnRef.current) return;
+        void handleRecording(new Blob(chunks, { type }), type, turn);
       };
-      recognition.start();
+      recorder.start();
+      dispatch('start_listening');
+      recordTimerRef.current = window.setTimeout(
+        () => stopListening(),
+        (sessionRef.current?.maxSeconds ?? 30) * 1000
+      );
     } catch (voiceError) {
+      releaseMic();
       if (turn !== turnRef.current) return;
       setError(microphoneAccessErrorMessage(voiceError));
       dispatch('fail');
@@ -294,11 +360,12 @@ export function VoiceCallPanel({
   }
 
   function stopListening() {
-    const recognition = recognitionRef.current;
-    if (!recognition) return;
-    // `stop` (not `abort`) lets the engine deliver what it already heard.
+    const recorder = recorderRef.current;
+    if (!recorder || recorder.state === 'inactive') return;
+    if (recordTimerRef.current) window.clearTimeout(recordTimerRef.current);
+    recordTimerRef.current = null;
     try {
-      recognition.stop();
+      recorder.stop();
     } catch {
       /* already stopped */
     }
@@ -398,8 +465,30 @@ export function VoiceCallPanel({
         </button>
       </div>
       <p className="mt-3 text-[11.5px] leading-5 text-muted-foreground">
-        الميكروفون يشتغل بس لما تضغط. ما نسجّل صوتك، والرد الكامل يبقى مكتوب في المحادثة.
+        الميكروفون يشتغل بس لما تضغط. تسجيلك يروح من جهازك لسيرفرنا ومنه لمزود الصوت (ElevenLabs) عشان يتحول لنص، والرد كذلك يتحول لصوت عنده. ما نحفظ الصوت عندنا، أما مدة حفظه عند المزود فتتبع شروطه. الرد الكامل يبقى مكتوب في المحادثة.
       </p>
     </div>
   );
+}
+
+/** 0.1s of silence as a WAV, built in the browser so no data: URL is needed (CSP allows blob:). */
+function silentWav(): ArrayBuffer {
+  const rate = 8000;
+  const samples = 800;
+  const buffer = new ArrayBuffer(44 + samples * 2);
+  const v = new DataView(buffer);
+  const str = (o: number, t: string) => [...t].forEach((c, k) => v.setUint8(o + k, c.charCodeAt(0)));
+  str(0, 'RIFF');
+  v.setUint32(4, 36 + samples * 2, true);
+  str(8, 'WAVEfmt ');
+  v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true);
+  v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true);
+  v.setUint32(28, rate * 2, true);
+  v.setUint16(32, 2, true);
+  v.setUint16(34, 16, true);
+  str(36, 'data');
+  v.setUint32(40, samples * 2, true);
+  return buffer;
 }

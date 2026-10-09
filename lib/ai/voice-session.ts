@@ -35,7 +35,7 @@ const TRANSITIONS: Record<VoiceCallState, Partial<Record<VoiceCallEvent, VoiceCa
     end_call: 'ended',
     fail: 'text_fallback',
   },
-  thinking: { reply_ready: 'speaking', end_call: 'ended', fail: 'text_fallback' },
+  thinking: { reply_ready: 'speaking', stop_listening: 'idle', end_call: 'ended', fail: 'text_fallback' },
   speaking: {
     audio_finished: 'idle',
     // Cutting the reply short hands the floor back to the person. The mic is
@@ -156,27 +156,156 @@ export function validateTtsText(input: unknown): TtsRequestCheck {
   return { ok: true, text };
 }
 
+export type VoiceProviderKind = 'elevenlabs' | 'mock';
+
 export type VoiceConfig = {
   enabled: boolean;
+  provider: VoiceProviderKind;
   apiKey: string | null;
   voiceId: string | null;
   modelId: string;
+  sttModelId: string;
+  ticketSecret: string | null;
+  caps: VoiceCaps;
+};
+
+export type VoiceCaps = {
+  /** Turns (one spoken question and its spoken answer) in one call. */
+  sessionMaxTurns: number;
+  /** Wall-clock life of one call, in seconds. */
+  sessionMaxSeconds: number;
+  /** Turns per user per day. Never above the plan's daily assistant quota. */
+  dailyTurns: number;
+  /** One recorded question. */
+  maxAudioBytes: number;
+  maxAudioSeconds: number;
+  maxSpokenChars: number;
 };
 
 /** Default is Fahad (library voice, Saudi Arabic). Never a cloned voice. */
 export const DEFAULT_VOICE_MODEL = 'eleven_flash_v2_5';
+export const DEFAULT_STT_MODEL = 'scribe_v1';
+
+function intFrom(value: string | undefined, fallback: number, min: number, max: number) {
+  const n = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+/**
+ * Caps are env-tunable but clamped, and the daily cap can never exceed the
+ * plan's daily assistant quota: every voice turn also spends one assistant
+ * message through the chat endpoint, so a bigger voice number would be fiction.
+ */
+export function resolveVoiceCaps(
+  env: Record<string, string | undefined> = process.env,
+  planAssistantDailyLimit: number | null = null
+): VoiceCaps {
+  const dailyEnv = intFrom(env.VOICE_DAILY_TURNS, 30, 1, 500);
+  return {
+    sessionMaxTurns: intFrom(env.VOICE_SESSION_MAX_TURNS, 12, 1, 60),
+    sessionMaxSeconds: intFrom(env.VOICE_SESSION_MAX_SECONDS, 600, 60, 3600),
+    dailyTurns: planAssistantDailyLimit ? Math.min(dailyEnv, planAssistantDailyLimit) : dailyEnv,
+    maxAudioBytes: intFrom(env.VOICE_MAX_AUDIO_BYTES, 1_500_000, 20_000, 5_000_000),
+    maxAudioSeconds: intFrom(env.VOICE_MAX_AUDIO_SECONDS, 30, 5, 60),
+    maxSpokenChars: VOICE_LIMITS.maxSpokenChars,
+  };
+}
 
 export function readVoiceConfig(env: Record<string, string | undefined> = process.env): VoiceConfig {
   const flag = (env.VOICE_ASSISTANT_ENABLED ?? '').trim().toLowerCase();
   const apiKey = env.ELEVENLABS_API_KEY?.trim() || null;
   const voiceId = env.ELEVENLABS_VOICE_ID?.trim() || null;
+  const secret = env.VOICE_TICKET_SECRET?.trim() || null;
+  const wantsMock = (env.VOICE_PROVIDER ?? '').trim().toLowerCase() === 'mock';
+  // The mock provider exists so the whole flow can be tried on a phone without
+  // a provider key. It must be impossible to run it on production.
+  const mockAllowed = wantsMock && env.VERCEL_ENV !== 'production';
+  const provider: VoiceProviderKind = mockAllowed ? 'mock' : 'elevenlabs';
+  const providerReady = provider === 'mock' || (Boolean(apiKey) && Boolean(voiceId));
+  const secretReady = Boolean(secret) && (secret as string).length >= 32;
   return {
-    // All three must exist. A flag with no key must read as "off", not crash.
-    enabled: flag === 'true' && Boolean(apiKey) && Boolean(voiceId),
+    // Flag, a real signing secret and a usable provider. Anything less reads
+    // as "off" rather than half working. `VOICE_PROVIDER=mock` on production
+    // also reads as off, never as a silent switch to the paid provider.
+    enabled: flag === 'true' && secretReady && providerReady && !(wantsMock && !mockAllowed),
+    provider,
     apiKey,
     voiceId,
     modelId: env.ELEVENLABS_MODEL_ID?.trim() || DEFAULT_VOICE_MODEL,
+    sttModelId: env.ELEVENLABS_STT_MODEL_ID?.trim() || DEFAULT_STT_MODEL,
+    ticketSecret: secret,
+    caps: resolveVoiceCaps(env),
   };
+}
+
+/** Recorder formats in the order we prefer them. Safari/iOS only has mp4. */
+export const RECORDER_MIME_CANDIDATES = [
+  'audio/webm;codecs=opus',
+  'audio/webm',
+  'audio/mp4',
+  'audio/ogg;codecs=opus',
+] as const;
+
+export function pickRecorderMime(isSupported: (mime: string) => boolean): string | null {
+  for (const mime of RECORDER_MIME_CANDIDATES) {
+    try {
+      if (isSupported(mime)) return mime;
+    } catch {
+      /* some engines throw on unknown types */
+    }
+  }
+  return null;
+}
+
+/** Below this the recording is almost certainly silence or a mis-tap. */
+export const MIN_RECORDING_BYTES = 1500;
+
+export type VoiceErrorCode =
+  | 'voice_unavailable'
+  | 'unauthorized'
+  | 'subscription_required'
+  | 'session_expired'
+  | 'session_limit'
+  | 'daily_limit'
+  | 'too_many_requests'
+  | 'audio_too_large'
+  | 'unsupported_audio'
+  | 'no_speech'
+  | 'ticket_invalid'
+  | 'text_too_long'
+  | 'voice_plan_required'
+  | 'provider_failed'
+  | 'security_service_unavailable';
+
+export function voiceErrorMessage(code: string | undefined, status: number | null): string {
+  switch (code) {
+    case 'voice_unavailable':
+      return 'المكالمة الصوتية غير مفعّلة الآن. كمّل كتابة.';
+    case 'subscription_required':
+      return 'المكالمة الصوتية تحتاج اشتراكاً فعّالاً. كمّل كتابة.';
+    case 'session_expired':
+    case 'unauthorized':
+      return 'انتهت جلسة المكالمة. اضغط التحدث لبدء جلسة جديدة.';
+    case 'session_limit':
+      return 'وصلت حد هذه المكالمة. ابدأ مكالمة جديدة أو كمّل كتابة.';
+    case 'daily_limit':
+      return 'وصلت حد المكالمات الصوتية اليوم. كمّل كتابة وارجع بكرة.';
+    case 'too_many_requests':
+      return 'طلبات كثيرة بسرعة. انتظر قليلاً وأعد المحاولة.';
+    case 'audio_too_large':
+      return 'التسجيل طويل. قصّر سؤالك وأعد المحاولة.';
+    case 'unsupported_audio':
+      return 'متصفحك سجّل الصوت بصيغة غير مدعومة. كمّل كتابة.';
+    case 'no_speech':
+      return 'لم أسمع كلاماً واضحاً. اضغط التحدث وأعد المحاولة.';
+    case 'voice_plan_required':
+      return 'الصوت المختار غير متاح على خطة مزود الصوت. الرد مكتوب فوق.';
+    case 'ticket_invalid':
+      return 'تعذر تشغيل الرد صوتياً. الرد مكتوب فوق.';
+    default:
+      return ttsFailureMessage(status);
+  }
 }
 
 /** Arabic error text for the three ways the TTS leg can fail. */

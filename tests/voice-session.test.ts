@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
   DEFAULT_VOICE_MODEL,
+  pickRecorderMime,
+  resolveVoiceCaps,
   looksLikeVoiceApproval,
   nextVoiceCallState,
   prepareSpokenText,
@@ -88,17 +90,45 @@ test('TTS text is validated: type, empty, and size', () => {
   assert.deepEqual(validateTtsText(' مرحبا   بك '), { ok: true, text: 'مرحبا بك' });
 });
 
-test('voice is off unless flag, key and voice id are all present', () => {
+const SECRET = 'x'.repeat(40);
+const base = { VOICE_ASSISTANT_ENABLED: 'true', ELEVENLABS_API_KEY: 'k', ELEVENLABS_VOICE_ID: 'v', VOICE_TICKET_SECRET: SECRET };
+
+test('voice is off unless flag, signing secret and provider are all present', () => {
   assert.equal(readVoiceConfig({}).enabled, false);
   assert.equal(readVoiceConfig({ VOICE_ASSISTANT_ENABLED: 'true' }).enabled, false);
-  assert.equal(readVoiceConfig({ VOICE_ASSISTANT_ENABLED: 'true', ELEVENLABS_API_KEY: 'k' }).enabled, false);
-  assert.equal(
-    readVoiceConfig({ ELEVENLABS_API_KEY: 'k', ELEVENLABS_VOICE_ID: 'v', VOICE_ASSISTANT_ENABLED: 'false' }).enabled,
-    false
-  );
-  const on = readVoiceConfig({ VOICE_ASSISTANT_ENABLED: 'true', ELEVENLABS_API_KEY: 'k', ELEVENLABS_VOICE_ID: 'v' });
+  assert.equal(readVoiceConfig({ ...base, VOICE_TICKET_SECRET: undefined }).enabled, false);
+  assert.equal(readVoiceConfig({ ...base, VOICE_TICKET_SECRET: 'short' }).enabled, false);
+  assert.equal(readVoiceConfig({ ...base, ELEVENLABS_API_KEY: undefined }).enabled, false);
+  assert.equal(readVoiceConfig({ ...base, VOICE_ASSISTANT_ENABLED: 'false' }).enabled, false);
+  const on = readVoiceConfig(base);
   assert.equal(on.enabled, true);
+  assert.equal(on.provider, 'elevenlabs');
   assert.equal(on.modelId, DEFAULT_VOICE_MODEL);
+});
+
+test('the mock provider needs no key off production and reads as off on production', () => {
+  const mock = { VOICE_ASSISTANT_ENABLED: 'true', VOICE_PROVIDER: 'mock', VOICE_TICKET_SECRET: SECRET };
+  assert.equal(readVoiceConfig({ ...mock, VERCEL_ENV: 'preview' }).enabled, true);
+  assert.equal(readVoiceConfig({ ...mock, VERCEL_ENV: 'preview' }).provider, 'mock');
+  // Production never silently falls back to the paid provider either.
+  const prod = readVoiceConfig({ ...mock, ...base, VOICE_PROVIDER: 'mock', VERCEL_ENV: 'production' });
+  assert.equal(prod.enabled, false);
+});
+
+test('caps are tunable, clamped, and the daily cap never exceeds the plan quota', () => {
+  assert.equal(resolveVoiceCaps({}, null).dailyTurns, 30);
+  assert.equal(resolveVoiceCaps({ VOICE_DAILY_TURNS: '400' }, 20).dailyTurns, 20);
+  assert.equal(resolveVoiceCaps({ VOICE_DAILY_TURNS: '5' }, 100).dailyTurns, 5);
+  assert.equal(resolveVoiceCaps({ VOICE_SESSION_MAX_TURNS: '9999' }).sessionMaxTurns, 60);
+  assert.equal(resolveVoiceCaps({ VOICE_SESSION_MAX_TURNS: 'abc' }).sessionMaxTurns, 12);
+  assert.equal(resolveVoiceCaps({ VOICE_MAX_AUDIO_BYTES: '1' }).maxAudioBytes, 20_000);
+});
+
+test('recorder mime negotiation falls back to mp4 on Safari and returns null when nothing works', () => {
+  assert.equal(pickRecorderMime((m) => m === 'audio/mp4'), 'audio/mp4');
+  assert.equal(pickRecorderMime(() => true), 'audio/webm;codecs=opus');
+  assert.equal(pickRecorderMime(() => false), null);
+  assert.equal(pickRecorderMime(() => { throw new Error('x'); }), null);
 });
 
 test('failure messages tell the person the answer is still written', () => {
@@ -120,21 +150,18 @@ test('the ElevenLabs key never reaches client code', () => {
   assert.ok(!/NEXT_PUBLIC_ELEVEN/i.test(readFileSync('.env.example', 'utf8')));
 });
 
-test('the speak route gates origin, flag, session, subscription and rate limit in that order', () => {
-  const source = readFileSync('app/api/voice/speak/route.ts', 'utf8');
-  const order = [
-    'isSameOriginRequest(req)',
-    "error: 'voice_unavailable'",
-    'auth.getUser()',
-    'getSubscriptionAccess(supabase',
-    'checkRateLimit({',
-    'validateTtsText(body',
-    'https://api.elevenlabs.io',
-  ].map((marker) => source.indexOf(marker));
-  assert.ok(order.every((index) => index > -1), JSON.stringify(order));
-  assert.deepEqual([...order].sort((a, b) => a - b), order);
-  assert.ok(source.includes('signal: req.signal'), 'a cut must stop the upstream request');
-  assert.ok(!/console\.(log|info|error)\([^)]*text/.test(source), 'text must not be logged');
+test('every paid voice route checks origin first and delegates to the gated handlers', () => {
+  for (const [file, handler] of [
+    ['app/api/voice/session/route.ts', 'startVoiceSession'],
+    ['app/api/voice/transcribe/route.ts', 'transcribeVoiceTurn'],
+    ['app/api/voice/speak/route.ts', 'speakVoiceTurn'],
+  ]) {
+    const source = readFileSync(file, 'utf8');
+    const origin = source.indexOf('isSameOriginRequest(req)');
+    const call = source.indexOf(`${handler}(`);
+    assert.ok(origin > -1 && call > origin, `${file}: origin check must precede ${handler}`);
+    assert.ok(!/api\.elevenlabs\.io/.test(source), `${file} must not call the provider directly`);
+  }
 });
 
 test('the voice path never reaches an approval or execution endpoint', () => {
