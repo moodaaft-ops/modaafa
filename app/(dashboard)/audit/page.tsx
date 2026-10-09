@@ -26,6 +26,7 @@ import { StatusBadge, recommendationStatusTone, severityTone } from '@/lib/ui/st
 import { buttonClasses } from '@/lib/ui/button';
 import { cn } from '@/lib/utils';
 import { getSubscriptionAccess, featureAccessMessage } from '@/lib/billing/entitlements';
+import { auditAccessMessage, freeAuditView, getFreeAuditStatus } from '@/lib/billing/free-audit';
 import { SubscriptionGate } from '@/lib/ui/subscription-gate';
 import { isCurrentAuditEngine } from '@/lib/audit/version';
 import { isRecommendationActionable, orderRecommendationsForGuidance } from '@/lib/audit/guidance';
@@ -49,6 +50,15 @@ export default async function AuditPage({
     getAccountWorkspace(user.id),
     getSubscriptionAccess(supabase, user.id, user.email),
   ]);
+  // Auditing is free (2 runs per Google Ads account), so a visitor without a
+  // plan can still run it until that allowance is used.
+  const freeAudit = !subscription.active && selectedAccount
+    ? await getFreeAuditStatus(selectedAccount.customer_id).catch(() => null)
+    : null;
+  const freeView = freeAuditView(freeAudit);
+  // An unreadable ledger is not "exhausted": the button stays and the server
+  // (consume_free_audit) is the one that decides, answering 503 if it is down.
+  const canRunAudit = subscription.active || !selectedAccount || freeView !== 'exhausted';
 
   const auditResult = selectedAccount
     ? await supabase
@@ -81,7 +91,7 @@ export default async function AuditPage({
               }
             />
           ) : (
-            subscription.active ? (
+            canRunAudit ? (
               <EmptyState
                 icon={ShieldCheck}
                 title="ابدأ أول فحص ذكي للحساب"
@@ -141,7 +151,7 @@ export default async function AuditPage({
               حُفظت قبل تشغيل محرك الفحص الذكي الذي يقرأ عبارات البحث وجودة الكلمات وفقد الميزانية والترتيب مباشرة من Google Ads. أخفينا الدرجة والتوصيات القديمة حتى لا تبدو نتيجة سطحية كأنها حكم حديث.
             </p>
             <div className="mt-6">
-              {subscription.active ? (
+              {canRunAudit ? (
                 <RunAuditForm accounts={accounts} selectedCustomerId={selectedCustomerId} label="تشغيل الفحص الذكي الآن" />
               ) : (
                 <a href="/billing" className={buttonClasses({ variant: 'primary', size: 'lg' })}>تفعيل الفحص</a>
@@ -188,7 +198,7 @@ export default async function AuditPage({
         description={`آخر فحص ${timeAgoAr(audit.ran_at)}`}
         account={selectedAccount ? { name: accountName, customerId: selectedAccount.customer_id } : null}
         actions={
-          subscription.active ? (
+          canRunAudit ? (
             <RunAuditForm accounts={accounts} selectedCustomerId={selectedCustomerId} label="إعادة الفحص" />
           ) : (
             <a href="/billing" className={buttonClasses({ variant: 'primary' })}>تفعيل الفحص</a>
@@ -200,6 +210,17 @@ export default async function AuditPage({
         {params?.ran && <Alert tone="success">تم تشغيل الفحص وتحديث التوصيات.</Alert>}
         {params?.approved && (
           <Alert tone="success">تم تجهيز التوصية للمراجعة. لم ننفذ أي تعديل على حسابك، وتقدر تراجع الأرقام قبل التنفيذ في مركز الموافقات.</Alert>
+        )}
+        {!subscription.active && selectedAccount && (
+          <Alert tone="info">
+            {freeView === 'exhausted'
+              ? 'استخدمت الفحصين المجانيين لهذا الحساب. تقاريرك وتوصياتك تبقى مفتوحة للقراءة، والاشتراك يلزم لفحص جديد أو لتنفيذ التوصيات.'
+              : freeView === 'unknown'
+                ? 'ما قدرنا نقرأ عدد فحوصاتك المجانية الآن. تقدر تشغّل الفحص، ونتحقق من حصتك عند التشغيل.'
+                : freeView === 'in_progress'
+                  ? `فيه فحص شغّال لهذا الحساب الآن. باقي لك ${freeAudit!.remaining} من ${freeAudit!.limit} بعد ما يخلص.`
+                  : `الفحص مجاني لهذا الحساب: باقي لك ${freeAudit!.remaining} من ${freeAudit!.limit}. الاشتراك يلزم فقط عند تنفيذ التوصيات أو تفعيل التحسين الآلي.`}
+          </Alert>
         )}
         {!subscription.active && <SubscriptionGate compact />}
         {params?.error && <Alert tone="danger">{auditErrorMessage(params.error)}</Alert>}
@@ -560,6 +581,9 @@ function GuidanceStep({ number, text }: { number: string; text: string }) {
 }
 
 function auditErrorMessage(code: string) {
+  if (['free_audits_exhausted', 'audit_in_progress'].includes(code)) {
+    return auditAccessMessage(code) ?? '';
+  }
   if (['subscription_required', 'quota_exceeded', 'usage_storage_unavailable'].includes(code)) {
     return featureAccessMessage(code);
   }
