@@ -1,0 +1,87 @@
+# بيئة Supabase محلية للاختبار (بدون اشتراك وبدون أسرار)
+
+تشغّل Postgres وAuth (GoTrue) وREST (PostgREST) داخل Docker على شبكة bridge خاصة، ولا يدخل إليها من جهازك إلا منافذ مربوطة على `127.0.0.1`، وتبني التطبيق فوقها، وتجري ثلاث مجموعات فحوص بحسابات اصطناعية. لا تلمس الإنتاج ولا Vercel ولا أي خدمة خارجية، ولا تفتح endpoint عاماً. لا تغيّر أي ملف في `app` أو `lib`.
+
+## المتطلبات
+- Docker (جُرّب على 29.8.2 على Linux. على macOS يلزم Docker Desktop، وهذا المسار **لم يُجرَّب فعلياً** لأن بيئة الاختبار Linux، انظر «حدود المحاكاة») مع وصول لـ `public.ecr.aws` لسحب الصور (Docker Hub رد 429 أثناء التجربة، فاستُخدم ECR).
+- Node 22 (جُرّب على v22.22.0) و`npm ci` منفّذ.
+- عميل `psql` (جُرّب على 16)، و`openssl`، و`curl`.
+- وصول لـ `fonts.googleapis.com` أثناء `next build` (خطوط `next/font`). فشل البناء بسببها مرة واحدة أثناء التجربة ونجح بعدها، لذلك `app.sh` يعيد المحاولة ثلاث مرات.
+
+## الإصدارات والمنافذ (كلها على 127.0.0.1)
+| الخدمة | الصورة أو التشغيل | المنفذ |
+| --- | --- | --- |
+| Postgres | `public.ecr.aws/docker/library/postgres:16-alpine` | 54999 (داخل الشبكة 5432) |
+| Auth | `public.ecr.aws/supabase/gotrue:v2.170.0` | 54321 (داخل الشبكة 9999) |
+| REST | `public.ecr.aws/supabase/postgrest:v12.2.12` | 54322 (داخل الشبكة 3000) |
+| بوابة واحدة لـ supabase-js (`/auth/v1` و`/rest/v1`) | `gateway.mjs` | 54320 |
+| بديل Anthropic المحلي | `llm-stub.mjs` | 54330 |
+| التطبيق (نسخة production) | `next start` | 3100 |
+
+الإصدارات والمنافذ وأسماء الحاويات في `versions.env`. الحاويات تتكلم مع بعضها بالاسم على الشبكة `modaafa-ls-net`، ولا يُستخدم `--network host` ولا `setsid` في أي مكان، فالمسار نفسه يصلح لـ Linux وmacOS.
+
+## أوامر التشغيل
+من جذر المستودع:
+
+```bash
+scripts/local-stack/up.sh        # قاعدة + Auth + REST + بوابة + بديل النموذج، نحو 11 ثانية
+scripts/local-stack/app.sh       # يبني التطبيق ويشغّله على 3100 (نحو 30 إلى 60 ثانية للبناء)
+scripts/local-stack/verify.sh    # الفحوص الثلاثة (أو --no-app لأول اثنين بدون التطبيق)
+```
+
+## أي Docker daemon يُستخدم (Docker Desktop وColima وغيرهما)
+بعد الـ preflight يختار `up.sh` **daemon محلياً واحداً** ويسجّله في `.local-stack/docker-host`. الأولوية: `DOCKER_HOST` ثم `DOCKER_CONTEXT` ثم الـ context الحالي. المقبول socket محلي أو named pipe فقط (`unix://` أو `npipe://`)؛ أي `tcp://` أو `ssh://` أو context بعيد يُرفض قبل أي اتصال بأي daemon، ويُرفض كذلك لو سمّى `DOCKER_HOST` و`DOCKER_CONTEXT` daemonين مختلفين. بعدها يستخدم `verify.sh` و`down.sh` القرار المسجّل نفسه، حتى لو فتحت terminal آخر على context مختلف. لا يُنفَّذ `docker context use` ولا يُعدَّل أي ملف لـ Docker، فالـ default عندك لا يتغير.
+
+سبب هذا: الاختبارات تعمل ببيئة فارغة، و`DOCKER_CONTEXT=colima-...` كان يضيع فيها فيرجع `docker` إلى `/var/run/docker.sock`. الآن يُمرَّر `DOCKER_HOST` المسجّل فقط للعملية التي تحتاج Docker (`posture.mjs`)، ولا يصل التطبيق.
+
+مثال Colima:
+```bash
+DOCKER_CONTEXT=colima-modaafa-qa scripts/local-stack/up.sh
+scripts/local-stack/verify.sh      # من أي terminal، نفس الـ daemon
+scripts/local-stack/down.sh
+```
+
+## الإغلاق والتنظيف
+```bash
+scripts/local-stack/down.sh      # يوقف التطبيق والبوابة والبديل ويحذف الحاويات والشبكة ومجلد .local-stack
+```
+الحاويات تعمل بدون volume، فحذفها يمحو القاعدة كاملة.
+
+التنظيف بالـ label فقط: كل حاوية وكل شبكة ينشئها `up.sh` تحمل `com.modaafa.local-stack=true`، و`down.sh` يحذف ما يحمل هذا الـ label ولا شيئاً غيره. لو وُجدت حاوية أو شبكة بنفس الاسم بلا label يرفض `up.sh` ويقول السبب ولا يمسّها. إذا تعذّر الوصول لـ Docker يبقي `down.sh` مجلد `.local-stack` (فيه اسم الـ daemon) ويخرج بخطأ، فشغّله مرة ثانية بعد تشغيل Docker. العمليات على الجهاز تُوقف من ملفات الـ pid فقط، وبعد التأكد أن الـ pid ما زال يشغّل الأمر المتوقع (لا يُقتل pid أعيد استخدامه).
+
+## ما الذي ينفّذه `up.sh`
+1. حاوية Postgres وقاعدتان: `app` و`fa_scratch` (للفحص الأول).
+2. الأدوار (`anon` و`authenticated` و`service_role` و`authenticator`) وGoTrue الذي يبني مخطط `auth` بنفسه. دور `supabase_auth_admin` بصلاحية superuser لأن ترحيلات GoTrue تحتاجها، وهذا مقبول فقط لأن القاعدة محلية وتُحذف. كلمات سر الأدوار تتولد عشوائياً في كل تشغيل.
+3. `db/schema.sql` ثم `scripts/migrate.mjs` لـ 20 ترحيلاً، مع **تخطي** `20261005_pg_cron_scheduler.sql` عمداً: يحتاج pg_cron وpg_net وvault ويجدول نداءات إلى `https://ai.modaafa.com/api/cron/...`. بعد الترحيل يتأكد الأمر أن لا دالة تذكر `ai.modaafa.com` وإلا يتوقف.
+4. الصلاحيات تطابق الإنتاج بدل منح شامل. Supabase يمنح كل كائن جديد في `public` لـ anon وauthenticated وservice_role عبر `ALTER DEFAULT PRIVILEGES`، ثم تسحب الترحيلات ما لا تريده (مثل `free_audit_ledger` وحذف `businesses` وجداول autopilot). لذلك تُضبط الـ default privileges **قبل** تحميل `db/schema.sql` والترحيلات، ولا يُمنح شيء بعدها. النتيجة المخزّنة للـ ledger: `{postgres=arwdDxt/postgres,service_role=r/postgres}`، أي SELECT فقط لـ service_role ولا شيء لـ anon وauthenticated. النسخة الأولى من هذا الـ PR كانت تنفّذ `grant ... on all tables` بعد الترحيلات، فأعطت anon وauthenticated صلاحية `arwd` على الـ ledger وأرجعت DELETE على `businesses`؛ الفحص 0b يفشل (11 من 16) إذا أُعيد ذلك المنح.
+   الجدول `free_audit_events` غير موجود في المستودع ولا في أي فرع. الموجود `free_audit_ledger` فقط، وعمود `event_id` تُرجعه الدالة `consume_free_audit`. فحص 0b يتحقق أنه غير موجود، وإن ظهر يوماً يُراجَع.
+5. التحقق قبل أي كتابة (`preflight.mjs`): الـ Docker daemon محلي (انظر القسم أعلاه)؛ البيئة الموروثة لا تذكر مرجع مشروع الإنتاج ولا `ai.modaafa.com` ولا مضيف supabase، ولا يوجد `PGSERVICE` ولا `DOCKER_HOST` بعيد؛ رابط القاعدة على loopback وبالمنفذ المحلي وبلا أي query (لأن `?host=` و`?hostaddr=` تغيّر وجهة الاتصال فعلياً)؛ والخادم نفسه Postgres عادي بلا أدوار أو إضافات `supabase_*` (يلتقط نفقاً إلى مشروع مستضاف). يعمل قبل إنشاء قاعدة `app` وقبل تحميل المخطط، ومرة على ملف `.local-stack/env` بعد توليده.
+5. ملف `.local-stack/env` بمفاتيح JWT وENCRYPTION_KEY وCRON_SECRET وHEALTH_SECRET عشوائية جديدة. المجلد داخل `.gitignore`. Stripe وResend وTikTok وGoogle وElevenLabs مضبوطة على `""` (إيقاف)، والصوت مطفأ.
+
+`app.sh` يبني ويشغّل التطبيق ببيئة **فارغة** فيها ملف `.local-stack/env` وأسماء قليلة للوكيل وشهادات الشبكة فقط، فلا يصل التطبيق أي متغير من شلّك (جُرّب بحقن `STRIPE_SECRET_KEY` و`NODE_ENV` في الشل، ولم يظهر منها شيء في بيئة عملية Next). ويرفض التشغيل لو وُجد في الجذر أي ملف يشبه ملفات البيئة: `.env` و`.env.*` (ومنها `.env.development` و`.env.test` و`.env.test.local`) و`*.env` و`env.*` وأي اسم يجمع `env` و`test`. القوالب `.example` و`.sample` و`.template` وحدها مسموحة. انقل الملف جانباً ثم أعد المحاولة.
+
+## الفحوص والنتائج المتوقعة (جُرّبت من نسخة نظيفة، 9 أكتوبر 2026)
+0. **27 و16** (قبل الباقي): `preflight.test.mjs` و`common.test.mjs` يجرّبان 27 حالة (مرجع الإنتاج، مضيف بعيد، `?host=` و`?hostaddr=` و`?service=`، قائمة مضيفين، ملف بيئة غير loopback، `DOCKER_HOST` أو context بعيد، تعارض `DOCKER_HOST` مع `DOCKER_CONTEXT`، وانتقال الـ daemon المختار عبر البيئة الفارغة بدون أي تغيير في إعدادات Docker). ثم `posture.mjs` بـ 16 فحصاً: 5 على Docker (ثلاث حاويات بالـ label، لا host networking، كل منفذ منشور على 127.0.0.1، الشبكة الخاصة) و11 على الصلاحيات (ledger وصلاحيات دوال الحصة وحذف businesses وautopilot وRLS على كل جدول).
+1. **13**: `tests/free-audit-sql.integration.test.ts` على قاعدة `fa_scratch`. الحصة المجانية بـ SQL حقيقي: 13 ناجح، صفر فاشل، **صفر skip**. هذي الاختبارات تتخطى نفسها بصمت لو غاب `FREE_AUDIT_PG_URL`، لذلك `verify.sh` يفشل (exit 1) لو كان `pass` غير 13 أو `skipped` أو `fail` أو `cancelled` غير صفر.
+2. **18**: `isolation.mjs`. مستخدمان اصطناعيان `synthetic-A/B@example.test` عبر Auth وREST الحقيقيين: كل مستخدم يقرأ صفوفه فقط، لا يعدّل ولا يحذف ولا يربط حساباً بنشاط الآخر، المجهول لا يرى شيئاً، `complete_free_audit` للـservice role فقط، وحصة كل حساب مستقلة. النتيجة: 0 فشل من 18.
+3. **10**: `chat.mjs`. `/api/chat/start` بكوكيز جلسة حقيقية: 401 بلا جلسة، 403 لأصل غريب، 400 لجسم فاضي، ولا جلسة أو customerId أو توصية تعبر بين الحسابين، ولا تسرّب في الردود. النتيجة: 0 فشل من 10 (مع نداء واحد لبديل النموذج في تلك الجولة).
+
+## حدود المحاكاة (ما لا تثبته هذه البيئة)
+- **ليست Supabase المستضاف.** الصلاحيات تُبنى بنفس آلية الإنتاج (default privileges ثم سحب الترحيلات) وتُفحص، لكن الأدوار والإصدارات والإضافات قريبة وليست مطابقة.
+- **Colima لم أجرّبه فعلياً.** جرّب أيمن على Mac نجاح 12/12 من الـ preflight على 8424d25. أعدت الخلل عندي بـ context حقيقي على socket بديل مع غلاف `docker` يفشل على الـ default بنفس رسالة `/var/run/docker.sock`، وهذا يختبر سلوك السكربتات مع الـ context لا Colima نفسه.
+- **macOS لم يُجرَّب.** كل الاختبارات تمت على Linux. ما أزيل من الخطر المعروف: `--network host` (على Docker Desktop يربط على آلة افتراضية لا على جهازك) و`setsid` (غير موجود افتراضياً في macOS). المتبقي غير مثبت: سلوك `-p 127.0.0.1:...` في Docker Desktop، و`ps -p <pid> -o command=` وعزل مجموعة العمليات في `proc.mjs`، وصيغة `find` و`env -i`. شغّل `verify.sh` على جهازك وأخبرنا بأي فشل.
+- **الشبكة الخاصة ليست `--internal`.** Docker لا ينشر منفذاً على شبكة `--internal`، والمنافذ مطلوبة هنا لأن Node والاختبارات على الجهاز. لذلك الحاويات تقدر نظرياً على الخروج للإنترنت. المخفِّف: GoTrue بلا SMTP ولا مزود خارجي، وPostgREST وPostgres لا يبدآن اتصالاً خارجياً.
+- **نفق إلى الإنتاج على loopback**: الـ preflight يلتقطه بمؤشرات الخادم (أدوار وإضافات Supabase)، لكن لا يلتقط نفقاً إلى Postgres عادي بلا هذه المؤشرات. التحقق النهائي يبقى على مشروع اختبار مستضاف.
+- **الحصة مرتبطة برقم حساب Google Ads** (وليس بالمستخدم فقط)، فكل تشغيل يولّد رقماً عشوائياً جديداً.
+- **النموذج مُحاكى.** `llm-stub.mjs` يرد برد ثابت، فلا يُختبر سلوك Claude ولا جودة طبقة اللغة ولا الـ streaming.
+- **OAuth Google وربط Google Ads وسرد الحسابات** غير مختبرة: لا عميل OAuth ولا developer token ولا Redirect URI.
+- **الصوت** (ElevenLabs والمايك) و**Stripe** و**البريد** و**بكسل TikTok**: خارج النطاق عمداً ومعطلة.
+- **نطاق Vercel الحقيقي** (SSO وhttps وكوكيز production) غير مغطى، لأن التطبيق يعمل على http محلي.
+- **pg_cron والمهام المجدولة** غير مطبقة عمداً.
+- **تضمين YouTube في دليل الفيديو** غير مغطى هنا، ولا يعدّل هذا الـPR سياسة CSP.
+- مكوّنات الواجهة لم تُختبر بمتصفح في هذا الـPR (فقط واجهات API).
+
+## ملاحظات أمان
+- كل المنافذ مربوطة على `127.0.0.1`. لا تغيّر `-H 127.0.0.1` ولا `-p` على اتصال خارجي.
+- لا تضع في `.local-stack/env` قيماً حقيقية. الملف مولّد ويُحذف مع `down.sh`.
+- لا تستخدم هذه الكلمات والمفاتيح خارج هذه القاعدة المحلية.
