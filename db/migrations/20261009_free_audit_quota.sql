@@ -13,8 +13,21 @@
 -- constants in the function bodies, not parameters. No RLS or grant is widened:
 -- the table stays unreadable to anon and authenticated.
 --
+-- Privileges (Supabase default privileges): on Supabase, objects created by the
+-- migration role in schema public get ALL for anon, authenticated and
+-- service_role through ALTER DEFAULT PRIVILEGES, and functions get EXECUTE for
+-- PUBLIC by Postgres default. So this file never relies on "grant only what is
+-- needed": it first REVOKES everything from PUBLIC, anon, authenticated and
+-- service_role on every object it creates, then grants back the minimum.
+-- Required minimum: service_role reads the ledger (SELECT, for the allowance
+-- shown on the audit page) and runs complete/refund; authenticated runs only
+-- consume_free_audit. Nothing else.
+--
 -- NOT applied to production by this PR. Additive only: no existing table,
--- price, subscription, trial or charge date is touched.
+-- price, subscription, trial or charge date is touched. One transaction: it
+-- either applies completely or not at all.
+
+begin;
 
 create table if not exists public.free_audit_ledger (
   id uuid primary key default gen_random_uuid(),
@@ -36,7 +49,8 @@ create index if not exists free_audit_ledger_customer_idx
 -- Server-only table: RLS on, no policies. Access goes through the functions below
 -- and through the service role.
 alter table public.free_audit_ledger enable row level security;
-revoke all on public.free_audit_ledger from anon, authenticated;
+revoke all on table public.free_audit_ledger from public, anon, authenticated, service_role;
+grant select on table public.free_audit_ledger to service_role;
 
 -- Reserve one free audit for an account the caller owns. Serialised per customer
 -- id with an advisory lock so concurrent requests cannot overshoot the limit.
@@ -173,9 +187,11 @@ drop function if exists public.consume_free_audit(uuid, text, uuid, integer, int
 drop function if exists public.complete_free_audit(uuid, uuid);
 drop function if exists public.complete_free_audit(uuid);
 
-revoke all on function public.consume_free_audit(uuid) from public;
+revoke all on function public.consume_free_audit(uuid) from public, anon, authenticated, service_role;
 grant execute on function public.consume_free_audit(uuid) to authenticated;
-revoke all on function public.complete_free_audit(uuid, uuid, uuid) from public, anon, authenticated;
+revoke all on function public.complete_free_audit(uuid, uuid, uuid) from public, anon, authenticated, service_role;
 grant execute on function public.complete_free_audit(uuid, uuid, uuid) to service_role;
-revoke all on function public.refund_free_audit(uuid) from public, anon, authenticated;
+revoke all on function public.refund_free_audit(uuid) from public, anon, authenticated, service_role;
 grant execute on function public.refund_free_audit(uuid) to service_role;
+
+commit;

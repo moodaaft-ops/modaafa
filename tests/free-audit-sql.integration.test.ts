@@ -51,9 +51,18 @@ test('setup', { skip }, () => {
       if not exists(select 1 from pg_roles where rolname='anon') then create role anon; end if;
       if not exists(select 1 from pg_roles where rolname='service_role') then create role service_role; end if;
     end $$;
+    alter role service_role bypassrls; -- as on Supabase
     create table if not exists public.businesses (id uuid primary key, user_id uuid not null);
     create table if not exists public.google_ads_accounts (id uuid primary key, business_id uuid not null, customer_id text not null, status text not null default 'active', is_manager boolean);
     grant usage on schema public to authenticated, service_role, anon;
+    -- Supabase default privileges: new tables and functions in public are open to
+    -- anon, authenticated and service_role. Reproduced here so the migration is
+    -- proven to close them (functions are also EXECUTE-able by PUBLIC by default).
+    alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
+    alter default privileges in schema public grant all on functions to anon, authenticated, service_role;
+    alter default privileges in schema public grant all on sequences to anon, authenticated, service_role;
+    drop table if exists public.free_audit_ledger cascade;
+    drop function if exists public.consume_free_audit(uuid), public.complete_free_audit(uuid, uuid, uuid), public.refund_free_audit(uuid);
     grant usage on schema auth to authenticated, service_role, anon;
     truncate public.google_ads_accounts, public.businesses;
     insert into public.businesses values ('${A}'::uuid, '${A}'::uuid), ('${B}'::uuid, '${B}'::uuid);
@@ -64,6 +73,63 @@ test('setup', { skip }, () => {
   execFileSync('psql', [url!, '-v', 'ON_ERROR_STOP=1', '-q'], { input: sql });
   execFileSync('psql', [url!, '-v', 'ON_ERROR_STOP=1', '-q'], { input: sql }); // idempotent
   psql('truncate public.free_audit_ledger');
+});
+
+test('migration is one explicit transaction', { skip }, () => {
+  const sql = readFileSync(new URL('../db/migrations/20261009_free_audit_quota.sql', import.meta.url), 'utf8');
+  const lines = sql.split('\n').map((l) => l.trim());
+  assert.equal(lines.filter((l) => l === 'begin;').length, 1);
+  assert.equal(lines.filter((l) => l === 'commit;').length, 1);
+  assert.ok(lines.indexOf('begin;') < lines.indexOf('commit;'));
+});
+
+test('privileges after the migration, with Supabase default privileges in place', { skip }, () => {
+  const can = (role: string, expr: string) => psql(`select ${expr.replace('$ROLE', `'${role}'`)}`) === 't';
+  const ledger = (priv: string) => `has_table_privilege($ROLE, 'public.free_audit_ledger', '${priv}')`;
+  for (const role of ['anon', 'authenticated']) {
+    for (const priv of ['select', 'insert', 'update', 'delete', 'truncate', 'references', 'trigger']) {
+      assert.equal(can(role, ledger(priv)), false, `${role} must not have ${priv} on the ledger`);
+    }
+  }
+  // service_role: SELECT only (the audit page reads the allowance); writes go through the functions.
+  assert.equal(can('service_role', ledger('select')), true);
+  for (const priv of ['insert', 'update', 'delete', 'truncate']) {
+    assert.equal(can('service_role', ledger(priv)), false, `service_role has no direct ${priv}`);
+  }
+  // PUBLIC (grantee 0) holds nothing on the table or on any of the three functions.
+  assert.equal(psql(`select count(*) from pg_class c, aclexplode(c.relacl) a where c.oid = 'public.free_audit_ledger'::regclass and a.grantee = 0`), '0');
+  assert.equal(
+    psql(`select count(*) from pg_proc p, aclexplode(p.proacl) a where p.pronamespace = 'public'::regnamespace and p.proname in ('consume_free_audit','complete_free_audit','refund_free_audit') and a.grantee = 0`),
+    '0'
+  );
+  const fn = (name: string) => `has_function_privilege($ROLE, 'public.${name}', 'execute')`;
+  const consume = 'consume_free_audit(uuid)';
+  const complete = 'complete_free_audit(uuid, uuid, uuid)';
+  const refund = 'refund_free_audit(uuid)';
+  assert.deepEqual(['anon', 'authenticated', 'service_role'].map((r) => can(r, fn(consume))), [false, true, false]);
+  assert.deepEqual(['anon', 'authenticated', 'service_role'].map((r) => can(r, fn(complete))), [false, false, true]);
+  assert.deepEqual(['anon', 'authenticated', 'service_role'].map((r) => can(r, fn(refund))), [false, false, true]);
+  // RLS stays on with no policies.
+  assert.equal(psql("select relrowsecurity from pg_class where oid = 'public.free_audit_ledger'::regclass"), 't');
+  assert.equal(psql("select count(*) from pg_policies where tablename = 'free_audit_ledger'"), '0');
+});
+
+test('anon and PUBLIC get no direct access, complete or refund (real calls)', { skip }, () => {
+  psql('truncate public.free_audit_ledger');
+  const r = consume(A, ACC_A);
+  assert.ok(r.allowed);
+  assert.match(psqlAs(null, 'select count(*) from public.free_audit_ledger', 'anon'), /permission denied/);
+  assert.match(psqlAs(null, `select public.complete_free_audit('${r.eventId}','${A}','${ACC_A}')`, 'anon'), /permission denied/);
+  assert.match(psqlAs(null, `select public.refund_free_audit('${r.eventId}')`, 'anon'), /permission denied/);
+  assert.match(psqlAs(null, `select * from public.consume_free_audit('${ACC_A}')`, 'anon'), /permission denied/);
+  // authenticated: no complete, no refund, no table writes, even for its own reservation
+  assert.match(psqlAs(A, `select public.complete_free_audit('${r.eventId}','${A}','${ACC_A}')`), /permission denied/);
+  assert.match(psqlAs(A, `select public.refund_free_audit('${r.eventId}')`), /permission denied/);
+  assert.match(psqlAs(A, `insert into public.free_audit_ledger (customer_id, user_id) values ('${CUST_A}', '${A}')`), /permission denied/);
+  // service_role cannot write the table directly either
+  assert.match(psqlAs(null, `delete from public.free_audit_ledger`, 'service_role'), /permission denied/);
+  assert.equal(psqlAs(null, 'select count(*) from public.free_audit_ledger', 'service_role'), '1');
+  assert.equal(psql(`select status from public.free_audit_ledger where id='${r.eventId}'`), 'reserved');
 });
 
 test('user A cannot reserve or burn the allowance of account B', { skip }, () => {

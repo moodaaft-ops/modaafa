@@ -1,77 +1,102 @@
 # خطة تطبيق migration الفحص المجاني (للاعتماد، لا تطبيق قبله)
 
-الملف: `db/migrations/20261009_free_audit_quota.sql` على PR #57.
+الملف: `db/migrations/20261009_free_audit_quota.sql` على PR #57. نسخة نهائية للمراجعة، لم تُطبَّق على الإنتاج.
 
-## الحالة الحالية
+## التحقق من metadata الإنتاج (مشروع `modaafa-prod`، من جلسة Supabase Dashboard، قراءة مخطط فقط)
 
-- **التحقق على Supabase الحقيقي: لم يتم.** موصل Supabase المعتمد موجود في الحساب لكن حالته `needs_reconnect` وغير مفعّل في هذي الجلسة، وما أقدر أعيد ربطه من عندي. ما قرأت شيئاً من قاعدة الإنتاج ولا غيّرت فيها شيئاً.
-- **اسم المشروع على Supabase:** غير مؤكد، لأني ما قدرت أقرأ القائمة. يُملأ بعد إعادة الربط.
-- **قاعدة معاينة معزولة (preview database):** ما لقيت أي إشارة لها في المستودع (لا `supabase/` ولا إعدادات فروع). اختباراتي كلها على Postgres 16 مؤقت وحذفته. 352 اختباراً نجحت منها 10 اختبارات SQL حقيقية.
-- الفرع محدّث من main عند `b341b8e`.
+فحصه أيمن وأرسل النتيجة، وتطابق ما يتوقعه الـmigration:
 
-## ما يتوقعه الـmigration من المخطط (من `db/schema.sql`)
+| الجدول | العمود | النوع | null |
+|---|---|---|---|
+| businesses | id | uuid | NO |
+| businesses | user_id | uuid | NO |
+| google_ads_accounts | id | uuid | NO |
+| google_ads_accounts | business_id | uuid | NO |
+| google_ads_accounts | customer_id | text | NO |
+| google_ads_accounts | is_manager | boolean | NO |
+| google_ads_accounts | status | text | YES |
 
-| الجدول | العمود | النوع المتوقع |
-|---|---|---|
-| businesses | id, user_id | uuid، و`user_id` فريد وهو مفتاح المالك |
-| google_ads_accounts | id, business_id | uuid |
-| google_ads_accounts | customer_id | text، أرقام فقط (الدالة ترفض غير `^[0-9]{3,20}$`) |
-| google_ads_accounts | status | text، القيمة المطلوبة `active` |
-| google_ads_accounts | is_manager | boolean not null default false |
+- `to_regclass('public.free_audit_ledger')` يرجع NULL، وعدد دوال الحصة `quota_function_count = 0`. يعني الـdraft ما انطبق سابقاً.
+- شرط الملكية داخل SQL: `google_ads_accounts.business_id = businesses.id` و`businesses.user_id = auth.uid()` مع `status = 'active'` و`is_manager is not true`. وجود `status` nullable لا يكسره: القيمة NULL لا تطابق `'active'` فيُرفض الحساب (يفشل مغلقاً، وهو المطلوب).
+- لم تُقرأ صفوف عملاء ولا tokens ولا أسرار.
+- هذا الجزء مأخوذ من نتيجة أيمن، وأنا ما شغّلت أي استعلام على الإنتاج (موصل Supabase عندي ما زال يحتاج إعادة ربط).
 
-شرط الملكية داخل SQL: `google_ads_accounts.business_id = businesses.id` و`businesses.user_id = auth.uid()`.
+## ما تغيّر في النسخة النهائية
 
-## استعلامات قراءة فقط تُشغَّل عبر الموصل (مخطط وصلاحيات، بدون صفوف عملاء ولا tokens)
+**1) معاملة صريحة.** الملف الآن يبدأ بـ`begin;` وينتهي بـ`commit;` (واحد من كل نوع). أي فشل يرجّع كل شي، ولا يبقى جدول بدون دوال أو العكس. الوصف السابق «معاملة واحدة» كان غير مطابق للملف، وصحّحته.
+
+**2) تحصين الصلاحيات مع default privileges.** على Supabase، أي جدول أو دالة تنشئها في `public` تحصل تلقائياً على صلاحيات كاملة لـ`anon` و`authenticated` و`service_role` عبر `ALTER DEFAULT PRIVILEGES`، والدوال يأخذ منها `PUBLIC` صلاحية `EXECUTE` افتراضياً من Postgres نفسه. لذلك الـmigration ما يكتفي بمنح الحد الأدنى، بل **يسحب كل شي أولاً** من `PUBLIC` و`anon` و`authenticated` و`service_role` على كل كائن ينشئه، ثم يمنح الحد الأدنى فقط:
+
+| الكائن | PUBLIC | anon | authenticated | service_role |
+|---|---|---|---|---|
+| جدول `free_audit_ledger` | لا شي | لا شي | لا شي | `SELECT` فقط |
+| `consume_free_audit(uuid)` | لا | لا | `EXECUTE` | لا |
+| `complete_free_audit(uuid,uuid,uuid)` | لا | لا | لا | `EXECUTE` |
+| `refund_free_audit(uuid)` | لا | لا | لا | `EXECUTE` |
+
+- لماذا `SELECT` لـservice_role: صفحة الفحص تقرأ الحصة بعميل الإدارة (`getFreeAuditStatus`). الكتابة كلها تمر عبر الدوال (security definer)، فما يحتاج `INSERT/UPDATE/DELETE` مباشرة.
+- RLS مفعّل بدون أي policy، والدوال `security definer` مع `search_path` ثابت.
+- ما وسّعت أي صلاحية على جداول موجودة (`businesses` و`google_ads_accounts` ما انلمسوا).
+
+**3) الاختبارات.** المختبر يحاكي default privileges قبل التطبيق (للجداول والدوال والـsequences، وservice_role بـBYPASSRLS كما في Supabase)، ويثبت بعد التطبيق:
+
+- لا `select/insert/update/delete/truncate/references/trigger` لـanon أو authenticated على الجدول.
+- service_role: `select` فقط، ومحاولة `delete` مباشرة تفشل بـpermission denied.
+- لا أي ACL لـPUBLIC (grantee 0) على الجدول أو الدوال الثلاث.
+- مصفوفة `EXECUTE` أعلاه مطابقة تماماً، ومحاولات حقيقية من anon وauthenticated على `complete` و`refund` والجدول تفشل، والحجز يبقى `reserved`.
+- معاملة واحدة صريحة، وRLS مفعّل بدون policies.
+- النتيجة: 361 اختباراً نجحت كلها (منها 19 اختبار SQL على Postgres 16 حقيقي مؤقت، حذفته بعد الانتهاء).
+
+## استعلامات قراءة فقط قبل التطبيق (إضافية، مخطط وصلاحيات بدون صفوف)
 
 ```sql
--- 1) أنواع الأعمدة
-select table_name, column_name, data_type, is_nullable
-from information_schema.columns
-where table_schema = 'public'
-  and ((table_name = 'businesses' and column_name in ('id','user_id'))
-    or (table_name = 'google_ads_accounts' and column_name in ('id','business_id','customer_id','status','is_manager')))
-order by table_name, column_name;
-
--- 2) هل طُبّق الـdraft سابقاً؟ (المتوقع: صفر صفوف وnull)
-select to_regclass('public.free_audit_ledger') as ledger;
-select proname, pg_get_function_identity_arguments(oid) as args
-from pg_proc
-where pronamespace = 'public'::regnamespace
-  and proname in ('consume_free_audit','complete_free_audit','refund_free_audit');
-
--- 3) أسماء الدوال المحجوزة وصلاحيات الأدوار الحالية على جدول المالك
-select grantee, privilege_type from information_schema.role_table_grants
-where table_schema = 'public' and table_name in ('businesses','google_ads_accounts')
-  and grantee in ('anon','authenticated','service_role');
+-- سياسة default privileges الفعلية في الإنتاج (هل الافتراضي مفتوح لـanon/authenticated؟)
+select defaclrole::regrole as owner, defaclobjtype as kind, defaclacl
+from pg_default_acl
+where defaclnamespace = 'public'::regnamespace or defaclnamespace = 0;
 ```
 
-**النتيجة المقبولة:** `customer_id` نوعه text، و`is_manager` boolean، و`user_id` uuid، والبند 2 فاضي. أي اختلاف يوقف التطبيق ويرجع لك.
+النتيجة لا تغيّر الخطة (السحب الصريح يغطي الحالتين)، لكنها توثّق الوضع الحالي.
 
-## خطة التطبيق (additive، غير مدمّر)
+## خطة التطبيق (additive، غير مدمّر) بعد اعتمادكم
 
-1. **قبل أي شي:** تقرر أنت اعتماد التوافق بعد نتائج القراءة أعلاه.
-2. **الترتيب:** نطبّق الـmigration أولاً، ثم ننشر الكود. الـmigration يضيف جدولاً ودوال جديدة فقط، فالكود القديم يشتغل معه بدون أي تأثر. لا يلمس أسعار Stripe ولا الاشتراكات ولا التجارب ولا مواعيد الخصم.
-3. **التطبيق:** ملف واحد في معاملة واحدة، قابل للتكرار (`if not exists` و`create or replace` و`drop function if exists`).
-4. **التحقق بعد التطبيق (قراءة فقط):**
-   - `to_regclass('public.free_audit_ledger')` غير null.
-   - `has_function_privilege('authenticated','public.complete_free_audit(uuid,uuid,uuid)','execute')` يرجع false.
-   - نفس الاستعلام لـ`service_role` يرجع true، ولـ`refund_free_audit` للـ`authenticated` false.
-   - `relrowsecurity` على الجدول true، ولا توجد policies.
+1. أيمن يعتمد النسخة النهائية، ثم ينفّذ الملف في Supabase SQL Editor على `modaafa-prod` كملف واحد.
+2. **الترتيب:** الـmigration أولاً ثم نشر الكود. الـmigration يضيف جدولاً ودوال فقط، والكود القديم يشتغل معه بدون تأثر. لا يلمس أسعار Stripe ولا الاشتراكات ولا التجارب ولا مواعيد الخصم.
+3. **التحقق بعد التطبيق (قراءة فقط):**
+
+```sql
+select to_regclass('public.free_audit_ledger') is not null as ledger_exists;
+
+select p.proname,
+  has_function_privilege('anon', p.oid, 'execute')          as anon,
+  has_function_privilege('authenticated', p.oid, 'execute') as authenticated,
+  has_function_privilege('service_role', p.oid, 'execute')  as service_role
+from pg_proc p
+where p.pronamespace = 'public'::regnamespace
+  and p.proname in ('consume_free_audit','complete_free_audit','refund_free_audit')
+order by p.proname;
+
+select has_table_privilege('anon','public.free_audit_ledger','select') as anon_select,
+       has_table_privilege('authenticated','public.free_audit_ledger','select') as auth_select,
+       has_table_privilege('service_role','public.free_audit_ledger','select') as svc_select,
+       has_table_privilege('service_role','public.free_audit_ledger','insert') as svc_insert,
+       (select relrowsecurity from pg_class where oid = 'public.free_audit_ledger'::regclass) as rls;
+```
+
+**المتوقع:** `ledger_exists = true`؛ `complete_free_audit` و`refund_free_audit` = (false, false, true)؛ `consume_free_audit` = (false, true, false)؛ `anon_select = false`، `auth_select = false`، `svc_select = true`، `svc_insert = false`، `rls = true`.
 
 ## التراجع (rollback)
 
-- **ترتيب التراجع:** نرجّع نشر الكود السابق أولاً، وبعدها فقط نحذف الدوال. لو حذفنا الدوال والكود الجديد شغّال، فحص المجاني يرجع 503.
+- نرجّع نشر الكود السابق أولاً، وبعدها فقط نحذف الدوال. لو حذفناها والكود الجديد شغّال، فحص المجاني يرجع 503.
 - ```sql
+  begin;
   drop function if exists public.consume_free_audit(uuid);
   drop function if exists public.complete_free_audit(uuid, uuid, uuid);
   drop function if exists public.refund_free_audit(uuid);
+  commit;
   ```
-- **الجدول `free_audit_ledger` نتركه** (فيه عداد الحصص، وحذفه يصفّر فحوصات العملاء). يُحذف فقط لو كان فاضياً ويطلب أيمن ذلك.
+- الجدول `free_audit_ledger` نتركه (فيه عداد حصص العملاء، وحذفه يصفّرها). يُحذف فقط لو كان فاضياً وبطلب صريح من أيمن.
 
 ## ما لن يحدث
 
-لا تطبيق على الإنتاج، ولا قراءة صفوف عملاء أو tokens، ولا صلاحيات جديدة، ولا خدمة مدفوعة، ولا إنشاء مشروع Supabase جديد.
-
-## المطلوب منكم
-
-إعادة ربط موصل Supabase وتفعيله في هذي الجلسة، وبعدها أشغّل الاستعلامات الثلاثة وأرجع النتيجة هنا. أو يشغّلها أيمن/كودكس مباشرة ويلصق المخرج.
+لا تطبيق على الإنتاج ولا دمج قبل اعتمادكم، ولا قراءة صفوف عملاء أو tokens، ولا صلاحيات جديدة على جداول موجودة، ولا خدمة مدفوعة، ولا مشروع Supabase جديد. قاعدة معاينة معزولة ما لقيت لها أثراً في المستودع، فالاختبارات على Postgres مؤقت.
