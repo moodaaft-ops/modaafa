@@ -1,9 +1,9 @@
 # بيئة Supabase محلية للاختبار (بدون اشتراك وبدون أسرار)
 
-تشغّل Postgres وAuth (GoTrue) وREST (PostgREST) داخل Docker على `127.0.0.1` فقط، وتبني التطبيق فوقها، وتجري ثلاث مجموعات فحوص بحسابات اصطناعية. لا تلمس الإنتاج ولا Vercel ولا أي خدمة خارجية، ولا تفتح endpoint عاماً. لا تغيّر أي ملف في `app` أو `lib`.
+تشغّل Postgres وAuth (GoTrue) وREST (PostgREST) داخل Docker على شبكة bridge خاصة، ولا يدخل إليها من جهازك إلا منافذ مربوطة على `127.0.0.1`، وتبني التطبيق فوقها، وتجري ثلاث مجموعات فحوص بحسابات اصطناعية. لا تلمس الإنتاج ولا Vercel ولا أي خدمة خارجية، ولا تفتح endpoint عاماً. لا تغيّر أي ملف في `app` أو `lib`.
 
 ## المتطلبات
-- Docker (جُرّب على 29.8.2) مع وصول لـ `public.ecr.aws` لسحب الصور (Docker Hub رد 429 أثناء التجربة، فاستُخدم ECR).
+- Docker (جُرّب على 29.8.2 على Linux. على macOS يلزم Docker Desktop، وهذا المسار **لم يُجرَّب فعلياً** لأن بيئة الاختبار Linux، انظر «حدود المحاكاة») مع وصول لـ `public.ecr.aws` لسحب الصور (Docker Hub رد 429 أثناء التجربة، فاستُخدم ECR).
 - Node 22 (جُرّب على v22.22.0) و`npm ci` منفّذ.
 - عميل `psql` (جُرّب على 16)، و`openssl`، و`curl`.
 - وصول لـ `fonts.googleapis.com` أثناء `next build` (خطوط `next/font`). فشل البناء بسببها مرة واحدة أثناء التجربة ونجح بعدها، لذلك `app.sh` يعيد المحاولة ثلاث مرات.
@@ -11,14 +11,14 @@
 ## الإصدارات والمنافذ (كلها على 127.0.0.1)
 | الخدمة | الصورة أو التشغيل | المنفذ |
 | --- | --- | --- |
-| Postgres | `public.ecr.aws/docker/library/postgres:16-alpine` | 54999 |
-| Auth | `public.ecr.aws/supabase/gotrue:v2.170.0` | 54321 |
-| REST | `public.ecr.aws/supabase/postgrest:v12.2.12` | 54322 |
+| Postgres | `public.ecr.aws/docker/library/postgres:16-alpine` | 54999 (داخل الشبكة 5432) |
+| Auth | `public.ecr.aws/supabase/gotrue:v2.170.0` | 54321 (داخل الشبكة 9999) |
+| REST | `public.ecr.aws/supabase/postgrest:v12.2.12` | 54322 (داخل الشبكة 3000) |
 | بوابة واحدة لـ supabase-js (`/auth/v1` و`/rest/v1`) | `gateway.mjs` | 54320 |
 | بديل Anthropic المحلي | `llm-stub.mjs` | 54330 |
 | التطبيق (نسخة production) | `next start` | 3100 |
 
-الإصدارات والمنافذ في `versions.env`.
+الإصدارات والمنافذ وأسماء الحاويات في `versions.env`. الحاويات تتكلم مع بعضها بالاسم على الشبكة `modaafa-ls-net`، ولا يُستخدم `--network host` ولا `setsid` في أي مكان، فالمسار نفسه يصلح لـ Linux وmacOS.
 
 ## أوامر التشغيل
 من جذر المستودع:
@@ -31,26 +31,34 @@ scripts/local-stack/verify.sh    # الفحوص الثلاثة (أو --no-app ل
 
 ## الإغلاق والتنظيف
 ```bash
-scripts/local-stack/down.sh      # يوقف التطبيق والبوابة والبديل ويحذف الحاويات ومجلد .local-stack
+scripts/local-stack/down.sh      # يوقف التطبيق والبوابة والبديل ويحذف الحاويات والشبكة ومجلد .local-stack
 ```
 الحاويات تعمل بدون volume، فحذفها يمحو القاعدة كاملة.
 
+التنظيف بالـ label فقط: كل حاوية وكل شبكة ينشئها `up.sh` تحمل `com.modaafa.local-stack=true`، و`down.sh` يحذف ما يحمل هذا الـ label ولا شيئاً غيره. لو وُجدت حاوية أو شبكة بنفس الاسم بلا label يرفض `up.sh` ويقول السبب ولا يمسّها. العمليات على الجهاز تُوقف من ملفات الـ pid فقط، وبعد التأكد أن الـ pid ما زال يشغّل الأمر المتوقع (لا يُقتل pid أعيد استخدامه).
+
 ## ما الذي ينفّذه `up.sh`
 1. حاوية Postgres وقاعدتان: `app` و`fa_scratch` (للفحص الأول).
-2. الأدوار (`anon` و`authenticated` و`service_role` و`authenticator`) وGoTrue الذي يبني مخطط `auth` بنفسه. دور `supabase_auth_admin` بصلاحية superuser وبكلمة سر ثابتة لأن ترحيلات GoTrue تحتاجها، وهذا مقبول فقط لأن القاعدة محلية وتُحذف.
+2. الأدوار (`anon` و`authenticated` و`service_role` و`authenticator`) وGoTrue الذي يبني مخطط `auth` بنفسه. دور `supabase_auth_admin` بصلاحية superuser لأن ترحيلات GoTrue تحتاجها، وهذا مقبول فقط لأن القاعدة محلية وتُحذف. كلمات سر الأدوار تتولد عشوائياً في كل تشغيل.
 3. `db/schema.sql` ثم `scripts/migrate.mjs` لـ 20 ترحيلاً، مع **تخطي** `20261005_pg_cron_scheduler.sql` عمداً: يحتاج pg_cron وpg_net وvault ويجدول نداءات إلى `https://ai.modaafa.com/api/cron/...`. بعد الترحيل يتأكد الأمر أن لا دالة تذكر `ai.modaafa.com` وإلا يتوقف.
-4. منح الجداول لأدوار Supabase كما في المستضاف، فيكون عزل `anon` معتمداً على RLS لا على غياب الصلاحية.
+4. الصلاحيات تطابق الإنتاج بدل منح شامل. Supabase يمنح كل كائن جديد في `public` لـ anon وauthenticated وservice_role عبر `ALTER DEFAULT PRIVILEGES`، ثم تسحب الترحيلات ما لا تريده (مثل `free_audit_ledger` وحذف `businesses` وجداول autopilot). لذلك تُضبط الـ default privileges **قبل** تحميل `db/schema.sql` والترحيلات، ولا يُمنح شيء بعدها. النتيجة المخزّنة للـ ledger: `{postgres=arwdDxt/postgres,service_role=r/postgres}`، أي SELECT فقط لـ service_role ولا شيء لـ anon وauthenticated. النسخة الأولى من هذا الـ PR كانت تنفّذ `grant ... on all tables` بعد الترحيلات، فأعطت anon وauthenticated صلاحية `arwd` على الـ ledger وأرجعت DELETE على `businesses`؛ الفحص 0b يفشل (11 من 16) إذا أُعيد ذلك المنح.
+   الجدول `free_audit_events` غير موجود في المستودع ولا في أي فرع. الموجود `free_audit_ledger` فقط، وعمود `event_id` تُرجعه الدالة `consume_free_audit`. فحص 0b يتحقق أنه غير موجود، وإن ظهر يوماً يُراجَع.
+5. التحقق قبل أي كتابة (`preflight.mjs`): البيئة الموروثة لا تذكر مرجع مشروع الإنتاج ولا `ai.modaafa.com` ولا مضيف supabase، ولا يوجد `PGSERVICE` ولا `DOCKER_HOST` بعيد؛ رابط القاعدة على loopback وبالمنفذ المحلي وبلا أي query (لأن `?host=` و`?hostaddr=` تغيّر وجهة الاتصال فعلياً)؛ والخادم نفسه Postgres عادي بلا أدوار أو إضافات `supabase_*` (يلتقط نفقاً إلى مشروع مستضاف). يعمل قبل إنشاء قاعدة `app` وقبل تحميل المخطط، ومرة على ملف `.local-stack/env` بعد توليده.
 5. ملف `.local-stack/env` بمفاتيح JWT وENCRYPTION_KEY وCRON_SECRET وHEALTH_SECRET عشوائية جديدة. المجلد داخل `.gitignore`. Stripe وResend وTikTok وGoogle وElevenLabs مضبوطة على `""` (إيقاف)، والصوت مطفأ.
 
-`app.sh` يحمّل ذلك الملف في بيئة العملية فقط، ويرفض التشغيل لو وُجد `.env` أو `.env.local` أو `.env.production*` في الجذر، حتى لا تدخل قيمة حقيقية. انقل الملف جانباً ثم أعد المحاولة.
+`app.sh` يبني ويشغّل التطبيق ببيئة **فارغة** فيها ملف `.local-stack/env` وأسماء قليلة للوكيل وشهادات الشبكة فقط، فلا يصل التطبيق أي متغير من شلّك (جُرّب بحقن `STRIPE_SECRET_KEY` و`NODE_ENV` في الشل، ولم يظهر منها شيء في بيئة عملية Next). ويرفض التشغيل لو وُجد في الجذر أي ملف يشبه ملفات البيئة: `.env` و`.env.*` (ومنها `.env.development` و`.env.test` و`.env.test.local`) و`*.env` و`env.*` وأي اسم يجمع `env` و`test`. القوالب `.example` و`.sample` و`.template` وحدها مسموحة. انقل الملف جانباً ثم أعد المحاولة.
 
 ## الفحوص والنتائج المتوقعة (جُرّبت من نسخة نظيفة، 9 أكتوبر 2026)
+0. **12 و16** (قبل الباقي): `preflight.test.mjs` يجرّب 12 حالة رفض (مرجع الإنتاج، مضيف بعيد، `?host=` و`?hostaddr=` و`?service=`، `DOCKER_HOST` بعيد، قائمة مضيفين، ملف بيئة غير loopback). ثم `posture.mjs` بـ 16 فحصاً: 5 على Docker (ثلاث حاويات بالـ label، لا host networking، كل منفذ منشور على 127.0.0.1، الشبكة الخاصة) و11 على الصلاحيات (ledger وصلاحيات دوال الحصة وحذف businesses وautopilot وRLS على كل جدول).
 1. **13**: `tests/free-audit-sql.integration.test.ts` على قاعدة `fa_scratch`. الحصة المجانية بـ SQL حقيقي: 13 ناجح، صفر فاشل.
 2. **18**: `isolation.mjs`. مستخدمان اصطناعيان `synthetic-A/B@example.test` عبر Auth وREST الحقيقيين: كل مستخدم يقرأ صفوفه فقط، لا يعدّل ولا يحذف ولا يربط حساباً بنشاط الآخر، المجهول لا يرى شيئاً، `complete_free_audit` للـservice role فقط، وحصة كل حساب مستقلة. النتيجة: 0 فشل من 18.
 3. **10**: `chat.mjs`. `/api/chat/start` بكوكيز جلسة حقيقية: 401 بلا جلسة، 403 لأصل غريب، 400 لجسم فاضي، ولا جلسة أو customerId أو توصية تعبر بين الحسابين، ولا تسرّب في الردود. النتيجة: 0 فشل من 10 (مع نداء واحد لبديل النموذج في تلك الجولة).
 
 ## حدود المحاكاة (ما لا تثبته هذه البيئة)
-- **ليست Supabase المستضاف.** المنح والأدوار والإصدارات قريبة لكنها ليست مطابقة. التحقق النهائي يبقى على مشروع اختبار مستضاف.
+- **ليست Supabase المستضاف.** الصلاحيات تُبنى بنفس آلية الإنتاج (default privileges ثم سحب الترحيلات) وتُفحص، لكن الأدوار والإصدارات والإضافات قريبة وليست مطابقة.
+- **macOS لم يُجرَّب.** كل الاختبارات تمت على Linux. ما أزيل من الخطر المعروف: `--network host` (على Docker Desktop يربط على آلة افتراضية لا على جهازك) و`setsid` (غير موجود افتراضياً في macOS). المتبقي غير مثبت: سلوك `-p 127.0.0.1:...` في Docker Desktop، و`ps -p <pid> -o command=` وعزل مجموعة العمليات في `proc.mjs`، وصيغة `find` و`env -i`. شغّل `verify.sh` على جهازك وأخبرنا بأي فشل.
+- **الشبكة الخاصة ليست `--internal`.** Docker لا ينشر منفذاً على شبكة `--internal`، والمنافذ مطلوبة هنا لأن Node والاختبارات على الجهاز. لذلك الحاويات تقدر نظرياً على الخروج للإنترنت. المخفِّف: GoTrue بلا SMTP ولا مزود خارجي، وPostgREST وPostgres لا يبدآن اتصالاً خارجياً.
+- **نفق إلى الإنتاج على loopback**: الـ preflight يلتقطه بمؤشرات الخادم (أدوار وإضافات Supabase)، لكن لا يلتقط نفقاً إلى Postgres عادي بلا هذه المؤشرات. التحقق النهائي يبقى على مشروع اختبار مستضاف.
 - **الحصة مرتبطة برقم حساب Google Ads** (وليس بالمستخدم فقط)، فكل تشغيل يولّد رقماً عشوائياً جديداً.
 - **النموذج مُحاكى.** `llm-stub.mjs` يرد برد ثابت، فلا يُختبر سلوك Claude ولا جودة طبقة اللغة ولا الـ streaming.
 - **OAuth Google وربط Google Ads وسرد الحسابات** غير مختبرة: لا عميل OAuth ولا developer token ولا Redirect URI.
