@@ -475,20 +475,20 @@ export default async function HomePage({
             <LogoMark size={22} alt="" />
             <span>© 2026 مُضاعِف · <span dir="ltr">Modaafa Ads AI</span> · مؤسسة تقنيات أيمن للتسويق الإلكتروني</span>
           </div>
-          <div className="flex flex-wrap gap-4">
-            <Link href="/privacy" className="transition-colors hover:text-foreground">
+          <div className="flex flex-wrap gap-x-2 gap-y-1">
+            <Link href="/privacy" className="inline-flex min-h-10 items-center px-2 transition-colors hover:text-foreground">
               الخصوصية
             </Link>
-            <Link href="/terms" className="transition-colors hover:text-foreground">
+            <Link href="/terms" className="inline-flex min-h-10 items-center px-2 transition-colors hover:text-foreground">
               الشروط
             </Link>
-            <Link href="/refund" className="transition-colors hover:text-foreground">
+            <Link href="/refund" className="inline-flex min-h-10 items-center px-2 transition-colors hover:text-foreground">
               الاسترداد
             </Link>
-            <Link href="/data-deletion" className="transition-colors hover:text-foreground">
+            <Link href="/data-deletion" className="inline-flex min-h-10 items-center px-2 transition-colors hover:text-foreground">
               حذف البيانات
             </Link>
-            <a href="mailto:moodaaft@gmail.com" className="transition-colors hover:text-foreground">
+            <a href="mailto:moodaaft@gmail.com" className="inline-flex min-h-10 items-center px-2 transition-colors hover:text-foreground">
               الدعم
             </a>
           </div>

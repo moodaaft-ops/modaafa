@@ -189,18 +189,21 @@ export function WelcomeTour() {
   const pad = 8;
 
   // Card placement: below the anchor when there is room, otherwise centered.
-  const cardStyle: React.CSSProperties = (() => {
-    if (!rect) {
-      return { top: '50%', left: '50%', transform: 'translate(-50%, -50%)' };
-    }
-    const below = rect.top + rect.height + 12;
+  // Centering uses `inset-0 m-auto` (see className below), never an inline
+  // `transform`: the card's fade-in animation ends on `transform: translateY(0)`
+  // and silently cancels any inline translate, which pushed the card half
+  // off-screen on phones.
+  const cardWidth = Math.min(window.innerWidth * 0.92, 360);
+  const anchoredStyle: React.CSSProperties | undefined = (() => {
+    if (!rect) return undefined;
     const spaceBelow = window.innerHeight - (rect.top + rect.height);
-    if (spaceBelow > 240) {
-      // Anchor the card's right edge near the target (RTL reading order).
-      const right = Math.max(16, window.innerWidth - (rect.left + rect.width));
-      return { top: below, right };
-    }
-    return { top: '50%', left: '50%', transform: 'translate(-50%, -50%)' };
+    if (spaceBelow <= 240) return undefined;
+    const below = rect.top + rect.height + 12;
+    // Anchor the card's right edge near the target (RTL reading order), but
+    // never let the card run past either edge of the screen.
+    const maxRight = Math.max(16, window.innerWidth - cardWidth - 16);
+    const right = Math.min(maxRight, Math.max(16, window.innerWidth - (rect.left + rect.width)));
+    return { top: below, right };
   })();
 
   return createPortal(
@@ -226,8 +229,11 @@ export function WelcomeTour() {
       <div
         ref={cardRef}
         tabIndex={-1}
-        className="absolute w-[min(92vw,360px)] surface-raised p-5 shadow-pop animate-fade-in-fast"
-        style={cardStyle}
+        className={cn(
+          'absolute max-h-[calc(100dvh-2rem)] w-[min(92vw,360px)] overflow-y-auto surface-raised p-5 shadow-pop animate-fade-in-fast',
+          !anchoredStyle && 'inset-0 m-auto h-fit'
+        )}
+        style={anchoredStyle}
       >
         <div className="mb-3 flex items-start justify-between gap-3">
           <span className="inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary ring-1 ring-inset ring-primary/25">
@@ -237,7 +243,7 @@ export function WelcomeTour() {
             type="button"
             onClick={finish}
             aria-label="إغلاق الجولة"
-            className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
             <X className="h-4 w-4" />
           </button>
@@ -296,7 +302,7 @@ export function WelcomeTour() {
           <button
             type="button"
             onClick={finish}
-            className="mt-3 w-full text-center text-[12px] text-muted-foreground transition-colors hover:text-foreground"
+            className="mt-3 min-h-10 w-full text-center text-[12px] text-muted-foreground transition-colors hover:text-foreground"
           >
             تخطّي الجولة
           </button>

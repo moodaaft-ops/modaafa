@@ -14,7 +14,7 @@ import { cn } from '@/lib/utils';
  * tell which field they were in.
  */
 export const inputClasses = cn(
-  'h-11 w-full rounded-lg border border-input bg-background-elevated px-3.5 text-sm text-foreground',
+  'h-11 w-full rounded-lg border border-input bg-background-elevated px-3.5 text-base text-foreground sm:text-sm',
   'placeholder:text-foreground-subtle',
   'outline-none transition-[border-color,box-shadow] duration-150',
   'hover:border-border-strong',
@@ -24,7 +24,7 @@ export const inputClasses = cn(
 
 /** Same treatment for <select>, minus the placeholder rule. */
 export const selectClasses = cn(
-  'h-11 w-full rounded-lg border border-input bg-background-elevated px-3 text-sm text-foreground',
+  'h-11 w-full rounded-lg border border-input bg-background-elevated px-3 text-base text-foreground sm:text-sm',
   'outline-none transition-[border-color,box-shadow] duration-150',
   'hover:border-border-strong',
   'focus:border-primary/70 focus:ring-4 focus:ring-primary/15'
@@ -32,7 +32,7 @@ export const selectClasses = cn(
 
 /** Same treatment for a multi-line field. */
 export const textareaClasses = cn(
-  'w-full rounded-lg border border-input bg-background-elevated px-3.5 py-3 text-sm leading-7 text-foreground',
+  'w-full rounded-lg border border-input bg-background-elevated px-3.5 py-3 text-base leading-7 text-foreground sm:text-sm',
   'placeholder:text-foreground-subtle',
   'outline-none transition-[border-color,box-shadow] duration-150',
   'hover:border-border-strong',
