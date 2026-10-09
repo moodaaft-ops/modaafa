@@ -57,3 +57,14 @@ export const FIRST_AUDIT_GUARD_MS = 6 * 60 * 1000;
 export function isFirstAuditGuardActive(startedAt: number | null, now = Date.now()) {
   return startedAt !== null && Number.isFinite(startedAt) && now - startedAt < FIRST_AUDIT_GUARD_MS;
 }
+
+/**
+ * Maps the refusal codes of POST /api/audit/run (docs/free-audit-contract.md)
+ * to what the first-audit screen does about them. Anything else is a plain
+ * error with a retry button.
+ */
+export function classifyAuditStartError(status: number, code?: string | null): 'exhausted' | 'running' | 'error' {
+  if (status === 402 && code === 'free_audits_exhausted') return 'exhausted';
+  if (status === 409 && code === 'audit_in_progress') return 'running';
+  return 'error';
+}

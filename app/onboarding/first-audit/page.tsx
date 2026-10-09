@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { ArrowLeft, Lock } from 'lucide-react';
+import { ArrowLeft, MessageCircle } from 'lucide-react';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import { getRequestAuthContext } from '@/lib/supabase/server';
@@ -16,6 +16,7 @@ import {
   type OpportunityRow,
 } from '@/lib/onboarding/first-opportunities';
 import { TikTokPixel } from '@/lib/analytics/tiktok-pixel';
+import { CHAT_HANDOFF_PATH } from '@/lib/onboarding/chat-handoff';
 import { FirstAuditRunner } from './first-audit-runner';
 
 export const metadata = {
@@ -76,43 +77,21 @@ export default async function FirstAuditPage({
         )}
 
         <div className="mb-6">
+          {!audit && (
+            <Link
+              href={accounts.length > 1 ? '/onboarding/choose' : '/onboarding/connect'}
+              className="mb-3 inline-flex text-xs font-semibold text-muted-foreground hover:text-foreground"
+            >
+              رجوع
+            </Link>
+          )}
           <h2 className="text-[26px] font-bold leading-tight sm:text-3xl">أول فرص في حسابك</h2>
           <p className="mt-2 max-w-2xl text-sm leading-7 text-muted-foreground">
             الحساب: <span className="font-semibold text-foreground">{accountName}</span>
           </p>
         </div>
 
-        {!audit && !access.active && (
-          <section className="surface-card p-5 sm:p-6">
-            <p className="text-[14px] font-semibold text-foreground">الفحص الأول جاهز ينطلق</p>
-            <p className="mt-1 text-[13px] leading-7 text-muted-foreground">
-              نفحص الحملات والكلمات والإعلانات ونطلع لك التوصيات مرتبة حسب أثرها. الفحص يشتغل داخل التجربة.
-            </p>
-            <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-border pt-5">
-              <button
-                type="button"
-                disabled
-                className={buttonClasses({ variant: 'outline' })}
-                aria-describedby="first-audit-locked"
-              >
-                <Lock className="h-4 w-4" />
-                تحتاج التجربة
-              </button>
-              <Link href="/onboarding/trial" className={buttonClasses({ variant: 'primary' })}>
-                ابدأ تجربتك
-                <ArrowLeft className="h-4 w-4" />
-              </Link>
-              <Link href="/dashboard" className={buttonClasses({ variant: 'ghost' })}>
-                لوحة التحكم
-              </Link>
-            </div>
-            <p id="first-audit-locked" className="sr-only">
-              تشغيل الفحص يحتاج تجربة أو اشتراكاً فعالاً
-            </p>
-          </section>
-        )}
-
-        {!audit && access.active && (
+        {!audit && (
           <FirstAuditRunner customerId={selectedAccount.customer_id} />
         )}
 
@@ -161,6 +140,11 @@ export default async function FirstAuditPage({
                 </ol>
               </>
             )}
+            {!access.active && top.length > 0 && (
+              <p className="mt-5 text-[12.5px] leading-6 text-muted-foreground">
+                قراءة التوصيات مجانية. الاشتراك يلزم فقط عند تنفيذ توصية على حسابك، وبعد معاينتك وموافقتك.
+              </p>
+            )}
             <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-border pt-5">
               {top.length > 0 && (
                 <Link href="/audit" className={buttonClasses({ variant: 'primary' })}>
@@ -168,10 +152,11 @@ export default async function FirstAuditPage({
                   <ArrowLeft className="h-4 w-4" />
                 </Link>
               )}
-              <Link
-                href="/dashboard"
-                className={buttonClasses({ variant: top.length > 0 ? 'ghost' : 'primary' })}
-              >
+              <Link href={CHAT_HANDOFF_PATH} className={buttonClasses({ variant: top.length > 0 ? 'outline' : 'primary' })}>
+                <MessageCircle className="h-4 w-4" />
+                كمّل في المحادثة
+              </Link>
+              <Link href="/dashboard" className={buttonClasses({ variant: 'ghost' })}>
                 لوحة التحكم
               </Link>
             </div>

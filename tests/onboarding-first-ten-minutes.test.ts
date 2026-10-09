@@ -147,7 +147,7 @@ test('only allowlisted next paths are followed', () => {
 test('next step: returning users go back, several accounts choose, one account skips the chooser', () => {
   assert.equal(nextStepAfterConnect({ linkableCount: 5, persistedSelectionStillLinked: true }), '/dashboard?connected=1');
   assert.equal(nextStepAfterConnect({ linkableCount: 5, persistedSelectionStillLinked: false }), '/onboarding/choose');
-  assert.equal(nextStepAfterConnect({ linkableCount: 1, persistedSelectionStillLinked: false }), '/onboarding/trial');
+  assert.equal(nextStepAfterConnect({ linkableCount: 1, persistedSelectionStillLinked: false }), '/onboarding/first-audit');
 });
 
 test('errors with a recovery block hand over to the connect page', () => {

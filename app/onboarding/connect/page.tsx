@@ -7,6 +7,7 @@ import { getRequestAuthContext } from '@/lib/supabase/server';
 import { Alert } from '@/lib/ui/alert';
 import { buttonClasses } from '@/lib/ui/button';
 import { accountsCountLabel } from '@/lib/onboarding/account-choice';
+import { NO_ACCOUNT_PATH } from '@/lib/onboarding/ads-guide';
 import { OnboardingProgress } from '../onboarding-progress';
 import { ConnectGoogleAdsButton } from './connect-google-ads-button';
 import {
@@ -126,6 +127,11 @@ export default async function ConnectGoogleAdsPage({
 
           <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-border pt-5">
             <ConnectGoogleAdsButton label={hasRevokedAccounts ? 'تجديد الربط' : undefined} />
+            {!hasAccounts && (
+              <Link href={NO_ACCOUNT_PATH} className={buttonClasses({ variant: 'outline' })}>
+                ما عندي حساب إعلانات
+              </Link>
+            )}
             {(hasAccounts || hasRevokedAccounts) && (
               <Link href="/dashboard" className={buttonClasses({ variant: 'ghost' })}>
                 لدي حسابات، انتقل للوحة التحكم

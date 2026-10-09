@@ -16,7 +16,6 @@ import { buttonClasses } from '@/lib/ui/button';
 import { PendingSubmitButton } from '@/lib/ui/pending-submit-button';
 import { formatCurrency, formatDateAr } from '@/lib/utils';
 import { daysLabel, firstChargeDate } from '@/lib/onboarding/trial';
-import { OnboardingProgress } from '../onboarding-progress';
 
 export const metadata = {
   title: 'ابدأ تجربتك',
@@ -62,16 +61,14 @@ export default async function TrialPage({
   return (
     <main className="px-4 py-8 sm:px-6">
       <div className="mx-auto max-w-4xl">
-        <OnboardingProgress active="trial" />
-
-        <div className="mb-6 mt-8">
+        <div className="mb-6">
           <h2 className="text-[26px] font-bold leading-tight sm:text-3xl">
             {trialEligible ? `ابدأ تجربتك ${daysLabel(TRIAL_DAYS)}` : 'فعّل اشتراكك'}
           </h2>
           <p className="mt-2 max-w-2xl text-sm leading-7 text-muted-foreground">
-            الفحص والتوصيات تشتغل داخل التجربة. بعدها نفحص{' '}
-            <span className="font-semibold text-foreground">{googleAdsAccountDisplayName(selectedAccount)}</span>{' '}
-            ونطلع لك أول الفرص فيه.
+            الفحص وقراءة التوصيات مفتوحة لك بدون اشتراك. الاشتراك يفعّل تنفيذ التوصيات على{' '}
+            <span className="font-semibold text-foreground">{googleAdsAccountDisplayName(selectedAccount)}</span>
+            ، وكل تنفيذ يبقى بعد معاينتك وموافقتك.
           </p>
         </div>
 
@@ -127,7 +124,7 @@ export default async function TrialPage({
 
           <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-5">
             <Link href="/onboarding/first-audit" className={buttonClasses({ variant: 'ghost' })}>
-              تخطي الآن
+              رجوع للنتائج
             </Link>
             <form action="/api/billing/start-trial" method="post">
               <input type="hidden" name="plan" value={TRIAL_PLAN} />

@@ -139,7 +139,7 @@ export function nextStepAfterConnect(params: {
 }) {
   if (params.persistedSelectionStillLinked) return '/dashboard?connected=1';
   if (params.linkableCount > 1) return '/onboarding/choose';
-  return '/onboarding/trial';
+  return '/onboarding/first-audit';
 }
 
 const ALLOWED_NEXT = ['/onboarding/choose', '/onboarding/trial', '/onboarding/first-audit', '/dashboard'];

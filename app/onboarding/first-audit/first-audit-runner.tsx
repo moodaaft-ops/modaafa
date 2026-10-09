@@ -5,11 +5,16 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { buttonClasses } from '@/lib/ui/button';
 import type { AuditStreamEvent } from '@/lib/audit/progress';
-import { firstAuditGuardKey, isFirstAuditGuardActive } from '@/lib/onboarding/first-opportunities';
+import {
+  classifyAuditStartError,
+  firstAuditGuardKey,
+  isFirstAuditGuardActive,
+} from '@/lib/onboarding/first-opportunities';
 
 type RunState =
   | { kind: 'running'; percent: number; message: string }
   | { kind: 'waiting' }
+  | { kind: 'exhausted' }
   | { kind: 'error'; message: string };
 
 const WAIT_REFRESH_MS = 10_000;
@@ -53,8 +58,19 @@ export function FirstAuditRunner({ customerId }: { customerId: string }) {
         body: JSON.stringify({ customerId }),
       });
       if (!res.ok || !res.body) {
-        const body = (await res.json().catch(() => ({}))) as { message?: string };
+        const body = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
+        const outcome = classifyAuditStartError(res.status, body.error);
+        if (outcome === 'running') {
+          // Another audit for this account is already running: wait for it.
+          writeGuard(guardKey, Date.now());
+          setState({ kind: 'waiting' });
+          return;
+        }
         writeGuard(guardKey, null);
+        if (outcome === 'exhausted') {
+          setState({ kind: 'exhausted' });
+          return;
+        }
         setState({ kind: 'error', message: body.message ?? 'ما قدرنا نبدأ الفحص الحين. جرّب بعد دقيقة.' });
         return;
       }
@@ -121,6 +137,25 @@ export function FirstAuditRunner({ customerId }: { customerId: string }) {
     }, WAIT_REFRESH_MS);
     return () => clearInterval(timer);
   }, [state.kind, guardKey, router]);
+
+  if (state.kind === 'exhausted') {
+    return (
+      <section className="surface-card p-5 sm:p-6">
+        <p className="text-[14px] font-semibold text-foreground">استخدمت الفحصين المجانيين لهذا الحساب</p>
+        <p className="mt-1 text-[13px] leading-7 text-muted-foreground">
+          نتائجك وتوصياتك السابقة تبقى مفتوحة تقرأها متى ما بغيت. فحص جديد يحتاج اشتراكاً.
+        </p>
+        <div className="mt-4 flex flex-wrap gap-3">
+          <Link href="/audit" className={buttonClasses({ variant: 'primary' })}>
+            اقرأ نتائجي
+          </Link>
+          <Link href="/onboarding/trial" className={buttonClasses({ variant: 'outline' })}>
+            اشترك لفحص جديد
+          </Link>
+        </div>
+      </section>
+    );
+  }
 
   if (state.kind === 'error') {
     return (

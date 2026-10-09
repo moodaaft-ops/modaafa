@@ -76,7 +76,7 @@ export function ChooseAccountForm({
         setSaving(false);
         return;
       }
-      router.push('/onboarding/trial');
+      router.push('/onboarding/first-audit');
     } catch {
       setError('انقطع الاتصال قبل حفظ اختيارك. جرّب مرة ثانية.');
       setSaving(false);

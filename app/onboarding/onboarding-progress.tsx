@@ -11,7 +11,7 @@ const steps = [
   { id: 'business', href: '/onboarding/business', label: 'بيانات النشاط', caption: 'دقيقة واحدة' },
   { id: 'connect', href: '/onboarding/connect', label: 'ربط Google Ads', caption: 'موافقة واحدة' },
   { id: 'choose', href: '/onboarding/choose', label: 'اختيار الحساب', caption: 'حسب الصرف' },
-  { id: 'trial', href: '/onboarding/trial', label: 'ابدأ تجربتك', caption: 'قبل أول فحص' },
+  { id: 'first-audit', href: '/onboarding/first-audit', label: 'أول فحص', caption: 'بدون بطاقة' },
 ] as const;
 
 type StepId = (typeof steps)[number]['id'];
