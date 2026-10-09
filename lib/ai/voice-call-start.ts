@@ -63,6 +63,9 @@ export async function runCallStart<Ctx, Stream>(d: CallStartDeps<Ctx, Stream>): 
     if (!d.isCurrent()) return abandon();
     if (stream !== null) d.stopStream(stream);
     d.closeContext(ctx);
+    // The session was opened for a call that never started (mic refused, resume failed):
+    // close it, so a retry opens a fresh one instead of reusing a dead token.
+    if (token) d.endSessionOnServer(token);
     return { status: 'failed', error };
   }
 }

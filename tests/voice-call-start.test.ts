@@ -121,6 +121,56 @@ test('failures while the call is still wanted are reported and cleaned: session 
   assert.equal(failed.status, 'failed');
   assert.equal(b.log.committed, 0);
   assert.equal(b.log.contextsClosed, 1);
+  assert.deepEqual(b.log.sessionsEnded, ['tok'], 'the session opened for a call that never started is closed on the server');
+});
+
+test('resume failing after the session and the mic: stream stopped, context closed, session ended, nothing committed', async () => {
+  const w = world();
+  w.deps.resumeContext = async () => {
+    throw new Error('resume refused');
+  };
+  const run = runCallStart(w.deps);
+  await tick();
+  w.gates.session!({ ok: true, token: 'tok-r' });
+  await tick();
+  w.gates.mic!.resolve({ id: 9 });
+  const result = await run;
+  assert.equal(result.status, 'failed');
+  assert.equal(w.log.tracksStopped, 1);
+  assert.equal(w.log.contextsClosed, w.log.contextsOpened);
+  assert.deepEqual(w.log.sessionsEnded, ['tok-r']);
+  assert.equal(w.log.committed, 0);
+  assert.equal(w.log.intervals, 0);
+});
+
+test('retry after a refused mic opens a new session instead of reusing the closed token', async () => {
+  // Same cache rule as the panel: a stored token is reused, and closing it forgets it.
+  let stored: string | null = 'old';
+  let issued = 0;
+  const attempt = (micOk: boolean) => {
+    const w = world();
+    w.deps.openSession = async () => (stored ? { ok: true as const, token: stored } : { ok: true as const, token: (stored = `new-${++issued}`) });
+    w.deps.endSessionOnServer = (t) => {
+      w.log.sessionsEnded.push(t);
+      if (stored === t) stored = null;
+    };
+    const run = runCallStart(w.deps);
+    return { w, run, micOk };
+  };
+  const first = attempt(false);
+  await tick();
+  await tick();
+  first.w.gates.mic!.reject(new Error('NotAllowedError'));
+  assert.equal((await first.run).status, 'failed');
+  assert.deepEqual(first.w.log.sessionsEnded, ['old']);
+  assert.equal(stored, null, 'the closed token is forgotten');
+
+  const second = attempt(true);
+  await tick();
+  await tick();
+  second.w.gates.mic!.resolve({ id: 1 });
+  assert.equal((await second.run).status, 'started');
+  assert.equal(stored, 'new-1', 'the retry got a fresh session');
 });
 
 test('panel wiring: generation bump before the early return, startCall goes through runCallStart, the end request keeps its token', () => {
@@ -132,6 +182,7 @@ test('panel wiring: generation bump before the early return, startCall goes thro
   const startCall = panel.slice(panel.indexOf('async function startCall'), panel.indexOf('function toggleMute'));
   assert.ok(startCall.includes('runCallStart<') && startCall.includes('++genRef.current'));
   assert.ok(!startCall.includes('endedRef.current = false;') || startCall.indexOf('endedRef.current = false;') > startCall.indexOf('commit:'), 'endedRef is only reset inside commit');
+  assert.ok(/endSessionOnServer: \(token\) => \{[\s\S]*?sessionRef\.current\?\.token === token\) sessionRef\.current = null/.test(startCall), 'closing a token forgets it');
   const fail = panel.slice(panel.indexOf('const failWith'), panel.indexOf('[beginListening, endOnServer, releaseMic]'));
   assert.ok(fail.indexOf('endOnServer()') > -1 && fail.indexOf('endOnServer()') < fail.indexOf('sessionRef.current = null'), 'the token is used for the end request before it is cleared');
 });

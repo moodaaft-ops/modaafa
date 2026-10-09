@@ -513,7 +513,11 @@ export function VoiceCallPanel({
         };
         return { ok: true, token: data.session_token };
       },
-      endSessionOnServer: sendEndToken,
+      endSessionOnServer: (token) => {
+        sendEndToken(token);
+        // Forget the token that was just closed, so a retry cannot reuse an ended session.
+        if (sessionRef.current?.token === token) sessionRef.current = null;
+      },
       acquireMic: () =>
         navigator.mediaDevices.getUserMedia({
           audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
