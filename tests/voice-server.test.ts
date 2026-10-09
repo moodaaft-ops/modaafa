@@ -752,3 +752,25 @@ test('every window used by the voice counters is fixed per key, never derived fr
   assert.ok(!/remainingSeconds/.test(src), 'a shrinking window resets the counter mid-call');
   assert.ok(src.includes('caps.sessionMaxSeconds, \'session_limit\''));
 });
+
+// ------------------------------------------- merge with main (PR59 free-audit exhaustion)
+
+test('merge: a spoken ask with free audits used up gets a speakable subscribe offer, never an approval or a 402 dead end', async () => {
+  const { planTurn } = await import('../lib/chat-first/orchestrator');
+  const { prepareSpokenText } = await import('../lib/ai/voice-session');
+  const state: any = {
+    accountLinked: true,
+    accountName: 'متجر الأمل',
+    customerId: '1234567890',
+    latestAudit: { id: 'a1', healthScore: 62, findingsCount: 7, estimatedMonthlyWaste: 340, ranAt: '2026-10-08T10:00:00Z' },
+    recommendations: [],
+    subscriptionActive: false,
+    freeAudit: 'exhausted',
+  };
+  for (const said of ['حلل حسابي', 'ابي فحص جديد']) {
+    const turn = planTurn(said, state);
+    const types = turn.actions.map((a) => a.action.type);
+    assert.ok(!types.includes('approve') && !types.includes('execute'), `${said}: ${types.join(',')}`);
+    assert.ok(prepareSpokenText(turn.reply).length > 0, 'the reply can be spoken');
+  }
+});
