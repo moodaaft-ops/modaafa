@@ -7,7 +7,6 @@ import { PageHeader } from '@/lib/ui/page-header';
 import { AssistantClient } from './assistant-client';
 import { getSubscriptionAccess } from '@/lib/billing/entitlements';
 import { SubscriptionGate } from '@/lib/ui/subscription-gate';
-import { readVoiceConfig } from '@/lib/ai/voice-session';
 import { isChatFirstEnabled } from '@/lib/chat-first/flag';
 
 export const metadata = {
@@ -51,7 +50,6 @@ export default async function AssistantPage({
             accounts={accounts}
             selectedCustomerId={selectedCustomerId}
             initialBrief={initialBrief || null}
-            voiceEnabled={readVoiceConfig().enabled}
           />
         ) : (
           <SubscriptionGate

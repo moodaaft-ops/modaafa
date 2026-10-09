@@ -28,6 +28,8 @@ export type VoiceTokenPayload = {
   i: string;
   /** expiry, epoch seconds */
   e: number;
+  /** ad account the call is scoped to ('-' when none is linked yet) */
+  a?: string;
   /** sha256 of the text this token is bound to (turn: the question, speak: the spoken reply) */
   h?: string;
 };
@@ -129,7 +131,7 @@ function preflight(deps: VoiceDeps): VoiceResult | null {
 }
 
 /** POST /api/voice/session: opens a call. No provider is touched. */
-export async function startVoiceSession(deps: VoiceDeps): Promise<VoiceResult> {
+export async function startVoiceSession(deps: VoiceDeps, accountKey = '-'): Promise<VoiceResult> {
   const early = preflight(deps);
   if (early) return early;
   if (!deps.planAssistantDailyLimit) return fail(402, 'subscription_required');
@@ -143,7 +145,7 @@ export async function startVoiceSession(deps: VoiceDeps): Promise<VoiceResult> {
   const sessionId = b64(randomBytes(12));
   const expires = Math.floor(now / 1000) + caps.sessionMaxSeconds;
   const token = signVoiceToken(
-    { k: 'session', u: user.id, s: sessionId, i: sessionId, e: expires },
+    { k: 'session', u: user.id, s: sessionId, i: sessionId, e: expires, a: accountKey },
     deps.config.ticketSecret!
   );
   return {
@@ -213,9 +215,10 @@ export async function transcribeVoiceTurn(
   if (!text) return fail(422, 'no_speech');
 
   const ticketId = b64(randomBytes(12));
-  const finalText = text.slice(0, 4000);
+  // Same ceiling as the chat entry's message limit, so the ticket's text hash matches what the chat sees.
+  const finalText = text.slice(0, 1000);
   const ticket = signVoiceToken(
-    { k: 'turn', u: user.id, s: session.s, i: ticketId, e: Math.floor(now / 1000) + 180, h: textFingerprint(finalText) },
+    { k: 'turn', u: user.id, s: session.s, i: ticketId, e: Math.floor(now / 1000) + 180, h: textFingerprint(finalText), a: session.a },
     secret
   );
   return { status: 200, json: { text: finalText, ticket } };
@@ -363,7 +366,7 @@ export function makeBeepWav(): ArrayBuffer {
 // ------------------------------------------------- chat route integration
 
 export type ChatVoiceCheck =
-  | { ok: true; ticketId: string; sessionId: string }
+  | { ok: true; ticketId: string; sessionId: string; accountKey: string }
   | { ok: false; status: number; error: VoiceErrorCode };
 
 /**
@@ -375,27 +378,31 @@ export async function verifyChatVoiceTicket(
   deps: Pick<VoiceDeps, 'config' | 'nowMs' | 'limit'>,
   userId: string,
   ticket: string,
-  message: string
+  message: string,
+  accountKey = '-'
 ): Promise<ChatVoiceCheck> {
   if (!deps.config.enabled || !deps.config.ticketSecret) return { ok: false, status: 404, error: 'voice_unavailable' };
   const payload = verifyVoiceToken(ticket, deps.config.ticketSecret, { kind: 'turn', userId }, deps.nowMs());
   if (!payload || !payload.h || payload.h !== textFingerprint(message)) {
     return { ok: false, status: 403, error: 'ticket_invalid' };
   }
+  // The call belongs to the account it was opened on. Switching accounts
+  // mid-call ends it: the old ticket never speaks for the new account.
+  if ((payload.a ?? '-') !== accountKey) return { ok: false, status: 409, error: 'account_changed' };
   try {
     const used = await deps.limit(`voice_chat:${payload.i}`, 1, 300);
     if (!used.allowed) return { ok: false, status: 403, error: 'ticket_invalid' };
   } catch {
     return { ok: false, status: 503, error: 'security_service_unavailable' };
   }
-  return { ok: true, ticketId: payload.i, sessionId: payload.s };
+  return { ok: true, ticketId: payload.i, sessionId: payload.s, accountKey: payload.a ?? '-' };
 }
 
 /** Turns a chat reply into the exact text to speak plus a ticket bound to it. */
 export function grantSpeech(
   deps: Pick<VoiceDeps, 'config' | 'nowMs'>,
   userId: string,
-  check: { ticketId: string; sessionId: string },
+  check: { ticketId: string; sessionId: string; accountKey?: string },
   replyText: string
 ): { spoken_text: string; speak_ticket: string } | null {
   const spoken = prepareSpokenText(replyText);
@@ -406,6 +413,7 @@ export function grantSpeech(
       u: userId,
       s: check.sessionId,
       i: `${check.ticketId}.s`,
+      a: check.accountKey ?? '-',
       e: Math.floor(deps.nowMs() / 1000) + 180,
       h: textFingerprint(spoken),
     },

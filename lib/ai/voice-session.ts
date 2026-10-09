@@ -276,6 +276,8 @@ export type VoiceErrorCode =
   | 'unsupported_audio'
   | 'no_speech'
   | 'ticket_invalid'
+  | 'account_changed'
+  | 'account_not_found'
   | 'text_too_long'
   | 'voice_plan_required'
   | 'provider_failed'
@@ -304,6 +306,10 @@ export function voiceErrorMessage(code: string | undefined, status: number | nul
       return 'لم أسمع كلاماً واضحاً. اضغط التحدث وأعد المحاولة.';
     case 'voice_plan_required':
       return 'الصوت المختار غير متاح على خطة مزود الصوت. الرد مكتوب فوق.';
+    case 'account_changed':
+      return 'تغيّر الحساب الإعلاني أثناء المكالمة، فانتهت. ابدأ مكالمة جديدة على الحساب الحالي.';
+    case 'account_not_found':
+      return 'ما لقيت هذا الحساب ضمن حساباتك. اختر حسابك وابدأ مكالمة جديدة.';
     case 'ticket_invalid':
       return 'تعذر تشغيل الرد صوتياً. الرد مكتوب فوق.';
     default:

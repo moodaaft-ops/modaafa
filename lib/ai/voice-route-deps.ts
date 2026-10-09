@@ -7,15 +7,16 @@ import { createElevenLabsProvider, createMockProvider, type VoiceDeps, type Voic
 import { NextResponse } from 'next/server';
 
 /** Wires the injectable voice handlers to Supabase, the rate limiter and the provider. */
-export async function buildVoiceDeps(req: NextRequest): Promise<VoiceDeps> {
+export async function buildVoiceDeps(req: NextRequest): Promise<VoiceDeps & { supabase: any }> {
   const config = readVoiceConfig();
   const provider = config.provider === 'mock' ? createMockProvider(process.env.VOICE_MOCK_TRANSCRIPT) : createElevenLabsProvider(config);
 
   let user: VoiceDeps['user'] = null;
+  let supabase: any = null;
   let planAssistantDailyLimit: number | null = null;
   let tier: VoiceDeps['tier'] = null;
   if (config.enabled) {
-    const supabase = await createServerClient();
+    supabase = await createServerClient();
     const {
       data: { user: authUser },
     } = await supabase.auth.getUser();
@@ -36,6 +37,7 @@ export async function buildVoiceDeps(req: NextRequest): Promise<VoiceDeps> {
   }
 
   return {
+    supabase,
     config,
     nowMs: () => Date.now(),
     user,

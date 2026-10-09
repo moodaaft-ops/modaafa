@@ -298,7 +298,7 @@ test('the mock provider returns a playable WAV and only transcribes a real-sized
 
 import { readFileSync } from 'node:fs';
 
-test('source guards: one mic open call inside startCall, ticket checked before model spend, mock labelled', () => {
+test('source guards: one mic open call inside startCall, ticket checked before any model spend, mock labelled', () => {
   const panel = readFileSync('app/(dashboard)/assistant/voice-call-panel.tsx', 'utf8');
   assert.equal(panel.match(/getUserMedia\(/g)?.length, 1);
   const startCall = panel.slice(panel.indexOf('async function startCall'), panel.indexOf('function toggleMute'));
@@ -306,8 +306,104 @@ test('source guards: one mic open call inside startCall, ticket checked before m
   assert.ok(panel.includes('وضع تجريبي: هذا محاكي مو صوت حقيقي'));
   assert.ok(panel.includes('إنهاء المكالمة'));
 
-  const chat = readFileSync('app/api/chat/assistant/route.ts', 'utf8');
+  const chat = readFileSync('app/api/chat/start/route.ts', 'utf8');
   const check = chat.indexOf('verifyChatVoiceTicket(');
-  const spend = chat.indexOf('consumeFeatureUsage({');
-  assert.ok(check > -1 && spend > check, 'ticket must be verified before usage is consumed');
+  const spend = chat.indexOf('resolveLanguage({');
+  assert.ok(check > -1 && spend > check, 'ticket must be verified before the language layer (model spend)');
+  assert.ok(chat.indexOf('accountId ?? ') > -1, 'ticket must be checked against the loaded account');
+});
+
+test('voice rides the chat-first entry: no old assistant path, no subscription gate, no history reads', () => {
+  const files = [
+    'app/(dashboard)/assistant/voice-call-panel.tsx',
+    'app/(dashboard)/start/start-client.tsx',
+    'lib/ai/voice-server.ts',
+    'lib/ai/voice-route-deps.ts',
+    'app/api/voice/session/route.ts',
+  ];
+  for (const f of files) assert.ok(!readFileSync(f, 'utf8').includes('/api/chat/assistant'), `${f} must not use the old assistant path`);
+  // The reply path itself never demands a subscription, so a free caller gets replies.
+  const chat = readFileSync('app/api/chat/start/route.ts', 'utf8');
+  assert.ok(!chat.includes('consumeFeatureUsage') && !chat.includes("'subscription_required'"));
+  // The call never loads any history: a switched or previous account's conversation is not readable from it.
+  const panel = readFileSync('app/(dashboard)/assistant/voice-call-panel.tsx', 'utf8');
+  assert.ok(!/method:\s*'GET'/.test(panel) && !panel.includes('/api/chat/start'));
+  const session = readFileSync('app/api/voice/session/route.ts', 'utf8');
+  assert.ok(session.includes('loadChatState('), 'session account comes from the same resolver as the chat');
+});
+
+test('account switch ends the call: the panel watches customerId and the server refuses the old ticket', () => {
+  const panel = readFileSync('app/(dashboard)/assistant/voice-call-panel.tsx', 'utf8');
+  assert.ok(panel.includes('customerRef.current !== customerId') && panel.includes('endCall()'));
+  const client = readFileSync('app/(dashboard)/start/start-client.tsx', 'utf8');
+  assert.ok(client.includes("fatal: 'account_changed'"));
+  // Ending a call aborts the request in flight and invalidates the running turn.
+  const end = panel.slice(panel.indexOf('const endCall'), panel.indexOf('// Hard ceiling'));
+  assert.ok(end.includes('turnRef.current += 1') && end.includes('releaseMic()') && end.includes('stopPlayback()'));
+  assert.ok(panel.includes('abortRef.current?.abort()'));
+});
+
+test('account scoping: a ticket from account A never works on account B or on a call with no account', async () => {
+  const { deps } = makeDeps();
+  const open = async (account: string) => {
+    const r = (await startVoiceSession(deps, account)) as unknown as { json: { session_token: string } };
+    return r.json.session_token;
+  };
+  const heardOn = async (account: string) => {
+    const t = (await transcribeVoiceTurn(deps, upload(await open(account)))) as unknown as { json: { text: string; ticket: string } };
+    return t.json;
+  };
+  const a = await heardOn('acct-A');
+  const wrong = await verifyChatVoiceTicket(deps, 'user-1', a.ticket, a.text, 'acct-B');
+  assert.deepEqual(wrong, { ok: false, status: 409, error: 'account_changed' });
+  // The refused ticket was not spent by the failed check: the right account can still use it.
+  assert.equal((await verifyChatVoiceTicket(deps, 'user-1', a.ticket, a.text, 'acct-A')).ok, true);
+  const none = await heardOn('-');
+  assert.equal((await verifyChatVoiceTicket(deps, 'user-1', none.ticket, none.text, 'acct-A')).ok, false);
+  const b = await heardOn('acct-B');
+  const granted = (await verifyChatVoiceTicket(deps, 'user-1', b.ticket, b.text, 'acct-B')) as { ok: true; ticketId: string; sessionId: string; accountKey: string };
+  assert.equal(granted.accountKey, 'acct-B');
+});
+
+test('an expired or cancelled call cannot continue: expired session, expired ticket, and a ticket outliving its session window', async () => {
+  const { deps } = makeDeps();
+  const token = await openSession(deps);
+  const heard = (await transcribeVoiceTurn(deps, upload(token))) as unknown as { json: { text: string; ticket: string } };
+  // 11 minutes later the session (10 minute default) is gone, and so is the ticket (3 minutes).
+  const later = { ...deps, nowMs: () => NOW + 11 * 60_000 };
+  assert.equal(((await transcribeVoiceTurn(later, upload(token))) as unknown as { status: number }).status, 401);
+  assert.equal((await verifyChatVoiceTicket(later, 'user-1', heard.json.ticket, heard.json.text)).ok, false);
+});
+
+test('approvals: spoken consent is only an offer on screen, never applied by the call', async () => {
+  const { planTurn } = await import('../lib/chat-first/orchestrator');
+  const state: any = {
+    accountLinked: true,
+    accountName: 'x',
+    customerId: '1234567890',
+    subscriptionActive: true,
+    latestAudit: { id: 'a', healthScore: 50, findingsCount: 3, estimatedMonthlyWaste: 10, ranAt: new Date().toISOString() },
+    recommendations: [{ id: 'r1', title: 'خفض', description: null, severity: 'critical', status: 'pending', executable: true }],
+  };
+  for (const said of ['أوافق', 'نفذ الحين', 'أيوه', 'موافق ونفذ', 'نعم', 'نفذ كل التوصيات']) {
+    const turn = planTurn(said, state);
+    // A pending recommendation is never offered as directly executable by speech.
+    assert.ok(!turn.actions.some((a) => a.action.type === 'execute'), `${said}: execute offered while pending`);
+    // Nothing is claimed as done in the spoken reply.
+    assert.ok(!/تم التنفيذ|نفذت|طبقت/.test(turn.reply), `${said}: reply claims completion`);
+  }
+  // The approve button is an on-screen HTML form to the guarded route, tapped by a person.
+  const client = readFileSync('app/(dashboard)/start/start-client.tsx', 'utf8');
+  assert.ok(client.includes('<form method="post" action="/api/recommendations/action">'));
+  assert.equal(client.match(/\/api\/recommendations\/action/g)?.length, 1, 'only the form posts to the approval route');
+  // The call code never reaches the approval route, and a voice turn sends the transcript as message only.
+  const panel = readFileSync('app/(dashboard)/assistant/voice-call-panel.tsx', 'utf8');
+  assert.ok(!panel.includes('/api/recommendations'));
+  const voiceCall = client.slice(client.indexOf('<VoiceCallPanel'));
+  assert.ok(/sendRef\.current\(\s*\{\s*message:/.test(voiceCall) && !/sendRef\.current\(\s*\{[^}]*action/.test(voiceCall));
+});
+
+test('cost estimate document carries its assumptions and the untested warning', () => {
+  const doc = readFileSync('docs/voice-cost-estimate.md', 'utf8');
+  assert.ok(doc.includes('لم يُقَس حياً') && doc.includes('0.04') && doc.includes('0.22'));
 });

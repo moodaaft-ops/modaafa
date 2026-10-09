@@ -2,8 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { AudioLines, Link2, LoaderCircle, Mic, Send, Sparkles, Square, TrendingUp } from 'lucide-react';
-import { VoiceCallPanel, type VoiceTurnResult } from './voice-call-panel';
+import { Link2, LoaderCircle, Mic, Send, Sparkles, Square, TrendingUp } from 'lucide-react';
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import {
   appendVoiceTranscript,
@@ -60,14 +59,11 @@ export function AssistantClient({
   accounts,
   selectedCustomerId,
   initialBrief = null,
-  voiceEnabled = false,
 }: {
   accounts: Account[];
   selectedCustomerId: string | null;
   /** Prefilled composer text (e.g. a campaign-opportunity brief). The user still reviews and sends it. */
   initialBrief?: string | null;
-  /** Server-decided feature flag for the live voice call. Off by default. */
-  voiceEnabled?: boolean;
 }) {
   const router = useRouter();
   const [isSwitching, startTransition] = useTransition();
@@ -82,7 +78,6 @@ export function AssistantClient({
   const [listening, setListening] = useState(false);
   const [voiceStarting, setVoiceStarting] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState('');
-  const [voiceCallOpen, setVoiceCallOpen] = useState(false);
   const [error, setError] = useState('');
   const [chat, setChat] = useState<ChatItem[]>([{ role: 'assistant', content: SEED_MESSAGE }]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -147,9 +142,9 @@ export function AssistantClient({
     startTransition(() => router.refresh());
   }
 
-  async function sendMessage(text: string, voiceTicket?: string): Promise<VoiceTurnResult> {
+  async function sendMessage(text: string) {
     const trimmed = text.trim();
-    if (!trimmed || !customerId || loading) return null;
+    if (!trimmed || !customerId || loading) return;
 
     setError('');
     setLoading(true);
@@ -173,9 +168,7 @@ export function AssistantClient({
     try {
       response = await fetch('/api/chat/assistant', {
         method: 'POST',
-        headers: voiceTicket
-          ? { 'Content-Type': 'application/json', 'x-voice-ticket': voiceTicket }
-          : { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: trimmed, customerId, sessionId, history: historyPayload }),
         signal: controller.signal,
       });
@@ -186,7 +179,7 @@ export function AssistantClient({
           ? 'استغرق الرد وقتاً أطول من المتوقع. أعد إرسال السؤال أو اختصره قليلاً.'
           : 'تعذر الاتصال بالمساعد. تحقق من اتصالك بالإنترنت ثم أعد الإرسال.'
       );
-      return null;
+      return;
     } finally {
       window.clearTimeout(timeout);
       setLoading(false);
@@ -194,7 +187,7 @@ export function AssistantClient({
 
     if (!response.ok) {
       setError(errorMessage(data.error));
-      return null;
+      return;
     }
 
     if (data.session_id) setSessionId(data.session_id);
@@ -212,18 +205,7 @@ export function AssistantClient({
         analysisMeta: data.analysis_meta,
       },
     ]);
-    return {
-      reply: String(data.reply_ar ?? ''),
-      hasDraft: Boolean(data.draft_campaign),
-      speech:
-        data.voice?.speak_ticket && data.voice?.spoken_text
-          ? { spokenText: String(data.voice.spoken_text), speakTicket: String(data.voice.speak_ticket) }
-          : null,
-    };
   }
-
-  const sendMessageRef = useRef(sendMessage);
-  sendMessageRef.current = sendMessage;
 
   function stopVoiceInput() {
     voiceStoppedByUserRef.current = true;
@@ -455,18 +437,6 @@ export function AssistantClient({
             </div>
           )}
           <div className="flex items-end gap-2">
-            {voiceEnabled && (
-              <button
-                type="button"
-                onClick={() => setVoiceCallOpen(true)}
-                disabled={voiceCallOpen || loading || !customerId}
-                className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-lg border border-border bg-background-elevated text-muted-foreground transition-colors duration-150 hover:border-border-strong hover:text-foreground disabled:opacity-50"
-                aria-label="ابدأ مكالمة صوتية مع المساعد"
-                title="مكالمة صوتية"
-              >
-                <AudioLines className="h-4 w-4" />
-              </button>
-            )}
             <button
               type="button"
               onClick={startVoiceInput}
@@ -516,12 +486,6 @@ export function AssistantClient({
             </div>
           )}
         </form>
-        {voiceEnabled && voiceCallOpen && (
-          <VoiceCallPanel
-            onUtterance={(text, ticket) => sendMessageRef.current(text, ticket)}
-            onClose={() => setVoiceCallOpen(false)}
-          />
-        )}
       </section>
 
       {/* Side panel */}

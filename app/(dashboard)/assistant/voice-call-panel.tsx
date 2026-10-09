@@ -25,6 +25,8 @@ export type VoiceTurnResult = {
   reply: string;
   hasDraft: boolean;
   speech?: { spokenText: string; speakTicket: string } | null;
+  /** The server ended the call for a reason the person must see (for example the account changed). */
+  fatal?: 'account_changed' | 'session_expired';
 } | null;
 
 const TICK_MS = 50;
@@ -42,9 +44,12 @@ const RECORDER_RECYCLE_MS = 6000;
  * path the text composer uses, so every server check of the text path applies.
  */
 export function VoiceCallPanel({
+  customerId,
   onUtterance,
   onClose,
 }: {
+  /** The ad account this call is scoped to. If it changes, the call ends. */
+  customerId: string | null;
   onUtterance: (text: string, voiceTicket: string) => Promise<VoiceTurnResult>;
   onClose: () => void;
 }) {
@@ -91,6 +96,7 @@ export function VoiceCallPanel({
   onCloseRef.current = onClose;
   const onUtteranceRef = useRef(onUtterance);
   onUtteranceRef.current = onUtterance;
+  const customerRef = useRef(customerId);
 
   const clearIdleTimer = () => {
     if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
@@ -161,6 +167,12 @@ export function VoiceCallPanel({
       stopPlayback();
     };
   }, [endCall, releaseMic, stopPlayback]);
+
+  // Switching ad account mid-call ends it: the open session, any ticket in
+  // flight and the mic all belong to the old account.
+  useEffect(() => {
+    if (customerRef.current !== customerId) endCall();
+  }, [customerId, endCall]);
 
   // A call where nobody has said anything for a while ends itself. Any real
   // activity (listening heard speech, thinking, speaking) clears the timer.
@@ -326,6 +338,15 @@ export function VoiceCallPanel({
         }, 600);
         return;
       }
+      if (result.fatal) {
+        // The server refused the ticket for this account or session. Nothing was spoken.
+        sessionRef.current = null;
+        setError(voiceErrorMessage(result.fatal, 409));
+        releaseMic();
+        setStarted(false);
+        dispatch('fail');
+        return;
+      }
       setDraftPending(result.hasDraft);
       if (result.hasDraft) setApprovalNotice(true);
       if (!result.speech) {
@@ -336,7 +357,7 @@ export function VoiceCallPanel({
       }
       await playReply(result.speech, turn);
     },
-    [beginListening, failWith, playReply]
+    [beginListening, failWith, playReply, releaseMic]
   );
 
   /** The person stopped talking: close this recording and send it. */
@@ -404,7 +425,11 @@ export function VoiceCallPanel({
 
   async function ensureSession(): Promise<boolean> {
     if (sessionRef.current) return true;
-    const response = await fetch('/api/voice/session', { method: 'POST' });
+    const response = await fetch('/api/voice/session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customerId: customerRef.current }),
+    });
     const data = await response.json().catch(() => ({}));
     if (!response.ok || !data.session_token) {
       setError(voiceErrorMessage(data?.error, response.status));

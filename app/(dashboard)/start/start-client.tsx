@@ -2,7 +2,8 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2, RotateCcw, Send, Square } from 'lucide-react';
+import { AudioLines, Loader2, RotateCcw, Send, Square } from 'lucide-react';
+import { VoiceCallPanel, type VoiceTurnResult } from '../assistant/voice-call-panel';
 import type { ChatAction, ChatCard, ChatQuickAction, ChatTurn } from '@/lib/chat-first/contracts';
 
 type Item =
@@ -23,7 +24,16 @@ const NOTICE: Record<string, string> = {
 let counter = 0;
 const uid = () => `m${Date.now()}-${counter++}`;
 
-export function StartClient({ customerId, notice }: { customerId: string | null; notice: string | null }) {
+export function StartClient({
+  customerId,
+  notice,
+  voiceEnabled = false,
+}: {
+  customerId: string | null;
+  notice: string | null;
+  voiceEnabled?: boolean;
+}) {
+  const [voiceOpen, setVoiceOpen] = useState(false);
   const [items, setItems] = useState<Item[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [text, setText] = useState('');
@@ -91,7 +101,7 @@ export function StartClient({ customerId, notice }: { customerId: string | null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customerId]);
 
-  async function send(body: Record<string, unknown>, shown: string) {
+  async function send(body: Record<string, unknown>, shown: string, voiceTicket?: string): Promise<VoiceTurnResult> {
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
@@ -101,7 +111,9 @@ export function StartClient({ customerId, notice }: { customerId: string | null;
     try {
       const res = await fetch('/api/chat/start', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: voiceTicket
+          ? { 'content-type': 'application/json', 'x-voice-ticket': voiceTicket }
+          : { 'content-type': 'application/json' },
         body: JSON.stringify({ ...body, sessionId, customerId }),
         signal: ac.signal,
       });
@@ -110,7 +122,11 @@ export function StartClient({ customerId, notice }: { customerId: string | null;
         // The session belongs to another account (or is gone): start clean.
         setSessionId(null);
         assistant('بدأت لك محادثة جديدة لهذا الحساب. أعد سؤالك.');
-        return;
+        return null;
+      }
+      if (voiceTicket && res.status === 409 && data.error === 'account_changed') {
+        assistant('تغيّر الحساب أثناء المكالمة، فانتهت. ابدأ مكالمة جديدة على الحساب الحالي.');
+        return { reply: '', hasDraft: false, fatal: 'account_changed' };
       }
       if (!res.ok) {
         const msg =
@@ -122,19 +138,29 @@ export function StartClient({ customerId, notice }: { customerId: string | null;
                 ? 'انتهت جلستك، سجل دخولك من جديد.'
                 : 'صار خلل عندنا. جرب مرة ثانية.';
         assistant(msg);
-        setFailed(() => () => send(body, ''));
-        return;
+        // A spoken turn is not retried from here: its ticket works once.
+        if (!voiceTicket) setFailed(() => () => send(body, ''));
+        return null;
       }
       if (data.sessionId) setSessionId(data.sessionId);
       const turn = data.turn as ChatTurn;
       assistant(turn.reply, turn.cards, turn.actions);
       if (data.saved === false) assistant('ملاحظة: ما قدرت أحفظ هذي المحادثة في السجل.');
+      return {
+        reply: turn.reply,
+        hasDraft: false,
+        speech:
+          data.voice?.speak_ticket && data.voice?.spoken_text
+            ? { spokenText: String(data.voice.spoken_text), speakTicket: String(data.voice.speak_ticket) }
+            : null,
+      };
     } catch (e: any) {
       if (e?.name === 'AbortError') assistant('أوقفت الانتظار.');
       else {
         assistant('انقطع الاتصال. تقدر تعيد المحاولة.');
-        setFailed(() => () => send(body, ''));
+        if (!voiceTicket) setFailed(() => () => send(body, ''));
       }
+      return null;
     } finally {
       setBusy(null);
     }
@@ -236,6 +262,10 @@ export function StartClient({ customerId, notice }: { customerId: string | null;
     send({ message: t }, t);
   }
 
+  // The voice panel outlives re-renders; it always calls the newest `send`.
+  const sendRef = useRef(send);
+  sendRef.current = send;
+
   const lastAssistant = [...items].reverse().find((i) => i.role === 'assistant')?.id;
 
   return (
@@ -302,6 +332,17 @@ export function StartClient({ customerId, notice }: { customerId: string | null;
           aria-label="رسالتك"
           className="h-11 min-w-0 flex-1 rounded-xl border border-border bg-background px-3 text-[14px]"
         />
+        {voiceEnabled && (
+          <button
+            type="button"
+            onClick={() => setVoiceOpen((open) => !open)}
+            aria-label="مكالمة صوتية"
+            aria-pressed={voiceOpen}
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-border text-foreground"
+          >
+            <AudioLines className="h-4 w-4" />
+          </button>
+        )}
         <button
           type="submit"
           disabled={!text.trim() || !!busy}
@@ -311,6 +352,13 @@ export function StartClient({ customerId, notice }: { customerId: string | null;
           <Send className="h-4 w-4 rtl:-scale-x-100" />
         </button>
       </form>
+      {voiceEnabled && voiceOpen && (
+        <VoiceCallPanel
+          customerId={customerId}
+          onUtterance={(spoken, ticket) => sendRef.current({ message: spoken }, spoken, ticket)}
+          onClose={() => setVoiceOpen(false)}
+        />
+      )}
       <div className="border-t border-border px-3 py-2 text-center text-xs text-muted-foreground">
         <Link href="/dashboard" className="underline underline-offset-4">
           تبي التفاصيل؟ افتح اللوحة الكاملة

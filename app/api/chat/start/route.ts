@@ -11,6 +11,9 @@ import { resolveLanguage } from '@/lib/chat-first/language';
 import { loadScopedHistory, sessionBelongsTo } from '@/lib/chat-first/sessions';
 import type { ModelCall } from '@/lib/chat-first/understand';
 import { createMessageForAgent, hasAIBackend } from '@/lib/ai/client';
+import { readVoiceConfig } from '@/lib/ai/voice-session';
+import { grantSpeech, verifyChatVoiceTicket } from '@/lib/ai/voice-server';
+import { voiceLimiter } from '@/lib/ai/voice-route-deps';
 
 const MAX_MESSAGE = 1000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -82,6 +85,24 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'session_not_found' }, { status: 404 });
   }
 
+  // A spoken turn carries a ticket from /api/voice/transcribe. It must belong
+  // to this user and THIS account, match this exact message, and works once.
+  // It is checked before the language layer so a bad ticket never costs a model call.
+  const voiceTicket = req.headers.get('x-voice-ticket');
+  const voiceConfig = readVoiceConfig();
+  let voiceCheck: Awaited<ReturnType<typeof verifyChatVoiceTicket>> | null = null;
+  if (voiceTicket) {
+    if (action || !message) return NextResponse.json({ error: 'ticket_invalid' }, { status: 403 });
+    voiceCheck = await verifyChatVoiceTicket(
+      { config: voiceConfig, nowMs: () => Date.now(), limit: voiceLimiter(req) },
+      user.id,
+      voiceTicket,
+      message,
+      accountId ?? '-'
+    );
+    if (!voiceCheck.ok) return NextResponse.json({ error: voiceCheck.error }, { status: voiceCheck.status });
+  }
+
   let turn: ChatTurn;
   let userText = message;
   let language: ChatLanguageMeta = { source: 'rules' };
@@ -124,6 +145,13 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // The spoken text is derived here from the final reply, so /api/voice/speak
+  // can only ever play what this route produced for this ticket.
+  const voiceGrant = () =>
+    voiceCheck?.ok
+      ? { voice: grantSpeech({ config: voiceConfig, nowMs: () => Date.now() }, user.id, voiceCheck, turn.reply) }
+      : {};
+
   let sid = sessionId;
   try {
     if (!sid) {
@@ -148,9 +176,9 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     console.error('chat-first persistence failed', err);
     // The answer is still correct; history just did not save.
-    return NextResponse.json({ sessionId: sid, turn, saved: false, language });
+    return NextResponse.json({ sessionId: sid, turn, saved: false, language, ...voiceGrant() });
   }
-  return NextResponse.json({ sessionId: sid, turn, saved: true, language });
+  return NextResponse.json({ sessionId: sid, turn, saved: true, language, ...voiceGrant() });
 }
 
 export async function GET(req: NextRequest) {
