@@ -38,6 +38,7 @@ export function buildContentSecurityPolicy(nonce: string): string {
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https://lh3.googleusercontent.com https://modaafa.com https://analytics.tiktok.com",
     "font-src 'self' data:",
+    "media-src 'self' blob:",
     "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://analytics.tiktok.com https://analytics-ipv6.tiktokw.us",
     'upgrade-insecure-requests',
   ].join('; ');

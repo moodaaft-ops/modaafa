@@ -5,6 +5,7 @@ import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import { isChatFirstEnabled } from '@/lib/chat-first/flag';
 import { PageHeader } from '@/lib/ui/page-header';
+import { readVoiceConfig } from '@/lib/ai/voice-session';
 import { StartClient } from './start-client';
 
 export const metadata = { title: 'ابدأ بمحادثة' };
@@ -41,7 +42,7 @@ export default async function StartPage({
         }
       />
       <div className="p-3 sm:p-6 lg:p-8">
-        <StartClient customerId={selectedCustomerId} notice={notice} />
+        <StartClient customerId={selectedCustomerId} notice={notice} voiceEnabled={readVoiceConfig().enabled} />
       </div>
     </>
   );
