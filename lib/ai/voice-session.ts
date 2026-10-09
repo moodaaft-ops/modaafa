@@ -242,25 +242,6 @@ export function readVoiceConfig(env: Record<string, string | undefined> = proces
   };
 }
 
-/** Recorder formats in the order we prefer them. Safari/iOS only has mp4. */
-export const RECORDER_MIME_CANDIDATES = [
-  'audio/webm;codecs=opus',
-  'audio/webm',
-  'audio/mp4',
-  'audio/ogg;codecs=opus',
-] as const;
-
-export function pickRecorderMime(isSupported: (mime: string) => boolean): string | null {
-  for (const mime of RECORDER_MIME_CANDIDATES) {
-    try {
-      if (isSupported(mime)) return mime;
-    } catch {
-      /* some engines throw on unknown types */
-    }
-  }
-  return null;
-}
-
 /** Below this the recording is almost certainly silence or a mis-tap. */
 export const MIN_RECORDING_BYTES = 1500;
 

@@ -8,13 +8,13 @@ import {
   looksLikeVoiceApproval,
   MIN_RECORDING_BYTES,
   nextVoiceCallState,
-  pickRecorderMime,
   voiceErrorMessage,
   VOICE_APPROVAL_NOTICE,
   VOICE_LIMITS,
   type VoiceCallEvent,
   type VoiceCallState,
 } from '@/lib/ai/voice-session';
+import { PcmCapture } from '@/lib/ai/voice-pcm';
 import { BARGE_VAD, createVad, LISTEN_VAD } from '@/lib/ai/voice-vad';
 import { Alert } from '@/lib/ui/alert';
 import { buttonClasses } from '@/lib/ui/button';
@@ -79,10 +79,9 @@ export function VoiceCallPanel({
   const ctxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const tickRef = useRef<number | null>(null);
-  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recorderRef = useRef<PcmCapture | null>(null);
+  const processorRef = useRef<ScriptProcessorNode | null>(null);
   const recorderStartRef = useRef(0);
-  const chunksRef = useRef<Blob[]>([]);
-  const mimeRef = useRef<string>('audio/webm');
   const listenVadRef = useRef(createVad(LISTEN_VAD));
   const bargeVadRef = useRef(createVad(BARGE_VAD));
   const sessionRef = useRef<{ token: string; maxSeconds: number } | null>(null);
@@ -118,18 +117,7 @@ export function VoiceCallPanel({
   }, []);
 
   const discardRecorder = useCallback(() => {
-    const recorder = recorderRef.current;
     recorderRef.current = null;
-    chunksRef.current = [];
-    if (!recorder) return;
-    recorder.ondataavailable = null;
-    recorder.onstop = null;
-    recorder.onerror = null;
-    try {
-      if (recorder.state !== 'inactive') recorder.stop();
-    } catch {
-      /* already stopped */
-    }
   }, []);
 
   /** Closes the microphone and the audio graph completely. */
@@ -137,6 +125,11 @@ export function VoiceCallPanel({
     if (tickRef.current) window.clearInterval(tickRef.current);
     tickRef.current = null;
     discardRecorder();
+    if (processorRef.current) {
+      processorRef.current.onaudioprocess = null;
+      processorRef.current.disconnect();
+      processorRef.current = null;
+    }
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     analyserRef.current = null;
@@ -210,22 +203,12 @@ export function VoiceCallPanel({
     else clearIdleTimer();
   }, [state, userSpeaking, started, armIdleTimer]);
 
+  /** Starts a fresh capture of the mic samples for the next turn (16-bit mono WAV when it is sent). */
   function startRecorder() {
-    const stream = streamRef.current;
-    if (!stream) return;
-    discardRecorder();
-    const recorder = new MediaRecorder(stream, { mimeType: mimeRef.current });
-    chunksRef.current = [];
-    recorder.ondataavailable = (event) => {
-      if (event.data.size > 0) chunksRef.current.push(event.data);
-    };
-    recorder.onerror = () => {
-      discardRecorder();
-      failWith(undefined, 500, turnRef.current);
-    };
-    recorderRef.current = recorder;
+    const ctx = ctxRef.current;
+    if (!ctx || !streamRef.current) return;
+    recorderRef.current = new PcmCapture(ctx.sampleRate, sessionRef.current?.maxSeconds ?? 30);
     recorderStartRef.current = performance.now();
-    recorder.start();
   }
 
   /** Back to waiting for the person, hands-free. */
@@ -325,7 +308,7 @@ export function VoiceCallPanel({
   );
 
   const handleRecording = useCallback(
-    async (blob: Blob, mime: string, turn: number) => {
+    async (blob: Blob, turn: number) => {
       if (blob.size < MIN_RECORDING_BYTES) {
         failWith('no_speech', 422, turn);
         return;
@@ -338,7 +321,7 @@ export function VoiceCallPanel({
         const response = await fetch('/api/voice/transcribe', {
           method: 'POST',
           headers: {
-            'Content-Type': mime.split(';')[0] || 'audio/webm',
+            'Content-Type': 'audio/wav',
             'x-voice-session': sessionRef.current?.token ?? '',
             ...(customerRef.current ? { 'x-voice-customer': customerRef.current } : {}),
           },
@@ -398,20 +381,14 @@ export function VoiceCallPanel({
 
   /** The person stopped talking: close this recording and send it. */
   function finishTurn() {
-    const recorder = recorderRef.current;
-    if (!recorder || recorder.state === 'inactive') return;
+    const capture = recorderRef.current;
+    if (!capture) return;
     const turn = ++turnRef.current;
     setUserSpeaking(false);
     dispatch('speech_final');
-    recorder.onstop = () => {
-      const type = recorder.mimeType || mimeRef.current;
-      const blob = new Blob(chunksRef.current, { type });
-      recorderRef.current = null;
-      chunksRef.current = [];
-      void handleRecording(blob, type, turn);
-    };
+    recorderRef.current = null;
     try {
-      recorder.stop();
+      void handleRecording(new Blob([capture.toWav()], { type: 'audio/wav' }), turn);
     } catch {
       failWith(undefined, 500, turn);
     }
@@ -504,20 +481,12 @@ export function VoiceCallPanel({
     setStarting(true);
     unlockAudio();
     const AudioCtx = (window as any).AudioContext || (window as any).webkitAudioContext;
-    if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices?.getUserMedia || !AudioCtx) {
+    if (!navigator.mediaDevices?.getUserMedia || !AudioCtx || !AudioCtx.prototype?.createScriptProcessor) {
       setError('متصفحك ما يدعم المكالمة الصوتية. حدّثه أو كمّل كتابة.');
       dispatch('fail');
       setStarting(false);
       return;
     }
-    const mime = pickRecorderMime((m) => MediaRecorder.isTypeSupported(m));
-    if (!mime) {
-      setError(voiceErrorMessage('unsupported_audio', 415));
-      dispatch('fail');
-      setStarting(false);
-      return;
-    }
-    mimeRef.current = mime;
     // Created inside the tap: iOS keeps the context suspended otherwise.
     const ctx: AudioContext = new AudioCtx();
     ctxRef.current = ctx;
@@ -534,8 +503,16 @@ export function VoiceCallPanel({
       await ctx.resume();
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 1024;
-      ctx.createMediaStreamSource(stream).connect(analyser);
+      const source = ctx.createMediaStreamSource(stream);
+      source.connect(analyser);
       analyserRef.current = analyser;
+      // Raw samples for the 16-bit PCM WAV that is uploaded. The node's own output is
+      // never written, so connecting it to the destination plays silence.
+      const processor = ctx.createScriptProcessor(4096, 1, 1);
+      processor.onaudioprocess = (event) => recorderRef.current?.push(event.inputBuffer.getChannelData(0));
+      source.connect(processor);
+      processor.connect(ctx.destination);
+      processorRef.current = processor;
       endedRef.current = false;
       setStarted(true);
       beginListening();

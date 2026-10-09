@@ -20,8 +20,12 @@ import { readVoiceConfig } from '../lib/ai/voice-session';
 
 const SECRET = 's'.repeat(40);
 const NOW = 1_800_000_000_000;
-const AUDIO = new ArrayBuffer(20_000);
-const mime = 'audio/mp4';
+import { encodeWav16, inspectWav, PcmCapture } from '../lib/ai/voice-pcm';
+
+/** What the browser uploads: 16-bit mono WAV at 16 kHz. */
+const wavOf = (seconds: number, rate = 16_000) => encodeWav16([Float32Array.from({ length: Math.round(seconds * rate) }, (_, i) => Math.sin(i / 20) * 0.3)], rate, rate);
+const AUDIO = wavOf(2);
+const mime = 'audio/wav';
 
 /** Stand-in for the shared limits store marker: one set, visible to every caller, like the real table. */
 function makeSessions(ended = new Set<string>()): VoiceDeps['sessions'] & { ended: Set<string> } {
@@ -267,6 +271,9 @@ test('audio gates: unsupported type, oversize header, oversize body and empty bo
   const code = async (extra: Parameters<typeof upload>[1]) => ((await transcribeVoiceTurn(deps, upload(token, extra))) as unknown as { status: number }).status;
   assert.equal(await code({ mime: 'text/plain' }), 415);
   assert.equal(await code({ mime: '' }), 415);
+  // Compressed formats are refused outright: their length cannot be verified from the bytes.
+  assert.equal(await code({ mime: 'audio/webm;codecs=opus' }), 415);
+  assert.equal(await code({ mime: 'audio/mp4' }), 415);
   assert.equal(await code({ declaredBytes: 9_000_000 }), 413);
   assert.equal(await code({ readAudio: async () => new ArrayBuffer(deps.config.caps.maxAudioBytes + 1), declaredBytes: null }), 413);
   assert.equal(await code({ readAudio: async () => new ArrayBuffer(0), declaredBytes: null }), 422);
@@ -311,8 +318,8 @@ test('the mock provider returns a playable WAV and only transcribes a real-sized
   assert.equal(String.fromCharCode(...wav.slice(0, 4)), 'RIFF');
   assert.equal(String.fromCharCode(...wav.slice(8, 12)), 'WAVE');
   const mock = createMockProvider('نص تجريبي');
-  assert.deepEqual(await mock.transcribe(new ArrayBuffer(100), 'audio/mp4'), { ok: true, text: '' });
-  assert.deepEqual(await mock.transcribe(new ArrayBuffer(5000), 'audio/mp4'), { ok: true, text: 'نص تجريبي' });
+  assert.deepEqual(await mock.transcribe(new ArrayBuffer(100), 'audio/wav'), { ok: true, text: '' });
+  assert.deepEqual(await mock.transcribe(new ArrayBuffer(5000), 'audio/wav'), { ok: true, text: 'نص تجريبي' });
   const spoken = await mock.speak('x');
   assert.ok(spoken.ok && spoken.contentType === 'audio/wav');
 });
@@ -614,3 +621,134 @@ test('wiring: every voice entry passes the account, the browser tells the server
 function ticketIdOf(token: string) {
   return JSON.parse(Buffer.from(token.split('.')[0], 'base64url').toString('utf8')).i as string;
 }
+
+// ------------------------------------------- audio length is enforced on the server
+
+test('audio length: a long clip is refused on the bytes before any provider request, a short one passes', async () => {
+  const { deps, counters } = makeDeps();
+  const send = async (audio: ArrayBuffer) => {
+    const token = await openSession(deps);
+    const r = (await transcribeVoiceTurn(deps, upload(token, { readAudio: async () => audio, declaredBytes: audio.byteLength }))) as unknown as { status: number; json: { error?: string } };
+    return [r.status, r.json.error];
+  };
+  const max = deps.config.caps.maxAudioSeconds; // 30 by default
+  assert.deepEqual(await send(wavOf(max)), [200, undefined]);
+  assert.equal(counters.stt, 1);
+  // 45 s of 16 kHz PCM is 1.44 MB: under the byte cap, over the length cap.
+  const long = wavOf(max + 15);
+  assert.ok(long.byteLength < deps.config.caps.maxAudioBytes, 'the size cap alone would let this through');
+  assert.deepEqual(await send(long), [413, 'audio_too_large']);
+  assert.equal(counters.stt, 1, 'the provider was never called for the long clip');
+});
+
+test('audio length cannot be faked: header sizes must match the payload, and only 16-bit mono PCM is accepted', () => {
+  const ok = wavOf(1);
+  assert.deepEqual(inspectWav(ok), { ok: true, seconds: 1, sampleRate: 16_000 });
+  // A header that claims 1 s over a 30 s payload.
+  const lying = wavOf(30);
+  new DataView(lying).setUint32(40, 32_000, true);
+  assert.equal(inspectWav(lying).ok, false);
+  // Trailing bytes after the declared data are not tolerated.
+  const padded = new Uint8Array(ok.byteLength + 500);
+  padded.set(new Uint8Array(ok));
+  assert.equal(inspectWav(padded.buffer).ok, false);
+  // Stereo, 8-bit, non-PCM, garbage, empty.
+  for (const [offset, size, value] of [[22, 2, 2], [34, 2, 8], [20, 2, 3]] as const) {
+    const bad = wavOf(1);
+    const v = new DataView(bad);
+    v.setUint16(offset, value, true);
+    assert.equal(inspectWav(bad).ok, false, `field at ${offset}/${size}`);
+  }
+  assert.equal(inspectWav(new ArrayBuffer(10_000)).ok, false);
+  assert.equal(inspectWav(new ArrayBuffer(0)).ok, false);
+});
+
+test('encoder: browser sample rates are cut to 16 kHz and the capture stops at its ceiling', () => {
+  const tone = (rate: number, seconds: number) => Float32Array.from({ length: Math.round(rate * seconds) }, (_, i) => Math.sin((2 * Math.PI * 440 * i) / rate) * 0.5);
+  for (const rate of [44_100, 48_000]) {
+    const info = inspectWav(encodeWav16([tone(rate, 2)], rate));
+    assert.ok(info.ok && Math.abs(info.seconds - 2) < 0.01 && info.sampleRate === 16_000, `rate ${rate}`);
+  }
+  const capture = new PcmCapture(48_000, 3);
+  for (let i = 0; i < 100; i++) capture.push(tone(48_000, 0.5)); // 50 s offered
+  assert.ok(capture.seconds <= 3 + 1e-9);
+  const info = inspectWav(capture.toWav());
+  assert.ok(info.ok && info.seconds <= 3.01);
+  // Chunk boundaries do not drop samples.
+  const split = encodeWav16([tone(16_000, 0.3), tone(16_000, 0.7)], 16_000);
+  assert.ok((inspectWav(split) as { seconds: number }).seconds === 1);
+});
+
+// ------------------------------------------- session quota window (SQL-accurate)
+
+/**
+ * Same rules as public.consume_rate_limit: a counter restarts when
+ * window_start + window_seconds has passed, measured from the window of THIS
+ * call. A count map would hide the bug this test is for.
+ */
+function makeSqlLimiter(now: () => number) {
+  const rows = new Map<string, { start: number; count: number }>();
+  return async (key: string, limit: number, windowSeconds: number) => {
+    const t = now();
+    const row = rows.get(key);
+    if (!row) rows.set(key, { start: t, count: 1 });
+    else if (row.start + windowSeconds * 1000 <= t) {
+      row.start = t;
+      row.count = 1;
+    } else row.count += 1;
+    return { allowed: rows.get(key)!.count <= limit, retryAfterSeconds: 30 };
+  };
+}
+
+test('session turn cap holds for the whole call: reached at t=0, still reached at t=400 of 600, and at t=599', async () => {
+  let t = NOW;
+  const config = readVoiceConfig({
+    VOICE_ASSISTANT_ENABLED: 'true',
+    ELEVENLABS_API_KEY: 'k',
+    ELEVENLABS_VOICE_ID: 'v',
+    VOICE_TICKET_SECRET: SECRET,
+    VOICE_SESSION_MAX_TURNS: '2',
+  });
+  assert.equal(config.caps.sessionMaxSeconds, 600);
+  const { deps, counters } = makeDeps({ config, nowMs: () => t });
+  deps.limit = makeSqlLimiter(() => t);
+  const token = await openSession(deps);
+  const turn = async () => ((await transcribeVoiceTurn(deps, upload(token))) as unknown as { status: number }).status;
+
+  assert.equal(await turn(), 200); // t = 0
+  assert.equal(await turn(), 200);
+  t = NOW + 400_000;
+  assert.equal(await turn(), 429, 'the cap must not reset after the artificial window of the remaining time ends');
+  t = NOW + 599_000;
+  assert.equal(await turn(), 429);
+  assert.equal(counters.stt, 2);
+  t = NOW + 601_000;
+  assert.equal(await turn(), 401, 'past the session lifetime the token itself is gone');
+});
+
+test('session turn cap: the second turn late in the call counts against the first one early on', async () => {
+  let t = NOW;
+  const config = readVoiceConfig({
+    VOICE_ASSISTANT_ENABLED: 'true',
+    ELEVENLABS_API_KEY: 'k',
+    ELEVENLABS_VOICE_ID: 'v',
+    VOICE_TICKET_SECRET: SECRET,
+    VOICE_SESSION_MAX_TURNS: '2',
+  });
+  const { deps, counters } = makeDeps({ config, nowMs: () => t });
+  deps.limit = makeSqlLimiter(() => t);
+  const token = await openSession(deps);
+  const turn = async () => ((await transcribeVoiceTurn(deps, upload(token))) as unknown as { status: number }).status;
+  assert.equal(await turn(), 200); // t = 0
+  t = NOW + 400_000;
+  assert.equal(await turn(), 200); // t = 400
+  t = NOW + 401_000;
+  assert.equal(await turn(), 429);
+  assert.equal(counters.stt, 2);
+});
+
+test('every window used by the voice counters is fixed per key, never derived from time left', () => {
+  const src = readFileSync('lib/ai/voice-server.ts', 'utf8');
+  assert.ok(!/remainingSeconds/.test(src), 'a shrinking window resets the counter mid-call');
+  assert.ok(src.includes('caps.sessionMaxSeconds, \'session_limit\''));
+});

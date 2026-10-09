@@ -3,7 +3,6 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
   DEFAULT_VOICE_MODEL,
-  pickRecorderMime,
   resolveVoiceCaps,
   looksLikeVoiceApproval,
   nextVoiceCallState,
@@ -122,13 +121,6 @@ test('caps are tunable, clamped, and the daily cap never exceeds the plan quota'
   assert.equal(resolveVoiceCaps({ VOICE_SESSION_MAX_TURNS: '9999' }).sessionMaxTurns, 60);
   assert.equal(resolveVoiceCaps({ VOICE_SESSION_MAX_TURNS: 'abc' }).sessionMaxTurns, 12);
   assert.equal(resolveVoiceCaps({ VOICE_MAX_AUDIO_BYTES: '1' }).maxAudioBytes, 20_000);
-});
-
-test('recorder mime negotiation falls back to mp4 on Safari and returns null when nothing works', () => {
-  assert.equal(pickRecorderMime((m) => m === 'audio/mp4'), 'audio/mp4');
-  assert.equal(pickRecorderMime(() => true), 'audio/webm;codecs=opus');
-  assert.equal(pickRecorderMime(() => false), null);
-  assert.equal(pickRecorderMime(() => { throw new Error('x'); }), null);
 });
 
 test('failure messages tell the person the answer is still written', () => {

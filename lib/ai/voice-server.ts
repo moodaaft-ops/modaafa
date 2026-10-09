@@ -1,3 +1,4 @@
+import { inspectWav } from './voice-pcm';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import {
   prepareSpokenText,
@@ -230,7 +231,8 @@ export function capsForPlan(caps: VoiceCaps, planAssistantDailyLimit: number): V
   return { ...caps, dailyTurns: Math.max(1, Math.min(caps.dailyTurns, planAssistantDailyLimit)) };
 }
 
-const ALLOWED_AUDIO = /^audio\/(webm|mp4|ogg|mpeg|wav|x-m4a|aac)(;.*)?$/i;
+// Only 16-bit mono PCM WAV: its duration can be verified from the bytes (see voice-pcm.ts).
+const ALLOWED_AUDIO = /^audio\/(wav|x-wav|wave)(;.*)?$/i;
 
 /** POST /api/voice/transcribe: one recorded question in, text and a turn ticket out. */
 export async function transcribeVoiceTurn(
@@ -255,9 +257,12 @@ export async function transcribeVoiceTurn(
   // Reject on the declared size before the body is read into memory, then on
   // the real size, because a header is only a claim.
   if (input.declaredBytes !== null && input.declaredBytes > caps.maxAudioBytes) return fail(413, 'audio_too_large');
-  const remainingSeconds = Math.max(1, session.e - Math.floor(now / 1000));
   const blocked = await guarded(deps, [
-    [`voice_turns_s:${session.s}`, caps.sessionMaxTurns, Math.min(remainingSeconds, caps.sessionMaxSeconds), 'session_limit'],
+    // Fixed window, never the shrinking time left: the limiter restarts a counter when
+    // window_start + windowSeconds has passed, so a window that shrinks with each call
+    // would zero the cap in the middle of the call. A call lasts at most sessionMaxSeconds
+    // and its first turn is after it opened, so this window outlives every call.
+    [`voice_turns_s:${session.s}`, caps.sessionMaxTurns, caps.sessionMaxSeconds, 'session_limit'],
     [`voice_turns_d:${user.id}`, caps.dailyTurns, 86_400, 'daily_limit'],
   ]);
   if (blocked) return blocked;
@@ -266,6 +271,11 @@ export async function transcribeVoiceTurn(
   const audio = await input.readAudio();
   if (!audio || audio.byteLength === 0) return fail(422, 'no_speech');
   if (audio.byteLength > caps.maxAudioBytes) return fail(413, 'audio_too_large');
+  // The length cap is enforced here, on the bytes, not only in the browser: a
+  // compressed long clip can fit under a size limit and still bill for minutes.
+  const wav = inspectWav(audio);
+  if (!wav.ok) return fail(415, 'unsupported_audio');
+  if (wav.seconds > caps.maxAudioSeconds + 0.5) return fail(413, 'audio_too_large');
 
   const result = await deps.provider.transcribe(audio, input.mime);
   if (!result.ok) {
