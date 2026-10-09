@@ -8,6 +8,8 @@ import { SUPPORT_WHATSAPP_DISPLAY, whatsappHelpUrl } from '@/lib/support/contact
 import {
   ADS_SIGNUP_URL,
   GUIDE_LIMIT_NOTE,
+  GUIDE_REGION_NOTICE,
+  GUIDE_VIDEO_SEGMENT,
   GUIDE_STEPS,
   resolveGuideVideo,
 } from '@/lib/onboarding/ads-guide';
@@ -25,7 +27,11 @@ export default async function AdsGuidePage() {
   const { business } = await getAccountWorkspace(user.id);
   if (!business) redirect('/onboarding/business');
 
-  const video = resolveGuideVideo(process.env.NEXT_PUBLIC_ADS_GUIDE_VIDEO_ID);
+  const video = resolveGuideVideo(
+    process.env.NEXT_PUBLIC_ADS_GUIDE_VIDEO_ID,
+    'فتح حساب Google Ads (مقطع إنشاء الحساب فقط)',
+    GUIDE_VIDEO_SEGMENT
+  );
 
   return (
     <main className="px-4 py-8 sm:px-6">
@@ -47,6 +53,10 @@ export default async function AdsGuidePage() {
         </div>
 
         <section className="surface-card p-5 sm:p-6">
+          <p className="mb-5 border-s-2 border-signal bg-background-elevated px-4 py-3 text-[13px] leading-7 text-foreground">
+            {GUIDE_REGION_NOTICE}
+          </p>
+
           <ol className="space-y-4">
             {GUIDE_STEPS.map((step, index) => (
               <li key={step.title} className="flex items-start gap-3">
