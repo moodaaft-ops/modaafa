@@ -151,30 +151,46 @@ export async function reserveAuditAccess({
 export type CompleteResult = 'completed' | 'already_completed' | 'expired' | 'not_found' | 'error' | 'noop';
 
 /**
- * The audit finished: keep the reservation counted. The audit result is already
- * saved, so a failure here must never fail the request; it is returned (and
- * logged) instead of thrown. Consequence of a lost completion: the reservation
- * lapses after its lease and stops counting, so the customer keeps the
- * allowance rather than losing it to our fault.
+ * The audit finished and its report is saved: keep the reservation counted.
+ * Server-only: the RPC is granted to service_role alone, so this runs on the
+ * admin client and names the event, the user and the account; SQL requires all
+ * three to match the ledger row. The customer's own session can never complete
+ * a reservation early. A failure here must never fail the request; it is
+ * returned (and logged) instead of thrown. Consequence of a lost completion:
+ * the reservation lapses after its lease and stops counting, so the customer
+ * keeps the allowance rather than losing it to our fault.
  */
-export async function completeAuditAccess(
-  supabase: any,
-  _userId: string,
-  access: AuditAccess
-): Promise<CompleteResult> {
+export async function completeAuditAccess({
+  admin,
+  userId,
+  accountId,
+  access,
+}: {
+  admin: any;
+  userId: string;
+  accountId: string;
+  access: AuditAccess;
+}): Promise<CompleteResult> {
   if (!access.ok || access.source !== 'free') return 'noop';
-  const { data, error } = await supabase.rpc('complete_free_audit', {
-    p_event_id: access.freeEventId,
-  });
-  if (error) {
+  try {
+    const { data, error } = await admin.rpc('complete_free_audit', {
+      p_event_id: access.freeEventId,
+      p_user_id: userId,
+      p_account_id: accountId,
+    });
+    if (error) {
+      console.error('Failed to complete free audit reservation', error);
+      return 'error';
+    }
+    const result = String(data ?? '');
+    if (result === 'expired') console.error('Free audit lease expired before completion', access.freeEventId);
+    return (['completed', 'already_completed', 'expired', 'not_found'] as const).includes(result as any)
+      ? (result as CompleteResult)
+      : 'error';
+  } catch (error) {
     console.error('Failed to complete free audit reservation', error);
     return 'error';
   }
-  const result = String(data ?? '');
-  if (result === 'expired') console.error('Free audit lease expired before completion', access.freeEventId);
-  return (['completed', 'already_completed', 'expired', 'not_found'] as const).includes(result as any)
-    ? (result as CompleteResult)
-    : 'error';
 }
 
 /** The audit failed on our side: give the allowance back. */

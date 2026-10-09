@@ -107,25 +107,27 @@ begin
 end;
 $$;
 
--- Finish a reservation. Idempotent: completing twice is fine. A reservation whose
--- lease already expired is NOT completed (it was abandoned), so a late or
--- replayed call can never push the count past the limit.
+-- Finish a reservation. SERVER-ONLY (service_role): the audit route calls it
+-- after the report is saved, so a customer cannot complete a reservation while
+-- the audit is still running and then start the next one (that would defeat the
+-- one-audit-at-a-time rule). The caller must name the event, the user and the
+-- account, and all three must match the ledger row.
+-- Idempotent: completing twice is fine. A reservation whose lease already
+-- expired is NOT completed (it was abandoned), so a late or replayed call can
+-- never push the count past the limit.
 -- Returns 'completed' | 'already_completed' | 'expired' | 'not_found'.
-create or replace function public.complete_free_audit(p_event_id uuid)
+create or replace function public.complete_free_audit(p_event_id uuid, p_user_id uuid, p_account_id uuid)
 returns text
 language plpgsql
 security definer
 set search_path = public, pg_temp
 as $$
 declare
-  v_user uuid := auth.uid();
   v_row public.free_audit_ledger%rowtype;
 begin
-  if v_user is null then
-    raise exception 'forbidden';
-  end if;
-
-  select * into v_row from public.free_audit_ledger where id = p_event_id and user_id = v_user;
+  select * into v_row
+  from public.free_audit_ledger
+  where id = p_event_id and user_id = p_user_id and account_id = p_account_id;
   if not found then
     return 'not_found';
   end if;
@@ -169,10 +171,11 @@ $$;
 -- Drop the earlier, wider signatures if a reviewer already ran the first draft.
 drop function if exists public.consume_free_audit(uuid, text, uuid, integer, integer, jsonb);
 drop function if exists public.complete_free_audit(uuid, uuid);
+drop function if exists public.complete_free_audit(uuid);
 
 revoke all on function public.consume_free_audit(uuid) from public;
 grant execute on function public.consume_free_audit(uuid) to authenticated;
-revoke all on function public.complete_free_audit(uuid) from public;
-grant execute on function public.complete_free_audit(uuid) to authenticated;
+revoke all on function public.complete_free_audit(uuid, uuid, uuid) from public, anon, authenticated;
+grant execute on function public.complete_free_audit(uuid, uuid, uuid) to service_role;
 revoke all on function public.refund_free_audit(uuid) from public, anon, authenticated;
 grant execute on function public.refund_free_audit(uuid) to service_role;

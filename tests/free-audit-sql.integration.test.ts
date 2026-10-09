@@ -32,6 +32,10 @@ function psqlAs(user: string | null, sql: string, role = 'authenticated') {
     return `ERROR: ${String(error.stderr ?? error.message)}`;
   }
 }
+/** Completion is server-only: always called as service_role with event, user and account. */
+function complete(eventId: string, user: string, acc: string) {
+  return psqlAs(null, `select public.complete_free_audit('${eventId}','${user}','${acc}')`, 'service_role');
+}
 function consume(user: string, acc: string) {
   const out = psqlAs(user, `select allowed||','||coalesce(reason,'-')||','||used||','||coalesce(event_id::text,'') from public.consume_free_audit('${acc}')`);
   const [allowed, reason, used, eventId] = out.split(',');
@@ -74,12 +78,36 @@ test('limit and lease cannot be overridden: the only parameter is the account id
   assert.match(psqlAs(A, `select * from public.consume_free_audit('${ACC_A}', 100)`), /does not exist/);
   assert.match(psqlAs(A, `select * from public.consume_free_audit(p_account_id => '${ACC_A}', p_limit => 100, p_inflight_seconds => 0)`), /does not exist|not exist/);
   assert.match(psqlAs(A, `select public.complete_free_audit('${A}'::uuid, '${A}'::uuid)`), /does not exist/);
+  assert.match(psqlAs(A, `select public.complete_free_audit('${A}'::uuid)`), /does not exist/);
 });
 
 test('no direct table access or refund for authenticated users', { skip }, () => {
   assert.match(psqlAs(A, 'select count(*) from public.free_audit_ledger'), /permission denied/);
   assert.match(psqlAs(A, `select public.refund_free_audit('${A}')`), /permission denied/);
   assert.match(psqlAs(A, `delete from public.free_audit_ledger`), /permission denied/);
+});
+
+test('authenticated users cannot complete a reservation, not even their own', { skip }, () => {
+  psql('truncate public.free_audit_ledger');
+  const r = consume(A, ACC_A);
+  assert.ok(r.allowed);
+  const direct = psqlAs(A, `select public.complete_free_audit('${r.eventId}','${A}','${ACC_A}')`);
+  assert.match(direct, /permission denied/);
+  assert.match(psqlAs(null, `select public.complete_free_audit('${r.eventId}','${A}','${ACC_A}')`, 'anon'), /permission denied/);
+  assert.equal(psql(`select status from public.free_audit_ledger where id='${r.eventId}'`), 'reserved');
+  // the audit is still running, so a second start stays blocked
+  assert.equal(consume(A, ACC_A).reason, 'audit_in_progress');
+});
+
+test('server completion verifies event, user and account', { skip }, () => {
+  psql('truncate public.free_audit_ledger');
+  const r = consume(A, ACC_A);
+  assert.equal(complete(r.eventId, B, ACC_A), 'not_found', 'wrong user');
+  assert.equal(complete(r.eventId, A, ACC_A2), 'not_found', 'wrong account');
+  assert.equal(complete(r.eventId, A, ACC_B), 'not_found', 'foreign account');
+  assert.equal(complete(randomUuid(), A, ACC_A), 'not_found', 'unknown event');
+  assert.equal(psql(`select status from public.free_audit_ledger where id='${r.eventId}'`), 'reserved');
+  assert.equal(complete(r.eventId, A, ACC_A), 'completed');
 });
 
 test('12 concurrent requests reserve exactly once', { skip }, async () => {
@@ -99,13 +127,13 @@ test('two audits max, per Google customer id, across account rows', { skip }, ()
   psql('truncate public.free_audit_ledger');
   const first = consume(A, ACC_A);
   assert.ok(first.allowed);
-  assert.equal(psqlAs(A, `select public.complete_free_audit('${first.eventId}')`), 'completed');
-  assert.equal(psqlAs(A, `select public.complete_free_audit('${first.eventId}')`), 'already_completed');
+  assert.equal(complete(first.eventId, A, ACC_A), 'completed');
+  assert.equal(complete(first.eventId, A, ACC_A), 'already_completed');
   // a second account row (relink) with the same customer id shares the counter
   const second = consume(A, ACC_A2);
   assert.ok(second.allowed);
   assert.equal(second.used, 2);
-  psqlAs(A, `select public.complete_free_audit('${second.eventId}')`);
+  complete(second.eventId, A, ACC_A2);
   const third = consume(A, ACC_A);
   assert.equal(third.reason, 'free_audits_exhausted');
   // unlink + delete the account row: ledger survives, allowance does not reset
@@ -129,10 +157,10 @@ test('abandoned reservation (server crash) does not burn the audits; completion 
   assert.equal(retry.used, 1, 'and stops counting');
   assert.equal(psql(`select status from public.free_audit_ledger where id='${crashed.eventId}'`), 'abandoned');
   // a late completion of the crashed run must not count
-  assert.equal(psqlAs(A, `select public.complete_free_audit('${crashed.eventId}')`), 'expired');
-  assert.equal(psqlAs(A, `select public.complete_free_audit('${retry.eventId}')`), 'completed');
+  assert.equal(complete(crashed.eventId, A, ACC_A), 'expired');
+  assert.equal(complete(retry.eventId, A, ACC_A), 'completed');
   // another user cannot complete somebody else's reservation
-  assert.equal(psqlAs(B, `select public.complete_free_audit('${retry.eventId}')`), 'not_found');
+  assert.equal(complete(retry.eventId, B, ACC_A), 'not_found');
 });
 
 test('failed audit refund (service role only) restores the allowance', { skip }, () => {

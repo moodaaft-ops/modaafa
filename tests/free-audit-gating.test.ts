@@ -12,7 +12,7 @@ import {
 
 /** In-memory twin of consume_free_audit (db/migrations/20261009_free_audit_quota.sql). */
 function fakeSupabase(accountCustomer: Record<string, string> = { acc1: '1234567890', 'brand-new-row': '1234567890', acc9: '9876543210' }) {
-  const ledger: { id: string; customer: string; status: string }[] = [];
+  const ledger: { id: string; customer: string; status: string; user?: string; account?: string }[] = [];
   const calls: any[] = [];
   let seq = 0;
   return {
@@ -21,7 +21,8 @@ function fakeSupabase(accountCustomer: Record<string, string> = { acc1: '1234567
     async rpc(name: string, args: any) {
       calls.push({ name, args });
       if (name === 'complete_free_audit') {
-        const row = ledger.find((r) => r.id === args.p_event_id);
+        assert.deepEqual(Object.keys(args).sort(), ['p_account_id', 'p_event_id', 'p_user_id']);
+        const row = ledger.find((r) => r.id === args.p_event_id && r.user === args.p_user_id && r.account === args.p_account_id);
         if (!row) return { data: 'not_found', error: null };
         if (row.status === 'completed') return { data: 'already_completed', error: null };
         if (row.status === 'abandoned') return { data: 'expired', error: null };
@@ -39,7 +40,7 @@ function fakeSupabase(accountCustomer: Record<string, string> = { acc1: '1234567
         return { data: [{ allowed: false, reason: 'audit_in_progress', used: completed, event_id: null }], error: null };
       }
       const id = `evt-${++seq}`;
-      ledger.push({ id, customer, status: 'reserved' });
+      ledger.push({ id, customer, status: 'reserved', user: 'u1', account: args.p_account_id });
       return { data: [{ allowed: true, reason: null, used: completed + 1, event_id: id }], error: null };
     },
   };
@@ -112,15 +113,24 @@ test('expired and cancelled subscriptions fall back to the free allowance, not t
   assert.equal(isSubscriptionEntitled({ status: 'active', current_period_end: '2026-10-20T00:00:00Z' }, now), true);
 });
 
-test('completion errors are swallowed but reported, never thrown', async () => {
+test('completion is server-side (admin client), verified, and errors are reported, never thrown', async () => {
   const supabase = fakeSupabase();
   const access = await reserveAuditAccess({ ...base, supabase, deps: deps(inactive) });
-  assert.equal(await completeAuditAccess(supabase, 'u1', access), 'completed');
-  assert.equal(await completeAuditAccess(supabase, 'u1', access), 'already_completed');
+  const done = (admin: any, over: any = {}) =>
+    completeAuditAccess({ admin, userId: 'u1', accountId: 'acc1', access, ...over });
+  assert.equal(await done(supabase, { userId: 'u2' }), 'not_found', 'wrong user');
+  assert.equal(await done(supabase, { accountId: 'acc9' }), 'not_found', 'wrong account');
+  assert.equal(supabase.ledger[0].status, 'reserved');
+  assert.equal(await done(supabase), 'completed');
+  assert.equal(await done(supabase), 'already_completed');
+  const sent = supabase.calls.filter((c: any) => c.name === 'complete_free_audit').pop().args;
+  assert.deepEqual(sent, { p_event_id: access.ok && access.source === 'free' ? access.freeEventId : '', p_user_id: 'u1', p_account_id: 'acc1' });
   const broken = { rpc: async () => ({ data: null, error: { message: 'down' } }) };
-  assert.equal(await completeAuditAccess(broken, 'u1', access), 'error');
+  assert.equal(await done(broken), 'error');
+  const throwing = { rpc: async () => { throw new Error('boom'); } };
+  assert.equal(await done(throwing), 'error');
   const sub = { ok: true as const, source: 'subscription' as const, remaining: 1, resetsAt: 'x', usageEventId: 'u' };
-  assert.equal(await completeAuditAccess(broken, 'u1', sub), 'noop');
+  assert.equal(await completeAuditAccess({ admin: broken, userId: 'u1', accountId: 'acc1', access: sub }), 'noop');
 });
 
 test('storage errors fail closed with a retryable reason', async () => {
@@ -162,4 +172,13 @@ test('audit route reads without a plan and rollback stays available after a subs
   assert.ok(audit.includes('reserveAuditAccess('));
   assert.ok(!audit.includes("feature: 'audit'"), 'audit no longer demands a subscription directly');
   assert.ok(!read('app/api/actions/rollback/route.ts').includes('consumeFeatureUsage('));
+});
+
+test('the audit route completes with the admin client after the report is saved', () => {
+  const route = readFileSync(new URL('../app/api/audit/run/route.ts', import.meta.url), 'utf8');
+  assert.match(route, /completeAuditAccess\(\{ admin, userId: user\.id, accountId: account\.id, access: usage \}\)/);
+  assert.ok(route.indexOf('await executeAudit(') < route.indexOf('await completeAuditAccess('), 'completion runs after executeAudit');
+  const migration = readFileSync(new URL('../db/migrations/20261009_free_audit_quota.sql', import.meta.url), 'utf8');
+  assert.match(migration, /grant execute on function public\.complete_free_audit\(uuid, uuid, uuid\) to service_role;/);
+  assert.doesNotMatch(migration, /grant execute on function public\.complete_free_audit[^;]*authenticated;/);
 });

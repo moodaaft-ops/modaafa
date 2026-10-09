@@ -123,7 +123,7 @@ export async function POST(req: NextRequest) {
       account,
       onProgress,
     });
-    await completeAuditAccess(supabase, user.id, usage);
+    await completeAuditAccess({ admin, userId: user.id, accountId: account.id, access: usage });
     return outcome;
   };
 

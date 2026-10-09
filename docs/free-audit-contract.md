@@ -22,10 +22,32 @@
 نجاح الفحص يرجع `usage: { source: 'free' | 'subscription', remaining, resets_at }`.
 
 ## RPC (Supabase)
-- `consume_free_audit(p_account_id uuid)` يرجع `(allowed, reason, used, event_id)`، للدور authenticated. الوسيط الوحيد هو معرّف الحساب؛ الـcustomer id يُقرأ داخل SQL من حساب يملكه `auth.uid()` (غير ذلك `forbidden`)، والحد 2 ومدة الحجز 15 دقيقة ثوابت داخل الدالة.
-- `complete_free_audit(p_event_id uuid)` يرجع نصاً: `completed` أو `already_completed` أو `expired` أو `not_found`. متكرر الأمان (idempotent)، ولا يكمل حجزاً انتهت مدته.
-- `refund_free_audit(p_event_id uuid)` للـservice_role فقط.
-- الجدول `free_audit_ledger` مقفل على anon وauthenticated. الحالات: `reserved` ثم `completed` أو `abandoned`؛ فقط `completed` يُحسب من الحد.
+
+**`consume_free_audit(p_account_id uuid)`**
+
+- الدور: `authenticated`.
+- يرجع `(allowed, reason, used, event_id)`.
+- الوسيط الوحيد هو معرّف الحساب. الـcustomer id يُقرأ داخل SQL من حساب يملكه `auth.uid()`، وغير ذلك `forbidden`.
+- الحد 2 ومدة الحجز 15 دقيقة ثوابت داخل الدالة.
+
+**`complete_free_audit(p_event_id uuid, p_user_id uuid, p_account_id uuid)`**
+
+- الدور: `service_role` فقط. `authenticated` و`anon` يحصلون على `permission denied`.
+- يُستدعى من السيرفر بعد حفظ التقرير، عبر `completeAuditAccess({ admin, userId, accountId, access })`.
+- يتحقق أن الحجز والمستخدم والحساب الثلاثة تطابق صف الدفتر، وإلا يرجع `not_found`.
+- يرجع نصاً: `completed` أو `already_completed` أو `expired` أو `not_found`.
+- متكرر الأمان (idempotent)، ولا يكمل حجزاً انتهت مدته.
+- السبب: لو كان متاحاً للعميل لكمّل الحجز وفحصه شغّال، وبدأ الفحص الثاني فوراً وتجاوز منع التزامن.
+
+**`refund_free_audit(p_event_id uuid)`**
+
+- الدور: `service_role` فقط.
+
+**الجدول `free_audit_ledger`**
+
+- مقفل على anon وauthenticated.
+- الحالات: `reserved` ثم `completed` أو `abandoned`.
+- فقط `completed` يُحسب من الحد.
 
 للقراءة من الواجهة: `getFreeAuditStatus(customerId)` ترجع `{ limit, used, remaining }` (خادم فقط).
 
@@ -39,4 +61,4 @@
 - الفحصان لكل حساب Google وليس لكل مستخدم: وكالة تنقل حساباً بين مستخدمين تحتاج رفعاً يدوياً للحد.
 - حساب Google جديد (customer id مختلف) له فحصان جديدان، وهذا مقصود حسب النص.
 - حجز عالق (انهيار السيرفر أثناء الفحص) يمنع فحصاً ثانياً حتى تنتهي مدته (15 دقيقة)، ثم يصير `abandoned` ولا يُحسب ولا يمنع. يعني انهيارنا ما يحرق الفحصين، والثمن أن انهياراً بعد حفظ التقرير وقبل الإكمال يعطي العميل فحصاً زائداً.
-- `completeAuditAccess` ما يرمي خطأ لأن التقرير انحفظ: يرجع `completed | already_completed | expired | not_found | error | noop` ويسجل الخطأ في اللوق. فشل الإكمال معناه أن الحجز ينتهي ولا يُحسب، لصالح العميل.
+- `completeAuditAccess` يشتغل على عميل الإدارة ولا يرمي خطأ لأن التقرير انحفظ: يرجع `completed | already_completed | expired | not_found | error | noop` ويسجل الخطأ في اللوق. فشل الإكمال معناه أن الحجز ينتهي ولا يُحسب، لصالح العميل.
