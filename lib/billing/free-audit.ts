@@ -55,15 +55,49 @@ export function auditAccessMessage(reason?: string) {
   return null;
 }
 
-/** Read-only view of the allowance, for the UI and for tasks 02 and 05. */
-export async function getFreeAuditStatus(customerId: string, admin: any = createAdminClient()) {
-  const { count, error } = await admin
+export type FreeAuditStatus = {
+  limit: number;
+  /** Completed audits only. Abandoned or expired reservations never count. */
+  used: number;
+  remaining: number;
+  /** A reservation with a live lease: an audit is running right now. Separate from `used`. */
+  inProgress: boolean;
+};
+
+/** Same rules as consume_free_audit: only `completed` counts, a lapsed lease is abandoned. */
+export function summarizeFreeAuditLedger(
+  rows: { status: string; lease_expires_at?: string | null }[],
+  now: number = Date.now()
+): FreeAuditStatus {
+  const completed = rows.filter((r) => r.status === 'completed').length;
+  const inProgress = rows.some(
+    (r) => r.status === 'reserved' && r.lease_expires_at != null && Date.parse(r.lease_expires_at) > now
+  );
+  const used = Math.min(completed, FREE_AUDITS_PER_ACCOUNT);
+  return { limit: FREE_AUDITS_PER_ACCOUNT, used, remaining: FREE_AUDITS_PER_ACCOUNT - used, inProgress };
+}
+
+export type FreeAuditView = 'unknown' | 'exhausted' | 'in_progress' | 'available';
+
+/**
+ * What the audit page shows. `unknown` (the ledger could not be read) must never
+ * be presented as exhausted: the button stays usable and the server decides.
+ */
+export function freeAuditView(status: FreeAuditStatus | null): FreeAuditView {
+  if (!status) return 'unknown';
+  if (status.remaining <= 0) return 'exhausted';
+  return status.inProgress ? 'in_progress' : 'available';
+}
+
+/** Read-only view of the allowance, for the UI and for tasks 02 and 05. Null when the ledger cannot be read. */
+export async function getFreeAuditStatus(customerId: string, admin: any = createAdminClient()): Promise<FreeAuditStatus | null> {
+  const { data, error } = await admin
     .from('free_audit_ledger')
-    .select('id', { count: 'exact', head: true })
-    .eq('customer_id', customerId);
-  if (error) return null;
-  const used = Math.min(count ?? 0, FREE_AUDITS_PER_ACCOUNT);
-  return { limit: FREE_AUDITS_PER_ACCOUNT, used, remaining: FREE_AUDITS_PER_ACCOUNT - used };
+    .select('status, lease_expires_at')
+    .eq('customer_id', customerId)
+    .in('status', ['completed', 'reserved']);
+  if (error || !Array.isArray(data)) return null;
+  return summarizeFreeAuditLedger(data);
 }
 
 type Deps = {

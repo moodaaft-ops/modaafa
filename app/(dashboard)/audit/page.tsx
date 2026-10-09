@@ -26,7 +26,7 @@ import { StatusBadge, recommendationStatusTone, severityTone } from '@/lib/ui/st
 import { buttonClasses } from '@/lib/ui/button';
 import { cn } from '@/lib/utils';
 import { getSubscriptionAccess, featureAccessMessage } from '@/lib/billing/entitlements';
-import { auditAccessMessage, getFreeAuditStatus } from '@/lib/billing/free-audit';
+import { auditAccessMessage, freeAuditView, getFreeAuditStatus } from '@/lib/billing/free-audit';
 import { SubscriptionGate } from '@/lib/ui/subscription-gate';
 import { isCurrentAuditEngine } from '@/lib/audit/version';
 import { isRecommendationActionable, orderRecommendationsForGuidance } from '@/lib/audit/guidance';
@@ -55,7 +55,10 @@ export default async function AuditPage({
   const freeAudit = !subscription.active && selectedAccount
     ? await getFreeAuditStatus(selectedAccount.customer_id).catch(() => null)
     : null;
-  const canRunAudit = subscription.active || (freeAudit ? freeAudit.remaining > 0 : !selectedAccount);
+  const freeView = freeAuditView(freeAudit);
+  // An unreadable ledger is not "exhausted": the button stays and the server
+  // (consume_free_audit) is the one that decides, answering 503 if it is down.
+  const canRunAudit = subscription.active || !selectedAccount || freeView !== 'exhausted';
 
   const auditResult = selectedAccount
     ? await supabase
@@ -208,11 +211,15 @@ export default async function AuditPage({
         {params?.approved && (
           <Alert tone="success">تم تجهيز التوصية للمراجعة. لم ننفذ أي تعديل على حسابك، وتقدر تراجع الأرقام قبل التنفيذ في مركز الموافقات.</Alert>
         )}
-        {!subscription.active && freeAudit && (
+        {!subscription.active && selectedAccount && (
           <Alert tone="info">
-            {freeAudit.remaining > 0
-              ? `الفحص مجاني لهذا الحساب: باقي لك ${freeAudit.remaining} من ${freeAudit.limit}. الاشتراك يلزم فقط عند تنفيذ التوصيات أو تفعيل التحسين الآلي.`
-              : 'استخدمت الفحصين المجانيين لهذا الحساب. تقاريرك وتوصياتك تبقى مفتوحة للقراءة، والاشتراك يلزم لفحص جديد أو لتنفيذ التوصيات.'}
+            {freeView === 'exhausted'
+              ? 'استخدمت الفحصين المجانيين لهذا الحساب. تقاريرك وتوصياتك تبقى مفتوحة للقراءة، والاشتراك يلزم لفحص جديد أو لتنفيذ التوصيات.'
+              : freeView === 'unknown'
+                ? 'ما قدرنا نقرأ عدد فحوصاتك المجانية الآن. تقدر تشغّل الفحص، ونتحقق من حصتك عند التشغيل.'
+                : freeView === 'in_progress'
+                  ? `فيه فحص شغّال لهذا الحساب الآن. باقي لك ${freeAudit!.remaining} من ${freeAudit!.limit} بعد ما يخلص.`
+                  : `الفحص مجاني لهذا الحساب: باقي لك ${freeAudit!.remaining} من ${freeAudit!.limit}. الاشتراك يلزم فقط عند تنفيذ التوصيات أو تفعيل التحسين الآلي.`}
           </Alert>
         )}
         {!subscription.active && <SubscriptionGate compact />}

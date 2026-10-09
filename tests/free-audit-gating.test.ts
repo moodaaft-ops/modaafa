@@ -7,6 +7,9 @@ import {
   auditAccessMessage,
   auditAccessStatus,
   completeAuditAccess,
+  freeAuditView,
+  getFreeAuditStatus,
+  summarizeFreeAuditLedger,
   reserveAuditAccess,
 } from '../lib/billing/free-audit';
 
@@ -181,4 +184,48 @@ test('the audit route completes with the admin client after the report is saved'
   const migration = readFileSync(new URL('../db/migrations/20261009_free_audit_quota.sql', import.meta.url), 'utf8');
   assert.match(migration, /grant execute on function public\.complete_free_audit\(uuid, uuid, uuid\) to service_role;/);
   assert.doesNotMatch(migration, /grant execute on function public\.complete_free_audit[^;]*authenticated;/);
+});
+
+const NOW = Date.parse('2026-10-09T00:00:00Z');
+const future = '2026-10-09T00:10:00Z';
+const past = '2026-10-08T23:00:00Z';
+
+test('status after a crash: two abandoned reservations do not burn the allowance or lock the page', () => {
+  const s = summarizeFreeAuditLedger([{ status: 'abandoned' }, { status: 'abandoned' }], NOW);
+  assert.deepEqual(s, { limit: 2, used: 0, remaining: 2, inProgress: false });
+  assert.equal(freeAuditView(s), 'available');
+});
+
+test('status: a lapsed reserved lease (crash, not yet swept) is not counted and not in progress', () => {
+  const s = summarizeFreeAuditLedger([{ status: 'reserved', lease_expires_at: past }, { status: 'reserved', lease_expires_at: past }], NOW);
+  assert.deepEqual(s, { limit: 2, used: 0, remaining: 2, inProgress: false });
+  assert.equal(freeAuditView(s), 'available');
+});
+
+test('status: one completed plus a live reservation is its own state, used stays 1', () => {
+  const s = summarizeFreeAuditLedger([{ status: 'completed' }, { status: 'reserved', lease_expires_at: future }], NOW);
+  assert.deepEqual(s, { limit: 2, used: 1, remaining: 1, inProgress: true });
+  assert.equal(freeAuditView(s), 'in_progress');
+});
+
+test('status: real exhaustion is two completed audits, even with abandoned noise around them', () => {
+  const s = summarizeFreeAuditLedger([{ status: 'completed' }, { status: 'abandoned' }, { status: 'completed' }, { status: 'completed' }], NOW);
+  assert.equal(s.used, 2);
+  assert.equal(s.remaining, 0);
+  assert.equal(freeAuditView(s), 'exhausted');
+});
+
+test('status: a database error is unknown, never exhausted', async () => {
+  const failing = { from: () => ({ select: () => ({ eq: () => ({ in: async () => ({ data: null, error: { message: 'down' } }) }) }) }) };
+  const s = await getFreeAuditStatus('1234567890', failing);
+  assert.equal(s, null);
+  assert.equal(freeAuditView(s), 'unknown');
+  const ok = { from: () => ({ select: () => ({ eq: () => ({ in: async () => ({ data: [{ status: 'completed' }], error: null }) }) }) }) };
+  assert.equal((await getFreeAuditStatus('1234567890', ok))?.remaining, 1);
+});
+
+test('the audit page only treats the exhausted view as a lock', () => {
+  const page = readFileSync(new URL('../app/(dashboard)/audit/page.tsx', import.meta.url), 'utf8');
+  assert.match(page, /freeView !== 'exhausted'/);
+  assert.match(page, /freeView === 'unknown'/);
 });
