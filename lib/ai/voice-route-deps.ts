@@ -13,6 +13,7 @@ export async function buildVoiceDeps(req: NextRequest): Promise<VoiceDeps> {
 
   let user: VoiceDeps['user'] = null;
   let planAssistantDailyLimit: number | null = null;
+  let tier: VoiceDeps['tier'] = null;
   if (config.enabled) {
     const supabase = await createServerClient();
     const {
@@ -23,6 +24,13 @@ export async function buildVoiceDeps(req: NextRequest): Promise<VoiceDeps> {
       const subscription = await getSubscriptionAccess(supabase, authUser.id, authUser.email);
       if (subscription.active && subscription.plan) {
         planAssistantDailyLimit = PLAN_LIMITS[subscription.plan].assistant.limit;
+        tier = 'paid';
+      } else if (config.freeDailyTurns > 0) {
+        // Not locked before the person has seen value (task 05 contract): a
+        // small read-only allowance. Writes stay behind subscription, preview
+        // and approval in the paths that perform them, not here.
+        planAssistantDailyLimit = config.freeDailyTurns;
+        tier = 'free';
       }
     }
   }
@@ -32,6 +40,7 @@ export async function buildVoiceDeps(req: NextRequest): Promise<VoiceDeps> {
     nowMs: () => Date.now(),
     user,
     planAssistantDailyLimit,
+    tier,
     provider,
     limit: async (key, limit, windowSeconds) => {
       const idx = key.indexOf(':');
@@ -44,6 +53,15 @@ export async function buildVoiceDeps(req: NextRequest): Promise<VoiceDeps> {
       });
       return { allowed: result.allowed, retryAfterSeconds: result.retryAfterSeconds };
     },
+  };
+}
+
+/** Rate-limit adapter shared by the chat route's voice check. */
+export function voiceLimiter(req: NextRequest): VoiceDeps['limit'] {
+  return async (key, limit, windowSeconds) => {
+    const idx = key.indexOf(':');
+    const result = await checkRateLimit({ req, scope: key.slice(0, idx), identifier: key.slice(idx + 1), limit, windowSeconds });
+    return { allowed: result.allowed, retryAfterSeconds: result.retryAfterSeconds };
   };
 }
 

@@ -147,7 +147,7 @@ export function AssistantClient({
     startTransition(() => router.refresh());
   }
 
-  async function sendMessage(text: string): Promise<VoiceTurnResult> {
+  async function sendMessage(text: string, voiceTicket?: string): Promise<VoiceTurnResult> {
     const trimmed = text.trim();
     if (!trimmed || !customerId || loading) return null;
 
@@ -173,7 +173,9 @@ export function AssistantClient({
     try {
       response = await fetch('/api/chat/assistant', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: voiceTicket
+          ? { 'Content-Type': 'application/json', 'x-voice-ticket': voiceTicket }
+          : { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: trimmed, customerId, sessionId, history: historyPayload }),
         signal: controller.signal,
       });
@@ -210,7 +212,14 @@ export function AssistantClient({
         analysisMeta: data.analysis_meta,
       },
     ]);
-    return { reply: String(data.reply_ar ?? ''), hasDraft: Boolean(data.draft_campaign) };
+    return {
+      reply: String(data.reply_ar ?? ''),
+      hasDraft: Boolean(data.draft_campaign),
+      speech:
+        data.voice?.speak_ticket && data.voice?.spoken_text
+          ? { spokenText: String(data.voice.spoken_text), speakTicket: String(data.voice.speak_ticket) }
+          : null,
+    };
   }
 
   const sendMessageRef = useRef(sendMessage);
@@ -509,7 +518,7 @@ export function AssistantClient({
         </form>
         {voiceEnabled && voiceCallOpen && (
           <VoiceCallPanel
-            onUtterance={(text) => sendMessageRef.current(text)}
+            onUtterance={(text, ticket) => sendMessageRef.current(text, ticket)}
             onClose={() => setVoiceCallOpen(false)}
           />
         )}

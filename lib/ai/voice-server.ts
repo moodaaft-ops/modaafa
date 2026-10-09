@@ -1,5 +1,6 @@
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import {
+  prepareSpokenText,
   validateTtsText,
   type VoiceCaps,
   type VoiceConfig,
@@ -17,8 +18,8 @@ import {
  */
 
 export type VoiceTokenPayload = {
-  /** session | turn */
-  k: 'session' | 'turn';
+  /** session | turn (one transcribed question) | speak (one chat reply, bound by hash) */
+  k: 'session' | 'turn' | 'speak';
   /** user id */
   u: string;
   /** session id */
@@ -27,7 +28,14 @@ export type VoiceTokenPayload = {
   i: string;
   /** expiry, epoch seconds */
   e: number;
+  /** sha256 of the text this token is bound to (turn: the question, speak: the spoken reply) */
+  h?: string;
 };
+
+/** Same normalisation on both sides of every hash comparison. */
+export function textFingerprint(text: string): string {
+  return createHash('sha256').update(text.replace(/\s+/g, ' ').trim(), 'utf8').digest('base64url');
+}
 
 const b64 = (buf: Buffer) => buf.toString('base64url');
 
@@ -81,6 +89,8 @@ export type VoiceDeps = {
   user: { id: string; email: string | null } | null;
   /** Active plan's daily assistant quota, or null when there is no live subscription. */
   planAssistantDailyLimit: number | null;
+  /** Which entitlement produced the limit above. */
+  tier: 'paid' | 'free' | null;
   /** Rate limiter. Throws when storage is down; handlers turn that into 503. */
   limit: (key: string, limit: number, windowSeconds: number) => Promise<LimitResult>;
   provider: VoiceProvider;
@@ -143,6 +153,7 @@ export async function startVoiceSession(deps: VoiceDeps): Promise<VoiceResult> {
       session_id: sessionId,
       expires_at: new Date(expires * 1000).toISOString(),
       provider: deps.config.provider,
+      tier: deps.tier,
       caps: {
         session_max_turns: caps.sessionMaxTurns,
         session_max_seconds: caps.sessionMaxSeconds,
@@ -202,14 +213,15 @@ export async function transcribeVoiceTurn(
   if (!text) return fail(422, 'no_speech');
 
   const ticketId = b64(randomBytes(12));
+  const finalText = text.slice(0, 4000);
   const ticket = signVoiceToken(
-    { k: 'turn', u: user.id, s: session.s, i: ticketId, e: Math.floor(now / 1000) + 180 },
+    { k: 'turn', u: user.id, s: session.s, i: ticketId, e: Math.floor(now / 1000) + 180, h: textFingerprint(finalText) },
     secret
   );
-  return { status: 200, json: { text: text.slice(0, 4000), ticket } };
+  return { status: 200, json: { text: finalText, ticket } };
 }
 
-/** POST /api/voice/speak: text to audio, only against a fresh, single-use turn ticket. */
+/** POST /api/voice/speak: text to audio, only for a reply the chat route itself granted. */
 export async function speakVoiceTurn(
   deps: VoiceDeps,
   input: { ticket: string | null; text: unknown; signal?: AbortSignal }
@@ -220,13 +232,17 @@ export async function speakVoiceTurn(
 
   const user = deps.user!;
   const now = deps.nowMs();
-  const ticket = verifyVoiceToken(input.ticket, deps.config.ticketSecret!, { kind: 'turn', userId: user.id }, now);
+  const ticket = verifyVoiceToken(input.ticket, deps.config.ticketSecret!, { kind: 'speak', userId: user.id }, now);
   if (!ticket) return fail(403, 'ticket_invalid');
 
   const checked = validateTtsText(input.text);
   if (!checked.ok) {
     return fail(checked.status, checked.error === 'text_too_long' ? 'text_too_long' : 'ticket_invalid');
   }
+
+  // The ticket is bound to the exact spoken text the chat route produced.
+  // Anything else, however well formed, is refused before the provider.
+  if (!ticket.h || textFingerprint(checked.text) !== ticket.h) return fail(403, 'ticket_invalid');
 
   // A ticket buys at most two playbacks: the second is there for one retry
   // after a dropped connection, not for replaying audio.
@@ -342,4 +358,58 @@ export function makeBeepWav(): ArrayBuffer {
     }
   });
   return buffer;
+}
+
+// ------------------------------------------------- chat route integration
+
+export type ChatVoiceCheck =
+  | { ok: true; ticketId: string; sessionId: string }
+  | { ok: false; status: number; error: VoiceErrorCode };
+
+/**
+ * Called by the chat route when a request carries a voice turn ticket. The
+ * ticket must belong to this user, be fresh, be bound to exactly this message,
+ * and can be used for one chat call.
+ */
+export async function verifyChatVoiceTicket(
+  deps: Pick<VoiceDeps, 'config' | 'nowMs' | 'limit'>,
+  userId: string,
+  ticket: string,
+  message: string
+): Promise<ChatVoiceCheck> {
+  if (!deps.config.enabled || !deps.config.ticketSecret) return { ok: false, status: 404, error: 'voice_unavailable' };
+  const payload = verifyVoiceToken(ticket, deps.config.ticketSecret, { kind: 'turn', userId }, deps.nowMs());
+  if (!payload || !payload.h || payload.h !== textFingerprint(message)) {
+    return { ok: false, status: 403, error: 'ticket_invalid' };
+  }
+  try {
+    const used = await deps.limit(`voice_chat:${payload.i}`, 1, 300);
+    if (!used.allowed) return { ok: false, status: 403, error: 'ticket_invalid' };
+  } catch {
+    return { ok: false, status: 503, error: 'security_service_unavailable' };
+  }
+  return { ok: true, ticketId: payload.i, sessionId: payload.s };
+}
+
+/** Turns a chat reply into the exact text to speak plus a ticket bound to it. */
+export function grantSpeech(
+  deps: Pick<VoiceDeps, 'config' | 'nowMs'>,
+  userId: string,
+  check: { ticketId: string; sessionId: string },
+  replyText: string
+): { spoken_text: string; speak_ticket: string } | null {
+  const spoken = prepareSpokenText(replyText);
+  if (!spoken || !deps.config.ticketSecret) return null;
+  const speak_ticket = signVoiceToken(
+    {
+      k: 'speak',
+      u: userId,
+      s: check.sessionId,
+      i: `${check.ticketId}.s`,
+      e: Math.floor(deps.nowMs() / 1000) + 180,
+      h: textFingerprint(spoken),
+    },
+    deps.config.ticketSecret
+  );
+  return { spoken_text: spoken, speak_ticket };
 }

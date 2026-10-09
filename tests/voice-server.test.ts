@@ -3,11 +3,14 @@ import test from 'node:test';
 import {
   capsForPlan,
   createMockProvider,
+  grantSpeech,
   makeBeepWav,
   signVoiceToken,
   speakVoiceTurn,
   startVoiceSession,
+  textFingerprint,
   transcribeVoiceTurn,
+  verifyChatVoiceTicket,
   verifyVoiceToken,
   type VoiceDeps,
   type VoiceProvider,
@@ -41,6 +44,7 @@ function makeDeps(over: Partial<VoiceDeps> = {}, counters = { stt: 0, tts: 0 }) 
     nowMs: () => NOW,
     user: { id: 'user-1', email: 'a@b.c' },
     planAssistantDailyLimit: 20,
+    tier: 'paid',
     provider,
     // Same counting behaviour as the database limiter: allowed until `limit` hits.
     limit: async (key, limit) => {
@@ -51,6 +55,15 @@ function makeDeps(over: Partial<VoiceDeps> = {}, counters = { stt: 0, tts: 0 }) 
     ...over,
   };
   return { deps, counters, hits };
+}
+
+/** What the chat route does: verify the turn ticket against the message, then grant speech for the reply. */
+async function chatGrant(deps: VoiceDeps, ticket: string, message = 'حلل الصرف', reply = 'الصرف ثابت اليوم') {
+  const check = await verifyChatVoiceTicket(deps, 'user-1', ticket, message);
+  assert.ok(check.ok, JSON.stringify(check));
+  const grant = grantSpeech(deps, 'user-1', check as { ticketId: string; sessionId: string }, reply);
+  assert.ok(grant);
+  return grant as { spoken_text: string; speak_ticket: string };
 }
 
 async function openSession(deps: VoiceDeps) {
@@ -103,7 +116,8 @@ test('a full turn works: session, transcribe, then speak with the ticket', async
   const heard = (await transcribeVoiceTurn(deps, upload(token))) as unknown as { status: number; json: { text: string; ticket: string } };
   assert.equal(heard.status, 200);
   assert.equal(heard.json.text, 'حلل الصرف');
-  const spoken = await speakVoiceTurn(deps, { ticket: heard.json.ticket, text: 'الصرف ثابت اليوم' });
+  const grant = await chatGrant(deps, heard.json.ticket);
+  const spoken = await speakVoiceTurn(deps, { ticket: grant.speak_ticket, text: grant.spoken_text });
   assert.equal(spoken.status, 200);
   assert.deepEqual(counters, { stt: 1, tts: 1 });
 });
@@ -121,24 +135,69 @@ test('direct API: speak with no ticket, a forged ticket, or another user ticket 
   assert.equal(counters.tts, 0);
 });
 
-test('a ticket is single use: the third playback is refused', async () => {
+test('a speak ticket is single use: the third playback is refused', async () => {
   const { deps, counters } = makeDeps();
   const token = await openSession(deps);
   const heard = (await transcribeVoiceTurn(deps, upload(token))) as unknown as { json: { ticket: string } };
-  const ticket = heard.json.ticket;
-  assert.equal((await speakVoiceTurn(deps, { ticket, text: 'رد' })).status, 200);
-  assert.equal((await speakVoiceTurn(deps, { ticket, text: 'رد' })).status, 200);
-  assert.equal((await speakVoiceTurn(deps, { ticket, text: 'نص عشوائي ثالث' })).status, 403);
+  const grant = await chatGrant(deps, heard.json.ticket);
+  const play = () => speakVoiceTurn(deps, { ticket: grant.speak_ticket, text: grant.spoken_text });
+  assert.equal((await play()).status, 200);
+  assert.equal((await play()).status, 200);
+  assert.equal((await play()).status, 403);
   assert.equal(counters.tts, 2);
+});
+
+test('a speak ticket plays only the reply it was granted for, never free text', async () => {
+  const { deps, counters } = makeDeps();
+  const token = await openSession(deps);
+  const heard = (await transcribeVoiceTurn(deps, upload(token))) as unknown as { json: { ticket: string } };
+  const grant = await chatGrant(deps, heard.json.ticket);
+  for (const text of ['نص عشوائي مختلف تماماً', grant.spoken_text + ' زيادة', 'x']) {
+    assert.equal((await speakVoiceTurn(deps, { ticket: grant.speak_ticket, text })).status, 403, text);
+  }
+  // A turn ticket (the transcribe leg) is not a speak ticket either.
+  const turn = (await transcribeVoiceTurn(deps, upload(token))) as unknown as { json: { ticket: string } };
+  assert.equal((await speakVoiceTurn(deps, { ticket: turn.json.ticket, text: grant.spoken_text })).status, 403);
+  assert.equal(counters.tts, 0);
+});
+
+test('chat voice check: wrong message, other user, replay and missing secret are refused', async () => {
+  const { deps } = makeDeps();
+  const token = await openSession(deps);
+  const heard = (await transcribeVoiceTurn(deps, upload(token))) as unknown as { json: { text: string; ticket: string } };
+  const t = heard.json.ticket;
+  const bad = await verifyChatVoiceTicket(deps, 'user-1', t, 'سؤال مختلف عما قيل');
+  assert.equal(bad.ok, false);
+  assert.equal((await verifyChatVoiceTicket(deps, 'user-2', t, heard.json.text)).ok, false);
+  assert.equal((await verifyChatVoiceTicket(deps, 'user-1', 'abc.def', heard.json.text)).ok, false);
+  assert.equal((await verifyChatVoiceTicket(deps, 'user-1', t, heard.json.text)).ok, true);
+  // Same ticket again: one chat call per spoken question.
+  assert.equal((await verifyChatVoiceTicket(deps, 'user-1', t, heard.json.text)).ok, false);
+  const off = makeDeps({ config: readVoiceConfig({}) });
+  assert.equal((await verifyChatVoiceTicket(off.deps, 'user-1', t, heard.json.text)).ok, false);
+  assert.equal(textFingerprint(' مرحبا   بك '), textFingerprint('مرحبا بك'));
+});
+
+test('free tier: a small allowance when configured, closed at zero, clamped by the daily cap', async () => {
+  const free = makeDeps({ tier: 'free', planAssistantDailyLimit: 2 });
+  const token = await openSession(free.deps);
+  assert.equal((await transcribeVoiceTurn(free.deps, upload(token))).status, 200);
+  assert.equal((await transcribeVoiceTurn(free.deps, upload(token))).status, 200);
+  assert.equal((await transcribeVoiceTurn(free.deps, upload(token))).status, 429);
+  const started = (await startVoiceSession(free.deps)) as unknown as { json: { tier: string } };
+  assert.equal(started.json.tier, 'free');
+  const closed = makeDeps({ tier: null, planAssistantDailyLimit: null });
+  assert.equal((await startVoiceSession(closed.deps)).status, 402);
 });
 
 test('an expired ticket and over-long spoken text are refused before the provider', async () => {
   const { deps, counters } = makeDeps();
-  const old = signVoiceToken({ k: 'turn', u: 'user-1', s: 's', i: 'i9', e: Math.floor(NOW / 1000) - 5 }, SECRET);
+  const old = signVoiceToken({ k: 'speak', u: 'user-1', s: 's', i: 'i9', e: Math.floor(NOW / 1000) - 5, h: textFingerprint('رد') }, SECRET);
   assert.equal((await speakVoiceTurn(deps, { ticket: old, text: 'رد' })).status, 403);
   const token = await openSession(deps);
   const heard = (await transcribeVoiceTurn(deps, upload(token))) as unknown as { json: { ticket: string } };
-  assert.equal((await speakVoiceTurn(deps, { ticket: heard.json.ticket, text: 'ا'.repeat(601) })).status, 413);
+  const grant = await chatGrant(deps, heard.json.ticket);
+  assert.equal((await speakVoiceTurn(deps, { ticket: grant.speak_ticket, text: 'ا'.repeat(601) })).status, 413);
   assert.equal(counters.tts, 0);
 });
 
@@ -208,7 +267,8 @@ test('an empty transcript is no_speech and issues no ticket; provider failure is
   const paid = makeDeps();
   paid.deps.provider = { ...paid.deps.provider, speak: async () => ({ ok: false, status: 402 }) };
   const t = (await transcribeVoiceTurn(paid.deps, upload(await openSession(paid.deps)))) as unknown as { json: { ticket: string } };
-  const spoken = (await speakVoiceTurn(paid.deps, { ticket: t.json.ticket, text: 'رد' })) as unknown as { status: number; json: { error: string } };
+  const g = await chatGrant(paid.deps, t.json.ticket);
+  const spoken = (await speakVoiceTurn(paid.deps, { ticket: g.speak_ticket, text: g.spoken_text })) as unknown as { status: number; json: { error: string } };
   assert.equal(spoken.status, 503);
   assert.equal(spoken.json.error, 'voice_plan_required');
 });
@@ -234,4 +294,20 @@ test('the mock provider returns a playable WAV and only transcribes a real-sized
   assert.deepEqual(await mock.transcribe(new ArrayBuffer(5000), 'audio/mp4'), { ok: true, text: 'نص تجريبي' });
   const spoken = await mock.speak('x');
   assert.ok(spoken.ok && spoken.contentType === 'audio/wav');
+});
+
+import { readFileSync } from 'node:fs';
+
+test('source guards: one mic open call inside startCall, ticket checked before model spend, mock labelled', () => {
+  const panel = readFileSync('app/(dashboard)/assistant/voice-call-panel.tsx', 'utf8');
+  assert.equal(panel.match(/getUserMedia\(/g)?.length, 1);
+  const startCall = panel.slice(panel.indexOf('async function startCall'), panel.indexOf('function toggleMute'));
+  assert.ok(startCall.includes('getUserMedia('));
+  assert.ok(panel.includes('وضع تجريبي: هذا محاكي مو صوت حقيقي'));
+  assert.ok(panel.includes('إنهاء المكالمة'));
+
+  const chat = readFileSync('app/api/chat/assistant/route.ts', 'utf8');
+  const check = chat.indexOf('verifyChatVoiceTicket(');
+  const spend = chat.indexOf('consumeFeatureUsage({');
+  assert.ok(check > -1 && spend > check, 'ticket must be verified before usage is consumed');
 });

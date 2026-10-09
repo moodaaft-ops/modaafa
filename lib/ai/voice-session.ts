@@ -166,6 +166,8 @@ export type VoiceConfig = {
   modelId: string;
   sttModelId: string;
   ticketSecret: string | null;
+  /** Daily voice turns for signed-in users without a subscription. 0 closes voice to them. */
+  freeDailyTurns: number;
   caps: VoiceCaps;
 };
 
@@ -235,6 +237,7 @@ export function readVoiceConfig(env: Record<string, string | undefined> = proces
     modelId: env.ELEVENLABS_MODEL_ID?.trim() || DEFAULT_VOICE_MODEL,
     sttModelId: env.ELEVENLABS_STT_MODEL_ID?.trim() || DEFAULT_STT_MODEL,
     ticketSecret: secret,
+    freeDailyTurns: intFrom(env.VOICE_FREE_DAILY_TURNS, 3, 0, 20),
     caps: resolveVoiceCaps(env),
   };
 }

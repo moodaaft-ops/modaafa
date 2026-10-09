@@ -1,4 +1,7 @@
 import { createHash } from 'node:crypto';
+import { readVoiceConfig } from '@/lib/ai/voice-session';
+import { grantSpeech, verifyChatVoiceTicket } from '@/lib/ai/voice-server';
+import { voiceLimiter } from '@/lib/ai/voice-route-deps';
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient, createServerClient } from '@/lib/supabase/server';
 import { getLinkedGoogleAdsAccount, normalizeCustomerId } from '@/lib/accounts/selection';
@@ -118,6 +121,22 @@ export async function POST(req: NextRequest) {
   const providedSessionId = typeof body.sessionId === 'string' ? body.sessionId : null;
 
   if (!message) return NextResponse.json({ error: 'message_required' }, { status: 400 });
+
+  // Voice turn: the ticket from /api/voice/transcribe must match this exact
+  // message and works once. Without it the request is an ordinary text turn and
+  // gets no speech grant.
+  const voiceTicket = req.headers.get('x-voice-ticket');
+  const voiceConfig = readVoiceConfig();
+  let voiceCheck: Awaited<ReturnType<typeof verifyChatVoiceTicket>> | null = null;
+  if (voiceTicket) {
+    voiceCheck = await verifyChatVoiceTicket(
+      { config: voiceConfig, nowMs: () => Date.now(), limit: voiceLimiter(req) },
+      user.id,
+      voiceTicket,
+      message
+    );
+    if (!voiceCheck.ok) return NextResponse.json({ error: voiceCheck.error }, { status: voiceCheck.status });
+  }
 
   const { business, account } = await getLinkedGoogleAdsAccount({
     supabase,
@@ -331,6 +350,9 @@ export async function POST(req: NextRequest) {
     },
     ...reply,
     usage: { remaining: usage.remaining, resets_at: usage.resetsAt },
+    ...(voiceCheck?.ok
+      ? { voice: grantSpeech({ config: voiceConfig, nowMs: () => Date.now() }, user.id, voiceCheck, String(reply.reply_ar ?? '')) }
+      : {}),
   });
 }
 

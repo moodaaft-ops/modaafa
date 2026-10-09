@@ -2,72 +2,89 @@
 
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Keyboard, LoaderCircle, Mic, PhoneOff, Square } from 'lucide-react';
+import { Keyboard, LoaderCircle, Mic, MicOff, PhoneOff, Square } from 'lucide-react';
 import { microphoneAccessErrorMessage } from '@/lib/ai/voice-input';
 import {
   looksLikeVoiceApproval,
   MIN_RECORDING_BYTES,
   nextVoiceCallState,
   pickRecorderMime,
-  prepareSpokenText,
   voiceErrorMessage,
   VOICE_APPROVAL_NOTICE,
   VOICE_LIMITS,
   type VoiceCallEvent,
   type VoiceCallState,
 } from '@/lib/ai/voice-session';
+import { BARGE_VAD, createVad, LISTEN_VAD } from '@/lib/ai/voice-vad';
 import { Alert } from '@/lib/ui/alert';
 import { buttonClasses } from '@/lib/ui/button';
 import { cn } from '@/lib/utils';
 
-export type VoiceTurnResult = { reply: string; hasDraft: boolean } | null;
+/** What the chat route returned for a spoken question. `speech` is absent when it granted none. */
+export type VoiceTurnResult = {
+  reply: string;
+  hasDraft: boolean;
+  speech?: { spokenText: string; speakTicket: string } | null;
+} | null;
 
-const STATE_LABEL: Record<VoiceCallState, string> = {
-  idle: 'اضغط الميكروفون وتكلم',
-  listening: 'أسمعك...',
-  thinking: 'أحلل سؤالك...',
-  speaking: 'أتكلم الحين. اضغط «قاطعني» إذا تبي توقفني',
-  ended: 'انتهت المكالمة',
-  text_fallback: 'الصوت متوقف، الرد مكتوب في المحادثة',
-};
+const TICK_MS = 50;
+/** Silence this long (no speech yet) restarts the recorder so a quiet room never builds a big file. */
+const RECORDER_RECYCLE_MS = 6000;
 
 /**
- * Live voice call over the existing assistant chat. It owns the mic, the
- * speech-to-text leg and the playback. The answer itself comes from
- * `onUtterance`, which is the same function the text composer uses, so the
- * voice path inherits every server check of the text path.
+ * Hands-free voice call over the existing assistant chat.
+ *
+ * One tap on «ابدأ المكالمة» opens the microphone for the length of the call.
+ * The turn ends by itself when the person stops talking, the assistant answers
+ * aloud, and talking over the assistant cuts it off. The mic is never opened
+ * without that tap, it is visibly open the whole time, and «إنهاء» (or the
+ * idle limit) closes it. The answer comes from `onUtterance`, the same code
+ * path the text composer uses, so every server check of the text path applies.
  */
 export function VoiceCallPanel({
   onUtterance,
   onClose,
 }: {
-  onUtterance: (text: string) => Promise<VoiceTurnResult>;
+  onUtterance: (text: string, voiceTicket: string) => Promise<VoiceTurnResult>;
   onClose: () => void;
 }) {
   const [state, dispatch] = useReducer(
     (current: VoiceCallState, event: VoiceCallEvent) => nextVoiceCallState(current, event),
     'idle' as VoiceCallState
   );
+  const [started, setStarted] = useState(false);
+  const [starting, setStarting] = useState(false);
   const [error, setError] = useState('');
   const [heard, setHeard] = useState('');
   const [approvalNotice, setApprovalNotice] = useState(false);
   const [draftPending, setDraftPending] = useState(false);
+  const [userSpeaking, setUserSpeaking] = useState(false);
+  const [muted, setMuted] = useState(false);
+  const [provider, setProvider] = useState<'elevenlabs' | 'mock' | null>(null);
 
   const stateRef = useRef<VoiceCallState>('idle');
   stateRef.current = state;
-  // One element for the whole call: iOS only lets an element that was started
-  // inside a tap play later without another tap.
+  const mutedRef = useRef(false);
+  mutedRef.current = muted;
+
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioUrlRef = useRef<string | null>(null);
-  const unlockedRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
-  const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const recordTimerRef = useRef<number | null>(null);
+  const ctxRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const tickRef = useRef<number | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recorderStartRef = useRef(0);
+  const chunksRef = useRef<Blob[]>([]);
+  const mimeRef = useRef<string>('audio/webm');
+  const listenVadRef = useRef(createVad(LISTEN_VAD));
+  const bargeVadRef = useRef(createVad(BARGE_VAD));
   const sessionRef = useRef<{ token: string; maxSeconds: number } | null>(null);
   const turnRef = useRef(0);
   const idleTimerRef = useRef<number | null>(null);
   const endedRef = useRef(false);
+  const lastFloorRef = useRef(0);
   // The parent re-renders on every chat update. Callbacks live in refs so a
   // re-render can never re-run the cleanup below and cut the mic or the voice.
   const onCloseRef = useRef(onClose);
@@ -93,25 +110,34 @@ export function VoiceCallPanel({
     audioUrlRef.current = null;
   }, []);
 
-  /** Releases the mic completely. Called on every path out of recording. */
-  const releaseMic = useCallback(() => {
-    if (recordTimerRef.current) window.clearTimeout(recordTimerRef.current);
-    recordTimerRef.current = null;
+  const discardRecorder = useCallback(() => {
     const recorder = recorderRef.current;
     recorderRef.current = null;
-    if (recorder) {
-      recorder.ondataavailable = null;
-      recorder.onstop = null;
-      recorder.onerror = null;
-      try {
-        if (recorder.state !== 'inactive') recorder.stop();
-      } catch {
-        /* already stopped */
-      }
+    chunksRef.current = [];
+    if (!recorder) return;
+    recorder.ondataavailable = null;
+    recorder.onstop = null;
+    recorder.onerror = null;
+    try {
+      if (recorder.state !== 'inactive') recorder.stop();
+    } catch {
+      /* already stopped */
     }
+  }, []);
+
+  /** Closes the microphone and the audio graph completely. */
+  const releaseMic = useCallback(() => {
+    if (tickRef.current) window.clearInterval(tickRef.current);
+    tickRef.current = null;
+    discardRecorder();
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
-  }, []);
+    analyserRef.current = null;
+    const ctx = ctxRef.current;
+    ctxRef.current = null;
+    if (ctx && ctx.state !== 'closed') void ctx.close().catch(() => undefined);
+    setUserSpeaking(false);
+  }, [discardRecorder]);
 
   const endCall = useCallback(() => {
     if (endedRef.current) return;
@@ -136,67 +162,72 @@ export function VoiceCallPanel({
     };
   }, [endCall, releaseMic, stopPlayback]);
 
+  // A call where nobody has said anything for a while ends itself. Any real
+  // activity (listening heard speech, thinking, speaking) clears the timer.
   const armIdleTimer = useCallback(() => {
     clearIdleTimer();
     idleTimerRef.current = window.setTimeout(endCall, VOICE_LIMITS.idleTimeoutMs);
   }, [endCall]);
 
   useEffect(() => {
-    if (state === 'idle' || state === 'text_fallback') armIdleTimer();
+    if (!started) return;
+    if ((state === 'listening' && !userSpeaking) || state === 'idle' || state === 'text_fallback') armIdleTimer();
     else clearIdleTimer();
-  }, [state, armIdleTimer]);
+  }, [state, userSpeaking, started, armIdleTimer]);
 
-  /** Plays a silent clip inside the tap so Safari/iOS allows the reply later. */
-  function unlockAudio() {
-    if (unlockedRef.current) return;
-    try {
-      const audio = audioRef.current ?? new Audio();
-      audioRef.current = audio;
-      const silent = new Blob([silentWav()], { type: 'audio/wav' });
-      const url = URL.createObjectURL(silent);
-      audio.src = url;
-      void audio
-        .play()
-        .catch(() => undefined)
-        .finally(() => URL.revokeObjectURL(url));
-      unlockedRef.current = true;
-    } catch {
-      /* playback may still work; failure shows as text later */
-    }
-  }
-
-  async function ensureSession(): Promise<string | null> {
-    if (sessionRef.current) return sessionRef.current.token;
-    const response = await fetch('/api/voice/session', { method: 'POST' });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok || !data.session_token) {
-      setError(voiceErrorMessage(data?.error, response.status));
-      dispatch('fail');
-      return null;
-    }
-    sessionRef.current = {
-      token: data.session_token,
-      maxSeconds: Math.min(Number(data.caps?.max_audio_seconds) || 30, 60),
+  function startRecorder() {
+    const stream = streamRef.current;
+    if (!stream) return;
+    discardRecorder();
+    const recorder = new MediaRecorder(stream, { mimeType: mimeRef.current });
+    chunksRef.current = [];
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) chunksRef.current.push(event.data);
     };
-    return data.session_token;
+    recorder.onerror = () => {
+      discardRecorder();
+      failWith(undefined, 500, turnRef.current);
+    };
+    recorderRef.current = recorder;
+    recorderStartRef.current = performance.now();
+    recorder.start();
   }
 
-  const failWith = useCallback((code: string | undefined, status: number | null, turn: number) => {
-    if (turn !== turnRef.current) return;
-    if (code === 'session_expired' || code === 'unauthorized') sessionRef.current = null;
-    setError(voiceErrorMessage(code, status));
-    // Limits and a missing feature end the voice leg; everything else lets the person retry.
-    const retryable = ['no_speech', 'too_many_requests', 'session_expired', 'audio_too_large'];
-    dispatch(code && retryable.includes(code) ? 'stop_listening' : 'fail');
+  /** Back to waiting for the person, hands-free. */
+  const beginListening = useCallback(() => {
+    if (endedRef.current || !streamRef.current) return;
+    setUserSpeaking(false);
+    listenVadRef.current.reset();
+    dispatch('start_listening');
+    startRecorder();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const speak = useCallback(
-    async (reply: string, ticket: string, turn: number) => {
-      const spoken = prepareSpokenText(reply);
-      if (!spoken) {
-        dispatch('audio_finished');
+  const failWith = useCallback(
+    (code: string | undefined, status: number | null, turn: number) => {
+      if (turn !== turnRef.current) return;
+      if (code === 'session_expired' || code === 'unauthorized') sessionRef.current = null;
+      setError(voiceErrorMessage(code, status));
+      const retryable = ['no_speech', 'too_many_requests', 'session_expired', 'audio_too_large'];
+      if (code && retryable.includes(code) && streamRef.current) {
+        // Say what went wrong, then keep listening: the call is still live.
+        dispatch('stop_listening');
+        window.setTimeout(() => {
+          if (turn === turnRef.current && !endedRef.current) beginListening();
+        }, 600);
         return;
       }
+      // Hard failure: the voice leg stops and the microphone is released, the
+      // written answer stays in the chat.
+      releaseMic();
+      setStarted(false);
+      dispatch('fail');
+    },
+    [beginListening, releaseMic]
+  );
+
+  const playReply = useCallback(
+    async (speech: { spokenText: string; speakTicket: string }, turn: number) => {
       const controller = new AbortController();
       abortRef.current = controller;
       dispatch('reply_ready');
@@ -204,12 +235,16 @@ export function VoiceCallPanel({
         const response = await fetch('/api/voice/speak', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: spoken, ticket }),
+          body: JSON.stringify({ text: speech.spokenText, ticket: speech.speakTicket }),
           signal: controller.signal,
         });
         if (!response.ok) {
           const data = await response.json().catch(() => ({}));
-          failWith(data?.error, response.status, turn);
+          // The answer is already written in the chat. A failed voice leg does not end the call.
+          if (turn !== turnRef.current) return;
+          setError(voiceErrorMessage(data?.error, response.status));
+          dispatch('audio_finished');
+          beginListening();
           return;
         }
         const blob = await response.blob();
@@ -223,23 +258,27 @@ export function VoiceCallPanel({
           if (turn !== turnRef.current) return;
           stopPlayback();
           dispatch('audio_finished');
+          beginListening();
         };
         audio.onerror = () => {
           if (turn !== turnRef.current) return;
           stopPlayback();
-          failWith(undefined, 500, turn);
+          setError(voiceErrorMessage(undefined, 500));
+          dispatch('audio_finished');
+          beginListening();
         };
+        bargeVadRef.current.reset();
         await audio.play();
         if (turn === turnRef.current) dispatch('audio_started');
       } catch (err) {
         if ((err as Error)?.name === 'AbortError' || turn !== turnRef.current) return;
         stopPlayback();
-        // `play()` is rejected when the browser blocks audio, a dropped
-        // connection rejects `fetch`; both end in text, never in a stuck panel.
-        failWith(undefined, (err as Error)?.name === 'NotAllowedError' ? 500 : null, turn);
+        setError(voiceErrorMessage(undefined, (err as Error)?.name === 'NotAllowedError' ? 500 : null));
+        dispatch('audio_finished');
+        beginListening();
       }
     },
-    [failWith, stopPlayback]
+    [beginListening, stopPlayback]
   );
 
   const handleRecording = useCallback(
@@ -248,7 +287,6 @@ export function VoiceCallPanel({
         failWith('no_speech', 422, turn);
         return;
       }
-      dispatch('speech_final');
       const controller = new AbortController();
       abortRef.current = controller;
       let transcript = '';
@@ -278,128 +316,256 @@ export function VoiceCallPanel({
       // reaches the approval path, and the person is told where the real
       // confirm button lives.
       if (looksLikeVoiceApproval(transcript)) setApprovalNotice(true);
-      const result = await onUtteranceRef.current(transcript);
+      const result = await onUtteranceRef.current(transcript, ticket);
       if (turn !== turnRef.current) return;
       if (!result) {
         setError('تعذر الحصول على رد. الخطأ ظاهر في المحادثة.');
-        dispatch('fail');
+        dispatch('stop_listening');
+        window.setTimeout(() => {
+          if (turn === turnRef.current && !endedRef.current) beginListening();
+        }, 600);
         return;
       }
       setDraftPending(result.hasDraft);
       if (result.hasDraft) setApprovalNotice(true);
-      await speak(result.reply, ticket, turn);
+      if (!result.speech) {
+        // No speech granted (flag off for this reply, or empty reply): text only, keep listening.
+        dispatch('stop_listening');
+        beginListening();
+        return;
+      }
+      await playReply(result.speech, turn);
     },
-    [failWith, speak]
+    [beginListening, failWith, playReply]
   );
 
-  // The mic opens ONLY from this function, and it is only called by a tap.
-  async function startListening() {
-    if (state === 'speaking') {
-      // Barge-in: cut the voice first, then listen.
-      turnRef.current += 1;
-      stopPlayback();
-      dispatch('barge_in');
+  /** The person stopped talking: close this recording and send it. */
+  function finishTurn() {
+    const recorder = recorderRef.current;
+    if (!recorder || recorder.state === 'inactive') return;
+    const turn = ++turnRef.current;
+    setUserSpeaking(false);
+    dispatch('speech_final');
+    recorder.onstop = () => {
+      const type = recorder.mimeType || mimeRef.current;
+      const blob = new Blob(chunksRef.current, { type });
+      recorderRef.current = null;
+      chunksRef.current = [];
+      void handleRecording(blob, type, turn);
+    };
+    try {
+      recorder.stop();
+    } catch {
+      failWith(undefined, 500, turn);
     }
-    if (state === 'thinking' || state === 'listening') return;
+  }
 
+  /** Talking over the assistant: cut the voice and take the floor. */
+  function bargeIn() {
+    turnRef.current += 1;
+    lastFloorRef.current = bargeVadRef.current.noiseFloor;
+    stopPlayback();
+    dispatch('barge_in');
+    dispatch('start_listening');
+    const vad = listenVadRef.current;
+    vad.reset();
+    vad.seed(Math.min(lastFloorRef.current, 0.01));
+    vad.forceSpeech(performance.now());
+    setUserSpeaking(true);
+    startRecorder();
+  }
+
+  function onTick() {
+    const analyser = analyserRef.current;
+    if (!analyser || endedRef.current) return;
+    if (mutedRef.current) return;
+    const buffer = new Float32Array(analyser.fftSize);
+    analyser.getFloatTimeDomainData(buffer);
+    let sum = 0;
+    for (let i = 0; i < buffer.length; i++) sum += buffer[i] * buffer[i];
+    const rms = Math.sqrt(sum / buffer.length);
+    const now = performance.now();
+    const current = stateRef.current;
+
+    if (current === 'listening') {
+      const event = listenVadRef.current.push(rms, now);
+      if (event === 'speech_start') setUserSpeaking(true);
+      else if (event === 'speech_end' || event === 'too_long') finishTurn();
+      else if (event === 'speech_cancel') {
+        setUserSpeaking(false);
+        startRecorder();
+      } else if (!listenVadRef.current.speaking && now - recorderStartRef.current > RECORDER_RECYCLE_MS) {
+        startRecorder();
+      }
+    } else if (current === 'speaking') {
+      if (bargeVadRef.current.push(rms, now) === 'speech_start') bargeIn();
+    }
+  }
+
+  async function ensureSession(): Promise<boolean> {
+    if (sessionRef.current) return true;
+    const response = await fetch('/api/voice/session', { method: 'POST' });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.session_token) {
+      setError(voiceErrorMessage(data?.error, response.status));
+      return false;
+    }
+    sessionRef.current = {
+      token: data.session_token,
+      maxSeconds: Math.min(Number(data.caps?.max_audio_seconds) || 30, 60),
+    };
+    setProvider(data.provider === 'mock' ? 'mock' : 'elevenlabs');
+    return true;
+  }
+
+  /** Plays a short silence inside the tap so Safari/iOS allows the reply later. */
+  function unlockAudio() {
+    try {
+      const audio = audioRef.current ?? new Audio();
+      audioRef.current = audio;
+      audio.setAttribute('playsinline', 'true');
+      const url = URL.createObjectURL(new Blob([silentWav()], { type: 'audio/wav' }));
+      audio.src = url;
+      void audio
+        .play()
+        .catch(() => undefined)
+        .finally(() => URL.revokeObjectURL(url));
+    } catch {
+      /* playback may still work; a failure shows as text later */
+    }
+  }
+
+  /** The only place the microphone opens. Called by a tap on «ابدأ المكالمة». */
+  async function startCall() {
+    if (starting || started) return;
     setError('');
     setApprovalNotice(false);
+    setStarting(true);
     unlockAudio();
-    const turn = ++turnRef.current;
-
-    if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
-      setError('متصفحك ما يدعم تسجيل الصوت. حدّثه أو كمّل كتابة.');
+    const AudioCtx = (window as any).AudioContext || (window as any).webkitAudioContext;
+    if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices?.getUserMedia || !AudioCtx) {
+      setError('متصفحك ما يدعم المكالمة الصوتية. حدّثه أو كمّل كتابة.');
       dispatch('fail');
+      setStarting(false);
       return;
     }
     const mime = pickRecorderMime((m) => MediaRecorder.isTypeSupported(m));
     if (!mime) {
       setError(voiceErrorMessage('unsupported_audio', 415));
       dispatch('fail');
+      setStarting(false);
       return;
     }
-
+    mimeRef.current = mime;
+    // Created inside the tap: iOS keeps the context suspended otherwise.
+    const ctx: AudioContext = new AudioCtx();
+    ctxRef.current = ctx;
     try {
-      const token = await ensureSession();
-      if (!token || turn !== turnRef.current) return;
-
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      if (turn !== turnRef.current) {
-        stream.getTracks().forEach((track) => track.stop());
+      if (!(await ensureSession())) {
+        releaseMic();
+        dispatch('fail');
         return;
       }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
       streamRef.current = stream;
-      const recorder = new MediaRecorder(stream, { mimeType: mime });
-      recorderRef.current = recorder;
-      const chunks: Blob[] = [];
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) chunks.push(event.data);
-      };
-      recorder.onerror = () => {
-        releaseMic();
-        failWith(undefined, 500, turn);
-      };
-      recorder.onstop = () => {
-        const type = recorder.mimeType || mime;
-        releaseMic();
-        if (turn !== turnRef.current) return;
-        void handleRecording(new Blob(chunks, { type }), type, turn);
-      };
-      recorder.start();
-      dispatch('start_listening');
-      recordTimerRef.current = window.setTimeout(
-        () => stopListening(),
-        (sessionRef.current?.maxSeconds ?? 30) * 1000
-      );
+      await ctx.resume();
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 1024;
+      ctx.createMediaStreamSource(stream).connect(analyser);
+      analyserRef.current = analyser;
+      endedRef.current = false;
+      setStarted(true);
+      beginListening();
+      tickRef.current = window.setInterval(onTick, TICK_MS);
     } catch (voiceError) {
       releaseMic();
-      if (turn !== turnRef.current) return;
       setError(microphoneAccessErrorMessage(voiceError));
       dispatch('fail');
+    } finally {
+      setStarting(false);
     }
   }
 
-  function stopListening() {
-    const recorder = recorderRef.current;
-    if (!recorder || recorder.state === 'inactive') return;
-    if (recordTimerRef.current) window.clearTimeout(recordTimerRef.current);
-    recordTimerRef.current = null;
-    try {
-      recorder.stop();
-    } catch {
-      /* already stopped */
+  function toggleMute() {
+    const next = !muted;
+    setMuted(next);
+    streamRef.current?.getAudioTracks().forEach((track) => {
+      track.enabled = !next;
+    });
+    if (next) {
+      setUserSpeaking(false);
+      if (stateRef.current === 'listening') startRecorder();
+    } else {
+      listenVadRef.current.reset();
+      bargeVadRef.current.reset();
     }
   }
 
-  const busy = state === 'thinking';
-  const listening = state === 'listening';
+  /** Back from the text fallback: a fresh tap reopens the voice leg. */
+  function retryVoice() {
+    void startCall();
+  }
+
+  const thinking = state === 'thinking';
   const speaking = state === 'speaking';
+  const listening = state === 'listening';
+  const live = started && streamRef.current !== null && !muted;
+
+  const label = !started
+    ? state === 'text_fallback'
+      ? 'الصوت متوقف، الرد مكتوب في المحادثة'
+      : 'اضغط «ابدأ المكالمة» وتكلم بشكل طبيعي'
+    : muted
+      ? 'الميكروفون مكتوم'
+      : thinking
+        ? 'أحلل سؤالك...'
+        : speaking
+          ? 'أتكلم الحين. تكلم فوقي وأوقف'
+          : userSpeaking
+            ? 'أسمعك...'
+            : listening
+              ? 'تكلم، أنا أسمعك'
+              : 'لحظة...';
 
   return (
-    <div
-      className="border-t border-border bg-card p-4"
-      role="region"
-      aria-label="مكالمة صوتية مع المساعد"
-    >
+    <div className="border-t border-border bg-card p-4" role="region" aria-label="مكالمة صوتية مع المساعد">
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-[13px] font-semibold">مكالمة صوتية</div>
+          <div className="flex items-center gap-2 text-[13px] font-semibold">
+            مكالمة صوتية
+            {live && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-danger/10 px-2 py-0.5 text-[11px] font-medium text-danger">
+                <span className="h-1.5 w-1.5 rounded-full bg-danger" aria-hidden />
+                الميكروفون مفتوح
+              </span>
+            )}
+          </div>
           <div className="text-[12px] text-muted-foreground" aria-live="polite">
-            {STATE_LABEL[state]}
+            {label}
           </div>
         </div>
         <button
           type="button"
           onClick={endCall}
-          className={buttonClasses({ variant: 'outline', size: 'sm' })}
+          className={buttonClasses({ variant: 'danger', size: 'md' })}
           aria-label="إنهاء المكالمة"
         >
-          <PhoneOff className="h-3.5 w-3.5" />
-          إنهاء
+          <PhoneOff className="h-4 w-4" />
+          إنهاء المكالمة
         </button>
       </div>
 
-      {heard && state !== 'idle' && (
+      {provider === 'mock' && (
+        <div className="mt-3">
+          <Alert tone="warning">
+            وضع تجريبي: هذا محاكي مو صوت حقيقي. أي كلام تقوله يُفهم كسؤال ثابت، والرد نغمتان قصيرتان. الغرض تجربة سلاسة المكالمة فقط.
+          </Alert>
+        </div>
+      )}
+
+      {heard && started && (
         <p className="mt-3 rounded-lg border border-border bg-background-elevated px-3 py-2 text-[12.5px] leading-6 text-foreground-subtle">
           سمعتك: {heard}
         </p>
@@ -423,49 +589,54 @@ export function VoiceCallPanel({
         </div>
       )}
 
-      <div className="mt-4 flex items-center gap-2">
-        {speaking ? (
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        {!started ? (
           <button
             type="button"
-            onClick={startListening}
-            className={buttonClasses({ variant: 'primary', size: 'md' })}
+            onClick={state === 'text_fallback' ? retryVoice : startCall}
+            disabled={starting}
+            className={cn(buttonClasses({ variant: 'primary', size: 'lg' }), 'disabled:opacity-60')}
           >
-            <Square className="h-3.5 w-3.5 fill-current" />
-            قاطعني وأتكلم
-          </button>
-        ) : listening ? (
-          <button
-            type="button"
-            onClick={stopListening}
-            className={buttonClasses({ variant: 'primary', size: 'md' })}
-            aria-label="خلصت كلامي"
-          >
-            <Square className="h-3.5 w-3.5 fill-current" />
-            خلصت كلامي
+            {starting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Mic className="h-4 w-4" />}
+            {starting ? 'لحظة...' : state === 'text_fallback' ? 'جرّب الصوت مرة ثانية' : 'ابدأ المكالمة'}
           </button>
         ) : (
-          <button
-            type="button"
-            onClick={startListening}
-            disabled={busy}
-            className={cn(buttonClasses({ variant: 'primary', size: 'md' }), 'disabled:opacity-60')}
-            aria-label="ابدأ التحدث"
-          >
-            {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Mic className="h-4 w-4" />}
-            {busy ? 'لحظة...' : 'تكلم'}
-          </button>
+          <>
+            {speaking && (
+              <button type="button" onClick={bargeIn} className={buttonClasses({ variant: 'primary', size: 'md' })}>
+                <Square className="h-3.5 w-3.5 fill-current" />
+                قاطعني
+              </button>
+            )}
+            {listening && userSpeaking && (
+              <button type="button" onClick={finishTurn} className={buttonClasses({ variant: 'subtle', size: 'md' })}>
+                <Square className="h-3.5 w-3.5 fill-current" />
+                خلصت كلامي
+              </button>
+            )}
+            {thinking && (
+              <span className="inline-flex items-center gap-2 text-[12.5px] text-muted-foreground">
+                <LoaderCircle className="h-4 w-4 animate-spin" /> لحظة...
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={toggleMute}
+              className={buttonClasses({ variant: 'outline', size: 'md' })}
+              aria-pressed={muted}
+            >
+              {muted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+              {muted ? 'ألغِ الكتم' : 'اكتم'}
+            </button>
+          </>
         )}
-        <button
-          type="button"
-          onClick={endCall}
-          className={buttonClasses({ variant: 'ghost', size: 'md' })}
-        >
+        <button type="button" onClick={endCall} className={buttonClasses({ variant: 'ghost', size: 'md' })}>
           <Keyboard className="h-4 w-4" />
           كمّل كتابة
         </button>
       </div>
       <p className="mt-3 text-[11.5px] leading-5 text-muted-foreground">
-        الميكروفون يشتغل بس لما تضغط. تسجيلك يروح من جهازك لسيرفرنا ومنه لمزود الصوت (ElevenLabs) عشان يتحول لنص، والرد كذلك يتحول لصوت عنده. ما نحفظ الصوت عندنا، أما مدة حفظه عند المزود فتتبع شروطه. الرد الكامل يبقى مكتوب في المحادثة.
+        الميكروفون يفتح بضغطة «ابدأ المكالمة» ويبقى مفتوح طول المكالمة لين تضغط إنهاء أو تسكت دقيقة ونص. تسجيلك يروح من جهازك لسيرفرنا ومنه لمزود الصوت (ElevenLabs) عشان يتحول لنص، والرد كذلك يتحول لصوت عنده. ما نحفظ الصوت عندنا، أما مدة حفظه عند المزود فتتبع شروطه. الرد الكامل يبقى مكتوب في المحادثة.
       </p>
     </div>
   );
