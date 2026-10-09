@@ -57,6 +57,19 @@ test('the TikTok pixel can report, and only to its own two hosts', () => {
   assert.ok(!directive(policy, 'default-src')?.includes('tiktok'));
 });
 
+test('the account guide can be framed from one YouTube host and nothing else', () => {
+  const policy = buildContentSecurityPolicy('n');
+  assert.equal(directive(policy, 'frame-src'), 'frame-src https://www.youtube-nocookie.com');
+  // No wildcard, no regular youtube.com, no scheme-wide allowance.
+  assert.ok(!/frame-src[^;]*\*/.test(policy), 'no wildcard frame host');
+  assert.ok(!/frame-src[^;]*https:(\s|;|$)/.test(policy), 'no https: scheme-wide');
+  assert.ok(!/frame-src[^;]*youtube\.com/.test(policy.replace('youtube-nocookie.com', '')), 'only the nocookie host');
+  // Nothing else in the policy moves: the default stays closed and framing us stays refused.
+  assert.equal(directive(policy, 'default-src'), "default-src 'self'");
+  assert.equal(directive(policy, 'frame-ancestors'), "frame-ancestors 'none'");
+  assert.equal(directive(policy, 'object-src'), "object-src 'none'");
+});
+
 test('style-src keeps unsafe-inline deliberately', () => {
   // Next and the font loader emit inline <style> blocks that cannot take a
   // nonce. This asserts the decision so a future tightening is a conscious
