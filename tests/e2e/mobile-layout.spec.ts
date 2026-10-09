@@ -142,15 +142,21 @@ test.describe('signed-in shell on phones', () => {
       }
     });
 
-    test('chat composer is visible above the tab bar without scrolling', async ({ page }) => {
-      await page.setViewportSize({ width: 390, height: 800 });
-      await page.goto('/assistant');
-      const input = page.getByLabel('رسالتك');
-      await expect(input).toBeVisible();
-      const tab = (await page.getByRole('navigation', { name: 'التنقل السريع' }).boundingBox())!;
-      const box = (await input.boundingBox())!;
-      expect(box.y + box.height).toBeLessThanOrEqual(tab.y);
-    });
+    // The chat height is a calc() of the viewport, so short phones are where it breaks:
+    // the composer must sit above the tab bar on first paint at 640 and 800 tall.
+    for (const height of [640, 800]) {
+      for (const width of WIDTHS) {
+        test(`chat composer is visible above the tab bar without scrolling at ${width}x${height}`, async ({ page }) => {
+          await page.setViewportSize({ width, height });
+          await page.goto('/assistant');
+          const input = page.getByLabel('رسالتك');
+          await expect(input).toBeVisible();
+          const tab = (await page.getByRole('navigation', { name: 'التنقل السريع' }).boundingBox())!;
+          const box = (await input.boundingBox())!;
+          expect(box.y + box.height).toBeLessThanOrEqual(tab.y);
+        });
+      }
+    }
 
     test('signed-in pages never overflow sideways', async ({ page }) => {
       for (const width of WIDTHS) {
