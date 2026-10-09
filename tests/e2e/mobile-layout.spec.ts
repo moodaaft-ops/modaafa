@@ -142,6 +142,25 @@ test.describe('signed-in shell on phones', () => {
       }
     });
 
+    test('chat placeholder fits the field without being cut off', async ({ page }) => {
+      for (const width of WIDTHS) {
+        await page.setViewportSize({ width, height: 800 });
+        await page.goto('/assistant');
+        const input = page.getByLabel('رسالتك');
+        await expect(input).toBeVisible();
+        await page.evaluate(() => document.fonts.ready);
+        const fit = await input.evaluate((el: HTMLInputElement) => {
+          const cs = getComputedStyle(el);
+          const ctx = document.createElement('canvas').getContext('2d')!;
+          ctx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+          const text = ctx.measureText(el.placeholder).width;
+          const inner = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+          return { text, inner };
+        });
+        expect(fit.text, `placeholder @${width}`).toBeLessThanOrEqual(fit.inner);
+      }
+    });
+
     // The chat height is a calc() of the viewport, so short phones are where it breaks:
     // the composer must sit above the tab bar on first paint at 640 and 800 tall.
     for (const height of [640, 800]) {

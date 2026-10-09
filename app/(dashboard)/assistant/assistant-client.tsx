@@ -462,7 +462,7 @@ export function AssistantClient({
             <input
               value={message}
               onChange={(event) => setMessage(event.target.value)}
-              placeholder="اسأل عن الأداء أو اطلب مسودة حملة..."
+              placeholder="اكتب سؤالك…"
               className={cn(inputClasses, 'min-w-0 flex-1')}
               aria-label="رسالتك"
             />
