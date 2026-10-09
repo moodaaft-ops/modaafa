@@ -2,6 +2,7 @@ import { getLinkedGoogleAdsAccount, normalizeCustomerId } from '@/lib/accounts/s
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import { getSubscriptionAccess } from '@/lib/billing/entitlements';
 import { buildExecutableAction } from '@/lib/ai/executable-action';
+import { freeAuditView, getFreeAuditStatus } from '@/lib/billing/free-audit';
 import type { ChatRecommendation, ChatState } from './contracts';
 
 export type LoadedChatState =
@@ -68,6 +69,14 @@ export async function loadChatState({
   return build(supabase, linked.account, subscription.active);
 }
 
+async function readFreeAudit(customerId: string): Promise<ChatState['freeAudit']> {
+  try {
+    return freeAuditView(await getFreeAuditStatus(customerId));
+  } catch {
+    return 'unknown';
+  }
+}
+
 async function build(supabase: any, account: any, subscriptionActive: boolean): Promise<LoadedChatState> {
   const [auditRes, recRes] = await Promise.all([
     supabase
@@ -88,6 +97,8 @@ async function build(supabase: any, account: any, subscriptionActive: boolean): 
   if (auditRes.error || recRes.error) return { ok: false, error: 'read_failed' };
 
   const audit = auditRes.data;
+  // Subscribers use their plan allowance, so the free ledger is irrelevant to them.
+  const freeAudit = subscriptionActive ? undefined : await readFreeAudit(normalizeCustomerId(account.customer_id));
   const recommendations: ChatRecommendation[] = (recRes.data ?? []).map((r: any) => ({
     id: r.id,
     title: r.title,
@@ -116,6 +127,7 @@ async function build(supabase: any, account: any, subscriptionActive: boolean): 
         : null,
       recommendations,
       subscriptionActive,
+      ...(freeAudit ? { freeAudit } : {}),
     },
   };
 }

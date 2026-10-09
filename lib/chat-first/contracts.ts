@@ -29,6 +29,12 @@ export type ChatState = {
   latestAudit: ChatAuditSummary | null;
   recommendations: ChatRecommendation[];
   subscriptionActive: boolean;
+  /**
+   * Free-audit allowance as the SERVER sees it (PR57 ledger). Optional: absent
+   * or 'unknown' means "could not read", which is never shown as exhausted;
+   * the audit route stays the only authority.
+   */
+  freeAudit?: 'unknown' | 'exhausted' | 'in_progress' | 'available';
 };
 
 export type ChatAction =
