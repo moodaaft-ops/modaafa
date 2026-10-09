@@ -11,7 +11,13 @@
  * for its host and user, and never returned.
  */
 
-const REF = /^[a-z0-9]{15,30}$/;
+const REF = /^[a-z0-9]{20}$/;
+
+/**
+ * The production project ref, known and fixed. It is refused even when the
+ * PRODUCTION_SUPABASE_REF variable is missing or wrong.
+ */
+export const KNOWN_PRODUCTION_REF = 'xxnkubcfwabesungeskz';
 
 export type TestTarget = { host: string; user: string };
 
@@ -25,11 +31,27 @@ export function parseDbTarget(connectionString: string): TestTarget {
   return { host: url.hostname.toLowerCase(), user: decodeURIComponent(url.username).toLowerCase() };
 }
 
+/** True when the connection is exactly this project: direct host or pooler user. */
+export function connectionIsProject(target: TestTarget, ref: string): boolean {
+  if (target.host === `db.${ref}.supabase.co`) return true;
+  return target.host.endsWith('.pooler.supabase.com') && target.user === `postgres.${ref}`;
+}
+
+function mentionsRef(target: TestTarget, ref: string): boolean {
+  return target.host.includes(ref) || target.user.includes(ref);
+}
+
 /**
- * The caller must name the test project's ref on purpose, and it has to show up
- * in the connection's host (direct: db.<ref>.supabase.co) or user (pooler:
- * postgres.<ref>). If the production ref is supplied, the same ref is refused.
- * `local` is accepted only for a localhost or socket target (used in tests).
+ * Rules, in order:
+ *  - `local` is accepted only for a localhost target (unit and scratch tests);
+ *  - otherwise TEST_ENV_PROJECT_REF is required and has to be a well-formed ref;
+ *  - PRODUCTION_SUPABASE_REF is required too, so a missing variable can never
+ *    turn the production check off;
+ *  - the known production ref and the supplied one are both refused, as the
+ *    test ref and as anything the connection mentions;
+ *  - the connection must be exactly the test project (direct host
+ *    db.<ref>.supabase.co, or pooler user postgres.<ref>). A ref that merely
+ *    appears somewhere inside a longer host or user does not count.
  */
 export function assertTestTarget(options: {
   connectionString: string;
@@ -37,25 +59,42 @@ export function assertTestTarget(options: {
   productionRef?: string | undefined;
 }): void {
   const testRef = (options.testRef ?? '').trim().toLowerCase();
-  const productionRef = (options.productionRef ?? '').trim().toLowerCase();
-  const { host, user } = parseDbTarget(options.connectionString);
+  const suppliedProduction = (options.productionRef ?? '').trim().toLowerCase();
+  const target = parseDbTarget(options.connectionString);
 
   if (testRef === 'local') {
-    if (host === 'localhost' || host === '127.0.0.1' || host === '' || host.startsWith('/')) return;
+    if (target.host === 'localhost' || target.host === '127.0.0.1' || target.host === '::1') {
+      if (mentionsRef(target, KNOWN_PRODUCTION_REF)) throw new Error('The connection mentions the production project. Refusing.');
+      return;
+    }
     throw new Error('TEST_ENV_PROJECT_REF=local is only allowed for a localhost database.');
   }
+
   if (!REF.test(testRef)) {
     throw new Error('Set TEST_ENV_PROJECT_REF to the test project ref (20 lowercase letters and digits).');
   }
-  if (productionRef && testRef === productionRef) {
-    throw new Error('TEST_ENV_PROJECT_REF equals the production project ref. Refusing.');
+  if (!REF.test(suppliedProduction)) {
+    throw new Error('Set PRODUCTION_SUPABASE_REF to the production project ref. It is required for any remote database.');
   }
-  if (!host.includes(testRef) && !user.includes(testRef)) {
-    throw new Error('The connection string does not point at the project named in TEST_ENV_PROJECT_REF. Refusing.');
+
+  const productionRefs = new Set([KNOWN_PRODUCTION_REF, suppliedProduction]);
+  for (const productionRef of productionRefs) {
+    if (testRef === productionRef) throw new Error('TEST_ENV_PROJECT_REF is a production project ref. Refusing.');
+    if (mentionsRef(target, productionRef)) throw new Error('The connection mentions a production project. Refusing.');
   }
-  if (productionRef && (host.includes(productionRef) || user.includes(productionRef))) {
-    throw new Error('The connection string points at the production project. Refusing.');
+  if (!connectionIsProject(target, testRef)) {
+    throw new Error('The connection is not exactly the project named in TEST_ENV_PROJECT_REF. Refusing.');
   }
+}
+
+/** Remove anything that could carry a credential before text is printed. */
+export function redactSecrets(text: string, secrets: (string | undefined)[] = []): string {
+  let out = text.replace(/[a-z][a-z0-9+.-]*:\/\/[^\s'"]+/gi, '[redacted-url]');
+  out = out.replace(/(password|passwd|pwd)\s*[=:]\s*\S+/gi, '$1=[redacted]');
+  for (const secret of secrets) {
+    if (secret && secret.length >= 4) out = out.split(secret).join('[redacted]');
+  }
+  return out;
 }
 
 /** A migration that reaches outside the database or hard-codes production. */

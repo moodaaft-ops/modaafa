@@ -5,7 +5,7 @@
  *
  *   SUPABASE_DB_URL=<test project connection string> \
  *   TEST_ENV_PROJECT_REF=<test project ref> \
- *   PRODUCTION_SUPABASE_REF=<production ref, optional but recommended> \
+ *   PRODUCTION_SUPABASE_REF=<production ref, required for any remote database> \
  *   npx tsx scripts/test-env-migrate.ts [--dry-run]
  *
  * It never prints the connection string. It does not create projects or users.
@@ -13,13 +13,17 @@
 import { spawnSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { assertTestTarget, selectSkippedMigrations } from '../lib/ops/test-env-guard';
+import { assertTestTarget, productionCallReason, redactSecrets, selectSkippedMigrations } from '../lib/ops/test-env-guard';
 
 const databaseUrl = process.env.SUPABASE_DB_URL;
 const dryRun = process.argv.includes('--dry-run');
 
+function safe(text: string): string {
+  return redactSecrets(text, [databaseUrl, process.env.SUPABASE_DB_PASSWORD]);
+}
+
 function fail(message: string): never {
-  console.error(message);
+  console.error(safe(message));
   process.exit(1);
 }
 
@@ -33,6 +37,12 @@ try {
 } catch (error) {
   fail((error as Error).message);
 }
+
+// db/schema.sql is written when the database is empty, so it gets the same
+// production check as the migrations, before anything is written.
+const schemaSql = readFileSync(resolve(process.cwd(), 'db/schema.sql'), 'utf8');
+const schemaReason = productionCallReason(schemaSql);
+if (schemaReason) fail(`db/schema.sql reaches production (${schemaReason}). Refusing to write anything.`);
 
 const migrationsDirectory = resolve(process.cwd(), 'db/migrations');
 const files = readdirSync(migrationsDirectory)
@@ -52,16 +62,24 @@ function psql(sql: string, tuplesOnly = false): string {
   const args = ['--dbname', databaseUrl as string, '--set', 'ON_ERROR_STOP=1', '--no-psqlrc'];
   if (tuplesOnly) args.push('--tuples-only', '--no-align');
   const result = spawnSync('psql', args, { input: sql, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
-  if (result.status !== 0) fail((result.stderr || 'psql failed').trim());
+  if (result.status !== 0) fail('psql failed: ' + (result.stderr || 'no error text').trim().split('\n')[0]);
   return result.stdout;
 }
 
 if (spawnSync('psql', ['--version'], { encoding: 'utf8' }).status !== 0) fail('psql is required.');
 
+// Existing scheduled jobs are checked before anything is migrated.
+function assertNoCronJobs(stage: string): void {
+  if (psql(`select to_regclass('cron.job') is not null;`, true).trim() !== 't') return;
+  const jobs = psql(`select count(*) from cron.job;`, true).trim();
+  if (jobs !== '0') fail(`cron.job has ${jobs} row(s) ${stage}. Remove them before testing. Nothing was changed.`);
+}
+assertNoCronJobs('before migrating');
+
 const hasBase = psql(`select to_regclass('public.businesses') is not null;`, true).trim() === 't';
 if (!hasBase) {
   console.log('Applying db/schema.sql (empty database).');
-  psql(readFileSync(resolve(process.cwd(), 'db/schema.sql'), 'utf8'));
+  psql(schemaSql);
 }
 
 psql(`create table if not exists public._modaafa_migrations (name text primary key, applied_at timestamptz not null default now());`);
@@ -70,17 +88,18 @@ for (const item of skipped) {
 }
 
 const migrate = spawnSync('node', ['scripts/migrate.mjs'], {
-  stdio: 'inherit',
+  encoding: 'utf8',
+  stdio: ['ignore', 'pipe', 'pipe'],
   env: { ...process.env, SUPABASE_DB_URL: databaseUrl },
 });
-if (migrate.status !== 0) fail('Migration run failed.');
+if (migrate.stdout) console.log(safe(migrate.stdout.trimEnd()));
+if (migrate.status !== 0) {
+  if (migrate.stderr) console.error(safe(migrate.stderr.trimEnd()));
+  fail('Migration run failed.');
+}
 
 // Verify: no scheduled job and no stored function body mentions production.
-const hasCron = psql(`select to_regclass('cron.job') is not null;`, true).trim() === 't';
-if (hasCron) {
-  const jobs = psql(`select count(*) from cron.job;`, true).trim();
-  if (jobs !== '0') fail(`cron.job has ${jobs} row(s) in a test database. Remove them before testing.`);
-}
+assertNoCronJobs('after migrating');
 const leaks = psql(
   `select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname not in ('pg_catalog','information_schema') and p.prosrc ilike '%ai.modaafa.com%';`,
