@@ -22,43 +22,46 @@ const SPEND_READ_LIMIT = 150;
 
 type Discovered = Awaited<ReturnType<typeof discoverAccessibleCustomers>>;
 
+export type ConnectJobDeps = {
+  discover?: typeof discoverAccessibleCustomers;
+  syncCache?: typeof syncCampaignCacheWithLoginFallback;
+  readSpend?: (
+    refreshToken: string,
+    accounts: Array<{ customer_id: string; manager_id: string | null }>
+  ) => Promise<Record<string, number | null>>;
+};
+
 /**
- * Records the start of a connect job. The `job_runs` partial unique index
- * allows one `running` row per job name, so any earlier row for this user is
- * retired first: a new consent always supersedes an older one.
+ * Records the start of a connect job. The retire-old-and-insert-new step is one
+ * SQL function (`connect_job_start`) under a per-user advisory lock: two
+ * simultaneous consents cannot both end up `running`, and the later one always
+ * supersedes the earlier one.
  */
 export async function startConnectJob(admin: any, userId: string) {
-  const jobName = connectJobName(userId);
   const startedAt = new Date().toISOString();
-  await admin
-    .from('job_runs')
-    .update({
-      status: 'failed',
-      finished_at: startedAt,
-      error_message: 'superseded: a newer Google Ads consent started',
-    })
-    .eq('job_name', jobName)
-    .eq('status', 'running');
-
-  const { data, error } = await admin
-    .from('job_runs')
-    .insert({
-      job_name: jobName,
-      status: 'running',
-      started_at: startedAt,
-      details: { stage: 'discover' } satisfies ConnectJobDetails,
-    })
-    .select('id')
-    .maybeSingle();
-  if (error || !data?.id) {
-    throw new Error(`Failed to record Google Ads connect job: ${error?.message ?? 'no id returned'}`);
+  const { data, error } = await admin.rpc('connect_job_start', { p_user_id: userId });
+  if (error || !data || typeof data !== 'string') {
+    throw new Error(`Failed to record Google Ads connect job: ${error?.code ?? 'no id returned'}`);
   }
-  return { id: data.id as string, startedAt };
+  return { id: data, startedAt };
 }
 
-async function setStage(admin: any, jobId: string, details: ConnectJobDetails) {
-  const { error } = await admin.from('job_runs').update({ details }).eq('id', jobId);
+/**
+ * Fencing: a job may only write while its own `job_runs` row is still
+ * `running`. These two helpers are single conditional statements, so a job that
+ * was superseded (or closed by the timeout sweep) can neither change its stage
+ * nor flip itself back to success. They return false when the job is no longer
+ * the live one.
+ */
+async function setStage(admin: any, jobId: string, details: ConnectJobDetails): Promise<boolean> {
+  const { data, error } = await admin
+    .from('job_runs')
+    .update({ details })
+    .eq('id', jobId)
+    .eq('status', 'running')
+    .select('id');
   if (error) console.warn('Failed to record Google Ads connect stage', { jobId, stage: details.stage });
+  return !error && Array.isArray(data) && data.length > 0;
 }
 
 async function finish(
@@ -66,9 +69,9 @@ async function finish(
   job: { id: string; startedAt: string },
   status: 'success' | 'failed',
   details: ConnectJobDetails
-) {
+): Promise<boolean> {
   const finishedAt = new Date();
-  const { error } = await admin
+  const { data, error } = await admin
     .from('job_runs')
     .update({
       status,
@@ -79,8 +82,11 @@ async function finish(
       details,
       error_message: status === 'failed' ? details.error ?? 'connect_failed' : null,
     })
-    .eq('id', job.id);
+    .eq('id', job.id)
+    .eq('status', 'running')
+    .select('id');
   if (error) console.error('Failed to record Google Ads connect finish', { jobId: job.id });
+  return !error && Array.isArray(data) && data.length > 0;
 }
 
 /**
@@ -98,13 +104,18 @@ export async function runConnectJob(params: {
   business: { id: string; selected_google_ads_customer_id?: string | null };
   refreshToken: string;
   encryptedRefreshToken: string;
+  /** Test seam only; production callers leave this out. */
+  deps?: ConnectJobDeps;
 }) {
   const { admin, job, userId, business, refreshToken, encryptedRefreshToken } = params;
+  const discover = params.deps?.discover ?? discoverAccessibleCustomers;
+  const syncCache = params.deps?.syncCache ?? syncCampaignCacheWithLoginFallback;
+  const readSpend = params.deps?.readSpend ?? readThirtyDaySpend;
   let stage: ConnectStageId = 'discover';
   const details: ConnectJobDetails = { stage };
 
   try {
-    const accounts = await discoverAccessibleCustomers(refreshToken);
+    const accounts = await discover(refreshToken);
     details.accounts_found = accounts.length;
     if (accounts.length === 0) {
       console.warn(`[google-ads/callback] no_ads_account reason=empty_discovery user=${userId}`);
@@ -114,7 +125,8 @@ export async function runConnectJob(params: {
 
     stage = 'read';
     details.stage = stage;
-    await setStage(admin, job.id, details);
+    // Superseded while discovering: stop before reading anything else.
+    if (!(await setStage(admin, job.id, details))) return;
 
     const enrichedAccounts = await enrichLinkableAccounts(
       refreshToken,
@@ -139,18 +151,27 @@ export async function runConnectJob(params: {
       existingMetadata,
     });
 
-    // Account creation and credential/link-state updates are service-owned.
-    const { data: savedAccounts, error: linkError } = await admin
-      .from('google_ads_accounts')
-      .upsert(rows, { onConflict: 'business_id,customer_id' })
-      .select('id, customer_id, manager_id, currency_code');
+    // Credential write. One SQL function locks this job's row, refuses unless
+    // it is still the live job, and only then upserts, so an older consent can
+    // never land its token after a newer one has started.
+    const { data: linkResult, error: linkError } = await admin.rpc('connect_job_link', {
+      p_job_id: job.id,
+      p_user_id: userId,
+      p_business_id: business.id,
+      p_rows: rows,
+    });
     if (linkError) {
-      console.error('Failed to auto-link Google Ads accounts', { code: linkError.code, message: linkError.message });
+      console.error('Failed to auto-link Google Ads accounts', { code: linkError.code });
+      await finish(admin, job, 'failed', { ...details, error: 'db_error' });
+      return;
+    }
+    if (linkResult?.status === 'superseded') return;
+    if (linkResult?.status !== 'linked') {
       await finish(admin, job, 'failed', { ...details, error: 'db_error' });
       return;
     }
 
-    const saved = (savedAccounts ?? []) as Array<{
+    const saved = (linkResult.rows ?? []) as Array<{
       id: string;
       customer_id: string;
       manager_id: string | null;
@@ -160,7 +181,7 @@ export async function runConnectJob(params: {
 
     stage = 'sync';
     details.stage = stage;
-    await setStage(admin, job.id, details);
+    if (!(await setStage(admin, job.id, details))) return;
 
     const persistedId = normalizeCustomerId(business.selected_google_ads_customer_id ?? '');
     const persisted = persistedId
@@ -171,18 +192,20 @@ export async function runConnectJob(params: {
     const autoSelected = !persisted && saved.length === 1 ? saved[0] : null;
 
     if (autoSelected) {
-      const { error: preferenceError } = await admin
-        .from('businesses')
-        .update({ selected_google_ads_customer_id: normalizeCustomerId(autoSelected.customer_id) })
-        .eq('id', business.id)
-        .eq('user_id', userId);
+      const { data: selectResult, error: preferenceError } = await admin.rpc('connect_job_select_account', {
+        p_job_id: job.id,
+        p_user_id: userId,
+        p_business_id: business.id,
+        p_customer_id: normalizeCustomerId(autoSelected.customer_id),
+      });
+      if (selectResult === 'superseded') return;
       if (preferenceError) console.warn('Unable to persist the only Google Ads account as selected');
     }
 
     const syncTarget = persisted ?? autoSelected;
     const [spend] = await Promise.all([
-      saved.length > 1 ? readThirtyDaySpend(refreshToken, saved) : Promise.resolve(undefined),
-      syncTarget ? syncFirstAccount(admin, refreshToken, syncTarget) : Promise.resolve(),
+      saved.length > 1 ? readSpend(refreshToken, saved) : Promise.resolve(undefined),
+      syncTarget ? syncFirstAccount(admin, job.id, userId, refreshToken, syncTarget, syncCache) : Promise.resolve(),
     ]);
     if (spend) details.spend = spend;
 
@@ -208,11 +231,14 @@ export async function runConnectJob(params: {
 
 async function syncFirstAccount(
   admin: any,
+  jobId: string,
+  userId: string,
   refreshToken: string,
-  account: { id: string; customer_id: string; manager_id: string | null; currency_code: string | null }
+  account: { id: string; customer_id: string; manager_id: string | null; currency_code: string | null },
+  syncCache: typeof syncCampaignCacheWithLoginFallback
 ) {
   try {
-    const syncResult = await syncCampaignCacheWithLoginFallback({
+    const syncResult = await syncCache({
       supabase: admin,
       customerId: account.customer_id,
       refreshToken,
@@ -221,10 +247,13 @@ async function syncFirstAccount(
       loginCustomerIds: [account.manager_id],
     });
     if (syncResult.loginCustomerId) {
-      await admin
-        .from('google_ads_accounts')
-        .update({ manager_id: syncResult.loginCustomerId })
-        .eq('id', account.id);
+      // Fenced like the other effectful writes: a superseded job leaves it alone.
+      await admin.rpc('connect_job_set_manager', {
+        p_job_id: jobId,
+        p_user_id: userId,
+        p_account_id: account.id,
+        p_manager_id: syncResult.loginCustomerId,
+      });
     }
   } catch (syncError) {
     console.warn(
