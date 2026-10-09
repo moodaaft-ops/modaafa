@@ -116,7 +116,7 @@ export default async function SettingsPage({
           <section className="surface-card p-6">
             <div className="flex items-center justify-between gap-4">
               <h2 className="text-[15px] font-semibold">النشاط</h2>
-              <Link href="/onboarding/business" className="inline-flex items-center gap-1 text-sm font-semibold text-primary hover:underline">
+              <Link href="/onboarding/business" className="inline-flex min-h-10 items-center gap-1 px-1 text-sm font-semibold text-primary hover:underline">
                 <Pencil className="h-3.5 w-3.5" />
                 تعديل
               </Link>
@@ -254,7 +254,7 @@ export default async function SettingsPage({
               <span className="mb-2 block text-[13px] font-medium text-foreground">للتأكيد اكتب: حذف حسابي</span>
               <input
                 name="confirmation"
-                className="h-11 w-full rounded-lg border border-danger/30 bg-background-elevated px-3.5 text-sm text-foreground outline-none transition-[border-color,box-shadow] duration-150 placeholder:text-foreground-subtle focus:border-danger/70 focus:ring-4 focus:ring-danger/15"
+                className="h-11 w-full rounded-lg border border-danger/30 bg-background-elevated px-3.5 text-base text-foreground outline-none sm:text-sm transition-[border-color,box-shadow] duration-150 placeholder:text-foreground-subtle focus:border-danger/70 focus:ring-4 focus:ring-danger/15"
                 placeholder="حذف حسابي"
                 aria-label="اكتب عبارة التأكيد: حذف حسابي"
                 autoComplete="off"

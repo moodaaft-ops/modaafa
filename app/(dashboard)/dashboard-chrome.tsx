@@ -217,7 +217,15 @@ export function DashboardChrome({
           // screen on desktop and the whole rail disappeared.
           mobileOpen
             ? 'translate-x-0'
-            : 'max-lg:rtl:translate-x-full max-lg:ltr:-translate-x-full'
+            : 'max-lg:rtl:translate-x-full max-lg:ltr:-translate-x-full',
+          // A closed drawer is only translated out of view, so its 17 links and
+          // buttons stayed in the tab order and the accessibility tree: a
+          // keyboard or screen-reader user tabbed into invisible controls.
+          // `visibility` removes them from both, and the delayed transition
+          // keeps the slide-out animation visible until it finishes.
+          mobileOpen
+            ? 'max-lg:visible'
+            : 'max-lg:invisible max-lg:[transition:transform_200ms_ease-out,visibility_0s_linear_200ms]'
         )}
         id="primary-navigation"
         aria-label="التنقل الرئيسي"
@@ -344,7 +352,7 @@ export function DashboardChrome({
       <div ref={mainColumnRef} className="flex min-w-0 flex-1 flex-col">
         {/* Mobile top bar */}
         <div className="flex h-14 items-center justify-between gap-3 border-b border-border bg-background px-4 lg:hidden">
-          <Link href="/dashboard" className="flex items-center gap-2">
+          <Link href="/dashboard" className="flex min-h-10 items-center gap-2">
             <LogoMark size={26} alt="شعار مُضاعِف" />
             <span className="text-sm font-semibold">مُضاعِف</span>
           </Link>
@@ -373,7 +381,7 @@ export function DashboardChrome({
         </div>
 
         {/* Extra bottom padding on mobile so content clears the tab bar. */}
-        <main className="flex-1 overflow-y-auto pb-16 scrollbar-thin lg:pb-0">{children}</main>
+        <main className="flex-1 overflow-y-auto pb-[calc(4.5rem+env(safe-area-inset-bottom))] scrollbar-thin lg:pb-0">{children}</main>
 
         {/* Mobile bottom tab bar — the four daily-work routes one tap away,
             instead of open-drawer → find item. Desktop keeps the sidebar. */}

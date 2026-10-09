@@ -164,7 +164,39 @@ export default async function CampaignsPage({
                 </a>
               </div>
             </div>
-            <div className="overflow-x-auto scrollbar-thin">
+            {/* Phones get one card per campaign. The 720px table forced a hidden
+                sideways scroll that pushed spend and conversions off-screen. */}
+            <ul className="divide-y divide-border md:hidden">
+              {sortedCampaigns.map((campaign: any) => (
+                <li key={campaign.id} className="px-4 py-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="min-w-0 break-words text-sm font-medium leading-6 text-foreground">{campaign.name}</p>
+                    <StatusBadge tone={campaignStatusTone(campaign.status)}>
+                      {campaignStatusLabel(campaign.status)}
+                    </StatusBadge>
+                  </div>
+                  <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2.5 text-[13px]">
+                    <div>
+                      <dt className="text-[11px] text-muted-foreground">النوع</dt>
+                      <dd className="mt-0.5 text-foreground">{campaignTypeLabel(campaign.type)}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-[11px] text-muted-foreground">الميزانية</dt>
+                      <dd className="mt-0.5 numeric text-foreground">{formatCurrency(campaign.daily_budget ?? 0, selectedAccount?.currency_code)}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-[11px] text-muted-foreground">الصرف · {effectiveRange.label}</dt>
+                      <dd className="mt-0.5 numeric text-foreground">{formatCurrency(moneyMetric(campaign.range_metrics, 'cost'), selectedAccount?.currency_code)}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-[11px] text-muted-foreground">التحويلات</dt>
+                      <dd className="mt-0.5 numeric text-foreground">{formatNumberAr(campaign.range_metrics?.conversions ?? 0)}</dd>
+                    </div>
+                  </dl>
+                </li>
+              ))}
+            </ul>
+            <div className="hidden overflow-x-auto scrollbar-thin md:block">
               <table className="w-full min-w-[720px] text-sm">
                 <thead className="border-b border-border bg-background-elevated text-[11px] uppercase text-muted-foreground">
                   <tr>
