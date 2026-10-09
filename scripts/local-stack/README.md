@@ -29,13 +29,25 @@ scripts/local-stack/app.sh       # يبني التطبيق ويشغّله على
 scripts/local-stack/verify.sh    # الفحوص الثلاثة (أو --no-app لأول اثنين بدون التطبيق)
 ```
 
+## أي Docker daemon يُستخدم (Docker Desktop وColima وغيرهما)
+بعد الـ preflight يختار `up.sh` **daemon محلياً واحداً** ويسجّله في `.local-stack/docker-host`. الأولوية: `DOCKER_HOST` ثم `DOCKER_CONTEXT` ثم الـ context الحالي. المقبول socket محلي أو named pipe فقط (`unix://` أو `npipe://`)؛ أي `tcp://` أو `ssh://` أو context بعيد يُرفض قبل أي اتصال بأي daemon، ويُرفض كذلك لو سمّى `DOCKER_HOST` و`DOCKER_CONTEXT` daemonين مختلفين. بعدها يستخدم `verify.sh` و`down.sh` القرار المسجّل نفسه، حتى لو فتحت terminal آخر على context مختلف. لا يُنفَّذ `docker context use` ولا يُعدَّل أي ملف لـ Docker، فالـ default عندك لا يتغير.
+
+سبب هذا: الاختبارات تعمل ببيئة فارغة، و`DOCKER_CONTEXT=colima-...` كان يضيع فيها فيرجع `docker` إلى `/var/run/docker.sock`. الآن يُمرَّر `DOCKER_HOST` المسجّل فقط للعملية التي تحتاج Docker (`posture.mjs`)، ولا يصل التطبيق.
+
+مثال Colima:
+```bash
+DOCKER_CONTEXT=colima-modaafa-qa scripts/local-stack/up.sh
+scripts/local-stack/verify.sh      # من أي terminal، نفس الـ daemon
+scripts/local-stack/down.sh
+```
+
 ## الإغلاق والتنظيف
 ```bash
 scripts/local-stack/down.sh      # يوقف التطبيق والبوابة والبديل ويحذف الحاويات والشبكة ومجلد .local-stack
 ```
 الحاويات تعمل بدون volume، فحذفها يمحو القاعدة كاملة.
 
-التنظيف بالـ label فقط: كل حاوية وكل شبكة ينشئها `up.sh` تحمل `com.modaafa.local-stack=true`، و`down.sh` يحذف ما يحمل هذا الـ label ولا شيئاً غيره. لو وُجدت حاوية أو شبكة بنفس الاسم بلا label يرفض `up.sh` ويقول السبب ولا يمسّها. العمليات على الجهاز تُوقف من ملفات الـ pid فقط، وبعد التأكد أن الـ pid ما زال يشغّل الأمر المتوقع (لا يُقتل pid أعيد استخدامه).
+التنظيف بالـ label فقط: كل حاوية وكل شبكة ينشئها `up.sh` تحمل `com.modaafa.local-stack=true`، و`down.sh` يحذف ما يحمل هذا الـ label ولا شيئاً غيره. لو وُجدت حاوية أو شبكة بنفس الاسم بلا label يرفض `up.sh` ويقول السبب ولا يمسّها. إذا تعذّر الوصول لـ Docker يبقي `down.sh` مجلد `.local-stack` (فيه اسم الـ daemon) ويخرج بخطأ، فشغّله مرة ثانية بعد تشغيل Docker. العمليات على الجهاز تُوقف من ملفات الـ pid فقط، وبعد التأكد أن الـ pid ما زال يشغّل الأمر المتوقع (لا يُقتل pid أعيد استخدامه).
 
 ## ما الذي ينفّذه `up.sh`
 1. حاوية Postgres وقاعدتان: `app` و`fa_scratch` (للفحص الأول).
@@ -43,19 +55,20 @@ scripts/local-stack/down.sh      # يوقف التطبيق والبوابة وا
 3. `db/schema.sql` ثم `scripts/migrate.mjs` لـ 20 ترحيلاً، مع **تخطي** `20261005_pg_cron_scheduler.sql` عمداً: يحتاج pg_cron وpg_net وvault ويجدول نداءات إلى `https://ai.modaafa.com/api/cron/...`. بعد الترحيل يتأكد الأمر أن لا دالة تذكر `ai.modaafa.com` وإلا يتوقف.
 4. الصلاحيات تطابق الإنتاج بدل منح شامل. Supabase يمنح كل كائن جديد في `public` لـ anon وauthenticated وservice_role عبر `ALTER DEFAULT PRIVILEGES`، ثم تسحب الترحيلات ما لا تريده (مثل `free_audit_ledger` وحذف `businesses` وجداول autopilot). لذلك تُضبط الـ default privileges **قبل** تحميل `db/schema.sql` والترحيلات، ولا يُمنح شيء بعدها. النتيجة المخزّنة للـ ledger: `{postgres=arwdDxt/postgres,service_role=r/postgres}`، أي SELECT فقط لـ service_role ولا شيء لـ anon وauthenticated. النسخة الأولى من هذا الـ PR كانت تنفّذ `grant ... on all tables` بعد الترحيلات، فأعطت anon وauthenticated صلاحية `arwd` على الـ ledger وأرجعت DELETE على `businesses`؛ الفحص 0b يفشل (11 من 16) إذا أُعيد ذلك المنح.
    الجدول `free_audit_events` غير موجود في المستودع ولا في أي فرع. الموجود `free_audit_ledger` فقط، وعمود `event_id` تُرجعه الدالة `consume_free_audit`. فحص 0b يتحقق أنه غير موجود، وإن ظهر يوماً يُراجَع.
-5. التحقق قبل أي كتابة (`preflight.mjs`): البيئة الموروثة لا تذكر مرجع مشروع الإنتاج ولا `ai.modaafa.com` ولا مضيف supabase، ولا يوجد `PGSERVICE` ولا `DOCKER_HOST` بعيد؛ رابط القاعدة على loopback وبالمنفذ المحلي وبلا أي query (لأن `?host=` و`?hostaddr=` تغيّر وجهة الاتصال فعلياً)؛ والخادم نفسه Postgres عادي بلا أدوار أو إضافات `supabase_*` (يلتقط نفقاً إلى مشروع مستضاف). يعمل قبل إنشاء قاعدة `app` وقبل تحميل المخطط، ومرة على ملف `.local-stack/env` بعد توليده.
+5. التحقق قبل أي كتابة (`preflight.mjs`): الـ Docker daemon محلي (انظر القسم أعلاه)؛ البيئة الموروثة لا تذكر مرجع مشروع الإنتاج ولا `ai.modaafa.com` ولا مضيف supabase، ولا يوجد `PGSERVICE` ولا `DOCKER_HOST` بعيد؛ رابط القاعدة على loopback وبالمنفذ المحلي وبلا أي query (لأن `?host=` و`?hostaddr=` تغيّر وجهة الاتصال فعلياً)؛ والخادم نفسه Postgres عادي بلا أدوار أو إضافات `supabase_*` (يلتقط نفقاً إلى مشروع مستضاف). يعمل قبل إنشاء قاعدة `app` وقبل تحميل المخطط، ومرة على ملف `.local-stack/env` بعد توليده.
 5. ملف `.local-stack/env` بمفاتيح JWT وENCRYPTION_KEY وCRON_SECRET وHEALTH_SECRET عشوائية جديدة. المجلد داخل `.gitignore`. Stripe وResend وTikTok وGoogle وElevenLabs مضبوطة على `""` (إيقاف)، والصوت مطفأ.
 
 `app.sh` يبني ويشغّل التطبيق ببيئة **فارغة** فيها ملف `.local-stack/env` وأسماء قليلة للوكيل وشهادات الشبكة فقط، فلا يصل التطبيق أي متغير من شلّك (جُرّب بحقن `STRIPE_SECRET_KEY` و`NODE_ENV` في الشل، ولم يظهر منها شيء في بيئة عملية Next). ويرفض التشغيل لو وُجد في الجذر أي ملف يشبه ملفات البيئة: `.env` و`.env.*` (ومنها `.env.development` و`.env.test` و`.env.test.local`) و`*.env` و`env.*` وأي اسم يجمع `env` و`test`. القوالب `.example` و`.sample` و`.template` وحدها مسموحة. انقل الملف جانباً ثم أعد المحاولة.
 
 ## الفحوص والنتائج المتوقعة (جُرّبت من نسخة نظيفة، 9 أكتوبر 2026)
-0. **12 و16** (قبل الباقي): `preflight.test.mjs` يجرّب 12 حالة رفض (مرجع الإنتاج، مضيف بعيد، `?host=` و`?hostaddr=` و`?service=`، `DOCKER_HOST` بعيد، قائمة مضيفين، ملف بيئة غير loopback). ثم `posture.mjs` بـ 16 فحصاً: 5 على Docker (ثلاث حاويات بالـ label، لا host networking، كل منفذ منشور على 127.0.0.1، الشبكة الخاصة) و11 على الصلاحيات (ledger وصلاحيات دوال الحصة وحذف businesses وautopilot وRLS على كل جدول).
-1. **13**: `tests/free-audit-sql.integration.test.ts` على قاعدة `fa_scratch`. الحصة المجانية بـ SQL حقيقي: 13 ناجح، صفر فاشل.
+0. **27 و16** (قبل الباقي): `preflight.test.mjs` و`common.test.mjs` يجرّبان 27 حالة (مرجع الإنتاج، مضيف بعيد، `?host=` و`?hostaddr=` و`?service=`، قائمة مضيفين، ملف بيئة غير loopback، `DOCKER_HOST` أو context بعيد، تعارض `DOCKER_HOST` مع `DOCKER_CONTEXT`، وانتقال الـ daemon المختار عبر البيئة الفارغة بدون أي تغيير في إعدادات Docker). ثم `posture.mjs` بـ 16 فحصاً: 5 على Docker (ثلاث حاويات بالـ label، لا host networking، كل منفذ منشور على 127.0.0.1، الشبكة الخاصة) و11 على الصلاحيات (ledger وصلاحيات دوال الحصة وحذف businesses وautopilot وRLS على كل جدول).
+1. **13**: `tests/free-audit-sql.integration.test.ts` على قاعدة `fa_scratch`. الحصة المجانية بـ SQL حقيقي: 13 ناجح، صفر فاشل، **صفر skip**. هذي الاختبارات تتخطى نفسها بصمت لو غاب `FREE_AUDIT_PG_URL`، لذلك `verify.sh` يفشل (exit 1) لو كان `pass` غير 13 أو `skipped` أو `fail` أو `cancelled` غير صفر.
 2. **18**: `isolation.mjs`. مستخدمان اصطناعيان `synthetic-A/B@example.test` عبر Auth وREST الحقيقيين: كل مستخدم يقرأ صفوفه فقط، لا يعدّل ولا يحذف ولا يربط حساباً بنشاط الآخر، المجهول لا يرى شيئاً، `complete_free_audit` للـservice role فقط، وحصة كل حساب مستقلة. النتيجة: 0 فشل من 18.
 3. **10**: `chat.mjs`. `/api/chat/start` بكوكيز جلسة حقيقية: 401 بلا جلسة، 403 لأصل غريب، 400 لجسم فاضي، ولا جلسة أو customerId أو توصية تعبر بين الحسابين، ولا تسرّب في الردود. النتيجة: 0 فشل من 10 (مع نداء واحد لبديل النموذج في تلك الجولة).
 
 ## حدود المحاكاة (ما لا تثبته هذه البيئة)
 - **ليست Supabase المستضاف.** الصلاحيات تُبنى بنفس آلية الإنتاج (default privileges ثم سحب الترحيلات) وتُفحص، لكن الأدوار والإصدارات والإضافات قريبة وليست مطابقة.
+- **Colima لم أجرّبه فعلياً.** جرّب أيمن على Mac نجاح 12/12 من الـ preflight على 8424d25. أعدت الخلل عندي بـ context حقيقي على socket بديل مع غلاف `docker` يفشل على الـ default بنفس رسالة `/var/run/docker.sock`، وهذا يختبر سلوك السكربتات مع الـ context لا Colima نفسه.
 - **macOS لم يُجرَّب.** كل الاختبارات تمت على Linux. ما أزيل من الخطر المعروف: `--network host` (على Docker Desktop يربط على آلة افتراضية لا على جهازك) و`setsid` (غير موجود افتراضياً في macOS). المتبقي غير مثبت: سلوك `-p 127.0.0.1:...` في Docker Desktop، و`ps -p <pid> -o command=` وعزل مجموعة العمليات في `proc.mjs`، وصيغة `find` و`env -i`. شغّل `verify.sh` على جهازك وأخبرنا بأي فشل.
 - **الشبكة الخاصة ليست `--internal`.** Docker لا ينشر منفذاً على شبكة `--internal`، والمنافذ مطلوبة هنا لأن Node والاختبارات على الجهاز. لذلك الحاويات تقدر نظرياً على الخروج للإنترنت. المخفِّف: GoTrue بلا SMTP ولا مزود خارجي، وPostgREST وPostgres لا يبدآن اتصالاً خارجياً.
 - **نفق إلى الإنتاج على loopback**: الـ preflight يلتقطه بمؤشرات الخادم (أدوار وإضافات Supabase)، لكن لا يلتقط نفقاً إلى Postgres عادي بلا هذه المؤشرات. التحقق النهائي يبقى على مشروع اختبار مستضاف.

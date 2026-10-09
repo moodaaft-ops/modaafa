@@ -1,6 +1,7 @@
 // Refuses to continue when anything points at production or at a remote machine. Runs before the
 // first write. It never prints a value, only the NAME of the variable and the rule that failed.
 //   node preflight.mjs env                       inherited environment + docker endpoint
+//   node preflight.mjs docker-endpoint           prints the ONE local daemon endpoint to use (else refuses)
 //   node preflight.mjs envfile <path>            every URL in the generated env file is loopback
 //   node preflight.mjs db <url> <expected-port>  loopback URL + server is not a hosted Supabase
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -45,20 +46,47 @@ function checkEnv() {
     if (!value) continue;
     if (!LOOPBACK.has(hostOf(value))) refuse(name, 'is set and is not a loopback address; unset it');
   }
-  const dockerHost = process.env.DOCKER_HOST;
-  if (dockerHost && !dockerHost.startsWith('unix://') && !dockerHost.startsWith('npipe://')) {
-    refuse('DOCKER_HOST', 'points at a remote Docker daemon; the stack must run on this machine');
-  }
+  resolveDockerEndpoint();
+}
+
+const LOCAL_DOCKER = (endpoint) => endpoint.startsWith('unix://') || endpoint.startsWith('npipe://');
+
+// Which Docker daemon will the stack use? DOCKER_HOST wins over DOCKER_CONTEXT, which wins over the
+// current context. Only a local socket or named pipe is accepted, and the two variables may not
+// disagree. Reading a context's endpoint does not contact any daemon.
+function contextEndpoint(name) {
+  const args = ['context', 'inspect', ...(name ? [name] : []), '--format', '{{.Endpoints.docker.Host}}'];
   try {
-    const endpoint = execFileSync('docker', ['context', 'inspect', '--format', '{{.Endpoints.docker.Host}}'], {
-      encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-    if (endpoint && !endpoint.startsWith('unix://') && !endpoint.startsWith('npipe://')) {
-      refuse('docker context', 'endpoint is not a local socket');
-    }
+    return execFileSync('docker', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
   } catch {
-    /* docker presence is checked by the caller */
+    return '';
   }
+}
+
+function resolveDockerEndpoint() {
+  const host = process.env.DOCKER_HOST || '';
+  const named = process.env.DOCKER_CONTEXT || '';
+  if (host && !LOCAL_DOCKER(host)) {
+    refuse('DOCKER_HOST', 'points at a remote Docker daemon; the stack must run on this machine');
+    return null;
+  }
+  let fromContext = '';
+  if (named || !host) {
+    fromContext = contextEndpoint(named);
+    if (!fromContext) {
+      refuse(named ? 'DOCKER_CONTEXT' : 'docker context', 'could not read a Docker endpoint for it');
+      return null;
+    }
+    if (!LOCAL_DOCKER(fromContext)) {
+      refuse(named ? 'DOCKER_CONTEXT' : 'docker context', 'endpoint is not a local socket');
+      return null;
+    }
+  }
+  if (host && fromContext && host !== fromContext) {
+    refuse('DOCKER_HOST and DOCKER_CONTEXT', 'name different daemons; unset one of them');
+    return null;
+  }
+  return host || fromContext;
 }
 
 function checkEnvFile(path) {
@@ -103,11 +131,13 @@ function checkDb(urlText, expectedPort) {
 }
 
 const [mode, a, b] = process.argv.slice(2);
+let printed = null;
 if (mode === 'env') checkEnv();
+else if (mode === 'docker-endpoint') printed = resolveDockerEndpoint();
 else if (mode === 'envfile') checkEnvFile(a);
 else if (mode === 'db') checkDb(a, b);
 else {
-  console.error('usage: preflight.mjs env | envfile <path> | db <url> <port>');
+  console.error('usage: preflight.mjs env | docker-endpoint | envfile <path> | db <url> <port>');
   process.exit(2);
 }
 if (problems.length) {
@@ -115,3 +145,4 @@ if (problems.length) {
   for (const line of problems) console.error(`  - ${line}`);
   process.exit(1);
 }
+if (printed) console.log(printed);

@@ -60,3 +60,63 @@ test('a refusal names the variable and never prints its value', () => {
   assert.match(r.stderr, /DATABASE_URL/);
   assert.doesNotMatch(r.stderr + r.stdout, /SECRETPW123|abcdefghij1234567890/);
 });
+
+// ---- Docker daemon selection (uses a fake `docker` that only answers `context inspect`) ----
+const fakeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-docker-'));
+fs.writeFileSync(
+  path.join(fakeDir, 'docker'),
+  `#!/bin/sh
+# usage: docker context inspect [NAME] --format FMT   (anything else is an error: no daemon is contacted)
+[ "$1" = context ] && [ "$2" = inspect ] || { echo "unexpected docker call: $*" >&2; exit 9; }
+name=""
+for a in "$@"; do case "$a" in context|inspect|--format|'{{.Endpoints.docker.Host}}') ;; *) name="$a";; esac; done
+[ -z "$name" ] && name="\${DOCKER_CONTEXT:-\${FAKE_CURRENT:-default}}"
+case "$name" in
+  default) echo unix:///var/run/docker.sock;;
+  colima-modaafa-qa) echo unix:///Users/qa/.colima/modaafa-qa/docker.sock;;
+  desktop-linux) echo unix:///Users/qa/.docker/run/docker.sock;;
+  remote-tcp) echo tcp://10.0.0.5:2375;;
+  remote-ssh) echo ssh://u@host;;
+  *) exit 1;;
+esac
+`,
+  { mode: 0o755 }
+);
+const withFakeDocker = (extra = {}) => ({ PATH: `${fakeDir}:${process.env.PATH}`, ...extra });
+const endpoint = (extra) => run(['docker-endpoint'], withFakeDocker(extra));
+
+test('docker-endpoint: the current context is used when nothing is set', () => {
+  assert.equal(endpoint().stdout.trim(), 'unix:///var/run/docker.sock');
+  assert.equal(endpoint({ FAKE_CURRENT: 'desktop-linux' }).stdout.trim(), 'unix:///Users/qa/.docker/run/docker.sock');
+});
+test('docker-endpoint: DOCKER_CONTEXT selects that context socket (Colima case)', () => {
+  const r = endpoint({ DOCKER_CONTEXT: 'colima-modaafa-qa' });
+  assert.equal(r.status, 0);
+  assert.equal(r.stdout.trim(), 'unix:///Users/qa/.colima/modaafa-qa/docker.sock');
+});
+test('docker-endpoint: a local DOCKER_HOST is used as given', () => {
+  assert.equal(endpoint({ DOCKER_HOST: 'unix:///tmp/x.sock' }).stdout.trim(), 'unix:///tmp/x.sock');
+});
+test('docker-endpoint: remote DOCKER_HOST is refused and prints nothing', () => {
+  for (const host of ['tcp://10.0.0.5:2375', 'ssh://me@host', 'https://docker.example.com']) {
+    const r = endpoint({ DOCKER_HOST: host });
+    assert.notEqual(r.status, 0, host);
+    assert.equal(r.stdout.trim(), '');
+  }
+});
+test('a remote context is refused, whether named, current, or checked by the env mode', () => {
+  for (const name of ['remote-tcp', 'remote-ssh']) {
+    assert.notEqual(endpoint({ DOCKER_CONTEXT: name }).status, 0, `named ${name}`);
+    assert.notEqual(endpoint({ FAKE_CURRENT: name }).status, 0, `current ${name}`);
+    assert.notEqual(run(['env'], withFakeDocker({ DOCKER_CONTEXT: name })).status, 0, `env mode ${name}`);
+  }
+});
+test('DOCKER_HOST and DOCKER_CONTEXT naming different daemons are refused; the same daemon is accepted', () => {
+  assert.notEqual(endpoint({ DOCKER_HOST: 'unix:///tmp/other.sock', DOCKER_CONTEXT: 'colima-modaafa-qa' }).status, 0);
+  const same = endpoint({ DOCKER_HOST: 'unix:///Users/qa/.colima/modaafa-qa/docker.sock', DOCKER_CONTEXT: 'colima-modaafa-qa' });
+  assert.equal(same.status, 0);
+});
+test('an unknown context, or a docker that cannot answer, is refused', () => {
+  assert.notEqual(endpoint({ DOCKER_CONTEXT: 'no-such-context' }).status, 0);
+  assert.notEqual(run(['docker-endpoint'], { PATH: '/nonexistent' }).status, 0);
+});

@@ -9,13 +9,16 @@ ROOT="$(cd "$HERE/../.." && pwd)"
 STATE="$ROOT/.local-stack"
 # shellcheck disable=SC1091
 . "$HERE/versions.env"
+# shellcheck disable=SC1091
+. "$HERE/common.sh"
 
 for entry in "app:next" "gateway:gateway.mjs" "llm-stub:llm-stub.mjs"; do
   node "$HERE/proc.mjs" stop "$STATE/${entry%%:*}.pid" "${entry##*:}" || true
 done
 
 status=0
-if command -v docker >/dev/null && docker info >/dev/null 2>&1; then
+# Same daemon that up.sh used, even when this terminal has another context selected.
+if command -v docker >/dev/null && use_stack_docker && docker info >/dev/null 2>&1; then
   containers="$(docker ps -aq --filter "label=$LS_LABEL")"
   [ -n "$containers" ] && docker rm -f $containers >/dev/null 2>&1
   networks="$(docker network ls -q --filter "label=$LS_LABEL")"
@@ -23,9 +26,11 @@ if command -v docker >/dev/null && docker info >/dev/null 2>&1; then
   left="$(docker ps -aq --filter "label=$LS_LABEL"; docker network ls -q --filter "label=$LS_LABEL")"
   if [ -n "$left" ]; then echo "Some labelled Docker objects are still there; run down.sh again." >&2; status=1; fi
 else
-  echo "Docker is not reachable, so containers were not touched." >&2
+  echo "The Docker daemon is not reachable, so containers were not touched. .local-stack is kept (it records which daemon the stack uses). Start Docker and run down.sh again." >&2
   status=1
 fi
-rm -rf "$STATE"
-[ "$status" = 0 ] && echo "Local stack removed."
+if [ "$status" = 0 ]; then
+  rm -rf "$STATE"
+  echo "Local stack removed."
+fi
 exit $status

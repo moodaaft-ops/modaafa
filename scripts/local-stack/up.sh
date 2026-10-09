@@ -18,7 +18,6 @@ umask 077
 for tool in docker node psql openssl; do
   command -v "$tool" >/dev/null || { echo "missing: $tool" >&2; exit 1; }
 done
-docker info >/dev/null 2>&1 || { echo "docker daemon is not running" >&2; exit 1; }
 
 if [ -e "$STATE/env" ]; then
   echo "A stack is already prepared at .local-stack. Run scripts/local-stack/down.sh first." >&2
@@ -27,6 +26,10 @@ fi
 
 # Preflight 1 of 3, before anything is created: the caller's environment and the Docker endpoint.
 node "$HERE/preflight.mjs" env
+# Pick ONE local daemon (DOCKER_HOST, DOCKER_CONTEXT or the current context, local sockets only) and
+# keep using it for every docker call here and in verify.sh and down.sh. The default context is not changed.
+pin_docker
+docker info >/dev/null 2>&1 || { echo "the Docker daemon at $DOCKER_HOST is not running" >&2; exit 1; }
 
 # Never reuse or delete an object this tool did not label.
 for name in "$LS_PG" "$LS_AUTH" "$LS_REST"; do
