@@ -3,6 +3,7 @@ import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import { getSubscriptionAccess } from '@/lib/billing/entitlements';
 import { buildExecutableAction } from '@/lib/ai/executable-action';
 import type { ChatRecommendation, ChatState } from './contracts';
+import { readFreeAuditView } from './free-audit-view';
 
 export type LoadedChatState =
   | { ok: true; state: ChatState; accountId: string | null }
@@ -88,6 +89,8 @@ async function build(supabase: any, account: any, subscriptionActive: boolean): 
   if (auditRes.error || recRes.error) return { ok: false, error: 'read_failed' };
 
   const audit = auditRes.data;
+  // Subscribers use their plan allowance, so the free ledger is irrelevant to them.
+  const freeAudit = subscriptionActive ? undefined : await readFreeAuditView(normalizeCustomerId(account.customer_id));
   const recommendations: ChatRecommendation[] = (recRes.data ?? []).map((r: any) => ({
     id: r.id,
     title: r.title,
@@ -116,6 +119,7 @@ async function build(supabase: any, account: any, subscriptionActive: boolean): 
         : null,
       recommendations,
       subscriptionActive,
+      ...(freeAudit ? { freeAudit } : {}),
     },
   };
 }
