@@ -34,16 +34,25 @@ export type ConnectJobDeps = {
 /**
  * Records the start of a connect job. The retire-old-and-insert-new step is one
  * SQL function (`connect_job_start`) under a per-user advisory lock: two
- * simultaneous consents cannot both end up `running`, and the later one always
- * supersedes the earlier one.
+ * simultaneous consents cannot both end up `running`.
+ *
+ * Ordering is by `consentAt` (when the user consented) when it is known, so a
+ * callback that reaches the server late for an OLDER consent returns `null`
+ * (stale) and never opens a job. Without a consent time the order is job start
+ * time, i.e. callback arrival order.
  */
-export async function startConnectJob(admin: any, userId: string) {
+export async function startConnectJob(admin: any, userId: string, consentAt?: string | null) {
   const startedAt = new Date().toISOString();
-  const { data, error } = await admin.rpc('connect_job_start', { p_user_id: userId });
-  if (error || !data || typeof data !== 'string') {
-    throw new Error(`Failed to record Google Ads connect job: ${error?.code ?? 'no id returned'}`);
+  const { data, error } = await admin.rpc('connect_job_start', {
+    p_user_id: userId,
+    p_consent_at: consentAt ?? null,
+  });
+  if (error) {
+    throw new Error(`Failed to record Google Ads connect job: ${error.code ?? 'unknown'}`);
   }
-  return { id: data, startedAt };
+  if (data === null || data === undefined) return null;
+  if (typeof data !== 'string') throw new Error('Failed to record Google Ads connect job: no id returned');
+  return { id: data, startedAt, consentAt: consentAt ?? null };
 }
 
 /**
@@ -99,7 +108,7 @@ async function finish(
  */
 export async function runConnectJob(params: {
   admin: any;
-  job: { id: string; startedAt: string };
+  job: { id: string; startedAt: string; consentAt?: string | null };
   userId: string;
   business: { id: string; selected_google_ads_customer_id?: string | null };
   refreshToken: string;
@@ -112,7 +121,7 @@ export async function runConnectJob(params: {
   const syncCache = params.deps?.syncCache ?? syncCampaignCacheWithLoginFallback;
   const readSpend = params.deps?.readSpend ?? readThirtyDaySpend;
   let stage: ConnectStageId = 'discover';
-  const details: ConnectJobDetails = { stage };
+  const details: ConnectJobDetails = { stage, consent_at: job.consentAt ?? null };
 
   try {
     const accounts = await discover(refreshToken);

@@ -40,6 +40,8 @@ export type ConnectJobDetails = {
   /** customer_id → spend over the last 30 days, in the account currency. */
   spend?: Record<string, number | null>;
   next?: string;
+  /** When the user consented (oauth_states.created_at); orders competing jobs. */
+  consent_at?: string | null;
 };
 
 export type ConnectJobSnapshot = {

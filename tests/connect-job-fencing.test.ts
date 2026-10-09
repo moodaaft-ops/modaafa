@@ -23,6 +23,10 @@ function makeDb(userId = 'u1', businessId = 'b1') {
   };
   const rpc = async (name: string, a: any) => {
     if (name === 'connect_job_start') {
+      const at = a.p_consent_at as string | null;
+      if (at && [...jobs.values()].some((j) => j.user_id === a.p_user_id && j.details.consent_at && j.details.consent_at > at)) {
+        return { data: null, error: null };
+      }
       for (const j of jobs.values()) {
         if (j.user_id === a.p_user_id && j.status === 'running') {
           j.status = 'failed';
@@ -30,7 +34,7 @@ function makeDb(userId = 'u1', businessId = 'b1') {
         }
       }
       const id = `job${++seq}`;
-      jobs.set(id, { id, user_id: a.p_user_id, status: 'running', details: { stage: 'discover' } });
+      jobs.set(id, { id, user_id: a.p_user_id, status: 'running', details: { stage: 'discover', consent_at: at ?? null } });
       return { data: id, error: null };
     }
     if (name === 'connect_job_link') {
@@ -115,8 +119,8 @@ function deps(over: Partial<ConnectJobDeps> & { accounts?: any[] } = {}): Connec
   };
 }
 
-async function launch(db: ReturnType<typeof makeDb>, token: string, d: ConnectJobDeps) {
-  const job = await startConnectJob(db.admin, 'u1');
+async function launch(db: ReturnType<typeof makeDb>, token: string, d: ConnectJobDeps, consentAt?: string) {
+  const job = (await startConnectJob(db.admin, 'u1', consentAt))!;
   const done = runConnectJob({
     admin: db.admin, job, userId: 'u1',
     business: { id: 'b1', selected_google_ads_customer_id: null },
@@ -249,4 +253,42 @@ test('OAuth state: replay, wrong user and storage failure without a cookie are a
   assert.equal(noCookie.accepted, false);
   const wrongState = validateGoogleAdsOAuthState({ serverResult: 'unavailable', cookieValue, returnedState: 'state-b' });
   assert.equal(wrongState.accepted, false);
+});
+
+test('a callback that reaches the server late for an OLDER consent is refused and writes nothing', async () => {
+  const db = makeDb();
+  const older = '2026-10-09T00:00:00.000Z';
+  const newer = '2026-10-09T00:05:00.000Z';
+  // The newer consent finishes first (its callback arrived first).
+  const b = await launch(db, 'NEW', deps(), newer);
+  await b.done;
+  assert.equal(tokenOf(db), 'enc-NEW');
+  // The older consent's callback arrives afterwards: it must not even open a job.
+  const jobsBefore = db.jobs.size;
+  const late = await startConnectJob(db.admin, 'u1', older);
+  assert.equal(late, null);
+  assert.equal(db.jobs.size, jobsBefore);
+  assert.equal(db.jobs.get(b.job.id).status, 'success', 'the newer job is not superseded by the late one');
+  assert.equal(tokenOf(db), 'enc-NEW');
+});
+
+test('a late older callback also loses while the newer job is still running', async () => {
+  const db = makeDb();
+  const hold = gate();
+  const b = await launch(db, 'NEW', deps({ discover: (async () => { await hold.promise; return [ACCOUNT]; }) as any }), '2026-10-09T00:05:00.000Z');
+  const late = await startConnectJob(db.admin, 'u1', '2026-10-09T00:00:00.000Z');
+  assert.equal(late, null);
+  hold.open();
+  await b.done;
+  assert.equal(db.jobs.get(b.job.id).status, 'success');
+  assert.equal(tokenOf(db), 'enc-NEW');
+});
+
+test('without a consent time (state storage down) the order falls back to arrival order', async () => {
+  const db = makeDb();
+  const a = await launch(db, 'FIRST', deps());
+  await a.done;
+  const b = await launch(db, 'SECOND', deps());
+  await b.done;
+  assert.equal(tokenOf(db), 'enc-SECOND');
 });

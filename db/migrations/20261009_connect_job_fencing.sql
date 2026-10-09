@@ -13,7 +13,16 @@
 -- 'running'. Starting a newer job needs the same row lock to retire the old one,
 -- so exactly one of "old write lands" or "old write is refused" happens, and an
 -- old job that arrives after its replacement can never touch credentials.
--- Newest consent wins; the older consent's token is never written after it.
+--
+-- Ordering rule (be precise about it): two jobs are ordered by the time the
+-- user CONSENTED (oauth_states.created_at, passed as p_consent_at), not by
+-- when the callback happened to reach the server. A callback that arrives late
+-- for an older consent is refused (connect_job_start returns null) and never
+-- opens a job. When no consent time is available (state storage down, cookie
+-- fallback) ordering falls back to job start time, i.e. callback arrival order.
+--
+-- Everything below runs in ONE transaction, so no function is ever visible with
+-- the default PUBLIC execute grant between create and revoke.
 --
 -- Permissions: nothing is widened. The functions are executable by service_role
 -- only (the app calls them through createAdminClient); anon, authenticated and
@@ -21,11 +30,16 @@
 --
 -- NOT applied to production by this PR. Additive only (create or replace).
 
+begin;
+
 -- Retire any live connect job for the user and open a new one, atomically.
 -- The advisory lock serialises concurrent callbacks for the same user, so two
 -- simultaneous consents cannot trip job_runs_one_running_per_job: the later one
 -- retires the earlier one and wins.
-create or replace function public.connect_job_start(p_user_id uuid)
+create or replace function public.connect_job_start(
+  p_user_id uuid,
+  p_consent_at timestamptz default null
+)
 returns uuid
 language plpgsql
 set search_path = public, pg_temp
@@ -36,6 +50,16 @@ declare
 begin
   perform pg_advisory_xact_lock(hashtextextended(v_name, 0));
 
+  -- A newer consent already has (or had) a job: this callback is stale.
+  if p_consent_at is not null and exists (
+    select 1 from public.job_runs
+     where job_name = v_name
+       and details ? 'consent_at'
+       and (details ->> 'consent_at')::timestamptz > p_consent_at
+  ) then
+    return null;
+  end if;
+
   update public.job_runs
      set status = 'failed',
          finished_at = now(),
@@ -43,7 +67,7 @@ begin
    where job_name = v_name and status = 'running';
 
   insert into public.job_runs (job_name, status, started_at, details)
-  values (v_name, 'running', now(), jsonb_build_object('stage', 'discover'))
+  values (v_name, 'running', now(), jsonb_build_object('stage', 'discover', 'consent_at', p_consent_at))
   returning id into v_id;
 
   return v_id;
@@ -174,14 +198,16 @@ begin
 end;
 $$;
 
-revoke all on function public.connect_job_start(uuid) from public, anon, authenticated;
+revoke all on function public.connect_job_start(uuid, timestamptz) from public, anon, authenticated;
 revoke all on function public.connect_job_lock_live(uuid, uuid) from public, anon, authenticated;
 revoke all on function public.connect_job_link(uuid, uuid, uuid, jsonb) from public, anon, authenticated;
 revoke all on function public.connect_job_select_account(uuid, uuid, uuid, text) from public, anon, authenticated;
 revoke all on function public.connect_job_set_manager(uuid, uuid, uuid, text) from public, anon, authenticated;
 
-grant execute on function public.connect_job_start(uuid) to service_role;
+grant execute on function public.connect_job_start(uuid, timestamptz) to service_role;
 grant execute on function public.connect_job_lock_live(uuid, uuid) to service_role;
 grant execute on function public.connect_job_link(uuid, uuid, uuid, jsonb) to service_role;
 grant execute on function public.connect_job_select_account(uuid, uuid, uuid, text) to service_role;
 grant execute on function public.connect_job_set_manager(uuid, uuid, uuid, text) to service_role;
+
+commit;

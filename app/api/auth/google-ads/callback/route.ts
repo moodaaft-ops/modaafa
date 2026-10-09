@@ -4,7 +4,7 @@ import { encrypt } from '@/lib/crypto';
 import { createAdminClient, createServerClient } from '@/lib/supabase/server';
 import { handleGoogleLoginCallback, isGoogleLoginCallback } from '@/lib/auth/google-login-callback';
 import { GOOGLE_ADS_OAUTH_STATE_COOKIE } from '@/lib/auth/google-ads-oauth-state';
-import { consumeOAuthState } from '@/lib/auth/oauth-state-store';
+import { consumeOAuthStateWithTime } from '@/lib/auth/oauth-state-store';
 import { validateGoogleAdsOAuthState } from '@/lib/auth/oauth-state-validation';
 import { runConnectJob, startConnectJob } from '@/lib/onboarding/connect-job';
 
@@ -63,7 +63,7 @@ export async function GET(req: NextRequest) {
   // the same browser before A finished consenting, A's refresh token and A's
   // ad accounts were written into B's business. That is a cross-tenant
   // credential leak, so those two results are now fatal.
-  const serverStateResult = await consumeOAuthState({
+  const { result: serverStateResult, consentAt } = await consumeOAuthStateWithTime({
     userId: user.id,
     state,
     purpose: 'google_ads_connect',
@@ -113,10 +113,19 @@ export async function GET(req: NextRequest) {
 
   let job;
   try {
-    job = await startConnectJob(admin, user.id);
+    job = await startConnectJob(admin, user.id, consentAt);
   } catch (err) {
     console.error('Google Ads connect job could not start', err instanceof Error ? err.message : 'unknown');
     return failureRedirect(req, '/onboarding/connect?error=db_error');
+  }
+
+  if (!job) {
+    // A newer consent already owns the connection: this callback is the late
+    // arrival of an older one. Its token is discarded unwritten; the user is
+    // shown the newer job's progress.
+    const res = NextResponse.redirect(new URL('/onboarding/preparing', req.url));
+    res.cookies.delete(GOOGLE_ADS_OAUTH_STATE_COOKIE);
+    return res;
   }
 
   const encryptedRefreshToken = encrypt(refreshToken);
