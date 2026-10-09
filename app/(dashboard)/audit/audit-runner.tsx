@@ -254,6 +254,8 @@ export function AuditRunner({
 }
 
 function auditErrorMessage(code: string) {
+  if (code === 'free_audits_exhausted') return 'استخدمت الفحصين المجانيين لهذا الحساب. تقاريرك السابقة تبقى مفتوحة، والاشتراك يلزم لفحص جديد أو لتنفيذ التوصيات.';
+  if (code === 'audit_in_progress') return 'فيه فحص شغّال لهذا الحساب الآن. انتظر يخلص.';
   if (code === 'subscription_required') return 'تحتاج إلى اشتراك نشط لتشغيل الفحص.';
   if (code === 'quota_exceeded') return 'وصلت إلى حد الفحوصات في خطتك الحالية.';
   if (code === 'account_not_found') return 'لم نجد الحساب الإعلاني المختار. اختر حساباً آخر أو أعد الربط.';

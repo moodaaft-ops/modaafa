@@ -21,12 +21,14 @@ import {
   normalizeCustomerId,
   SELECTED_ADS_ACCOUNT_COOKIE,
 } from '@/lib/accounts/selection';
+import { featureAccessMessage } from '@/lib/billing/entitlements';
 import {
-  consumeFeatureUsage,
-  featureAccessMessage,
-  featureAccessStatus,
-  refundFeatureUsage,
-} from '@/lib/billing/entitlements';
+  auditAccessMessage,
+  auditAccessStatus,
+  completeAuditAccess,
+  releaseAuditAccess,
+  reserveAuditAccess,
+} from '@/lib/billing/free-audit';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 import { isSameOriginRequest } from '@/lib/security/origin';
 
@@ -89,37 +91,47 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'service_unavailable' }, { status: 503 });
   }
 
-  const usage = await consumeFeatureUsage({
+  // Auditing only reads Google Ads and writes our own tables, so it never needs
+  // a subscription: each Google Ads account gets two free audits (first run +
+  // one retry), after that a plan allowance. Applying changes is gated elsewhere.
+  const usage = await reserveAuditAccess({
     supabase,
     userId: user.id,
     userEmail: user.email,
-    feature: 'audit',
     accountId: account.id,
-    metadata: { customer_id: account.customer_id },
+    customerId: account.customer_id,
   });
   if (!usage.ok) {
     if (isForm) {
       return NextResponse.redirect(new URL(`/audit?error=${usage.reason}`, req.url), 303);
     }
     return NextResponse.json(
-      { error: usage.reason, message: featureAccessMessage(usage.reason), resets_at: usage.resetsAt },
-      { status: featureAccessStatus(usage.reason) }
+      {
+        error: usage.reason,
+        message: auditAccessMessage(usage.reason) ?? featureAccessMessage(usage.reason),
+        resets_at: usage.resetsAt,
+      },
+      { status: auditAccessStatus(usage.reason) }
     );
   }
 
-  const execute = (onProgress: AuditProgressReporter = () => undefined) => executeAudit({
-    supabase,
-    admin,
-    userId: user.id,
-    account,
-    onProgress,
-  });
+  const execute = async (onProgress: AuditProgressReporter = () => undefined) => {
+    const outcome = await executeAudit({
+      supabase,
+      admin,
+      userId: user.id,
+      account,
+      onProgress,
+    });
+    await completeAuditAccess({ admin, userId: user.id, accountId: account.id, access: usage });
+    return outcome;
+  };
 
   if (req.headers.get('accept')?.includes('application/x-ndjson')) {
     return withSelectedAccountCookie(createAuditProgressResponse({
       execute,
       onFailure: async (err) => {
-        await refundFeatureUsage({ userId: user.id, usageEventId: usage.usageEventId });
+        await releaseAuditAccess(user.id, usage);
         console.error('Audit failed', err);
       },
     }), account.customer_id);
@@ -141,10 +153,14 @@ export async function POST(req: NextRequest) {
       findings_count: outcome.findingsCount,
       duration_ms: outcome.durationMs,
       sync_error: outcome.syncError,
-      usage: { remaining: usage.remaining, resets_at: usage.resetsAt },
+      usage: {
+        source: usage.source,
+        remaining: usage.remaining,
+        resets_at: usage.source === 'subscription' ? usage.resetsAt : null,
+      },
     }), account.customer_id);
   } catch (err) {
-    await refundFeatureUsage({ userId: user.id, usageEventId: usage.usageEventId });
+    await releaseAuditAccess(user.id, usage);
     console.error('Audit failed', err);
     if (isForm) {
       return NextResponse.redirect(new URL('/audit?error=audit_failed', req.url), 303);
