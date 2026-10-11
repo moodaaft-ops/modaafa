@@ -29,3 +29,4 @@ _sync/
 # exceed a gigabyte and must never enter the application repository or a
 # Vercel upload.
 artifacts/
+.local-stack/
