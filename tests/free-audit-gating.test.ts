@@ -7,6 +7,7 @@ import {
   auditAccessMessage,
   auditAccessStatus,
   completeAuditAccess,
+  isTransientRpcError,
   freeAuditView,
   getFreeAuditStatus,
   summarizeFreeAuditLedger,
@@ -128,12 +129,88 @@ test('completion is server-side (admin client), verified, and errors are reporte
   assert.equal(await done(supabase), 'already_completed');
   const sent = supabase.calls.filter((c: any) => c.name === 'complete_free_audit').pop().args;
   assert.deepEqual(sent, { p_event_id: access.ok && access.source === 'free' ? access.freeEventId : '', p_user_id: 'u1', p_account_id: 'acc1' });
+  const noSleep = async () => undefined;
   const broken = { rpc: async () => ({ data: null, error: { message: 'down' } }) };
-  assert.equal(await done(broken), 'error');
+  assert.equal(await done(broken, { sleep: noSleep }), 'error');
   const throwing = { rpc: async () => { throw new Error('boom'); } };
-  assert.equal(await done(throwing), 'error');
+  assert.equal(await done(throwing, { sleep: noSleep }), 'error');
   const sub = { ok: true as const, source: 'subscription' as const, remaining: 1, resetsAt: 'x', usageEventId: 'u' };
   assert.equal(await completeAuditAccess({ admin: broken, userId: 'u1', accountId: 'acc1', access: sub }), 'noop');
+});
+
+test('only errors that can clear on their own are classified as transient', () => {
+  for (const e of [
+    { code: '57014', message: 'canceling statement due to statement timeout' },
+    { code: '40001' }, { code: '40P01' }, { code: '08006' }, { code: '53300' },
+    { status: 503 }, { status: 429 }, { status: 500, code: '42501' },
+    { message: 'fetch failed' }, { message: 'Request timed out' },
+    'string failure',
+  ]) assert.equal(isTransientRpcError(e), true, JSON.stringify(e));
+  for (const e of [
+    { code: '42501', message: 'permission denied for function complete_free_audit' },
+    { code: '42883' }, { code: 'PGRST202' }, { code: '23505' }, { code: '22P02' },
+    { status: 401 }, { status: 403 }, { status: 404 },
+    { message: 'down' },
+  ]) assert.equal(isTransientRpcError(e), false, JSON.stringify(e));
+});
+
+test('a transient completion error is retried, so a saved report is still counted', async () => {
+  const supabase = fakeSupabase();
+  const access = await reserveAuditAccess({ ...base, supabase, deps: deps(inactive) });
+  let failures = 2;
+  const flaky = {
+    rpc: async (name: string, args: any) =>
+      failures-- > 0 ? { data: null, error: { code: '57014', message: 'statement timeout' } } : supabase.rpc(name, args),
+  };
+  const waits: number[] = [];
+  const result = await completeAuditAccess({
+    admin: flaky, userId: 'u1', accountId: 'acc1', access,
+    sleep: async (ms) => { waits.push(ms); },
+  });
+  assert.equal(result, 'completed');
+  assert.equal(supabase.ledger[0].status, 'completed');
+  assert.deepEqual(waits, [250, 750]);
+});
+
+test('a thrown runtime error is retried too, and gives up after 3 attempts', async () => {
+  const supabase = fakeSupabase();
+  const access = await reserveAuditAccess({ ...base, supabase, deps: deps(inactive) });
+  let calls = 0;
+  const down = { rpc: async () => { calls++; throw new Error('fetch failed'); } };
+  const result = await completeAuditAccess({
+    admin: down, userId: 'u1', accountId: 'acc1', access, sleep: async () => undefined,
+  });
+  assert.equal(result, 'error');
+  assert.equal(calls, 3);
+});
+
+test('permanent errors and final SQL answers are returned on the first attempt, never retried', async () => {
+  const supabase = fakeSupabase();
+  const access = await reserveAuditAccess({ ...base, supabase, deps: deps(inactive) });
+  const run = async (reply: any) => {
+    let calls = 0;
+    const admin = { rpc: async () => { calls++; return reply; } };
+    const waits: number[] = [];
+    const result = await completeAuditAccess({
+      admin, userId: 'u1', accountId: 'acc1', access, sleep: async (ms) => { waits.push(ms); },
+    });
+    return { result, calls, waits };
+  };
+  const denied = await run({ data: null, error: { code: '42501', message: 'permission denied' } });
+  assert.deepEqual(denied, { result: 'error', calls: 1, waits: [] }, 'permanent: permission denied');
+  const missing = await run({ data: null, error: { code: '42883', message: 'function does not exist' } });
+  assert.deepEqual(missing, { result: 'error', calls: 1, waits: [] }, 'permanent: missing function');
+  const expired = await run({ data: 'expired', error: null });
+  assert.deepEqual(expired, { result: 'expired', calls: 1, waits: [] }, 'expired is final');
+  const gone = await run({ data: 'not_found', error: null });
+  assert.deepEqual(gone, { result: 'not_found', calls: 1, waits: [] }, 'not_found is final');
+  const odd = await run({ data: 'something_new', error: null });
+  assert.deepEqual(odd, { result: 'error', calls: 1, waits: [] }, 'unknown SQL answer is a contract break');
+});
+
+test('the audit route logs a finished audit that was not counted', () => {
+  const route = read('app/api/audit/run/route.ts');
+  assert.match(route, /FREE_AUDIT_NOT_COUNTED/);
 });
 
 test('storage errors fail closed with a retryable reason', async () => {

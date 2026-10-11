@@ -123,7 +123,16 @@ export async function POST(req: NextRequest) {
       account,
       onProgress,
     });
-    await completeAuditAccess({ admin, userId: user.id, accountId: account.id, access: usage });
+    const completion = await completeAuditAccess({ admin, userId: user.id, accountId: account.id, access: usage });
+    if (completion === 'error' || completion === 'expired' || completion === 'not_found') {
+      // The report is saved but the free audit was not counted. Surface it so it
+      // can be reconciled; never fail a finished audit over bookkeeping.
+      console.error('FREE_AUDIT_NOT_COUNTED', {
+        completion,
+        eventId: usage.ok && usage.source === 'free' ? usage.freeEventId : null,
+        auditId: outcome.auditId,
+      });
+    }
     return outcome;
   };
 
