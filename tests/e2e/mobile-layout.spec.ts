@@ -177,6 +177,25 @@ test.describe('signed-in shell on phones', () => {
       }
     }
 
+    // Emulation only, NOT real-device QA: shrinking the layout viewport by 300px models the
+    // "resizes-content" keyboard (older Android). iOS and modern Android Chrome keep the layout
+    // viewport and move only the visual viewport, which Playwright cannot reproduce.
+    for (const [width, height] of [[320, 568], [360, 640], [390, 844]] as const) {
+      test(`chat composer stays reachable when a 300px keyboard shrinks the viewport at ${width}x${height}`, async ({ page }) => {
+        await page.setViewportSize({ width, height });
+        await page.goto('/assistant');
+        const input = page.getByLabel('رسالتك');
+        await expect(input).toBeVisible();
+        await page.setViewportSize({ width, height: height - 300 });
+        await input.evaluate((el: HTMLInputElement) => { el.blur(); el.focus(); });
+        await page.waitForTimeout(300);
+        const tab = (await page.getByRole('navigation', { name: 'التنقل السريع' }).boundingBox())!;
+        const box = (await input.boundingBox())!;
+        expect(box.y, 'composer top inside viewport').toBeGreaterThanOrEqual(0);
+        expect(box.y + box.height, 'composer above tab bar').toBeLessThanOrEqual(tab.y);
+      });
+    }
+
     test('signed-in pages never overflow sideways', async ({ page }) => {
       for (const width of WIDTHS) {
         await page.setViewportSize({ width, height: 800 });
