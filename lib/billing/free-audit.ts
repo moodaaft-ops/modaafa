@@ -187,6 +187,25 @@ export type CompleteResult = 'completed' | 'already_completed' | 'expired' | 'no
 const COMPLETE_RETRY_DELAYS_MS = [250, 750];
 
 /**
+ * Only errors that can plausibly clear on their own are retried: a thrown
+ * network/runtime error, HTTP 429 or 5xx, and the Postgres classes for
+ * connection trouble (08), resource limits (53), operator intervention such as
+ * a statement timeout (57), and serialization failures or deadlocks (40001,
+ * 40P01). Anything else is permanent for this request: a missing grant (42501),
+ * a missing function (42883, PGRST202), bad arguments, a constraint failure.
+ * Retrying those only delays the response and repeats the same failure.
+ */
+export function isTransientRpcError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return true; // thrown non-object: treat as runtime failure
+  const e = error as { code?: unknown; status?: unknown; message?: unknown };
+  const status = Number(e.status);
+  if (Number.isFinite(status) && status > 0) return status === 429 || status >= 500;
+  const code = typeof e.code === 'string' ? e.code : '';
+  if (code) return /^(08|53|57)/.test(code) || code === '40001' || code === '40P01';
+  return /timeout|timed out|fetch failed|network|econn|socket|temporar/i.test(String(e.message ?? ''));
+}
+
+/**
  * The audit finished and its report is saved: keep the reservation counted.
  * Server-only: the RPC is granted to service_role alone, so this runs on the
  * admin client and names the event, the user and the account; SQL requires all
@@ -194,11 +213,12 @@ const COMPLETE_RETRY_DELAYS_MS = [250, 750];
  * a reservation early. A failure here never fails the request; it is returned
  * (and logged) instead of thrown.
  *
- * A transient storage error is retried (3 attempts in total) because a lost
- * completion has a real cost: the reservation lapses after its lease, stops
- * counting, and the saved report would not be charged against the two free
- * audits. 'expired' and 'not_found' are final answers from SQL and are not
- * retried. If every attempt errors the result is 'error' and the caller logs it.
+ * A transient storage error is retried (3 attempts in total, see
+ * isTransientRpcError) because a lost completion has a real cost: the
+ * reservation lapses after its lease, stops counting, and the saved report
+ * would not be charged against the two free audits. Permanent errors and the
+ * final SQL answers 'expired' and 'not_found' are returned on the first
+ * attempt. If every attempt errors the result is 'error' and the caller logs it.
  */
 export async function completeAuditAccess({
   admin,
@@ -214,14 +234,14 @@ export async function completeAuditAccess({
   sleep?: (ms: number) => Promise<void>;
 }): Promise<CompleteResult> {
   if (!access.ok || access.source !== 'free') return 'noop';
-  let result: CompleteResult = 'error';
+  let outcome: { result: CompleteResult; retryable: boolean } = { result: 'error', retryable: false };
   for (let attempt = 0; attempt <= COMPLETE_RETRY_DELAYS_MS.length; attempt++) {
-    result = await completeOnce(admin, userId, accountId, access.freeEventId);
-    if (result !== 'error') return result;
+    outcome = await completeOnce(admin, userId, accountId, access.freeEventId);
+    if (outcome.result !== 'error' || !outcome.retryable) return outcome.result;
     const delay = COMPLETE_RETRY_DELAYS_MS[attempt];
     if (delay !== undefined) await sleep(delay);
   }
-  return result;
+  return outcome.result;
 }
 
 async function completeOnce(
@@ -229,7 +249,7 @@ async function completeOnce(
   userId: string,
   accountId: string,
   eventId: string
-): Promise<CompleteResult> {
+): Promise<{ result: CompleteResult; retryable: boolean }> {
   try {
     const { data, error } = await admin.rpc('complete_free_audit', {
       p_event_id: eventId,
@@ -238,16 +258,18 @@ async function completeOnce(
     });
     if (error) {
       console.error('Failed to complete free audit reservation', error);
-      return 'error';
+      return { result: 'error', retryable: isTransientRpcError(error) };
     }
     const result = String(data ?? '');
     if (result === 'expired') console.error('Free audit lease expired before completion', eventId);
-    return (['completed', 'already_completed', 'expired', 'not_found'] as const).includes(result as any)
-      ? (result as CompleteResult)
-      : 'error';
+    if ((['completed', 'already_completed', 'expired', 'not_found'] as const).includes(result as any)) {
+      return { result: result as CompleteResult, retryable: false };
+    }
+    // An answer SQL does not define is a contract break, not a blip.
+    return { result: 'error', retryable: false };
   } catch (error) {
     console.error('Failed to complete free audit reservation', error);
-    return 'error';
+    return { result: 'error', retryable: true };
   }
 }
 
