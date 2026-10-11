@@ -11,7 +11,7 @@ STATE="$ROOT/.local-stack"
 # shellcheck disable=SC1091
 . "$HERE/common.sh"
 EXPECTED_SQL_PASS=13
-EXPECTED_GUARD_PASS=27   # preflight.test.mjs (19) + common.test.mjs (8)
+EXPECTED_GUARD_PASS=40   # preflight.test.mjs (19) + common.test.mjs (8) + run-timed.test.mjs (13)
 [ -f "$STATE/env" ] || { echo "run up.sh first" >&2; exit 1; }
 cd "$ROOT"
 node "$HERE/preflight.mjs" envfile "$STATE/env" || exit 1
@@ -38,8 +38,8 @@ require_summary() {
   fi
 }
 
-echo "== 0a. preflight refusals, Docker daemon selection and clean-environment propagation (expects $EXPECTED_GUARD_PASS pass, 0 skipped)"
-guard_out="$(node --test "$HERE/preflight.test.mjs" "$HERE/common.test.mjs" 2>&1)"
+echo "== 0a. preflight refusals, Docker daemon selection, clean-environment propagation and build time limits (expects $EXPECTED_GUARD_PASS pass, 0 skipped)"
+guard_out="$(node --test "$HERE/preflight.test.mjs" "$HERE/common.test.mjs" "$HERE/run-timed.test.mjs" 2>&1)"
 require_summary "guard tests" $? "$guard_out" "$EXPECTED_GUARD_PASS"
 echo "== 0b. stack posture and privilege parity with the migrations (expects 16 of 16)"
 # posture.mjs is the only child that talks to Docker, so only it receives DOCKER_HOST.

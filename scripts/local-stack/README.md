@@ -6,7 +6,7 @@
 - Docker (جُرّب على 29.8.2 على Linux. على macOS يلزم Docker Desktop، وهذا المسار **لم يُجرَّب فعلياً** لأن بيئة الاختبار Linux، انظر «حدود المحاكاة») مع وصول لـ `public.ecr.aws` لسحب الصور (Docker Hub رد 429 أثناء التجربة، فاستُخدم ECR).
 - Node 22 (جُرّب على v22.22.0) و`npm ci` منفّذ.
 - عميل `psql` (جُرّب على 16)، و`openssl`، و`curl`.
-- وصول لـ `fonts.googleapis.com` أثناء `next build` (خطوط `next/font`). فشل البناء بسببها مرة واحدة أثناء التجربة ونجح بعدها، لذلك `app.sh` يعيد المحاولة ثلاث مرات.
+- وصول لـ `fonts.googleapis.com` أثناء `next build` (خطوط `next/font`). فشل البناء بسببها مرة واحدة أثناء التجربة ونجح بعدها، لذلك `app.sh` يعيد المحاولة (حتى ثلاث مرات) عند هذا الخطأ تحديداً فقط. أي فشل بناء آخر أو تعليق لا يُعاد.
 
 ## الإصدارات والمنافذ (كلها على 127.0.0.1)
 | الخدمة | الصورة أو التشغيل | المنفذ |
@@ -25,7 +25,7 @@
 
 ```bash
 scripts/local-stack/up.sh        # قاعدة + Auth + REST + بوابة + بديل النموذج، نحو 11 ثانية
-scripts/local-stack/app.sh       # يبني التطبيق ويشغّله على 3100 (نحو 30 إلى 60 ثانية للبناء)
+scripts/local-stack/app.sh       # يبني التطبيق ويشغّله على 3100 (نحو 45 إلى 70 ثانية للبناء، بمهلة قصوى 900 ثانية)
 scripts/local-stack/verify.sh    # الفحوص الثلاثة (أو --no-app لأول اثنين بدون التطبيق)
 ```
 
@@ -40,6 +40,15 @@ DOCKER_CONTEXT=colima-modaafa-qa scripts/local-stack/up.sh
 scripts/local-stack/verify.sh      # من أي terminal، نفس الـ daemon
 scripts/local-stack/down.sh
 ```
+
+## مهلة البناء ومراحله
+`app.sh` يشغّل `next build` عبر `run-timed.mjs` (Node فقط و`ps`، يعمل على Linux وmacOS بلا `timeout` ولا `setsid`):
+- **مهلة كلية** 900 ثانية و**مهلة خمول** 300 ثانية بلا أي مخرجات. تُغيَّر بـ `LS_BUILD_TIMEOUT` و`LS_BUILD_IDLE_TIMEOUT` (أعداد صحيحة بالثواني، وغير ذلك يُرفض بـ exit 2).
+- عند انتهاء المهلة يوقف أبناء البناء وحدهم: العملية التي شغّلها وكل ما تفرّع منها وأعضاء مجموعتها، بالتسلسل (SIGTERM ثم SIGKILL بعد 5 ثوانٍ). لا يطابق بالاسم، فأي `next` آخر على الجهاز لا يُمسّ. لو قُتل `app.sh` نفسه توقف البناء خلال ثوانٍ، وكذلك عند Ctrl-C.
+- رموز الخروج: 124 مهلة كلية، 125 خمول، 126 تعذّر إيقاف عملية، 130 و143 مقاطعة، وغير ذلك رمز `next` نفسه. ولا يُعاد بناء علق، لأن إعادته ثلاث مرات تضاعف الانتظار.
+- يطبع اسم المرحلة والثواني فقط: `compiling` ثم `compiled` أو `compiled-with-warnings` ثم `type-check` ثم `collecting-page-data` ثم `static-pages` ثم `finalizing` ثم `build-traces` ثم `summary`. وعند الفشل آخر 15 سطراً من المخرجات بعد حذف قيم `.local-stack/env` والتوكنات وأي رابط غير `localhost`. السجل الكامل في `.local-stack/build.log`.
+- يستدعي `node node_modules/next/dist/bin/next build` مباشرة بدل `npx` (لا وصول للـregistry)، ويعطّل telemetry الخاصة بـ Next حتى لا يخرج البناء بطلب من عنده. الخطوط تبقى تُجلب من Google.
+- تحذير Supabase عن `process.version` في Edge Runtime يظهر كمرحلة `compiled-with-warnings` وليس فشلاً: البناء يكمل بعده.
 
 ## الإغلاق والتنظيف
 ```bash
@@ -61,7 +70,7 @@ scripts/local-stack/down.sh      # يوقف التطبيق والبوابة وا
 `app.sh` يبني ويشغّل التطبيق ببيئة **فارغة** فيها ملف `.local-stack/env` وأسماء قليلة للوكيل وشهادات الشبكة فقط، فلا يصل التطبيق أي متغير من شلّك (جُرّب بحقن `STRIPE_SECRET_KEY` و`NODE_ENV` في الشل، ولم يظهر منها شيء في بيئة عملية Next). ويرفض التشغيل لو وُجد في الجذر أي ملف يشبه ملفات البيئة: `.env` و`.env.*` (ومنها `.env.development` و`.env.test` و`.env.test.local`) و`*.env` و`env.*` وأي اسم يجمع `env` و`test`. القوالب `.example` و`.sample` و`.template` وحدها مسموحة. انقل الملف جانباً ثم أعد المحاولة.
 
 ## الفحوص والنتائج المتوقعة (جُرّبت من نسخة نظيفة، 9 أكتوبر 2026)
-0. **27 و16** (قبل الباقي): `preflight.test.mjs` و`common.test.mjs` يجرّبان 27 حالة (مرجع الإنتاج، مضيف بعيد، `?host=` و`?hostaddr=` و`?service=`، قائمة مضيفين، ملف بيئة غير loopback، `DOCKER_HOST` أو context بعيد، تعارض `DOCKER_HOST` مع `DOCKER_CONTEXT`، وانتقال الـ daemon المختار عبر البيئة الفارغة بدون أي تغيير في إعدادات Docker). ثم `posture.mjs` بـ 16 فحصاً: 5 على Docker (ثلاث حاويات بالـ label، لا host networking، كل منفذ منشور على 127.0.0.1، الشبكة الخاصة) و11 على الصلاحيات (ledger وصلاحيات دوال الحصة وحذف businesses وautopilot وRLS على كل جدول).
+0. **40 و16** (قبل الباقي): `preflight.test.mjs` و`common.test.mjs` و`run-timed.test.mjs` يجرّبون 40 حالة (منها 13 لمهلة البناء) (مرجع الإنتاج، مضيف بعيد، `?host=` و`?hostaddr=` و`?service=`، قائمة مضيفين، ملف بيئة غير loopback، `DOCKER_HOST` أو context بعيد، تعارض `DOCKER_HOST` مع `DOCKER_CONTEXT`، وانتقال الـ daemon المختار عبر البيئة الفارغة بدون أي تغيير في إعدادات Docker). ثم `posture.mjs` بـ 16 فحصاً: 5 على Docker (ثلاث حاويات بالـ label، لا host networking، كل منفذ منشور على 127.0.0.1، الشبكة الخاصة) و11 على الصلاحيات (ledger وصلاحيات دوال الحصة وحذف businesses وautopilot وRLS على كل جدول).
 1. **13**: `tests/free-audit-sql.integration.test.ts` على قاعدة `fa_scratch`. الحصة المجانية بـ SQL حقيقي: 13 ناجح، صفر فاشل، **صفر skip**. هذي الاختبارات تتخطى نفسها بصمت لو غاب `FREE_AUDIT_PG_URL`، لذلك `verify.sh` يفشل (exit 1) لو كان `pass` غير 13 أو `skipped` أو `fail` أو `cancelled` غير صفر.
 2. **18**: `isolation.mjs`. مستخدمان اصطناعيان `synthetic-A/B@example.test` عبر Auth وREST الحقيقيين: كل مستخدم يقرأ صفوفه فقط، لا يعدّل ولا يحذف ولا يربط حساباً بنشاط الآخر، المجهول لا يرى شيئاً، `complete_free_audit` للـservice role فقط، وحصة كل حساب مستقلة. النتيجة: 0 فشل من 18.
 3. **10**: `chat.mjs`. `/api/chat/start` بكوكيز جلسة حقيقية: 401 بلا جلسة، 403 لأصل غريب، 400 لجسم فاضي، ولا جلسة أو customerId أو توصية تعبر بين الحسابين، ولا تسرّب في الردود. النتيجة: 0 فشل من 10 (مع نداء واحد لبديل النموذج في تلك الجولة).
