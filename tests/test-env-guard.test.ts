@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { delimiter, resolve } from 'node:path';
 import test from 'node:test';
 
 import {
@@ -120,4 +122,58 @@ test('PGHOSTADDR, PGSERVICE and PGSERVICEFILE in the environment are refused', (
     assert.throws(() => assertSafeConnectionEnv({ [name]: 'x' }), new RegExp(name));
   }
   assert.doesNotThrow(() => assertSafeConnectionEnv({ PATH: '/usr/bin', PGHOST: '127.0.0.1' }));
+});
+
+test('only a postgres URL is accepted as a target', () => {
+  for (const url of ['https://127.0.0.1/db', 'http://localhost/db', 'file:///tmp/x', 'mysql://u:p@127.0.0.1/db']) {
+    assert.throws(() => assertTestTarget({ connectionString: url, testRef: 'local' }), /postgres/, url);
+  }
+  assert.doesNotThrow(() => assertTestTarget({ connectionString: 'postgres://u:p@127.0.0.1:5432/db', testRef: 'local' }));
+  assert.doesNotThrow(() => assertTestTarget({ connectionString: 'postgresql://u:p@localhost:5432/db', testRef: 'local' }));
+});
+
+test('the local IPv6 address is accepted as localhost', () => {
+  assert.doesNotThrow(() => assertTestTarget({ connectionString: 'postgresql://u:p@[::1]:5432/db', testRef: 'local' }));
+  assert.throws(() => assertTestTarget({ connectionString: 'postgresql://u:p@[2001:db8::1]:5432/db', testRef: 'local' }), /localhost/);
+});
+
+test('the bootstrap script refuses before it ever starts psql', () => {
+  const dir = mkdtempSync(resolve(tmpdir(), 'guard-order-'));
+  const marker = resolve(dir, 'psql-was-called');
+  const fakePsql = resolve(dir, 'psql');
+  writeFileSync(fakePsql, `#!/bin/sh\necho called >> "${marker}"\nexit 0\n`);
+  chmodSync(fakePsql, 0o755);
+  const cases: { name: string; url: string; env?: Record<string, string>; ref?: string }[] = [
+    { name: 'production direct host', url: direct(KNOWN_PRODUCTION_REF), ref: REF },
+    { name: 'production pooler user', url: pooler(KNOWN_PRODUCTION_REF), ref: REF },
+    { name: 'host parameter', url: 'postgresql://u:p@127.0.0.1:5432/db?host=203.0.113.9', ref: 'local' },
+    { name: 'hostaddr parameter', url: 'postgresql://u:p@127.0.0.1:5432/db?hostaddr=203.0.113.9', ref: 'local' },
+    { name: 'PGHOSTADDR', url: 'postgresql://u:p@127.0.0.1:5432/db', env: { PGHOSTADDR: '203.0.113.9' }, ref: 'local' },
+    { name: 'PGSERVICE', url: 'postgresql://u:p@127.0.0.1:5432/db', env: { PGSERVICE: 'prod' }, ref: 'local' },
+    { name: 'https scheme', url: 'https://127.0.0.1/db', ref: 'local' },
+  ];
+  try {
+    for (const item of cases) {
+      const result = spawnSync(process.execPath, ['--import', 'tsx', 'scripts/test-env-migrate.ts'], {
+        cwd: process.cwd(),
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          PGHOSTADDR: '',
+          PGSERVICE: '',
+          PGSERVICEFILE: '',
+          PATH: `${dir}${delimiter}${process.env.PATH ?? ''}`,
+          SUPABASE_DB_URL: item.url,
+          TEST_ENV_PROJECT_REF: item.ref ?? REF,
+          PRODUCTION_SUPABASE_REF: PROD,
+          ...item.env,
+        },
+      });
+      assert.equal(result.status, 1, `${item.name}: expected a refusal, got ${result.status}`);
+      assert.match(result.stderr, /production|parameter|can redirect|postgres:\/\/|not exactly/, `${item.name}: refused for another reason: ${result.stderr.split('\n')[0]}`);
+      assert.ok(!existsSync(marker), `${item.name}: psql was started before the guard refused`);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
