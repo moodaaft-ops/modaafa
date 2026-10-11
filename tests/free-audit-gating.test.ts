@@ -128,12 +128,50 @@ test('completion is server-side (admin client), verified, and errors are reporte
   assert.equal(await done(supabase), 'already_completed');
   const sent = supabase.calls.filter((c: any) => c.name === 'complete_free_audit').pop().args;
   assert.deepEqual(sent, { p_event_id: access.ok && access.source === 'free' ? access.freeEventId : '', p_user_id: 'u1', p_account_id: 'acc1' });
+  const noSleep = async () => undefined;
   const broken = { rpc: async () => ({ data: null, error: { message: 'down' } }) };
-  assert.equal(await done(broken), 'error');
+  assert.equal(await done(broken, { sleep: noSleep }), 'error');
   const throwing = { rpc: async () => { throw new Error('boom'); } };
-  assert.equal(await done(throwing), 'error');
+  assert.equal(await done(throwing, { sleep: noSleep }), 'error');
   const sub = { ok: true as const, source: 'subscription' as const, remaining: 1, resetsAt: 'x', usageEventId: 'u' };
   assert.equal(await completeAuditAccess({ admin: broken, userId: 'u1', accountId: 'acc1', access: sub }), 'noop');
+});
+
+test('a transient completion error is retried, so a saved report is still counted', async () => {
+  const supabase = fakeSupabase();
+  const access = await reserveAuditAccess({ ...base, supabase, deps: deps(inactive) });
+  let failures = 2;
+  const flaky = {
+    rpc: async (name: string, args: any) =>
+      failures-- > 0 ? { data: null, error: { message: 'timeout' } } : supabase.rpc(name, args),
+  };
+  const waits: number[] = [];
+  const result = await completeAuditAccess({
+    admin: flaky, userId: 'u1', accountId: 'acc1', access,
+    sleep: async (ms) => { waits.push(ms); },
+  });
+  assert.equal(result, 'completed');
+  assert.equal(supabase.ledger[0].status, 'completed');
+  assert.deepEqual(waits, [250, 750]);
+});
+
+test('completion gives up after 3 attempts, and final SQL answers are never retried', async () => {
+  let calls = 0;
+  const down = { rpc: async () => { calls++; return { data: null, error: { message: 'down' } }; } };
+  const supabase = fakeSupabase();
+  const access = await reserveAuditAccess({ ...base, supabase, deps: deps(inactive) });
+  const args = { userId: 'u1', accountId: 'acc1', access, sleep: async () => undefined };
+  assert.equal(await completeAuditAccess({ admin: down, ...args }), 'error');
+  assert.equal(calls, 3);
+  calls = 0;
+  const gone = { rpc: async () => { calls++; return { data: 'not_found', error: null }; } };
+  assert.equal(await completeAuditAccess({ admin: gone, ...args }), 'not_found');
+  assert.equal(calls, 1);
+});
+
+test('the audit route logs a finished audit that was not counted', () => {
+  const route = read('app/api/audit/run/route.ts');
+  assert.match(route, /FREE_AUDIT_NOT_COUNTED/);
 });
 
 test('storage errors fail closed with a retryable reason', async () => {

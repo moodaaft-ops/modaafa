@@ -184,31 +184,55 @@ export async function reserveAuditAccess({
 
 export type CompleteResult = 'completed' | 'already_completed' | 'expired' | 'not_found' | 'error' | 'noop';
 
+const COMPLETE_RETRY_DELAYS_MS = [250, 750];
+
 /**
  * The audit finished and its report is saved: keep the reservation counted.
  * Server-only: the RPC is granted to service_role alone, so this runs on the
  * admin client and names the event, the user and the account; SQL requires all
  * three to match the ledger row. The customer's own session can never complete
- * a reservation early. A failure here must never fail the request; it is
- * returned (and logged) instead of thrown. Consequence of a lost completion:
- * the reservation lapses after its lease and stops counting, so the customer
- * keeps the allowance rather than losing it to our fault.
+ * a reservation early. A failure here never fails the request; it is returned
+ * (and logged) instead of thrown.
+ *
+ * A transient storage error is retried (3 attempts in total) because a lost
+ * completion has a real cost: the reservation lapses after its lease, stops
+ * counting, and the saved report would not be charged against the two free
+ * audits. 'expired' and 'not_found' are final answers from SQL and are not
+ * retried. If every attempt errors the result is 'error' and the caller logs it.
  */
 export async function completeAuditAccess({
   admin,
   userId,
   accountId,
   access,
+  sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
 }: {
   admin: any;
   userId: string;
   accountId: string;
   access: AuditAccess;
+  sleep?: (ms: number) => Promise<void>;
 }): Promise<CompleteResult> {
   if (!access.ok || access.source !== 'free') return 'noop';
+  let result: CompleteResult = 'error';
+  for (let attempt = 0; attempt <= COMPLETE_RETRY_DELAYS_MS.length; attempt++) {
+    result = await completeOnce(admin, userId, accountId, access.freeEventId);
+    if (result !== 'error') return result;
+    const delay = COMPLETE_RETRY_DELAYS_MS[attempt];
+    if (delay !== undefined) await sleep(delay);
+  }
+  return result;
+}
+
+async function completeOnce(
+  admin: any,
+  userId: string,
+  accountId: string,
+  eventId: string
+): Promise<CompleteResult> {
   try {
     const { data, error } = await admin.rpc('complete_free_audit', {
-      p_event_id: access.freeEventId,
+      p_event_id: eventId,
       p_user_id: userId,
       p_account_id: accountId,
     });
@@ -217,7 +241,7 @@ export async function completeAuditAccess({
       return 'error';
     }
     const result = String(data ?? '');
-    if (result === 'expired') console.error('Free audit lease expired before completion', access.freeEventId);
+    if (result === 'expired') console.error('Free audit lease expired before completion', eventId);
     return (['completed', 'already_completed', 'expired', 'not_found'] as const).includes(result as any)
       ? (result as CompleteResult)
       : 'error';
