@@ -281,12 +281,13 @@ async function discoverAvailableModels(force = false) {
 }
 
 export function tierForAgent(agent: AgentRole): ModelTier {
-  // Audit and builder make high-stakes judgments and stay on the top tier, as
-  // does the weekly deep review. The existing /assistant page also stays on
-  // Opus: moving it is a product decision for Ayman, not a side effect of
-  // Jarvis. Jarvis answers daily questions on Sonnet (spec 8.2), and the cheap
-  // classification and extraction role runs on Haiku.
-  if (agent === 'audit' || agent === 'assistant' || agent === 'builder' || agent === 'jarvis_deep') return 'opus';
+  // The free audit is the customer's first read of their account and stays on
+  // the top tier until its real cost is measured, as does the weekly deep
+  // review. Ayman moved the /assistant page and the campaign builder to Sonnet
+  // on 2026-10-12 to keep model spend down; Jarvis answers daily questions on
+  // Sonnet (spec 8.2), and the cheap classification and extraction role runs
+  // on Haiku.
+  if (agent === 'audit' || agent === 'jarvis_deep') return 'opus';
   if (agent === 'jarvis_fast') return 'haiku';
   return 'sonnet';
 }

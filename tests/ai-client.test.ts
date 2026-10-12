@@ -65,9 +65,9 @@ test('model ranking ignores non-Claude entries', () => {
 test('agent roles map to the intended tiers', () => {
   const expected: Record<AgentRole, 'opus' | 'sonnet' | 'haiku'> = {
     audit: 'opus',
-    builder: 'opus',
     jarvis_deep: 'opus',
-    assistant: 'opus',
+    builder: 'sonnet',
+    assistant: 'sonnet',
     jarvis: 'sonnet',
     optimizer: 'sonnet',
     reporter: 'sonnet',
@@ -86,9 +86,9 @@ test('hard fallback model ids are the 5.5 generation', async () => {
     assert.equal(getModelForAgent('jarvis'), 'claude-sonnet-5-5');
     assert.equal(getModelForAgent('jarvis_fast'), 'claude-haiku-5-5');
     assert.equal(getModelForAgent('jarvis_deep'), 'claude-opus-5-5');
-    assert.equal(getModelForAgent('assistant'), 'claude-opus-5-5');
+    assert.equal(getModelForAgent('assistant'), 'claude-sonnet-5-5');
     assert.equal(getModelForAgent('audit'), 'claude-opus-5-5');
-    assert.equal(getModelForAgent('builder'), 'claude-opus-5-5');
+    assert.equal(getModelForAgent('builder'), 'claude-sonnet-5-5');
   });
 });
 
@@ -115,7 +115,8 @@ test('compatibility lists put 5.5 ids first and keep the older ids after them', 
     assert.equal(sonnet[0], 'claude-sonnet-5-5');
     assert.ok(sonnet.indexOf('claude-sonnet-5-5') < sonnet.indexOf('claude-sonnet-5'));
     assert.ok(sonnet.includes('claude-sonnet-4-6-20260217'));
-    assert.deepEqual(modelCandidatesForAgent('assistant'), opus);
+    assert.deepEqual(modelCandidatesForAgent('assistant'), sonnet);
+    assert.deepEqual(modelCandidatesForAgent('builder'), sonnet);
   });
 });
 
