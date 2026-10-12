@@ -178,6 +178,30 @@ export async function setStripeCancelAtPeriodEnd(subscriptionId: string, cancel:
   return getStripe().subscriptions.update(subscriptionId, { cancel_at_period_end: cancel });
 }
 
+/**
+ * Move a trialing subscription's trial end (operator "extend trial"). No
+ * proration: nothing has been billed yet. The webhook for
+ * customer.subscription.updated re-reads the subscription and writes the new
+ * trial_ends_at, and the operator API also writes it straight away so the
+ * screen is right before the webhook lands. Stripe only accepts this on a
+ * subscription that is still trialing; the caller checks that first.
+ */
+export async function extendStripeTrial(params: {
+  subscriptionId: string;
+  trialEndUnix: number;
+  idempotencyKey: string;
+}) {
+  const updated = await getStripe().subscriptions.update(
+    params.subscriptionId,
+    { trial_end: params.trialEndUnix, proration_behavior: 'none' },
+    { idempotencyKey: params.idempotencyKey }
+  );
+  return {
+    status: updated.status,
+    trialEnd: updated.trial_end ? new Date(updated.trial_end * 1000).toISOString() : null,
+  };
+}
+
 const CANCELLABLE_STRIPE_STATUSES = new Set(['trialing', 'active', 'past_due', 'unpaid', 'incomplete', 'paused']);
 
 /**

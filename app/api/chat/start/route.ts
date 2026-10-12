@@ -1,3 +1,5 @@
+import { readAccessOverrides } from '@/lib/billing/access-overrides';
+import { ACCOUNT_SUSPENDED_MESSAGE } from '@/lib/billing/entitlements';
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase/server';
 import { SELECTED_ADS_ACCOUNT_COOKIE } from '@/lib/accounts/selection';
@@ -41,6 +43,12 @@ async function authed(req: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return { res: NextResponse.json({ error: 'unauthorized' }, { status: 401 }) };
+  // An operator-suspended account gets no model calls at all, free tier included.
+  if ((await readAccessOverrides(supabase, user.id)).suspended) {
+    return {
+      res: NextResponse.json({ error: 'account_suspended', message: ACCOUNT_SUSPENDED_MESSAGE }, { status: 403 }),
+    };
+  }
   try {
     const rl = await checkRateLimit({ req, scope: 'chat_start', limit: 60, windowSeconds: 60, identifier: user.id });
     if (!rl.allowed) {

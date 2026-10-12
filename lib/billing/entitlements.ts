@@ -1,5 +1,6 @@
 import { createAdminClient } from '@/lib/supabase/server';
 import { isModaafaOperator } from '@/lib/platform/operators';
+import { readAccessOverrides, type LiveAccessOverrides } from '@/lib/billing/access-overrides';
 
 export type BillingPlan = 'starter' | 'growth' | 'pro';
 export type MeteredFeature = 'assistant' | 'campaign_builder' | 'audit' | 'manual_sync' | 'execute_action';
@@ -14,9 +15,15 @@ type FeatureLimit = {
 export type SubscriptionAccess = {
   active: boolean;
   plan: BillingPlan | null;
+  /**
+   * Stripe status, or one of the local ones: 'internal' (operator), 'comp'
+   * (free plan granted by an operator) and 'suspended' (an operator suspended
+   * the account; nothing runs for it until they lift it).
+   */
   status: string | null;
   trialEndsAt: string | null;
   currentPeriodEnd: string | null;
+  suspended?: boolean;
 };
 
 export type FeatureAccessResult =
@@ -31,7 +38,7 @@ export type FeatureAccessResult =
     }
   | {
       ok: false;
-      reason: 'subscription_required' | 'quota_exceeded' | 'usage_storage_unavailable';
+      reason: 'subscription_required' | 'account_suspended' | 'quota_exceeded' | 'usage_storage_unavailable';
       plan: BillingPlan | null;
       limit?: number;
       used?: number;
@@ -109,7 +116,12 @@ export async function getSubscriptionAccess(
 
   query = query.eq('user_id', userId);
 
-  const { data: rows, error } = await query;
+  // Operator overrides (free plan, suspension) are read alongside. A missing
+  // overrides table reads as "none" so this check never fails because of it.
+  const [{ data: rows, error }, overrides] = await Promise.all([
+    query,
+    readAccessOverrides(supabase, userId),
+  ]);
   if (error) console.error('Failed to read subscription access', error);
 
   const subscriptions = (rows ?? []) as Array<Record<string, any>>;
@@ -121,24 +133,54 @@ export async function getSubscriptionAccess(
       return new Date(b.current_period_end ?? 0).getTime() - new Date(a.current_period_end ?? 0).getTime();
     })[0] ?? subscriptions[0];
 
-  if (!subscription) {
+  const plan = subscription && isBillingPlan(subscription.plan) ? subscription.plan : null;
+  const fromStripe: SubscriptionAccess = subscription
+    ? {
+        active: Boolean(plan && isSubscriptionEntitled(subscription)),
+        plan,
+        status: subscription.status ?? null,
+        trialEndsAt: subscription.trial_ends_at ?? null,
+        currentPeriodEnd: subscription.current_period_end ?? null,
+      }
+    : { active: false, plan: null, status: null, trialEndsAt: null, currentPeriodEnd: null };
+
+  return applyAccessOverrides(fromStripe, overrides);
+}
+
+/**
+ * Layer operator overrides over the Stripe-derived access. A suspension wins
+ * over everything (including a paid plan: billing is untouched, but nothing
+ * runs). A free plan applies when there is no live paid plan, or when it is a
+ * higher plan than the paid one.
+ */
+export function applyAccessOverrides(
+  access: SubscriptionAccess,
+  overrides: LiveAccessOverrides
+): SubscriptionAccess {
+  if (overrides.suspended) {
     return {
       active: false,
       plan: null,
-      status: null,
-      trialEndsAt: null,
-      currentPeriodEnd: null,
+      status: 'suspended',
+      trialEndsAt: access.trialEndsAt,
+      currentPeriodEnd: access.currentPeriodEnd,
+      suspended: true,
     };
   }
-
-  const plan = isBillingPlan(subscription.plan) ? subscription.plan : null;
-  return {
-    active: Boolean(plan && isSubscriptionEntitled(subscription)),
-    plan,
-    status: subscription.status ?? null,
-    trialEndsAt: subscription.trial_ends_at ?? null,
-    currentPeriodEnd: subscription.current_period_end ?? null,
-  };
+  const grant = overrides.grant;
+  if (grant) {
+    const paidRank = access.active && access.plan ? PLAN_RANK[access.plan] : 0;
+    if (PLAN_RANK[grant.plan] > paidRank) {
+      return {
+        active: true,
+        plan: grant.plan,
+        status: 'comp',
+        trialEndsAt: null,
+        currentPeriodEnd: grant.expiresAt,
+      };
+    }
+  }
+  return access;
 }
 
 /** Dunning grace for a past_due subscription, from the unpaid period's start. */
@@ -207,6 +249,9 @@ export async function consumeFeatureUsage({
   metadata?: Record<string, unknown>;
 }): Promise<FeatureAccessResult> {
   const subscription = await getSubscriptionAccess(supabase, userId, userEmail);
+  if (subscription.suspended) {
+    return { ok: false, reason: 'account_suspended', plan: null };
+  }
   if (!subscription.active || !subscription.plan) {
     return { ok: false, reason: 'subscription_required', plan: subscription.plan };
   }
@@ -283,7 +328,11 @@ export async function refundFeatureUsage({
   }
 }
 
+export const ACCOUNT_SUSPENDED_MESSAGE =
+  'حسابك موقوف مؤقتاً، ولن تُنفذ أي عملية عليه حتى يُعاد تفعيله. تواصل معنا على واتساب 0541004029.';
+
 export function featureAccessMessage(reason?: string) {
+  if (reason === 'account_suspended') return ACCOUNT_SUSPENDED_MESSAGE;
   if (reason === 'subscription_required') {
     return 'هذه الخاصية تحتاج تجربة أو اشتراكاً نشطاً. اختر الخطة المناسبة ثم أعد المحاولة.';
   }
@@ -297,6 +346,7 @@ export function featureAccessMessage(reason?: string) {
 }
 
 export function featureAccessStatus(reason?: string) {
+  if (reason === 'account_suspended') return 403;
   if (reason === 'subscription_required') return 402;
   if (reason === 'quota_exceeded') return 429;
   return 503;

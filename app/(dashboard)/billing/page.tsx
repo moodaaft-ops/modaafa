@@ -113,7 +113,9 @@ export default async function BillingPage({
   assertSupabaseRead(invoicesResult.error, 'load billing invoices');
   const invoices = invoicesResult.data ?? [];
   const trialEligible = checkout.trialEligible;
-  const hasInternalAccess = access.status === 'internal';
+  // 'comp' is a free plan an operator granted from the operations center: show
+  // it as the current plan, like internal access.
+  const hasInternalAccess = access.status === 'internal' || access.status === 'comp';
   const hasLiveSubscription = Boolean(checkout.activeSubscriptionId);
   const currentPlan = hasLiveSubscription || hasInternalAccess ? access.plan : null;
 
