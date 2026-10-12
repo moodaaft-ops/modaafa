@@ -50,14 +50,35 @@ async function loggedEvents(page: Page) {
 test.describe('welcome screen for a brand-new user', () => {
   test.skip(SCENARIO !== 'new-user', 'set MODAAFA_E2E_WELCOME=new-user with the new-user fake backend running');
 
-  test.beforeEach(async ({ context, baseURL }) => {
+  test.beforeEach(async ({ context, baseURL, request }) => {
     await context.addCookies([{ name: 'sb-127-auth-token', value: encodeURIComponent(SESSION), url: baseURL! }]);
+    // Most checks below are about the connect screen, so the person starts out
+    // as someone who already answered the first-login questions.
+    await request.post(`${MOCK}/__answers`, { data: { state: 'answered' } });
   });
 
   test('a signed-in user with nothing linked lands on /welcome from the dashboard', async ({ page }) => {
     await page.goto('/dashboard');
     await expect(page).toHaveURL(/\/welcome$/);
-    await expect(page.getByRole('heading', { level: 1 })).toContainText('اربط حسابك');
+    await expect(page.getByRole('heading', { level: 1 })).toContainText('الخطوة الأخيرة قبل فحصك');
+  });
+
+
+  test('connect screen: progress bar says step 2 of 2 and the answers can be edited', async ({ page }) => {
+    await page.goto('/welcome');
+    await expect(page.getByRole('group', { name: 'الخطوة 2 من 2' })).toBeVisible();
+    await expect(page.getByText('سجلنا عنك:')).toContainText('متجر إلكتروني');
+    await page.getByRole('link', { name: 'عدّل إجاباتك' }).click();
+    await expect(page).toHaveURL(/\/welcome\?edit=1$/);
+    await expect(page.getByRole('heading', { level: 1 })).toContainText('عرّفنا على وضعك');
+  });
+
+  test('a table that does not exist yet never blocks the connect button', async ({ page, request }) => {
+    await request.post(`${MOCK}/__answers`, { data: { state: 'unavailable' } });
+    await page.goto('/welcome');
+    await expect(page.getByRole('heading', { level: 1 })).toContainText('الخطوة الأخيرة قبل فحصك');
+    await expect(page.getByRole('group', { name: /الخطوة/ })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'اربط حسابك' }).first()).toBeVisible();
   });
 
   test('/onboarding sends them to /welcome too', async ({ page }) => {
@@ -123,6 +144,91 @@ test.describe('welcome screen for a brand-new user', () => {
     await expect.poll(async () => (await loggedEvents(page)).some((e) => e.event === 'connect_clicked')).toBe(true);
     const click = (await loggedEvents(page)).find((e) => e.event === 'connect_clicked')!;
     expect(click.metadata).toEqual({ source: 'welcome' });
+  });
+});
+
+
+test.describe('first-login questions (step 1 of 2)', () => {
+  test.skip(SCENARIO !== 'new-user', 'set MODAAFA_E2E_WELCOME=new-user with the new-user fake backend running');
+
+  test.beforeEach(async ({ context, baseURL, request }) => {
+    await context.addCookies([{ name: 'sb-127-auth-token', value: encodeURIComponent(SESSION), url: baseURL! }]);
+    await request.post(`${MOCK}/__answers`, { data: { state: 'none' } });
+  });
+
+  test('a person who never answered sees the questions first, each with its reason', async ({ page }) => {
+    await page.goto('/welcome');
+    await expect(page.getByRole('group', { name: 'الخطوة 1 من 2' })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1 })).toContainText('عرّفنا على وضعك');
+    for (const legend of ['وش نوع نشاطك؟', 'كم تصرف على إعلانات قوقل في الشهر تقريباً؟', 'مين يدير حسابك الإعلاني الحين؟']) {
+      await expect(page.getByRole('group', { name: legend })).toBeVisible();
+    }
+    await expect(page.getByText('ليش نسأل:')).toHaveCount(3);
+    // The Google link is not on this step at all.
+    await expect(page.getByRole('link', { name: 'اربط حسابك' })).toHaveCount(0);
+  });
+
+  test('"next" refuses until all three are answered, then saves and moves to step 2', async ({ page, request }) => {
+    await page.goto('/welcome');
+    await page.getByRole('button', { name: 'التالي: ربط الحساب' }).click({ force: true });
+    await expect(page.getByText('اختر جواب لكل سؤال')).toBeVisible();
+
+    await page.getByText('متجر إلكتروني', { exact: true }).click();
+    await page.getByText('من 10000 إلى 30000 ريال').click();
+    await page.getByText('ما أحد يديره حالياً').click();
+    await page.getByRole('button', { name: 'التالي: ربط الحساب' }).click();
+
+    await expect(page.getByRole('heading', { level: 1 })).toContainText('الخطوة الأخيرة قبل فحصك');
+    await expect(page.getByRole('group', { name: 'الخطوة 2 من 2' })).toBeVisible();
+
+    const { writes } = await (await request.get(`${MOCK}/__answers`)).json();
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatchObject({
+      user_id: '11111111-1111-4111-8111-111111111111',
+      business_type: 'ecommerce',
+      spend_band: '10k_30k',
+      account_manager: 'nobody',
+      skipped: false,
+    });
+  });
+
+  test('skipping saves a skip and goes straight to the connect screen', async ({ page, request }) => {
+    await page.goto('/welcome');
+    await page.getByRole('button', { name: 'تخطّى هالخطوة' }).click();
+    await expect(page.getByRole('heading', { level: 1 })).toContainText('الخطوة الأخيرة قبل فحصك');
+    const { writes } = await (await request.get(`${MOCK}/__answers`)).json();
+    expect(writes[0]).toMatchObject({ skipped: true, business_type: null });
+    // And it does not ask again on the next visit.
+    await page.goto('/welcome');
+    await expect(page.getByRole('heading', { level: 1 })).toContainText('الخطوة الأخيرة قبل فحصك');
+  });
+
+  for (const width of WIDTHS) {
+    test(`step 1 fits a ${width}px phone with no sideways scroll and big tap targets`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 780 });
+      await page.goto('/welcome');
+      expect(await offscreen(page)).toEqual([]);
+      const rows = page.locator('label:has(input[type=radio])');
+      expect(await rows.count()).toBe(14);
+      for (let i = 0; i < 14; i += 1) {
+        const box = (await rows.nth(i).boundingBox())!;
+        expect(box.height, `option ${i} height`).toBeGreaterThanOrEqual(44);
+        expect(box.x).toBeGreaterThanOrEqual(0);
+        expect(box.x + box.width).toBeLessThanOrEqual(width);
+      }
+      // The radio inputs are visually hidden but must stay reachable by keyboard.
+      await page.keyboard.press('Tab');
+      await page.keyboard.press('Tab');
+      expect(await page.evaluate(() => document.activeElement?.tagName)).toBeTruthy();
+    });
+  }
+
+  test('the radios work from the keyboard', async ({ page }) => {
+    await page.goto('/welcome');
+    const first = page.locator('input[name=businessType]').first();
+    await first.focus();
+    await page.keyboard.press('Space');
+    await expect(first).toBeChecked();
   });
 });
 

@@ -9,10 +9,11 @@ import { contactHref } from '@/lib/platform/operator-page';
  * interactive part (operator actions) lives in its own client file.
  */
 
-export function OpsTabs({ active, updatedAt }: { active: 'overview' | 'customers'; updatedAt: string }) {
+export function OpsTabs({ active, updatedAt }: { active: 'overview' | 'customers' | 'leads'; updatedAt: string }) {
   const tabs = [
     { key: 'overview', href: '/operations', label: 'نظرة عامة' },
     { key: 'customers', href: '/operations/users', label: 'العملاء' },
+    { key: 'leads', href: '/operations/leads', label: 'الفرص' },
   ] as const;
   return (
     <div className="flex flex-wrap items-end justify-between gap-3 border-b border-border px-4 sm:px-6 lg:px-8">

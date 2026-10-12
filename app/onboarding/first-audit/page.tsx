@@ -19,6 +19,7 @@ import {
 import { TikTokPixel } from '@/lib/analytics/tiktok-pixel';
 import { CHAT_HANDOFF_PATH } from '@/lib/onboarding/chat-handoff';
 import { recordUserEvent } from '@/lib/stages/events';
+import { FullManagementCard } from '@/lib/ui/full-management-card';
 import { FirstAuditRunner } from './first-audit-runner';
 
 export const metadata = {
@@ -168,6 +169,12 @@ export default async function FirstAuditPage({
               </Link>
             </div>
           </section>
+        )}
+
+        {audit && (
+          <div className="mt-5">
+            <FullManagementCard />
+          </div>
         )}
       </div>
     </main>

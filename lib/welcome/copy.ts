@@ -18,9 +18,9 @@ export const WELCOME_COPY = {
   pageTitle: 'ابدأ بربط حسابك',
 
   eyebrow: 'حسابك جاهز، ناقص الربط بس',
-  headline: 'اربط حسابك، ونوريك وين تضيع فلوس إعلاناتك',
+  headline: 'الخطوة الأخيرة قبل فحصك',
   intro:
-    'موافقة وحدة على Google، وبعدها نفحص حسابك ونرتب لك الصرف اللي ما جاب نتيجة والفرص اللي تفوتك، من الأهم للأقل.',
+    'اربط حسابك بموافقة وحدة على Google، ونوريك وين تضيع فلوس إعلاناتك. نرتب لك الصرف اللي ما جاب نتيجة والفرص اللي تفوتك، من الأهم للأقل.',
 
   connectLabel: 'اربط حسابك',
   connectLoading: 'جاري فتح شاشة Google...',
@@ -97,4 +97,46 @@ export const WELCOME_COPY = {
   ],
   noAccountWhatsApp: 'افتحه معي على واتساب',
   noAccountGuide: 'الشرح المكتوب',
+} as const;
+
+
+/**
+ * The questions asked before the Google Ads link (step 1 of 2).
+ *
+ * Each "why" line says what the answer is really used for. None of them claims
+ * the audit changes with the answer, because it does not: the audit reads the
+ * Google Ads account only.
+ */
+export const WELCOME_QUESTIONS_COPY = {
+  pageTitle: 'قبل الربط',
+  eyebrow: 'قبل الربط',
+  headline: 'عرّفنا على وضعك قبل الربط',
+  intro: 'أقل من نص دقيقة. إجاباتك ما تغيّر نتيجة الفحص، تساعدنا نعرف كيف نخدمك.',
+
+  progressLabel: (current: number, total: number) => `الخطوة ${current} من ${total}`,
+  stepNames: ['أسئلة سريعة', 'ربط الحساب'],
+
+  businessType: {
+    legend: 'وش نوع نشاطك؟',
+    why: 'نكتب لك بلغة نشاطك، فمتجر غير عيادة.',
+  },
+  spend: {
+    legend: 'كم تصرف على إعلانات قوقل في الشهر تقريباً؟',
+    why: 'تقريبي يكفي. نعرف منه حجم حسابك ونحدد أي خطة تناسبه، وما نبني عليه أي رقم في الفحص.',
+  },
+  manager: {
+    legend: 'مين يدير حسابك الإعلاني الحين؟',
+    why: 'نعرف إذا كنت تحتاج أداة بس، ولا يد إضافية معها.',
+  },
+
+  next: 'التالي: ربط الحساب',
+  saving: 'جاري الحفظ...',
+  skip: 'تخطّى هالخطوة',
+  incomplete: 'اختر جواب لكل سؤال عشان نكمل، أو تخطّى.',
+  saveFailed: 'ما قدرنا نحفظ إجاباتك. جرّب مرة ثانية، أو تخطّى وكمّل الربط.',
+  disclosure:
+    'نحفظ إجاباتك مع حسابك. وإذا بان لنا إن حسابك يستفيد من إدارة كاملة، ممكن يتواصل معك فريق مُضاعفة، وتقدر ترفض.',
+
+  summaryLead: 'سجلنا عنك:',
+  editLink: 'عدّل إجاباتك',
 } as const;

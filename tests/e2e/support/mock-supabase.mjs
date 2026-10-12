@@ -41,18 +41,68 @@ if (process.env.MOCK_SCENARIO === 'new-user') {
   tables.google_ads_accounts = [];
   tables.subscriptions = [];
 }
+// MOCK_OPERATOR=1: the signed-in test user is a confirmed operator and the
+// visitor_leads table has a few rows, so /operations/leads can be looked at.
+if (process.env.MOCK_OPERATOR === '1') {
+  user.email_confirmed_at = now;
+  tables.visitor_leads = [
+    { id: 'l1', channel: 'whatsapp', email: null, whatsapp: '966501234567', source: 'exit_mobile', created_at: now, followup_status: 'pending', followup_reason: null, whatsapp_status: 'pending', contacted_at: null, contacted_by: null, messages_opt_out: false },
+    { id: 'l2', channel: 'email', email: 'sara@example.com', whatsapp: null, source: 'exit_desktop', created_at: now, followup_status: 'sent', followup_reason: null, whatsapp_status: null, contacted_at: null, contacted_by: null, messages_opt_out: false },
+    { id: 'l3', channel: 'email', email: 'khalid@example.com', whatsapp: null, source: 'exit_desktop', created_at: now, followup_status: 'failed', followup_reason: 'send_failed', whatsapp_status: null, contacted_at: null, contacted_by: null, messages_opt_out: false },
+  ];
+}
 const loggedEvents = [];
+// First-login answers (user_onboarding_answers). A test sets the state through
+// POST /__answers {state}: 'none' (never asked), 'answered', 'skipped' or
+// 'unavailable' (table missing). POSTs from the app are kept in answersWrites.
+let answersState = 'answered';
+const DEFAULT_ANSWERS = { user_id: UID, business_type: 'ecommerce', spend_band: '3k_10k', account_manager: 'self', skipped: false };
+let answersRow = { ...DEFAULT_ANSWERS };
+const answersWrites = [];
 http.createServer((req, res) => {
   const u = new URL(req.url, 'http://x');
   const send = (code, body, h = {}) => { res.writeHead(code, { 'content-type': 'application/json', 'access-control-allow-origin': '*', ...h }); res.end(JSON.stringify(body)); };
   if (req.method === 'OPTIONS') return send(204, {}, { 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' });
   if (u.pathname === '/__events') return send(200, loggedEvents);
+  if (u.pathname === '/__answers') {
+    if (req.method === 'POST') {
+      let body = '';
+      req.on('data', (chunk) => (body += chunk));
+      req.on('end', () => {
+        try { answersState = JSON.parse(body).state; } catch { /* ignore */ }
+        answersWrites.length = 0;
+        answersRow = { ...DEFAULT_ANSWERS };
+        send(200, { state: answersState });
+      });
+      return;
+    }
+    return send(200, { state: answersState, writes: answersWrites });
+  }
   if (u.pathname === '/auth/v1/user') return send(200, user);
   if (u.pathname.startsWith('/auth/v1/')) return send(200, {});
   const m = u.pathname.match(/^\/rest\/v1\/([a-z_]+)$/);
   if (m) {
     const rows = tables[m[1]] ?? [];
     const accept = req.headers.accept || '';
+    if (m[1] === 'user_onboarding_answers') {
+      if (answersState === 'unavailable') return send(404, { code: '42P01', message: 'relation "public.user_onboarding_answers" does not exist', details: '', hint: '' });
+      if (req.method === 'POST') {
+        let body = '';
+        req.on('data', (chunk) => (body += chunk));
+        req.on('end', () => {
+          try {
+            const row = JSON.parse(body);
+            answersWrites.push(row);
+            answersRow = row;
+            answersState = row.skipped ? 'skipped' : 'answered';
+          } catch { /* ignore */ }
+          send(201, []);
+        });
+        return;
+      }
+      const stored = answersState === 'none' ? [] : answersState === 'skipped' ? [{ ...answersRow, skipped: true, business_type: null, spend_band: null, account_manager: null }] : [answersRow];
+      return send(200, stored, { 'content-range': `0-${Math.max(stored.length - 1, 0)}/${stored.length}` });
+    }
     if (req.method === 'POST' && m[1] === 'user_events') {
       let body = '';
       req.on('data', (chunk) => (body += chunk));
