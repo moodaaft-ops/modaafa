@@ -18,21 +18,32 @@ import { voiceLimiter, voiceSessionStore } from '@/lib/ai/voice-route-deps';
 const MAX_MESSAGE = 1000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Existing model path (assistant role). No new model, no Opus. */
-const callAssistantModel: ModelCall = async ({ system, user, maxTokens }) => {
-  const response = await createMessageForAgent('assistant', {
-    max_tokens: maxTokens,
-    system,
-    messages: [{ role: 'user', content: user }],
-  });
-  return (
-    response.content
-      ?.filter((part: any) => part.type === 'text')
-      .map((part: any) => part.text)
-      .join('\n')
-      .trim() ?? null
-  );
-};
+/**
+ * Intent classification only (max 450 tokens, no tools), so it runs on the
+ * cheap fast tier. The user id is attached per request so the cost lands on the
+ * right subscriber.
+ */
+const callAssistantModel =
+  (userId: string, accountId: string | null, channel: 'text' | 'voice'): ModelCall =>
+  async ({ system, user, maxTokens }) => {
+    const response = await createMessageForAgent(
+      'jarvis_fast',
+      {
+        max_tokens: maxTokens,
+        system,
+        messages: [{ role: 'user', content: user }],
+      },
+      undefined,
+      { userId, accountId, feature: 'chat_start_language', channel }
+    );
+    return (
+      response.content
+        ?.filter((part: any) => part.type === 'text')
+        .map((part: any) => part.text)
+        .join('\n')
+        .trim() ?? null
+    );
+  };
 
 async function authed(req: NextRequest) {
   if (!isChatFirstEnabled()) return { res: NextResponse.json({ error: 'not_found' }, { status: 404 }) };
@@ -123,7 +134,7 @@ export async function POST(req: NextRequest) {
       message,
       state,
       hasBackend: hasAIBackend(),
-      call: callAssistantModel,
+      call: callAssistantModel(user.id, accountId ?? null, voiceCheck ? 'voice' : 'text'),
       checkAllowance: async (scope) => {
         const r = await checkRateLimit({
           req,

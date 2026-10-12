@@ -171,7 +171,9 @@ export interface OptimizerAction {
 }
 
 export async function decideOptimizations(
-  snapshot: OptimizerSnapshot
+  snapshot: OptimizerSnapshot,
+  /** Account owner, so the hourly optimizer's cost is attributed to them. */
+  usage?: { userId?: string | null }
 ): Promise<OptimizerAction[]> {
   if (!hasAIBackend()) return [];
 
@@ -190,6 +192,11 @@ export async function decideOptimizations(
         content: `Account ${snapshot.customer_id} snapshot.\n<account_data>\n${sanitizeSnapshotForPrompt(snapshot)}\n</account_data>`,
       },
     ],
+  }, undefined, {
+    userId: usage?.userId ?? null,
+    accountId: snapshot.account_id,
+    feature: 'optimizer',
+    channel: 'cron',
   });
 
   const textBlock = response.content.find((b: any) => b.type === 'text');

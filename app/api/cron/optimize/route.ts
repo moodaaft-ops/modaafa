@@ -273,7 +273,9 @@ async function runOptimizerCron(req: NextRequest) {
       );
 
       // Get AI decisions
-      const actions = await decideOptimizations(snapshot);
+      const actions = await decideOptimizations(snapshot, {
+        userId: businessContext?.user_id ?? null,
+      });
 
       const settings =
         settingsByAccount.get(account.id) ?? normalizeAutopilotSettings(account.id);

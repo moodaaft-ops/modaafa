@@ -520,6 +520,52 @@ CREATE TABLE IF NOT EXISTS sector_benchmarks (
   UNIQUE (sector, currency_code, window_days)
 );
 
+-- LLM usage and cost ledger: one row per successful Anthropic call, written
+-- from createMessageForAgent. Service role only: RLS enabled with no policy.
+CREATE TABLE IF NOT EXISTS llm_usage (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  account_id UUID REFERENCES google_ads_accounts(id) ON DELETE SET NULL,
+  feature TEXT NOT NULL CHECK (char_length(feature) <= 60),
+  channel TEXT CHECK (channel IN ('text', 'voice', 'cron')),
+  model TEXT NOT NULL,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+  cost_usd NUMERIC(12, 6) NOT NULL DEFAULT 0,
+  priced BOOLEAN NOT NULL DEFAULT TRUE,
+  tool_rounds SMALLINT NOT NULL DEFAULT 0,
+  latency_ms INTEGER,
+  pricing_version TEXT,
+  playbook_version TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_llm_usage_user_created ON llm_usage(user_id, created_at DESC);
+CREATE INDEX idx_llm_usage_created ON llm_usage(created_at DESC);
+
+COMMENT ON TABLE llm_usage IS
+  'Append-only ledger of Anthropic calls with token counts and computed USD cost. Service role only; no browser access.';
+
+CREATE OR REPLACE FUNCTION public.llm_usage_cost_since(p_user_id UUID, p_since TIMESTAMPTZ)
+RETURNS NUMERIC
+LANGUAGE SQL
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  SELECT COALESCE(SUM(cost_usd), 0)::NUMERIC
+  FROM public.llm_usage
+  WHERE user_id = p_user_id
+    AND created_at >= p_since;
+$$;
+
+REVOKE ALL ON FUNCTION public.llm_usage_cost_since(UUID, TIMESTAMPTZ)
+  FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.llm_usage_cost_since(UUID, TIMESTAMPTZ)
+  TO service_role;
+
 -- =====================================================
 -- ROW LEVEL SECURITY (RLS)
 -- =====================================================
@@ -544,6 +590,7 @@ ALTER TABLE billing_trial_grants ENABLE ROW LEVEL SECURITY;
 ALTER TABLE job_runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE processed_webhook_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sector_benchmarks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE llm_usage ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY sector_benchmarks_read ON sector_benchmarks
   FOR SELECT TO authenticated USING (true);
@@ -641,6 +688,8 @@ REVOKE INSERT, UPDATE, DELETE ON subscriptions FROM anon, authenticated;
 REVOKE INSERT, UPDATE, DELETE ON invoices FROM anon, authenticated;
 REVOKE INSERT, UPDATE, DELETE ON billing_trial_grants FROM anon, authenticated;
 REVOKE ALL ON TABLE billing_trial_ledger FROM anon, authenticated;
+REVOKE ALL ON TABLE llm_usage FROM PUBLIC, anon, authenticated, service_role;
+GRANT SELECT, INSERT ON TABLE llm_usage TO service_role;
 
 -- Metering rows are created through consume_feature_usage() only and refunded
 -- by the service role only.
