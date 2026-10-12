@@ -33,22 +33,42 @@ const tables = {
   invoices: [{ invoice_number: 'INV-1001', amount_sar: 299, currency: 'SAR', status: 'paid', invoice_url: null, created_at: now }],
   autopilot_settings: [], autopilot_decisions: [], chat_sessions: [], chat_messages: [], usage_events: [], job_runs: [], sector_benchmarks: [],
 };
+// MOCK_SCENARIO=new-user: a person who just registered. No business, no linked
+// accounts. Every insert into user_events is kept and readable at /__events, so
+// the welcome tests can prove what was (and was not) logged.
+if (process.env.MOCK_SCENARIO === 'new-user') {
+  tables.businesses = [];
+  tables.google_ads_accounts = [];
+  tables.subscriptions = [];
+}
+const loggedEvents = [];
 http.createServer((req, res) => {
   const u = new URL(req.url, 'http://x');
   const send = (code, body, h = {}) => { res.writeHead(code, { 'content-type': 'application/json', 'access-control-allow-origin': '*', ...h }); res.end(JSON.stringify(body)); };
   if (req.method === 'OPTIONS') return send(204, {}, { 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' });
+  if (u.pathname === '/__events') return send(200, loggedEvents);
   if (u.pathname === '/auth/v1/user') return send(200, user);
   if (u.pathname.startsWith('/auth/v1/')) return send(200, {});
   const m = u.pathname.match(/^\/rest\/v1\/([a-z_]+)$/);
   if (m) {
     const rows = tables[m[1]] ?? [];
     const accept = req.headers.accept || '';
+    if (req.method === 'POST' && m[1] === 'user_events') {
+      let body = '';
+      req.on('data', (chunk) => (body += chunk));
+      req.on('end', () => {
+        try { loggedEvents.push(JSON.parse(body)); } catch { /* ignore */ }
+        send(201, []);
+      });
+      return;
+    }
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(201, []);
     const lim = Number(u.searchParams.get('limit') || rows.length);
     const out = rows.slice(0, lim);
     if (accept.includes('vnd.pgrst.object')) return out.length ? send(200, out[0]) : send(406, { code: 'PGRST116', message: 'none', details: '', hint: '' });
     return send(200, out, { 'content-range': `0-${Math.max(out.length - 1, 0)}/${rows.length}` });
   }
+  if (u.pathname === '/rest/v1/rpc/consume_rate_limit') return send(200, [{ allowed: true, remaining: 9, reset_at: new Date(Date.now() + 9e5).toISOString() }]);
   if (u.pathname.startsWith('/rest/v1/rpc/')) return send(200, null);
   send(404, { message: 'mock: ' + u.pathname });
 }).listen(54321, '127.0.0.1', () => console.log('mock supabase on 54321'));

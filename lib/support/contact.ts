@@ -17,12 +17,13 @@ export const SUPPORT_WHATSAPP_NUMBER = '966541004029';
 /** Same number, written the way Saudi users read it. */
 export const SUPPORT_WHATSAPP_DISPLAY = '054 100 4029';
 
-export type WhatsAppHelpReason = 'no_ads_account' | 'manager_only' | 'connect_failed';
+export type WhatsAppHelpReason = 'no_ads_account' | 'manager_only' | 'connect_failed' | 'talk_to_team';
 
 const OPENERS: Record<WhatsAppHelpReason, string> = {
   no_ads_account: 'سجلت في مضاعف وما عندي حساب اعلانات قوقل، ابي مساعدة افتحه',
   manager_only: 'سجلت في مضاعف وعندي حساب اداري MCC بس بدون حساب اعلاني تحته، ابي مساعدة',
   connect_failed: 'سجلت في مضاعف وما قدرت اربط حساب اعلانات قوقل، ابي مساعدة',
+  talk_to_team: 'سجلت في مضاعف وقبل ما اربط حسابي ابي اكلم احد من الفريق',
 };
 
 export function whatsappHelpUrl(reason: WhatsAppHelpReason, email?: string | null) {
