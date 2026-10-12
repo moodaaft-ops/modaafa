@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { after, NextRequest, NextResponse } from 'next/server';
 import { randomBytes } from 'crypto';
 import { buildAuthUrl } from '@/lib/google-ads/oauth';
 import { createServerClient } from '@/lib/supabase/server';
@@ -8,6 +8,7 @@ import {
 } from '@/lib/auth/google-ads-oauth-state';
 import { persistOAuthState } from '@/lib/auth/oauth-state-store';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
+import { trackUserEvent } from '@/lib/events/user-events';
 
 /**
  * Step 1: User clicks "Connect Google Ads" → we redirect them to Google's consent screen.
@@ -48,6 +49,13 @@ export async function GET(req: NextRequest) {
       303
     );
   }
+
+  // Funnel event. Written after the redirect is sent and swallowed on failure,
+  // so it can never slow down or break the hand-off to Google. `source` is
+  // read from a short allow-list, never stored as typed.
+  const source = req.nextUrl.searchParams.get('source') === 'welcome' ? 'welcome' : 'other';
+  const userId = user.id;
+  after(() => trackUserEvent({ userId, event: 'connect_clicked', properties: { source } }));
 
   // CSRF protection: tie state to the user's session
   const state = randomBytes(32).toString('hex');

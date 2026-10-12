@@ -103,8 +103,13 @@ export default async function DashboardPage({
     business: workspaceBusiness,
     accounts,
     revokedAccounts,
+    pausedAccounts,
     selectedAccount,
   } = await getAccountWorkspace(user.id);
+
+  // Nobody has linked anything yet (not even an expired link): /welcome is the
+  // landing, every time they sign in, until the first account is connected.
+  if (accounts.length + revokedAccounts.length + pausedAccounts.length === 0) redirect('/welcome');
 
   // Reuse the workspace lookup rather than issuing a second, unordered
   // `.maybeSingle()` query — that variant threw PGRST116 the moment a user had
