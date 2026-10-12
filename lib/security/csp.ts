@@ -26,6 +26,11 @@
  * to report to — `analytics.tiktok.com` for beacons (with an image fallback)
  * and `analytics-ipv6.tiktokw.us` for its IPv6 enrichment call. Both are named
  * exactly, never as a wildcard.
+ *
+ * `frame-src` is named because `default-src 'self'` would otherwise block every
+ * iframe. The only embed the product uses is the reviewed Google Ads account
+ * guide on the privacy-enhanced YouTube host, so that one host is allowed.
+ * No wildcard and no youtube.com: nothing else may be framed.
  */
 export function buildContentSecurityPolicy(nonce: string): string {
   return [
@@ -39,6 +44,7 @@ export function buildContentSecurityPolicy(nonce: string): string {
     "img-src 'self' data: blob: https://lh3.googleusercontent.com https://modaafa.com https://analytics.tiktok.com",
     "font-src 'self' data:",
     "media-src 'self' blob:",
+    'frame-src https://www.youtube-nocookie.com',
     "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://analytics.tiktok.com https://analytics-ipv6.tiktokw.us",
     'upgrade-insecure-requests',
   ].join('; ');
