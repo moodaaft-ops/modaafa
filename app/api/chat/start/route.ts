@@ -1,3 +1,5 @@
+import { readAccessOverrides } from '@/lib/billing/access-overrides';
+import { ACCOUNT_SUSPENDED_MESSAGE } from '@/lib/billing/entitlements';
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase/server';
 import { SELECTED_ADS_ACCOUNT_COOKIE } from '@/lib/accounts/selection';
@@ -60,6 +62,12 @@ async function authed(req: NextRequest): Promise<{ res?: NextResponse; supabase?
   // In allowlist mode an outsider, signed in or not, sees the same 404 as when the flag is off.
   if (!user) return mode === 'true' ? { res: NextResponse.json({ error: 'unauthorized' }, { status: 401 }) } : notFound;
   if (!isChatFirstEnabled(process.env, user.email)) return notFound;
+  // An operator-suspended account gets no model calls at all, free tier included.
+  if ((await readAccessOverrides(supabase, user.id)).suspended) {
+    return {
+      res: NextResponse.json({ error: 'account_suspended', message: ACCOUNT_SUSPENDED_MESSAGE }, { status: 403 }),
+    };
+  }
   try {
     const rl = await checkRateLimit({ req, scope: 'chat_start', limit: 60, windowSeconds: 60, identifier: user.id });
     if (!rl.allowed) {

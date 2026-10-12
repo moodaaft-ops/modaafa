@@ -1,4 +1,5 @@
 import { isSubscriptionEntitled } from '@/lib/billing/entitlements';
+import { readAllLiveOverrides } from '@/lib/billing/access-overrides';
 
 /**
  * A `running` row older than this is a corpse: maxDuration is 300s, so any
@@ -161,14 +162,22 @@ export async function getBillableBusinessIds(supabase: any) {
       .order('user_id', { ascending: true })
   );
 
-  const userIds = Array.from(
-    new Set(
-      subscriptions
-        .filter((item: any) => isSubscriptionEntitled(item, now))
-        .map((item: any) => item.user_id)
-        .filter(Boolean)
-    )
-  ) as string[];
+  // Operator overrides: a free plan makes a user billable without a Stripe
+  // row, and a suspension removes them even with one. Missing table = none.
+  const overrides = await readAllLiveOverrides(supabase, now);
+  const entitled = new Set(
+    subscriptions
+      .filter((item: any) => isSubscriptionEntitled(item, now))
+      .map((item: any) => item.user_id)
+      .filter(Boolean) as string[]
+  );
+  for (const [userId, live] of overrides) {
+    if (live.grant) entitled.add(userId);
+  }
+  for (const [userId, live] of overrides) {
+    if (live.suspended) entitled.delete(userId);
+  }
+  const userIds = Array.from(entitled).sort();
   if (userIds.length === 0) return [] as string[];
 
   // Chunk the IN list too: thousands of ids in one URL blows the request line.

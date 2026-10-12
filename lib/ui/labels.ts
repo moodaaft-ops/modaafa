@@ -6,6 +6,8 @@ const PLAN_LABELS: Record<string, string> = {
 
 const SUBSCRIPTION_STATUS_LABELS: Record<string, string> = {
   internal: 'صلاحية داخلية',
+  comp: 'خطة مجانية',
+  suspended: 'موقوف',
   trialing: 'تجربة',
   active: 'نشط',
   past_due: 'متأخر الدفع',
