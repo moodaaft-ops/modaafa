@@ -63,10 +63,15 @@ export async function trackUserEvent(
 ): Promise<boolean> {
   try {
     const client = deps.client ?? (createAdminClient() as unknown as Inserter);
+    // Column names match db/migrations/20261012_welcome_email.sql (PR #81),
+    // which creates the same table: `stage` + `metadata`, not `properties`.
+    // Every event this file writes happens before the user is connected, so the
+    // stage is always 'registered' here.
     const { error } = await client.from('user_events').insert({
       user_id: input.userId,
       event: input.event,
-      properties: cleanEventProperties(input.properties),
+      stage: 'registered',
+      metadata: cleanEventProperties(input.properties),
     });
     if (!error) return true;
     // A repeat of a once-only event is the normal case, not a problem.

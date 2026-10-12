@@ -44,7 +44,7 @@ async function offscreen(page: Page) {
 
 async function loggedEvents(page: Page) {
   const res = await page.request.get(`${MOCK}/__events`);
-  return (await res.json()) as Array<{ event: string; user_id: string; properties: Record<string, unknown> }>;
+  return (await res.json()) as Array<{ event: string; user_id: string; metadata: Record<string, unknown> }>;
 }
 
 test.describe('welcome screen for a brand-new user', () => {
@@ -122,7 +122,7 @@ test.describe('welcome screen for a brand-new user', () => {
 
     await expect.poll(async () => (await loggedEvents(page)).some((e) => e.event === 'connect_clicked')).toBe(true);
     const click = (await loggedEvents(page)).find((e) => e.event === 'connect_clicked')!;
-    expect(click.properties).toEqual({ source: 'welcome' });
+    expect(click.metadata).toEqual({ source: 'welcome' });
   });
 });
 

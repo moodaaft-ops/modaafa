@@ -15,6 +15,8 @@
 ## قبل التفعيل
 شغّل `db/migrations/20261012_user_events.sql` في Supabase SQL Editor. بدونه الشاشة تشتغل لكن الحدثين ما ينحفظون (يطلع تحذير في اللوقز فقط).
 
+الجدول بنفس شكله في `db/migrations/20261012_welcome_email.sql` (PR #81): الأعمدة `stage` و`metadata` والربط مع `public.users` وأسماء الفهارس. فلا يهم أي ميقريشن تنشغل أول، الثانية ما تغيّر الجدول وتضيف فهرسها بس. لا تغيّر أسماء الأعمدة في أحدهما بدون الثاني.
+
 ## فيديو الديمو
 يظهر فقط لما تضبط `NEXT_PUBLIC_WELCOME_VIDEO_EMBED_URL` على رابط `https://www.youtube-nocookie.com/embed/...`.
 

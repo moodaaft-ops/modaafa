@@ -42,7 +42,7 @@ test('user_events is server-only and onboarding_viewed is unique per user', () =
     migration,
     /create unique index if not exists user_events_onboarding_viewed_once\s+on public\.user_events \(user_id\)\s+where event = 'onboarding_viewed'/i
   );
-  assert.match(migration, /references auth\.users \(id\) on delete cascade/i);
+  assert.match(migration, /references public\.users \(id\) on delete cascade/i);
 });
 
 test('trackUserEvent writes the row and cleans properties', async () => {
@@ -63,7 +63,12 @@ test('trackUserEvent writes the row and cleans properties', async () => {
     { client }
   );
   assert.equal(ok, true);
-  assert.deepEqual(rows[0], { user_id: 'u1', event: 'connect_clicked', properties: { source: 'welcome' } });
+  assert.deepEqual(rows[0], {
+    user_id: 'u1',
+    event: 'connect_clicked',
+    stage: 'registered',
+    metadata: { source: 'welcome' },
+  });
 });
 
 test('a repeat onboarding_viewed is quiet, a real failure never throws', async () => {
