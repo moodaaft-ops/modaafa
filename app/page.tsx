@@ -10,6 +10,7 @@ import { getAuditedAccountsForProof } from '@/lib/landing/proof-stats';
 import { cn, formatCurrency } from '@/lib/utils';
 import { CTA_TEXT, ownerConfig } from './landing/owner-config';
 import { PlanDemo } from './landing/plan-demo';
+import { SquareField } from './landing/square-field';
 import { StickyCta } from './landing/sticky-cta';
 import { DayLeaks, FlowDiagram, LimitVisual, MoveVisual, PlanScreen, type LimitKind, type MoveKind } from './landing/visuals';
 
@@ -44,13 +45,13 @@ export const metadata: Metadata = {
     type: 'website',
     locale: 'ar_SA',
     siteName: 'مُضاعِف',
-    images: [{ url: '/landing/og-landing-v3.png', width: 1200, height: 630, alt: 'أيمن أمين، مؤسس مُضاعِف' }],
+    images: [{ url: '/landing/og-landing-v4.png', width: 1200, height: 630, alt: 'أيمن أمين، مؤسس مُضاعِف' }],
   },
   twitter: {
     card: 'summary_large_image',
     title: 'مُضاعِف | كم تضيع من فلوسك في إعلانات قوقل؟ مُضاعِف يوريك وينها بالريال',
     description: 'خطة يومية لحساب إعلانات قوقل، وما يتغير شي إلا باعتمادك. الفحص الأول مجاني.',
-    images: ['/landing/og-landing-v3.png'],
+    images: ['/landing/og-landing-v4.png'],
   },
 };
 
@@ -224,7 +225,8 @@ export default async function HomePage({
       </header>
 
       {/* ----------------------------------------------------------------- Hero */}
-      <section className="border-b border-brand-navy/10">
+      <section className="relative isolate border-b border-brand-navy/10">
+        <SquareField tone="paper" id="sq-hero" fade="left" />
         <div className={cn(container, 'grid items-end gap-10 pt-10 sm:pt-14 lg:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)] lg:gap-6 lg:pt-16')}>
           <div className="pb-2 lg:pb-20">
             {ownerConfig.googlePartner && (
@@ -280,7 +282,7 @@ export default async function HomePage({
 
           <div className="relative mx-auto w-full max-w-[30rem] lg:max-w-none">
             <Image
-              src="/landing/ayman-portrait-v3.jpg"
+              src="/landing/ayman-portrait-v4.jpg"
               alt="أيمن أمين، مؤسس مُضاعِف، بالثوب والشماغ وجواله في يده"
               width={892}
               height={1189}
@@ -288,6 +290,11 @@ export default async function HomePage({
               sizes="(min-width: 1024px) 40vw, (min-width: 640px) 30rem, 100vw"
               className="block h-auto w-full"
             />
+            {/* The photo stands in for the logo's big square: the yellow lamp
+                sits in its top-right corner and the small square touches its
+                bottom-left corner, as in the mark. Physical sides on purpose. */}
+            <span aria-hidden className="absolute right-0 top-0 h-5 w-5 bg-brand-signal motion-safe:animate-lamp sm:h-6 sm:w-6" />
+            <span aria-hidden className="absolute -bottom-14 -left-14 hidden h-14 w-14 bg-brand-navy lg:block" />
             <div className="relative z-10 -mt-24 px-3 sm:px-6 lg:absolute lg:-bottom-14 lg:-start-28 lg:mt-0 lg:px-0">
               <PlanDemo />
             </div>
@@ -299,7 +306,7 @@ export default async function HomePage({
       <section aria-label="مين وراه" className="border-b border-brand-navy/10 bg-white">
         <div className={cn(container, 'flex flex-wrap items-center gap-x-5 gap-y-3 py-5')}>
           <Image
-            src={ownerConfig.founderPhoto ?? '/landing/ayman-avatar-v3.jpg'}
+            src={ownerConfig.founderPhoto ?? '/landing/ayman-avatar-v4.jpg'}
             alt="أيمن أمين"
             width={48}
             height={48}
@@ -349,7 +356,8 @@ export default async function HomePage({
       )}
 
       {/* ------------------------------------------------------- A normal day */}
-      <section className="bg-brand-navy py-20 text-brand-paper sm:py-28">
+      <section className="relative isolate bg-brand-navy py-20 text-brand-paper sm:py-28">
+        <SquareField tone="navy" id="sq-day" fade="edges" />
         <div className={container}>
           <h2 className="max-w-[44rem] font-display text-[2rem] font-semibold leading-[1.3] sm:text-[2.75rem]">
             الإعلان ما يخرب فجأة. يخرب كل يوم شوي، وأنت مشغول بشغلك.
@@ -446,7 +454,8 @@ export default async function HomePage({
       </section>
 
       {/* -------------------------------------------------------------- Limits */}
-      <section id="limits" className="scroll-mt-16 bg-brand-navy py-20 text-brand-paper sm:py-28">
+      <section id="limits" className="relative isolate scroll-mt-16 bg-brand-navy py-20 text-brand-paper sm:py-28">
+        <SquareField tone="navy" id="sq-limits" fade="edges" />
         <div className={cn(container, 'grid gap-12 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:gap-20')}>
           <div>
             <h2 className="font-display text-[2rem] font-semibold leading-[1.3] sm:text-[2.6rem]">القرار بيدك، والحدود مكتوبة في النظام نفسه.</h2>
@@ -522,7 +531,7 @@ export default async function HomePage({
 
           <div className="order-1 lg:order-2">
             <Image
-              src="/landing/ayman-desk-v3.jpg"
+              src="/landing/ayman-desk-v4.jpg"
               alt="أيمن أمين على مكتبه الصبح، قدامه اللابتوب وفنجال قهوة وورقة معلّمة بالأصفر"
               width={980}
               height={1223}
@@ -856,11 +865,12 @@ export default async function HomePage({
       </section>
 
       {/* ---------------------------------------------------------- Final CTA */}
-      <section className="bg-brand-navy py-20 text-brand-paper sm:py-24">
+      <section className="relative isolate bg-brand-navy py-20 text-brand-paper sm:py-24">
+        <SquareField tone="navy" id="sq-final" fade="edges" />
         <div className={cn(container, 'flex flex-col gap-10 lg:flex-row lg:items-center lg:justify-between')}>
           <div className="flex items-start gap-5">
             <Image
-              src="/landing/ayman-avatar-v3.jpg"
+              src="/landing/ayman-avatar-v4.jpg"
               alt=""
               width={80}
               height={80}
@@ -1015,7 +1025,7 @@ function StructuredData({ nonce }: { nonce?: string }) {
         name: 'أيمن أمين',
         alternateName: 'Ayman Amin',
         jobTitle: 'مؤسس وكالة مُضاعفة ومنصة مُضاعِف',
-        image: 'https://ai.modaafa.com/landing/ayman-portrait-v3.jpg',
+        image: 'https://ai.modaafa.com/landing/ayman-portrait-v4.jpg',
         worksFor: { '@id': 'https://ai.modaafa.com/#org' },
       },
       {
