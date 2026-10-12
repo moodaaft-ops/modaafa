@@ -16,7 +16,21 @@ export function buildExecutableAction(
   accountCustomerId?: string | null
 ): OptimizerAction | null {
   const operation = String(payload?.operation ?? '');
-  const allowed = ['pause_keyword', 'add_negative_keyword', 'add_keyword', 'adjust_budget', 'adjust_bid', 'pause_ad'];
+  const allowed = [
+    'pause_keyword',
+    'add_negative_keyword',
+    'add_keyword',
+    'adjust_budget',
+    'adjust_bid',
+    'pause_ad',
+    // Human/assistant-only operations: the nightly optimizer never proposes
+    // these (see ALLOWED_ACTION_TYPES in optimizer-agent.ts) and autopilot
+    // never executes them (AUTOPILOT_SAFE_ACTIONS). They reach this boundary
+    // only through an approved row in the recommendations table.
+    'pause_campaign',
+    'enable_campaign',
+    'add_negative_keywords_batch',
+  ];
   if (!allowed.includes(operation)) return null;
 
   const params = payload?.params ?? {};
@@ -96,7 +110,68 @@ export function buildExecutableAction(
     return base;
   }
 
+  if (operation === 'pause_campaign' || operation === 'enable_campaign') {
+    return validGoogleAdsResource(targetId, 'campaigns', accountCustomerId) ? base : null;
+  }
+
+  if (operation === 'add_negative_keywords_batch') {
+    const campaignResource = String(params.campaign_resource ?? '');
+    const matchType = String(params.match_type ?? '').trim();
+    const keywords = cleanNegativeKeywordBatch(params.keywords);
+    if (
+      !validGoogleAdsResource(campaignResource, 'campaigns', accountCustomerId) ||
+      // Same narrowing as positive promotion: a BROAD negative can block far
+      // more traffic than the words suggest, so batches are EXACT/PHRASE only.
+      !NEGATIVE_BATCH_MATCH_TYPES.includes(matchType) ||
+      !keywords
+    ) {
+      return null;
+    }
+    return {
+      ...base,
+      // The batch is addressed by its campaign; a free-form target_id from the
+      // payload is never used for execution.
+      target_id: campaignResource,
+      params: { ...params, campaign_resource: campaignResource, match_type: matchType, keywords },
+    };
+  }
+
   return null;
+}
+
+export const MAX_NEGATIVE_KEYWORD_BATCH = 10;
+export const NEGATIVE_BATCH_MATCH_TYPES = ['EXACT', 'PHRASE'];
+const MAX_KEYWORD_CHARS = 80;
+const MAX_KEYWORD_WORDS = 10;
+
+/**
+ * Validate and canonicalise a negative-keyword batch: 1 to 10 strings, each
+ * trimmed (inner whitespace collapsed, invisible direction/zero-width marks
+ * removed), non-empty, at most 80 characters and 10 words, de-duplicated
+ * case-insensitively. Returns null when ANY entry is invalid; a malformed
+ * batch is rejected whole rather than silently shortened.
+ */
+export function cleanNegativeKeywordBatch(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_NEGATIVE_KEYWORD_BATCH) {
+    return null;
+  }
+  const seen = new Set<string>();
+  const cleaned: string[] = [];
+  for (const raw of value) {
+    if (typeof raw !== 'string') return null;
+    const text = raw
+      .replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!text || text.length > MAX_KEYWORD_CHARS || text.split(' ').length > MAX_KEYWORD_WORDS) {
+      return null;
+    }
+    const key = text.toLocaleLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    cleaned.push(text);
+  }
+  return cleaned.length > 0 ? cleaned : null;
 }
 
 /**

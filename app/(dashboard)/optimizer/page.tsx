@@ -325,6 +325,9 @@ function ChangePreview({
     pause_ad: 'إيقاف إعلان',
     add_negative_keyword: 'إضافة كلمة سلبية',
     add_keyword: 'إضافة كلمة رابحة من عبارات البحث',
+    pause_campaign: 'إيقاف حملة',
+    enable_campaign: 'تشغيل حملة',
+    add_negative_keywords_batch: 'منع عبارات بحث (دفعة)',
     build_campaign_opportunity: 'اقتراح حملة جديدة (تُبنى في المساعد)',
     manual_campaign_draft: 'مسودة حملة جديدة (تحتاج مراجعة يدوية)',
   };
@@ -383,6 +386,28 @@ function ChangePreview({
   } else if (operation === 'add_negative_keyword') {
     if (params.keyword_text) rows.push({ label: 'الكلمة السلبية', value: String(params.keyword_text) });
     if (params.match_type) rows.push({ label: 'نوع المطابقة', value: String(params.match_type), ltr: true });
+  } else if (operation === 'add_negative_keywords_batch') {
+    const keywords: unknown[] = Array.isArray(params.keywords) ? params.keywords : [];
+    if (keywords.length > 0) {
+      rows.push({ label: `العبارات الممنوعة (${formatNumberAr(keywords.length)})`, value: keywords.map(String).join('، ') });
+    }
+    if (params.match_type) rows.push({ label: 'نوع المطابقة', value: String(params.match_type), ltr: true });
+    if (params.campaign_resource) {
+      rows.push({ label: 'الحملة', value: String(params.campaign_resource), ltr: true });
+    }
+    rows.push({
+      label: 'حماية المبيعات',
+      value: 'نستبعد تلقائياً أي عبارة تمنع بحثاً جاب تحويل أو كلمة مفعّلة في الحملة',
+    });
+  } else if (operation === 'pause_campaign' || operation === 'enable_campaign') {
+    if (payload.target_id) rows.push({ label: 'الحملة', value: String(payload.target_id), ltr: true });
+    rows.push({
+      label: 'شرط التنفيذ',
+      value:
+        operation === 'pause_campaign'
+          ? 'تُوقف فقط إذا كانت الحملة شغالة وقت التنفيذ'
+          : 'تُشغّل فقط إذا كانت الحملة موقوفة ولها ميزانية يومية',
+    });
   } else if (payload.target_id) {
     rows.push({ label: 'المورد المستهدف', value: String(payload.target_id), ltr: true });
   }
@@ -437,7 +462,7 @@ function ObservedImpact({
   const delta = impact.delta ?? {};
 
   const parts: string[] = [];
-  if (actionType === 'pause_keyword' || actionType === 'pause_ad') {
+  if (actionType === 'pause_keyword' || actionType === 'pause_ad' || actionType === 'pause_campaign') {
     // Pauses are savings stories: the spend the entity used to burn weekly.
     if (before.cost > 0) {
       parts.push(`وفّرنا ~${formatCurrency(before.cost, currencyCode)} أسبوعياً كانت تُصرف بدون نتيجة`);
@@ -474,6 +499,9 @@ function actionTypeLabel(value?: string | null) {
     pause_ad: 'إيقاف إعلان',
     add_negative_keyword: 'إضافة كلمة سلبية',
     add_keyword: 'إضافة كلمة رابحة',
+    pause_campaign: 'إيقاف حملة',
+    enable_campaign: 'تشغيل حملة',
+    add_negative_keywords_batch: 'منع عبارات بحث (دفعة)',
     approval_queued: 'اعتماد توصية',
     execution_blocked: 'محجوب: يحتاج مراجعة',
     blocked_by_guardrails: 'محجوب بحواجز الأمان',

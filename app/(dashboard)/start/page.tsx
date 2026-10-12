@@ -13,19 +13,23 @@ export const metadata = { title: 'ابدأ بمحادثة' };
 export default async function StartPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ approved?: string; executed?: string; error?: string }>;
+  searchParams?: Promise<{ approved?: string; executed?: string; updated?: string; reverted?: string; error?: string }>;
 }) {
-  if (!isChatFirstEnabled()) notFound();
   const params = await searchParams;
   const { user } = await getRequestAuthContext();
   if (!user) redirect('/login');
+  if (!isChatFirstEnabled(process.env, user.email)) notFound();
   const { selectedAccount, selectedCustomerId } = await getAccountWorkspace(user.id);
 
   const notice = params?.executed
     ? 'executed'
     : params?.approved
       ? 'approved'
-      : params?.error
+      : params?.updated
+        ? 'updated'
+        : params?.reverted
+          ? 'reverted'
+        : params?.error
         ? `error:${String(params.error).slice(0, 40)}`
         : null;
 

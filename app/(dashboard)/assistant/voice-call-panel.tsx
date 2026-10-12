@@ -358,7 +358,10 @@ export function VoiceCallPanel({
       // reaches the approval path, and the person is told where the real
       // confirm button lives.
       if (looksLikeVoiceApproval(transcript)) setApprovalNotice(true);
-      const result = await onUtteranceRef.current(transcript, ticket);
+      // A short pre-recorded "one moment" while the answer is prepared. The
+      // clips are static files; a missing file is simply silent.
+      const filler = startFiller();
+      const result = await onUtteranceRef.current(transcript, ticket).finally(() => filler.stop());
       if (turn !== turnRef.current) return;
       if (!result) {
         setError('تعذر الحصول على رد. الخطأ ظاهر في المحادثة.');
@@ -737,4 +740,24 @@ function silentWav(): ArrayBuffer {
   str(36, 'data');
   v.setUint32(40, samples * 2, true);
   return buffer;
+}
+
+/** Static «لحظة أشوف حسابك» clips in public/voice/, rotated per turn (spec 83, section 2). */
+const FILLER_CLIPS = ['/voice/wait-1.mp3', '/voice/wait-2.mp3', '/voice/wait-3.mp3'];
+let fillerIndex = 0;
+
+function startFiller(): { stop: () => void } {
+  if (typeof window === 'undefined' || typeof window.Audio === 'undefined') return { stop: () => undefined };
+  const audio = new window.Audio(FILLER_CLIPS[fillerIndex++ % FILLER_CLIPS.length]);
+  audio.volume = 0.9;
+  void audio.play().catch(() => undefined);
+  return {
+    stop: () => {
+      try {
+        audio.pause();
+      } catch {
+        // already stopped
+      }
+    },
+  };
 }

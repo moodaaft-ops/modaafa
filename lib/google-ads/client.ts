@@ -637,6 +637,19 @@ export function getCustomer(
           options
         ),
     },
+    // Campaign status only (pause / enable). The field mask is fixed to
+    // `status` so no other campaign field can ride along on this path.
+    campaigns: {
+      update: (items: unknown[], options?: { validateOnly?: boolean }) =>
+        mutateResource(
+          refreshToken,
+          normalizedCustomerId,
+          'campaigns',
+          toUpdateOperations(items, ['status']),
+          normalizedLoginCustomerId,
+          options
+        ),
+    },
   };
 
   return restCustomer as unknown as Customer;

@@ -147,7 +147,22 @@ export interface OptimizerSnapshot {
 }
 
 export interface OptimizerAction {
-  type: 'pause_keyword' | 'add_negative_keyword' | 'add_keyword' | 'adjust_budget' | 'adjust_bid' | 'pause_ad';
+  /**
+   * The last three types are human/assistant-only: they are executable from
+   * an approved recommendation row but are deliberately absent from
+   * ALLOWED_ACTION_TYPES below and from the system prompt, so the nightly
+   * optimizer can never propose them.
+   */
+  type:
+    | 'pause_keyword'
+    | 'add_negative_keyword'
+    | 'add_keyword'
+    | 'adjust_budget'
+    | 'adjust_bid'
+    | 'pause_ad'
+    | 'pause_campaign'
+    | 'enable_campaign'
+    | 'add_negative_keywords_batch';
   target_id: string;
   params: Record<string, unknown>;
   reason_ar: string;
@@ -171,7 +186,9 @@ export interface OptimizerAction {
 }
 
 export async function decideOptimizations(
-  snapshot: OptimizerSnapshot
+  snapshot: OptimizerSnapshot,
+  /** Account owner, so the hourly optimizer's cost is attributed to them. */
+  usage?: { userId?: string | null }
 ): Promise<OptimizerAction[]> {
   if (!hasAIBackend()) return [];
 
@@ -190,6 +207,11 @@ export async function decideOptimizations(
         content: `Account ${snapshot.customer_id} snapshot.\n<account_data>\n${sanitizeSnapshotForPrompt(snapshot)}\n</account_data>`,
       },
     ],
+  }, undefined, {
+    userId: usage?.userId ?? null,
+    accountId: snapshot.account_id,
+    feature: 'optimizer',
+    channel: 'cron',
   });
 
   const textBlock = response.content.find((b: any) => b.type === 'text');
@@ -255,15 +277,15 @@ function sanitizeSnapshotForPrompt(snapshot: OptimizerSnapshot) {
   , 2);
 }
 
-export function sanitizePromptText(value: string) {
+export function sanitizePromptText(value: string, maxLength = 300) {
   return value
     .normalize('NFKC')
-    .slice(0, 300)
+    .slice(0, maxLength)
     // Remove invisible direction/zero-width controls that can split a command
     // visually while leaving it intelligible to the model.
     .replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/gi, '')
     // Strip anything that looks like a role marker or a delimiter escape.
-    .replace(/<\/?\s*(account_data|system|assistant|human|user)[^>]*>/gi, ' ')
+    .replace(/<\/?\s*(account_data|tool_data|account_card|spoken|system|assistant|human|user)[^>]*>/gi, ' ')
     .replace(/\b(system|assistant|human|user)\s*:/gi, '$1 ')
     .replace(
       /(?:ignore|disregard|forget)[\s\p{P}\p{S}_]+(?:(?:all|any)[\s\p{P}\p{S}_]+)?(?:previous|prior|above)(?:[\s\p{P}\p{S}_]+(?:instructions?|directions?|rules?))?/giu,
@@ -436,7 +458,55 @@ export async function checkGuardrails(
     if (!['EXACT', 'PHRASE'].includes(matchType)) return null;
   }
 
+  // Guardrail 6: negative-keyword batches stay small, account-scoped and
+  // well-formed. buildExecutableAction already enforces this; it is repeated
+  // here because guardrails are the last gate before the live mutate and
+  // must not rely on how the action was constructed.
+  if (action.type === 'add_negative_keywords_batch') {
+    const params = action.params as Record<string, unknown>;
+    const campaignResource = String(params.campaign_resource ?? '').trim();
+    if (action.target_id && action.target_id !== campaignResource) return null;
+    if (!['EXACT', 'PHRASE'].includes(String(params.match_type ?? ''))) return null;
+    const keywords = params.keywords;
+    if (!Array.isArray(keywords) || keywords.length === 0 || keywords.length > MAX_NEGATIVE_BATCH) return null;
+    for (const keyword of keywords) {
+      if (typeof keyword !== 'string') return null;
+      const text = keyword.trim();
+      if (!text || text.length > 80 || text.split(/\s+/).length > 10) return null;
+    }
+    if (!(await campaignResourceInAccount(supabase, accountId, campaignResource))) return null;
+  }
+
+  // Guardrail 7: campaign status changes only address a campaign of THIS account.
+  if (action.type === 'pause_campaign' || action.type === 'enable_campaign') {
+    if (!(await campaignResourceInAccount(supabase, accountId, String(action.target_id ?? '')))) return null;
+  }
+
   return action;
+}
+
+const MAX_NEGATIVE_BATCH = 10;
+
+/**
+ * The campaign must be a well-formed campaign resource under the linked
+ * account's own customer id. Fails closed when the account row is unreadable.
+ */
+async function campaignResourceInAccount(supabase: any, accountId: string, resource: string) {
+  if (!/^customers\/\d+\/campaigns\/\d+$/.test(resource)) return false;
+  const { data: account, error } = await supabase
+    .from('google_ads_accounts')
+    .select('customer_id')
+    .eq('id', accountId)
+    .maybeSingle();
+  if (error || !account) {
+    console.error('Guardrail blocked campaign-scoped action because account metadata is unavailable', {
+      accountId,
+      error,
+    });
+    return false;
+  }
+  const customerId = String(account.customer_id ?? '').replace(/\D/g, '');
+  return Boolean(customerId) && resource.startsWith(`customers/${customerId}/campaigns/`);
 }
 
 /** Matches the bound stated in the optimizer system prompt. */
@@ -507,6 +577,32 @@ export async function executeAction(
         { resource_name: action.target_id, status: 'PAUSED' },
       ], options);
     }
+
+    case 'pause_campaign': {
+      return client.campaigns.update([
+        { resource_name: action.target_id, status: 'PAUSED' },
+      ], options);
+    }
+
+    case 'enable_campaign': {
+      return client.campaigns.update([
+        { resource_name: action.target_id, status: 'ENABLED' },
+      ], options);
+    }
+
+    case 'add_negative_keywords_batch': {
+      // ONE mutate call with N create operations. Without partialFailure the
+      // request is atomic: either every negative is added or none is.
+      const { campaign_resource, keywords, match_type } = action.params as any;
+      return client.campaignCriteria.create(
+        (keywords as string[]).map((text) => ({
+          campaign: campaign_resource,
+          keyword: { text, match_type },
+          negative: true,
+        })),
+        options
+      );
+    }
   }
 }
 
@@ -548,6 +644,23 @@ export async function executeRollback(
     case 'remove_created_keyword':
       if (!rollback.resource_name) throw new Error('Created keyword resource is unavailable');
       return client.adGroupCriteria.remove([rollback.resource_name], options);
+    case 'restore_campaign_status':
+      if (!rollback.campaign_resource || !['ENABLED', 'PAUSED'].includes(rollback.status)) {
+        throw new Error('Previous campaign status is unavailable');
+      }
+      return client.campaigns.update(
+        [{ resource_name: rollback.campaign_resource, status: rollback.status }],
+        options
+      );
+    case 'remove_created_negative_keywords': {
+      const names = Array.isArray(rollback.resource_names)
+        ? rollback.resource_names.filter((name: unknown) => typeof name === 'string' && name.length > 0)
+        : [];
+      if (names.length === 0 || names.length !== rollback.resource_names.length) {
+        throw new Error('Created negative keyword resources are unavailable');
+      }
+      return client.campaignCriteria.remove(names, options);
+    }
     default:
       throw new Error('This action does not have a supported rollback operation');
   }

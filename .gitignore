@@ -30,3 +30,6 @@ _sync/
 # Vercel upload.
 artifacts/
 .local-stack/
+
+# Private Jarvis playbook build output (never commit the knowledge base).
+.playbook-build/
