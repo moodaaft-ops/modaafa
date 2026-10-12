@@ -11,9 +11,13 @@ import { getRequestAuthContext } from '@/lib/supabase/server';
 import { buttonClasses } from '@/lib/ui/button';
 import { LogoMark } from '@/lib/ui/logo';
 import { getWelcomeVideo, isGoogleAppVerified } from '@/lib/welcome/config';
-import { WELCOME_COPY as copy } from '@/lib/welcome/copy';
+import { WELCOME_COPY as copy, WELCOME_QUESTIONS_COPY as questionsCopy } from '@/lib/welcome/copy';
+import { loadAnswers } from '@/lib/growth/answers-store';
+import { ACCOUNT_MANAGERS, BUSINESS_TYPES, SPEND_BANDS, labelFor } from '@/lib/growth/onboarding-answers';
 import { WelcomeConnectButton } from './welcome-connect-button';
 import { WelcomeVideoFrame } from './welcome-video';
+import { PreconnectQuestions } from './preconnect-questions';
+import { StepProgress } from './step-progress';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,7 +35,11 @@ export const metadata: Metadata = {
  * time (a unique index in user_events enforces "first time"), so a slow or
  * missing table can never delay or break this page.
  */
-export default async function WelcomePage() {
+export default async function WelcomePage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ edit?: string }>;
+}) {
   const { user } = await getRequestAuthContext();
   if (!user) redirect('/login?next=/welcome');
 
@@ -40,6 +48,49 @@ export default async function WelcomePage() {
 
   const userId = user.id;
   after(() => trackUserEvent({ userId, event: 'onboarding_viewed', properties: { surface: 'welcome' } }));
+
+  // Step 1 of 2: three quick questions, asked once. A missing table or a
+  // failed read ("unavailable") skips them, so nothing ever stands between a
+  // new user and the Google Ads link.
+  const answers = await loadAnswers(userId);
+  const editing = (await searchParams)?.edit === '1';
+  const asking = answers.status === 'none' || (editing && (answers.status === 'answered' || answers.status === 'skipped'));
+
+  if (asking) {
+    return (
+      <main className="min-h-screen bg-background">
+        <div className="mx-auto w-full max-w-xl px-4 pb-14 pt-5 sm:px-6 sm:pt-8">
+          <header className="flex items-center gap-2.5">
+            <LogoMark size={30} alt="" />
+            <span className="text-[15px] font-bold">مُضاعِف</span>
+          </header>
+          <StepProgress current={1} />
+          <section className="mt-8">
+            <p className="flex items-center gap-2 text-[12.5px] font-semibold text-muted-foreground">
+              <span className="status-square bg-signal" aria-hidden />
+              {questionsCopy.eyebrow}
+            </p>
+            <h1 className="mt-3 text-[28px] font-bold leading-[1.35] sm:text-[36px] sm:leading-[1.3]">
+              {questionsCopy.headline}
+            </h1>
+            <p className="mt-3 text-[15px] leading-8 text-muted-foreground">{questionsCopy.intro}</p>
+            <PreconnectQuestions initial={answers.status === 'answered' ? answers.answers : undefined} />
+          </section>
+        </div>
+      </main>
+    );
+  }
+
+  const summary =
+    answers.status === 'answered'
+      ? [
+          labelFor(BUSINESS_TYPES, answers.answers.businessType),
+          labelFor(SPEND_BANDS, answers.answers.spendBand),
+          labelFor(ACCOUNT_MANAGERS, answers.answers.accountManager),
+        ]
+          .filter(Boolean)
+          .join('، ')
+      : null;
 
   const video = getWelcomeVideo();
   const verified = isGoogleAppVerified();
@@ -54,6 +105,8 @@ export default async function WelcomePage() {
           <span className="text-[15px] font-bold">مُضاعِف</span>
         </header>
 
+        {answers.status !== 'unavailable' && <StepProgress current={2} />}
+
         <section className="mt-9 sm:mt-12">
           <p className="flex items-center gap-2 text-[12.5px] font-semibold text-muted-foreground">
             <span className="status-square bg-signal" aria-hidden />
@@ -67,6 +120,14 @@ export default async function WelcomePage() {
           <div className="mt-7">
             <WelcomeConnectButton label={copy.connectLabel} loadingLabel={copy.connectLoading} />
             <p className="mt-3 text-[12.5px] leading-6 text-muted-foreground">{copy.connectNote}</p>
+            {summary && (
+              <p className="mt-3 text-[12.5px] leading-6 text-muted-foreground">
+                {questionsCopy.summaryLead} {summary}.{' '}
+                <Link href="/welcome?edit=1" className="font-semibold text-foreground underline decoration-border-strong underline-offset-4 hover:decoration-foreground">
+                  {questionsCopy.editLink}
+                </Link>
+              </p>
+            )}
             <a
               href={teamHref}
               target="_blank"

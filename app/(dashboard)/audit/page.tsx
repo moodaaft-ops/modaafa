@@ -33,6 +33,7 @@ import { isCurrentAuditEngine } from '@/lib/audit/version';
 import { isRecommendationActionable, orderRecommendationsForGuidance } from '@/lib/audit/guidance';
 import { recordUserEvent } from '@/lib/stages/events';
 import { AuditRunner } from './audit-runner';
+import { FullManagementCard } from '@/lib/ui/full-management-card';
 
 type AccountLite = { customer_id: string; customer_name: string | null };
 
@@ -265,6 +266,8 @@ export default async function AuditPage({
             </a>
           </section>
         ) : null}
+
+        <FullManagementCard />
 
         {aiNarrative?.headline_ar && (
           <section className="surface-card overflow-hidden border-primary/25">

@@ -18,8 +18,8 @@ function secret() {
   return null;
 }
 
-function sign(userId: string, key: string) {
-  return createHmac('sha256', key).update(`messages_opt_out:${userId}`).digest('base64url');
+function sign(userId: string, key: string, scope = 'messages_opt_out') {
+  return createHmac('sha256', key).update(`${scope}:${userId}`).digest('base64url');
 }
 
 export function appBaseUrl() {
@@ -40,6 +40,29 @@ export function verifyOptOutToken(userId: string | null, token: string | null) {
   if (!key || !userId || !token) return false;
   if (!/^[0-9a-f-]{36}$/i.test(userId)) return false;
   const expected = Buffer.from(sign(userId, key));
+  const received = Buffer.from(token);
+  return expected.length === received.length && timingSafeEqual(expected, received);
+}
+
+/**
+ * Same idea for a visitor who left their email in the landing page's exit
+ * popup. The scope prefix differs, so a signed user link can never unsubscribe
+ * a lead and the reverse.
+ */
+const LEAD_SCOPE = 'lead_messages_opt_out';
+
+export function buildLeadOptOutUrl(leadId: string) {
+  const key = secret();
+  if (!key) return null;
+  const params = new URLSearchParams({ l: leadId, t: sign(leadId, key, LEAD_SCOPE) });
+  return `${appBaseUrl()}/api/leads/opt-out?${params.toString()}`;
+}
+
+export function verifyLeadOptOutToken(leadId: string | null, token: string | null) {
+  const key = secret();
+  if (!key || !leadId || !token) return false;
+  if (!/^[0-9a-f-]{36}$/i.test(leadId)) return false;
+  const expected = Buffer.from(sign(leadId, key, LEAD_SCOPE));
   const received = Buffer.from(token);
   return expected.length === received.length && timingSafeEqual(expected, received);
 }

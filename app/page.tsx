@@ -9,6 +9,8 @@ import { NONCE_HEADER } from '@/lib/security/csp';
 import { cn, formatCurrency } from '@/lib/utils';
 import { PlanDemo } from './landing/plan-demo';
 import { StickyCta } from './landing/sticky-cta';
+import { ExitIntent } from './landing/exit-intent';
+import { exitPopupEnabled } from '@/lib/growth/owner-config';
 import { DayLeaks, FlowDiagram, LimitVisual, MoveVisual, PlanScreen, type LimitKind, type MoveKind } from './landing/visuals';
 
 /*
@@ -714,6 +716,7 @@ export default async function HomePage({
       </footer>
 
       <StickyCta watchId="hero-cta" whatsappHref={WHATSAPP_GENERAL} />
+      <ExitIntent enabled={exitPopupEnabled()} />
     </main>
   );
 }

@@ -18,6 +18,9 @@
     "app/api/cron/welcome-email/route.ts": {
       "maxDuration": 60
     },
+    "app/api/cron/lead-followups/route.ts": {
+      "maxDuration": 60
+    },
     "app/api/webhooks/stripe/route.ts": {
       "maxDuration": 60
     },
