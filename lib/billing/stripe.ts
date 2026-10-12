@@ -1,4 +1,5 @@
 import Stripe from 'stripe';
+import { computeExtendedTrialEnd } from '@/lib/billing/trial-extension';
 import { isConfiguredEnv } from '@/lib/platform/env';
 import { minorUnitsToAmount } from '@/lib/billing/invoices';
 
@@ -176,6 +177,38 @@ export async function cancelStripeSubscription(subscriptionId: string) {
  */
 export async function setStripeCancelAtPeriodEnd(subscriptionId: string, cancel: boolean) {
   return getStripe().subscriptions.update(subscriptionId, { cancel_at_period_end: cancel });
+}
+
+/**
+ * Operator "extend trial". Reads the LIVE subscription first and refuses
+ * anything that is not trialing in Stripe right now: Stripe would accept a
+ * trial_end on an active subscription too, which would hand a paying customer
+ * an unpaid trial on top of the period they already paid for. The new end
+ * counts from the live trial end (never from our table, which can lag the
+ * webhook), so a stale row can never shorten a trial. The idempotency key is
+ * derived from (subscription, live trial end, days): a double submit or a
+ * retry of the same extension is one extension, not two.
+ */
+export async function extendStripeTrial(params: { subscriptionId: string; days: number; now?: number }) {
+  const stripe = getStripe();
+  const live = await stripe.subscriptions.retrieve(params.subscriptionId);
+  if (live.status !== 'trialing' || !live.trial_end) {
+    throw Object.assign(new Error(`subscription is ${live.status}, not trialing`), {
+      code: 'not_trialing',
+      stripeStatus: live.status,
+    });
+  }
+  const newEnd = computeExtendedTrialEnd(new Date(live.trial_end * 1000).toISOString(), params.days, params.now);
+  const updated = await stripe.subscriptions.update(
+    params.subscriptionId,
+    { trial_end: Math.floor(newEnd.getTime() / 1000), proration_behavior: 'none' },
+    { idempotencyKey: `operator-extend-trial:${params.subscriptionId}:${live.trial_end}:${params.days}` }
+  );
+  return {
+    status: updated.status,
+    previousTrialEnd: new Date(live.trial_end * 1000).toISOString(),
+    trialEnd: updated.trial_end ? new Date(updated.trial_end * 1000).toISOString() : newEnd.toISOString(),
+  };
 }
 
 const CANCELLABLE_STRIPE_STATUSES = new Set(['trialing', 'active', 'past_due', 'unpaid', 'incomplete', 'paused']);

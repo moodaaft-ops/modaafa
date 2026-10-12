@@ -13,7 +13,7 @@ import { EmptyState } from '@/lib/ui/empty-state';
 import { buttonClasses } from '@/lib/ui/button';
 import { getBillingCheckoutContext } from '@/lib/billing/checkout-policy';
 import { hasActiveGoogleAdsAccount } from '@/lib/accounts/selection';
-import { getSubscriptionAccess } from '@/lib/billing/entitlements';
+import { getSubscriptionAccessDetailed } from '@/lib/billing/entitlements';
 import {
   getPlanPriceAmounts,
   retrieveStripeSubscription,
@@ -33,6 +33,7 @@ const billingErrors: Record<string, string> = {
   too_many_requests: 'تم طلب بوابة الفوترة عدة مرات خلال فترة قصيرة. انتظر دقيقة ثم أعد المحاولة.',
   security_service_unavailable: 'تعذر التحقق الآمن من طلب الفوترة الآن. أعد المحاولة بعد قليل.',
   internal_access: 'حساب المالك لديه صلاحية داخلية ولا يحتاج اشتراكاً أو تجربة.',
+  account_suspended: 'حسابك موقوف مؤقتاً، فما نقدر نبدأ اشتراكاً جديداً الحين. تواصل معنا على واتساب 0541004029.',
   google_ads_account_required: 'اربط حساب إعلانات Google نشطاً أولاً حتى تبدأ التجربة.',
   no_live_subscription: 'ما لقينا اشتراكاً قائماً على هذا الحساب حتى نلغيه.',
   cancel_failed: 'تعذر تنفيذ الطلب الآن ولم يتغيّر اشتراكك. أعد المحاولة بعد قليل، ولو تكرر راسلنا.',
@@ -97,8 +98,8 @@ export default async function BillingPage({
   // durable email ledger (promising a trial checkout would then deny), and
   // "current plan" took the newest row, the exact heuristic entitlements.ts
   // documents as showing a paying customer "no active subscription".
-  const [access, checkout, hasActiveAccount, invoicesResult, priceAmounts] = await Promise.all([
-    getSubscriptionAccess(supabase, user.id, user.email),
+  const [detailedAccess, checkout, hasActiveAccount, invoicesResult, priceAmounts] = await Promise.all([
+    getSubscriptionAccessDetailed(supabase, user.id, user.email),
     getBillingCheckoutContext(supabase, user.id, user.email),
     hasActiveGoogleAdsAccount(supabase, user.id),
     supabase
@@ -113,9 +114,18 @@ export default async function BillingPage({
   assertSupabaseRead(invoicesResult.error, 'load billing invoices');
   const invoices = invoicesResult.data ?? [];
   const trialEligible = checkout.trialEligible;
+  // Everything Stripe-related renders from the billing truth. A free plan an
+  // operator granted (status 'comp' on the effective access) is shown as a note
+  // and, only when there is no live Stripe subscription, as the current plan:
+  // it must never hide the portal or the cancel controls of a card that Stripe
+  // is still going to charge.
+  const access = detailedAccess.billing;
+  const comp = detailedAccess.access.status === 'comp' ? detailedAccess.access : null;
   const hasInternalAccess = access.status === 'internal';
   const hasLiveSubscription = Boolean(checkout.activeSubscriptionId);
-  const currentPlan = hasLiveSubscription || hasInternalAccess ? access.plan : null;
+  const compOnly = Boolean(comp && !hasLiveSubscription);
+  const currentPlan = hasLiveSubscription || hasInternalAccess ? access.plan : compOnly ? comp!.plan : null;
+  const compUntil = comp?.currentPeriodEnd ? formatDateAr(comp.currentPeriodEnd) : null;
 
   // Our table does not store `cancel_at_period_end`, so read it live from
   // Stripe. If Stripe is unreachable the page still renders, just without the
@@ -170,6 +180,7 @@ export default async function BillingPage({
                     {subscriptionStatusLabel(access.status)}
                   </StatusBadge>
                 )}
+                {compOnly && <StatusBadge tone="success">{subscriptionStatusLabel('comp')}</StatusBadge>}
               </div>
               <p className="mt-2 text-[13px] text-muted-foreground">
                 {/* The trial line is gated on the LIVE status: Stripe keeps
@@ -178,6 +189,8 @@ export default async function BillingPage({
                     paying customer instead of their renewal date. */}
                 {hasInternalAccess
                   ? 'صلاحية المالك مفعلة للاختبار الداخلي ولا ترتبط بفوترة Stripe.'
+                  : compOnly
+                  ? `خطة مجانية من فريق مُضاعِف${compUntil ? ` حتى ${compUntil}` : ''}. ما ينخصم منك شيء.`
                   : cancelScheduled && periodEndLabel
                   ? access.status === 'trialing'
                     ? `ألغيت الاشتراك. تنتهي التجربة في ${periodEndLabel} ولن يُخصم منك شيء.`
@@ -189,7 +202,7 @@ export default async function BillingPage({
                     : 'اختر خطة بالأسفل لتفعيل الفحص والتنفيذ والمساعد الذكي.'}
               </p>
             </div>
-            {hasInternalAccess ? (
+            {hasInternalAccess || compOnly ? (
               <StatusBadge tone="success">لا تحتاج اشتراكاً</StatusBadge>
             ) : hasLiveSubscription && checkout.stripeCustomerId ? (
               <form action="/api/billing/portal" method="post">
@@ -214,6 +227,13 @@ export default async function BillingPage({
             ) : null}
           </div>
         </section>
+
+        {comp && hasLiveSubscription && (
+          <p className="border-s-4 border-success bg-success/10 px-4 py-3 text-[13px] leading-6 text-foreground">
+            معك خطة {planLabel(comp.plan)} مجانية من فريق مُضاعِف{compUntil ? ` حتى ${compUntil}` : ''}، وهي اللي تشتغل لك الحين.
+            اشتراكك في Stripe ما تغيّر ويتجدد في موعده، وتقدر تلغيه من تحت.
+          </p>
+        )}
 
         {/* Cancellation. Customers reported "there is no way to cancel": the only
             control was a Stripe-portal button that never said the word. This
@@ -401,6 +421,11 @@ export default async function BillingPage({
                       })}
                     >
                       {isCurrent ? 'مفعلة بصلاحية المالك' : 'متاحة للعملاء'}
+                    </div>
+                  ) : isCurrent && compOnly ? (
+                    // A free plan from the team has no Stripe customer, so no portal to open.
+                    <div aria-disabled="true" className={buttonClasses({ variant: 'primary', block: true })}>
+                      مفعلة من فريق مُضاعِف
                     </div>
                   ) : isCurrent ? (
                     <form action="/api/billing/portal" method="post">

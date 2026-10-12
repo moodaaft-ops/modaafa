@@ -13,19 +13,24 @@ import { checkGuardrails, type OptimizerAction } from '../lib/ai/optimizer-agent
  * every step (`.limit(...)` is awaited in some call sites and further filtered
  * in others), so the stub has to be too.
  */
-function subscriptionsStub(rows: Array<Record<string, any>>) {
-  const builder: any = {
-    select: () => builder,
-    order: () => builder,
-    limit: () => builder,
-    eq: () => builder,
-    in: () => builder,
-    not: () => builder,
-    maybeSingle: () => Promise.resolve({ data: rows[0] ?? null, error: null }),
-    then: (resolve: (value: { data: unknown; error: null }) => unknown) =>
-      Promise.resolve({ data: rows, error: null }).then(resolve),
+function subscriptionsStub(rows: Array<Record<string, any>>, overrides: Array<Record<string, any>> = []) {
+  const builderFor = (tableRows: Array<Record<string, any>>) => {
+    const builder: any = {
+      select: () => builder,
+      order: () => builder,
+      limit: () => builder,
+      eq: () => builder,
+      in: () => builder,
+      not: () => builder,
+      maybeSingle: () => Promise.resolve({ data: tableRows[0] ?? null, error: null }),
+      then: (resolve: (value: { data: unknown; error: null }) => unknown) =>
+        Promise.resolve({ data: tableRows, error: null }).then(resolve),
+    };
+    return builder;
   };
-  return { from: () => builder };
+  // Table-aware: entitlements also read account_access_overrides now, and that
+  // read must not be served subscription rows.
+  return { from: (table: string) => builderFor(table === 'account_access_overrides' ? overrides : rows) };
 }
 
 const day = 24 * 60 * 60 * 1000;
@@ -190,4 +195,28 @@ test('past_due access is capped to a short dunning grace from the unpaid period 
   // A card that never recovers must not keep the whole unpaid month.
   assert.equal(isSubscriptionEntitled(row, start + PAST_DUE_GRACE_MS + 1), false);
   assert.equal(isSubscriptionEntitled(row, start + 20 * day), false);
+});
+
+test('an operator suspension makes a paying customer inactive with status suspended', async () => {
+  const access = await getSubscriptionAccess(
+    subscriptionsStub(
+      [{ plan: 'pro', status: 'active', current_period_end: future, created_at: '2026-07-01' }],
+      [{ kind: 'suspension', plan: null, expires_at: null, created_at: '2026-10-11', revoked_at: null }]
+    ),
+    'user-1'
+  );
+  assert.equal(access.active, false);
+  assert.equal(access.status, 'suspended');
+});
+
+test('a revoked suspension does not block a paying customer', async () => {
+  const access = await getSubscriptionAccess(
+    subscriptionsStub(
+      [{ plan: 'pro', status: 'active', current_period_end: future, created_at: '2026-07-01' }],
+      [{ kind: 'suspension', plan: null, expires_at: null, created_at: '2026-10-11', revoked_at: '2026-10-12' }]
+    ),
+    'user-1'
+  );
+  assert.equal(access.active, true);
+  assert.equal(access.plan, 'pro');
 });
