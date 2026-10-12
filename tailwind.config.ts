@@ -25,6 +25,34 @@ const config: Config = {
         shimmer: {
           '100%': { transform: 'translateX(-100%)' },
         },
+        // Landing page: a status square travelling along the how-it-works
+        // flow, pausing on each of the five stops (RTL, so it runs right to left).
+        'flow-x': {
+          '0%, 8%': { left: '100%', opacity: '0' },
+          '10%, 22%': { left: '100%', opacity: '1' },
+          '30%, 40%': { left: '75%' },
+          '48%, 58%': { left: '50%' },
+          '66%, 76%': { left: '25%' },
+          '84%, 94%': { left: '0%', opacity: '1' },
+          '100%': { left: '0%', opacity: '0' },
+        },
+        'flow-y': {
+          '0%, 8%': { top: '0%', opacity: '0' },
+          '10%, 22%': { top: '0%', opacity: '1' },
+          '30%, 40%': { top: '25%' },
+          '48%, 58%': { top: '50%' },
+          '66%, 76%': { top: '75%' },
+          '84%, 94%': { top: '100%', opacity: '1' },
+          '100%': { top: '100%', opacity: '0' },
+        },
+        scan: {
+          '0%, 100%': { transform: 'translateY(0)' },
+          '50%': { transform: 'translateY(26px)' },
+        },
+        lamp: {
+          '0%, 55%, 100%': { opacity: '1' },
+          '70%, 85%': { opacity: '0.25' },
+        },
       },
       animation: {
         'loading-bar': 'loading-bar 1.1s ease-in-out infinite',
@@ -33,6 +61,10 @@ const config: Config = {
         'fade-up': 'fade-up 0.5s cubic-bezier(0.16,1,0.3,1) both',
         'typing-dot': 'typing-dot 1.2s ease-in-out infinite',
         shimmer: 'shimmer 1.6s ease-in-out infinite',
+        'flow-x': 'flow-x 7s cubic-bezier(0.65,0,0.35,1) infinite',
+        'flow-y': 'flow-y 7s cubic-bezier(0.65,0,0.35,1) infinite',
+        scan: 'scan 2.4s ease-in-out infinite',
+        lamp: 'lamp 2.2s steps(1,end) infinite',
       },
       boxShadow: {
         // Identity is flat: separation comes from hairline borders. `pop` is a

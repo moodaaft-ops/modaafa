@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 const publicPages = [
-  { path: '/', heading: /مضاعف|إعلانات Google/i },
+  { path: '/', heading: /قوقل|مُضاعِف|مضاعف/ },
   { path: '/login', heading: 'تسجيل الدخول' },
   { path: '/privacy', heading: /الخصوصية/ },
   { path: '/terms', heading: /شروط/ },
@@ -37,8 +37,10 @@ test.describe('public launch surface', () => {
     await expect(page.getByRole('link', { name: /افحص حسابك مجاناً/ }).first()).toHaveAttribute('href', '/login');
   });
 
+  // The landing page is always light (photo-led, brand palette), so the theme
+  // toggle is exercised on the login page, which keeps it.
   test('theme choice persists after reload', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/login');
     const html = page.locator('html');
     const isDark = await html.evaluate((element) => element.classList.contains('dark'));
     const targetLabel = isDark ? 'الوضع الفاتح' : 'الوضع الداكن';
