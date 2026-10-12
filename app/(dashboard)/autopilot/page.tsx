@@ -203,6 +203,11 @@ function decisionTone(decision: AutopilotDecision): StatusTone {
 
 function actionLabel(actionType: string) {
   if (actionType === 'add_negative_keyword') return 'إضافة كلمة سلبية مطابقة تامة';
+  // Never executed by autopilot (AUTOPILOT_SAFE_ACTIONS); labelled so a
+  // human-approved change appearing in shared history is still readable.
+  if (actionType === 'pause_campaign') return 'إيقاف حملة';
+  if (actionType === 'enable_campaign') return 'تشغيل حملة';
+  if (actionType === 'add_negative_keywords_batch') return 'منع عبارات بحث (دفعة)';
   if (actionType === 'budget') return 'تعديل ميزانية';
   if (actionType === 'status') return 'تغيير حالة';
   if (actionType === 'bidding') return 'تعديل مزايدة';

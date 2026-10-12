@@ -248,7 +248,8 @@ test('browser roles cannot forge executable recommendation or evidence rows', ()
 });
 
 test('recommendation state transitions use the service role after an RLS ownership read', () => {
-  const route = readFileSync(resolve('app/api/recommendations/action/route.ts'), 'utf8');
+  // The route is a thin wrapper; its body lives in the injectable handler.
+  const route = readFileSync(resolve('lib/recommendations/action-handler.ts'), 'utf8');
   assert.match(route, /const \{ data: recommendation[\s\S]+?await supabase[\s\S]+?\.from\('recommendations'\)[\s\S]+?\.select\(/);
   assert.doesNotMatch(route, /await supabase\s*\n\s*\.from\('recommendations'\)\s*\n\s*\.update\(/);
   assert.match(route, /await admin\s*\n\s*\.from\('recommendations'\)\s*\n\s*\.update\(/);
