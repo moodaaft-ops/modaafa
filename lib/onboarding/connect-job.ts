@@ -8,6 +8,7 @@ import { syncCampaignCacheWithLoginFallback } from '@/lib/google-ads/sync';
 import { mapLimit } from '@/lib/platform/concurrency';
 import { buildGoogleAdsLinkRows } from '@/lib/google-ads/link-account-rows';
 import { isNotAdsUserError } from '@/lib/google-ads/connect-errors';
+import { recordUserEvent } from '@/lib/stages/events';
 import {
   connectJobName,
   nextStepAfterConnect,
@@ -200,6 +201,13 @@ export async function runConnectJob(params: {
       currency_code: string | null;
     }>;
     details.linkable = saved.length || linkableAccounts.length;
+
+    // The accounts are linked: that is "connected", whatever the first data
+    // read below does. First occurrence only, never throws.
+    await recordUserEvent(userId, 'ads_account_connected', {
+      admin,
+      metadata: { accounts_linked: details.linkable },
+    });
 
     stage = 'sync';
     details.stage = stage;

@@ -1,6 +1,7 @@
 import { appBaseUrl, buildOptOutUrl } from './opt-out';
+import { STAGE_TEMPLATE_IDS, renderStageEmail, type StageTemplateId } from '@/lib/stages/messages';
 
-export type TemplateId = 'welcome_ads_connect';
+export type TemplateId = 'welcome_ads_connect' | StageTemplateId;
 
 export type RenderedEmail = {
   subject: string;
@@ -56,12 +57,30 @@ export function renderWelcomeAdsConnect(user: TemplateUser): RenderedEmail | nul
   };
 }
 
-export const TEMPLATES: Record<
-  TemplateId,
-  { sentEvent: 'welcome_email_sent'; renderEmail: (user: TemplateUser) => RenderedEmail | null }
-> = {
+export type TemplateDefinition = {
+  /** Funnel event written after a successful send, or null for none. */
+  sentEvent: 'welcome_email_sent' | null;
+  /**
+   * When true, `send` refuses if ANY message was sent to this person in the
+   * last 24 hours (one message per person per day). The welcome email does
+   * not carry this flag, so it is never held back, but once it has gone out
+   * it counts toward the limit for the follow-ups that come after it.
+   */
+  dailyLimit?: boolean;
+  renderEmail: (user: TemplateUser) => RenderedEmail | null;
+};
+
+const stageTemplates = Object.fromEntries(
+  STAGE_TEMPLATE_IDS.map((id): [StageTemplateId, TemplateDefinition] => [
+    id,
+    { sentEvent: null, dailyLimit: true, renderEmail: (user) => renderStageEmail(id, user) },
+  ])
+) as Record<StageTemplateId, TemplateDefinition>;
+
+export const TEMPLATES: Record<TemplateId, TemplateDefinition> = {
   welcome_ads_connect: {
     sentEvent: 'welcome_email_sent',
     renderEmail: renderWelcomeAdsConnect,
   },
+  ...stageTemplates,
 };
