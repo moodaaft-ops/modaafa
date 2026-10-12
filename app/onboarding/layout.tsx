@@ -1,10 +1,10 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import Image from 'next/image';
+import { redirect } from 'next/navigation';
 import { ThemeToggle } from '@/lib/ui/theme-toggle';
-import { getRequestAuthContext } from '@/lib/supabase/server';
-import { TikTokPixel } from '@/lib/analytics/tiktok-pixel';
-import { isRecentRegistration } from '@/lib/analytics/tiktok';
+import { createAdminClient, getRequestAuthContext } from '@/lib/supabase/server';
+import { isRegistrationComplete, REGISTRATION_COMPLETE_PATH } from '@/lib/registration/gate';
 import { LogoMark } from '@/lib/ui/logo';
 
 export const metadata: Metadata = {
@@ -12,22 +12,18 @@ export const metadata: Metadata = {
 };
 
 export default async function OnboardingLayout({ children }: { children: React.ReactNode }) {
-  // Onboarding is where a brand-new account lands, so it is the one place the
-  // registration is reported. The pixel only loads while the account is under
-  // 30 minutes old: anyone returning later (e.g. via "إضافة حساب") gets no
-  // pixel at all, rather than one that loads and then sends nothing.
+  // Registration (name, email, phone) comes first. The CompleteRegistration
+  // conversion is reported from /welcome now, with the same event id the
+  // server event uses, so this layout no longer reports it.
   const { user } = await getRequestAuthContext();
-  const justRegistered = user && isRecentRegistration(user.created_at) ? user : null;
+  if (!user) redirect('/login?next=/onboarding');
+  if (!(await isRegistrationComplete(createAdminClient(), user.id))) redirect(REGISTRATION_COMPLETE_PATH);
 
   return (
     // A faint radial wash behind the setup flow so the panels read as floating
     // on a canvas rather than sitting on flat paint — same treatment as the
     // landing hero, at lower intensity.
     <div className="relative min-h-screen bg-background">
-      {justRegistered && (
-        <TikTokPixel conversion={{ event: 'CompleteRegistration', userId: justRegistered.id }} />
-      )}
-
       <header className="sticky top-0 z-30 border-b border-border bg-background">
         <div className="mx-auto flex max-w-4xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
           <Link href="/" className="flex items-center gap-2.5">
