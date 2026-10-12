@@ -97,6 +97,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ use
       if (error) throw error;
       return data?.length ?? 0;
     },
+    replacePlanGrant: async (row) => {
+      const { error } = await createAdminClient().rpc('operator_replace_plan_grant', {
+        p_user_id: row.userId,
+        p_plan: row.plan,
+        p_expires_at: row.expiresAt,
+      });
+      if (error) throw error;
+    },
     insertOverride: async (row) => {
       const { error } = await createAdminClient().from('account_access_overrides').insert({
         user_id: row.userId,

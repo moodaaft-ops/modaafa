@@ -1020,6 +1020,37 @@ create policy account_access_overrides_owner_read
   to authenticated
   using (user_id = auth.uid());
 
+-- Replace a customer's free plan in ONE transaction: revoke the live grant and
+-- insert the new one together, so a failed insert can never leave the customer
+-- without the grant they already had. Service role only (the operator API).
+create or replace function public.operator_replace_plan_grant(
+  p_user_id uuid,
+  p_plan text,
+  p_expires_at timestamptz
+)
+returns uuid
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $$
+declare
+  v_id uuid;
+begin
+  update public.account_access_overrides
+  set revoked_at = now()
+  where user_id = p_user_id and kind = 'plan_grant' and revoked_at is null;
+
+  insert into public.account_access_overrides (user_id, kind, plan, expires_at)
+  values (p_user_id, 'plan_grant', p_plan, p_expires_at)
+  returning id into v_id;
+
+  return v_id;
+end;
+$$;
+
+revoke all on function public.operator_replace_plan_grant(uuid, text, timestamptz) from public, anon, authenticated, service_role;
+grant execute on function public.operator_replace_plan_grant(uuid, text, timestamptz) to service_role;
+
 create table if not exists public.operator_audit_log (
   id uuid primary key default gen_random_uuid(),
   operator_user_id uuid not null,

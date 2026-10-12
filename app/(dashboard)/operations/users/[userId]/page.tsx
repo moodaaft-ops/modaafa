@@ -59,7 +59,14 @@ export default async function OperationsCustomerPage({ params }: { params: Promi
     { stage: 'connected', at: profile.firstLinkedAt },
     { stage: 'audited', at: minIso(detail.dataset.audits.map((row) => row.ran_at)) },
     { stage: 'trial', at: minIso(detail.subscriptions.map((row) => row.created_at)) },
-    { stage: 'paying', at: minIso(detail.invoices.filter((row) => row.status === 'paid').map((row) => row.paid_at ?? row.created_at)) },
+    {
+      stage: 'paying',
+      at: minIso(
+        detail.invoices
+          .filter((row) => row.status === 'paid' && Number(row.amount_sar ?? 0) > 0)
+          .map((row) => row.paid_at ?? row.created_at)
+      ),
+    },
   ];
 
   const business = detail.dataset.businesses[0] ?? null;
@@ -82,7 +89,8 @@ export default async function OperationsCustomerPage({ params }: { params: Promi
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
               {[profile.name, profile.businessName, profile.sector].filter(Boolean).join(' · ') || 'ما عبّى بيانات النشاط'}
-              {profile.website && (
+              {/* Customers can write this field; only ever link plain http(s). */}
+              {profile.website && /^https?:\/\//i.test(profile.website) && (
                 <>
                   {' · '}
                   <a href={profile.website} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 underline underline-offset-4" dir="ltr">

@@ -42,7 +42,16 @@ function build(overrides: Partial<OperatorActionDeps> = {}) {
     },
     extendStripeTrial: async (params) => {
       calls.stripe.push(params);
-      return { status: 'trialing', trialEnd: new Date(params.trialEndUnix * 1000).toISOString() };
+      // Stripe's live trial end, two days out; the helper extends from it.
+      const live = NOW + 2 * DAY;
+      return {
+        status: 'trialing',
+        previousTrialEnd: new Date(live).toISOString(),
+        trialEnd: new Date(live + params.days * DAY).toISOString(),
+      };
+    },
+    replacePlanGrant: async (row) => {
+      calls.inserts.push({ userId: row.userId, kind: 'plan_grant', plan: row.plan, expiresAt: row.expiresAt, atomic: true });
     },
     updateLocalTrialEnd: async (id, iso) => {
       calls.localTrial.push({ id, iso });
@@ -137,6 +146,7 @@ test('no confirm flag, no reason, bad days or bad plan are 400', () => {
   assert.equal(parseOperatorAction({ action: 'grant_plan', confirm: true, reason: 'abc', plan: 'enterprise' }).ok, false);
   assert.equal(parseOperatorAction({ action: 'grant_plan', confirm: true, reason: 'abc', plan: 'pro', expiresAt: '2026-10-01' }, NOW).ok, false);
   assert.equal(parseOperatorAction({ action: 'grant_plan', confirm: true, reason: 'abc', plan: 'pro', expiresAt: '2030-01-01' }, NOW).ok, false);
+  assert.equal(parseOperatorAction({ action: 'grant_plan', confirm: true, reason: 'abc', plan: 'pro', expiresAt: '2027-02-31' }, NOW).ok, false);
   const ok = parseOperatorAction({ action: 'grant_plan', confirm: true, reason: 'abc', plan: 'growth', expiresAt: '2026-11-30' }, NOW);
   assert.equal(ok.ok, true);
   if (ok.ok && ok.input.action === 'grant_plan') {
@@ -157,7 +167,7 @@ test('a malformed target id is 400 and an unknown one is 404', async () => {
 // Extend trial
 // ---------------------------------------------------------------------------
 
-test('extending a trial counts from the current end, audits first, and updates Stripe then the local row', async () => {
+test('extending a trial audits first, asks Stripe for N days, and writes the confirmed end locally', async () => {
   const { handle, calls } = build();
   const res = await handle({ targetUserId: TARGET, body: confirmBody({ action: 'extend_trial', days: 7 }) });
   assert.equal(res.status, 200);
@@ -165,10 +175,23 @@ test('extending a trial counts from the current end, audits first, and updates S
   assert.equal(calls.audit[0].action, 'extend_trial');
   assert.equal(calls.stripe.length, 1);
   assert.equal(calls.stripe[0].subscriptionId, 'sub_123');
-  assert.equal(calls.stripe[0].trialEndUnix, Math.floor((NOW + 9 * DAY) / 1000));
-  assert.equal(calls.stripe[0].idempotencyKey, 'operator-extend-trial:audit-1');
+  assert.equal(calls.stripe[0].days, 7);
   assert.equal(calls.localTrial[0].id, 'sub-row-1');
+  assert.equal(calls.localTrial[0].iso, new Date(NOW + 9 * DAY).toISOString());
   assert.equal(calls.finish[0].status, 'succeeded');
+});
+
+test('Stripe says the subscription is no longer trialing: 409, audit failed, nothing local changes', async () => {
+  const { handle, calls } = build({
+    extendStripeTrial: async () => {
+      throw Object.assign(new Error('subscription is active, not trialing'), { code: 'not_trialing', stripeStatus: 'active' });
+    },
+  });
+  const res = await handle({ targetUserId: TARGET, body: confirmBody({ action: 'extend_trial', days: 7 }) });
+  assert.equal(res.status, 409);
+  assert.equal(res.json.error, 'not_trialing');
+  assert.equal(calls.localTrial.length, 0);
+  assert.equal(calls.finish[0].status, 'failed');
 });
 
 test('an expired trial end extends from today, not from the past', () => {
@@ -217,12 +240,12 @@ test('when the audit row cannot be written, nothing happens', async () => {
 // Plan grants and suspension
 // ---------------------------------------------------------------------------
 
-test('granting a plan replaces any live grant', async () => {
+test('granting a plan goes through the one-transaction replace, never revoke-then-insert', async () => {
   const { handle, calls } = build();
   const res = await handle({ targetUserId: TARGET, body: confirmBody({ action: 'grant_plan', plan: 'growth' }) });
   assert.equal(res.status, 200);
-  assert.deepEqual(calls.revokes, [{ userId: TARGET, kind: 'plan_grant' }]);
-  assert.deepEqual(calls.inserts, [{ userId: TARGET, kind: 'plan_grant', plan: 'growth', expiresAt: null }]);
+  assert.deepEqual(calls.revokes, []);
+  assert.deepEqual(calls.inserts, [{ userId: TARGET, kind: 'plan_grant', plan: 'growth', expiresAt: null, atomic: true }]);
 });
 
 test('an operator account cannot be suspended, including your own', async () => {

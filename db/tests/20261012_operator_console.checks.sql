@@ -57,3 +57,19 @@ do $$ begin
   begin perform 1 from account_access_overrides; raise notice 'FAIL anon reads overrides';
   exception when insufficient_privilege then raise notice 'ok: anon cannot read overrides'; end;
 end $$;
+
+-- ---- atomic grant replacement (operator_replace_plan_grant) ----
+set role service_role;
+select operator_replace_plan_grant('11111111-1111-1111-1111-111111111111','pro', null) is not null as granted;
+select count(*) filter (where revoked_at is null) as live, count(*) as total from account_access_overrides where user_id='11111111-1111-1111-1111-111111111111' and kind='plan_grant';
+do $$ begin
+  begin perform operator_replace_plan_grant('11111111-1111-1111-1111-111111111111','enterprise', null); raise notice 'FAIL bad plan accepted';
+  exception when check_violation then raise notice 'ok: bad plan rolls back'; end;
+end $$;
+select count(*) filter (where revoked_at is null) as live_after_failed from account_access_overrides where user_id='11111111-1111-1111-1111-111111111111' and kind='plan_grant';
+reset role;
+set role authenticated;
+do $$ begin
+  begin perform operator_replace_plan_grant('11111111-1111-1111-1111-111111111111','pro', null); raise notice 'FAIL authenticated can call';
+  exception when insufficient_privilege then raise notice 'ok: authenticated cannot call'; end;
+end $$;

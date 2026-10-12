@@ -14,7 +14,7 @@ import {
 import { sanitizeOperatorSearch } from '@/lib/platform/operator-users';
 import { planLabel } from '@/lib/ui/labels';
 import { cn, formatNumberAr, timeAgoAr } from '@/lib/utils';
-import { AccessChip, MigrationNotice, OpsTabs, StageTrack } from '../ops-ui';
+import { AccessChip, MigrationNotice, OpsTabs, TruncatedNotice, StageTrack } from '../ops-ui';
 import { riyadhTime, shortDate } from '../format';
 
 export const metadata = { title: 'العملاء · مركز التشغيل' };
@@ -110,6 +110,7 @@ export default async function OperationsCustomersPage({ searchParams }: { search
 
       <div className="space-y-5 px-4 pt-5 sm:px-6 lg:px-8">
         <MigrationNotice missing={data.unavailable} />
+        <TruncatedNotice tables={data.truncated} />
 
         <form method="get" role="search" className="flex flex-wrap items-center gap-2">
           {stage && <input type="hidden" name="stage" value={stage} />}

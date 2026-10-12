@@ -73,6 +73,12 @@ export function parseOperatorAction(body: unknown, now = Date.now()): ParseResul
       if (typeof raw.expiresAt !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(raw.expiresAt)) {
         return bad('invalid_expiry', 'تاريخ الانتهاء لازم يكون بصيغة يوم/شهر/سنة صحيحة.');
       }
+      // Reject dates that do not exist (2026-02-31 would roll over to March).
+      const [y, m, d] = raw.expiresAt.split('-').map(Number);
+      const calendar = new Date(Date.UTC(y, m - 1, d));
+      if (calendar.getUTCFullYear() !== y || calendar.getUTCMonth() !== m - 1 || calendar.getUTCDate() !== d) {
+        return bad('invalid_expiry', 'تاريخ الانتهاء غير موجود في التقويم.');
+      }
       // End of that day in Riyadh (UTC+3), so "until 20 Oct" includes 20 Oct.
       const end = new Date(`${raw.expiresAt}T23:59:59+03:00`).getTime();
       if (!Number.isFinite(end)) return bad('invalid_expiry', 'تاريخ الانتهاء غير صحيح.');
@@ -88,12 +94,7 @@ export function parseOperatorAction(body: unknown, now = Date.now()): ParseResul
   return { ok: true, input: { action: action as 'revoke_plan' | 'suspend' | 'unsuspend', reason } };
 }
 
-/** New trial end: the extension counts from the later of today and the current end. */
-export function computeExtendedTrialEnd(currentTrialEnd: string | null, days: number, now = Date.now()) {
-  const current = currentTrialEnd ? new Date(currentTrialEnd).getTime() : NaN;
-  const base = Number.isFinite(current) && current > now ? current : now;
-  return new Date(base + days * DAY_MS);
-}
+export { computeExtendedTrialEnd } from '@/lib/billing/trial-extension';
 
 export type OperatorUser = { id: string; email: string | null; email_confirmed_at?: string | null };
 
@@ -126,14 +127,20 @@ export type OperatorActionDeps = {
     auditId: string,
     outcome: { status: 'succeeded' | 'failed'; details?: Record<string, unknown>; errorMessage?: string }
   ) => Promise<void>;
+  /**
+   * Reads the live subscription, refuses unless it is trialing in Stripe
+   * (throws { code: 'not_trialing' }), and extends from the LIVE trial end.
+   */
   extendStripeTrial: (params: {
     subscriptionId: string;
-    trialEndUnix: number;
-    idempotencyKey: string;
-  }) => Promise<{ status: string; trialEnd: string | null }>;
+    days: number;
+    now?: number;
+  }) => Promise<{ status: string; trialEnd: string | null; previousTrialEnd: string | null }>;
   updateLocalTrialEnd: (subscriptionRowId: string, trialEndsAt: string) => Promise<void>;
   /** Revoke every live row of this kind for the user. Returns how many. */
   revokeOverrides: (userId: string, kind: 'suspension' | 'plan_grant') => Promise<number>;
+  /** Revoke the live grant and insert the new one in one transaction (SQL function). */
+  replacePlanGrant: (row: { userId: string; plan: OverridePlan; expiresAt: string | null }) => Promise<void>;
   /** Throws { code: '23505' } style errors on a duplicate live row. */
   insertOverride: (row: {
     userId: string;
@@ -199,7 +206,6 @@ export function createOperatorActionHandler(deps: OperatorActionDeps) {
 
     // Preconditions, checked before anything is written.
     let trialing: TrialingSubscription | null = null;
-    let newTrialEnd: Date | null = null;
     const overrides = await deps.readOverrides(target.id);
 
     if (input.action === 'extend_trial') {
@@ -210,7 +216,6 @@ export function createOperatorActionHandler(deps: OperatorActionDeps) {
           message: 'هذا العميل ما عنده تجربة شغالة في Stripe. لو تبي تعطيه وقت مجاني استخدم الخطة المجانية.',
         });
       }
-      newTrialEnd = computeExtendedTrialEnd(trialing.trialEndsAt, input.days, now());
     }
     if (input.action === 'revoke_plan' && !overrides.grant) {
       return reply(409, { error: 'no_active_grant', message: 'ما عنده خطة مجانية شغالة.' });
@@ -227,8 +232,7 @@ export function createOperatorActionHandler(deps: OperatorActionDeps) {
         ? {
             days: input.days,
             stripe_subscription_id: trialing!.stripeSubscriptionId,
-            previous_trial_end: trialing!.trialEndsAt,
-            new_trial_end: newTrialEnd!.toISOString(),
+            local_trial_end: trialing!.trialEndsAt,
           }
         : input.action === 'grant_plan'
           ? {
@@ -264,10 +268,10 @@ export function createOperatorActionHandler(deps: OperatorActionDeps) {
       if (input.action === 'extend_trial') {
         const stripeResult = await deps.extendStripeTrial({
           subscriptionId: trialing!.stripeSubscriptionId,
-          trialEndUnix: Math.floor(newTrialEnd!.getTime() / 1000),
-          idempotencyKey: `operator-extend-trial:${auditId}`,
+          days: input.days,
+          now: now(),
         });
-        const confirmedEnd = stripeResult.trialEnd ?? newTrialEnd!.toISOString();
+        const confirmedEnd = stripeResult.trialEnd as string;
         let localSynced = true;
         try {
           await deps.updateLocalTrialEnd(trialing!.id, confirmedEnd);
@@ -276,10 +280,14 @@ export function createOperatorActionHandler(deps: OperatorActionDeps) {
           localSynced = false;
           console.error('Trial extended in Stripe but the local row was not updated', errorText(error));
         }
-        result = { trial_end: confirmedEnd, stripe_status: stripeResult.status, local_synced: localSynced };
+        result = {
+          previous_trial_end: stripeResult.previousTrialEnd,
+          trial_end: confirmedEnd,
+          stripe_status: stripeResult.status,
+          local_synced: localSynced,
+        };
       } else if (input.action === 'grant_plan') {
-        await deps.revokeOverrides(target.id, 'plan_grant');
-        await deps.insertOverride({ userId: target.id, kind: 'plan_grant', plan: input.plan, expiresAt: input.expiresAt });
+        await deps.replacePlanGrant({ userId: target.id, plan: input.plan, expiresAt: input.expiresAt });
         result = { plan: input.plan, expires_at: input.expiresAt };
       } else if (input.action === 'revoke_plan') {
         result = { revoked: await deps.revokeOverrides(target.id, 'plan_grant') };
@@ -300,6 +308,12 @@ export function createOperatorActionHandler(deps: OperatorActionDeps) {
         .finishAudit(auditId, { status: 'failed', errorMessage: message })
         .catch((finishError) => console.error('Could not mark operator audit row failed', errorText(finishError)));
 
+      if (error && typeof error === 'object' && (error as { code?: string }).code === 'not_trialing') {
+        return reply(409, {
+          error: 'not_trialing',
+          message: 'الاشتراك في Stripe ما عاد تجربة، فما مددنا شي. لو تبي تعطيه وقت مجاني استخدم الخطة المجانية.',
+        });
+      }
       if (isUniqueViolation(error)) {
         return reply(409, { error: 'conflict', message: 'فيه إجراء ثاني على نفس العميل صار بنفس اللحظة. حدّث الصفحة وشوف.' });
       }

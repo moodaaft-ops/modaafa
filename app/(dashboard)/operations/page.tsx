@@ -20,7 +20,7 @@ import {
   type FunnelRange,
 } from '@/lib/platform/operator-insights';
 import { cn, formatNumberAr, timeAgoAr } from '@/lib/utils';
-import { AccessChip, ContactButton, MigrationNotice, OpsTabs, SectionHead } from './ops-ui';
+import { AccessChip, ContactButton, MigrationNotice, OpsTabs, TruncatedNotice, SectionHead } from './ops-ui';
 import { OPERATOR_ACTION_LABELS, percent, riyadhDayLabel, riyadhTime, sar } from './format';
 
 export const metadata = { title: 'مركز التشغيل' };
@@ -99,6 +99,7 @@ export default async function OperationsOverviewPage({
 
       <div className="space-y-10 px-4 pt-6 sm:px-6 lg:px-8">
         <MigrationNotice missing={data.unavailable} />
+        <TruncatedNotice tables={data.truncated} />
 
         <div className="grid gap-8 lg:grid-cols-3">
           {/* Who needs you */}

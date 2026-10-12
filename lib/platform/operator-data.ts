@@ -14,17 +14,32 @@ import { parseModaafaOperatorEmails } from '@/lib/platform/operators';
 import { DAY_MS, type OperatorDataset, type Row } from '@/lib/platform/operator-insights';
 
 const PAGE = 1000;
-const MAX_PAGES = 20;
+const MAX_PAGES = 50;
 
 const FALLBACK_MONTHLY_PRICES = { starter: 500, growth: 1200, pro: 2500 } as const;
 
 /** Tables added by 20261012_operator_console.sql; missing before it runs. */
 const OPTIONAL_TABLES = new Set(['account_access_overrides', 'operator_audit_log']);
 
-async function pagedSelect(admin: any, table: string, build: (query: any) => any, unavailable: string[]) {
+/**
+ * Read every row in pages. The caller's ordering gets a unique tie-break
+ * column appended, so offset paging cannot skip or repeat rows that share a
+ * timestamp. Hitting the page cap is recorded in `truncated` and shown on the
+ * page, instead of silently undercounting.
+ */
+async function pagedSelect(
+  admin: any,
+  table: string,
+  build: (query: any) => any,
+  unavailable: string[],
+  truncated: string[] = [],
+  tieBreak = 'id'
+) {
   const rows: Row[] = [];
   for (let page = 0; page < MAX_PAGES; page += 1) {
-    const { data, error } = await build(admin.from(table)).range(page * PAGE, page * PAGE + PAGE - 1);
+    const { data, error } = await build(admin.from(table))
+      .order(tieBreak, { ascending: true })
+      .range(page * PAGE, page * PAGE + PAGE - 1);
     if (error) {
       if (OPTIONAL_TABLES.has(table)) {
         unavailable.push(table);
@@ -34,8 +49,9 @@ async function pagedSelect(admin: any, table: string, build: (query: any) => any
     }
     const chunk = (data ?? []) as Row[];
     rows.push(...chunk);
-    if (chunk.length < PAGE) break;
+    if (chunk.length < PAGE) return rows;
   }
+  truncated.push(table);
   return rows;
 }
 
@@ -60,12 +76,19 @@ async function loadAuthFacts(admin: any) {
   return facts;
 }
 
-export async function loadMonthlyPrices(): Promise<OperatorDataset['monthlyPrices']> {
+export async function loadPlanPrices(): Promise<Pick<OperatorDataset, 'monthlyPrices' | 'yearlyPrices'>> {
   const live = await getPlanPriceAmounts().catch(() => null);
   return {
-    starter: live?.starter?.monthly?.amount ?? FALLBACK_MONTHLY_PRICES.starter,
-    growth: live?.growth?.monthly?.amount ?? FALLBACK_MONTHLY_PRICES.growth,
-    pro: live?.pro?.monthly?.amount ?? FALLBACK_MONTHLY_PRICES.pro,
+    monthlyPrices: {
+      starter: live?.starter?.monthly?.amount ?? FALLBACK_MONTHLY_PRICES.starter,
+      growth: live?.growth?.monthly?.amount ?? FALLBACK_MONTHLY_PRICES.growth,
+      pro: live?.pro?.monthly?.amount ?? FALLBACK_MONTHLY_PRICES.pro,
+    },
+    yearlyPrices: {
+      starter: live?.starter?.yearly?.amount ?? null,
+      growth: live?.growth?.yearly?.amount ?? null,
+      pro: live?.pro?.yearly?.amount ?? null,
+    },
   };
 }
 
@@ -73,6 +96,7 @@ export async function loadMonthlyPrices(): Promise<OperatorDataset['monthlyPrice
 export async function loadOperatorDataset(now = Date.now()): Promise<OperatorDataset> {
   const admin = createAdminClient();
   const unavailable: string[] = [];
+  const truncated: string[] = [];
   const monthAgo = new Date(now - 30 * DAY_MS).toISOString();
   const weekAgo = new Date(now - 7 * DAY_MS).toISOString();
 
@@ -91,11 +115,11 @@ export async function loadOperatorDataset(now = Date.now()): Promise<OperatorDat
     jobs,
     webhooks,
     auditLog,
-    monthlyPrices,
+    prices,
   ] = await Promise.all([
-    pagedSelect(admin, 'users', (q) => q.select('id, email, name, phone, created_at, last_login_at').order('created_at', { ascending: false }), unavailable),
+    pagedSelect(admin, 'users', (q) => q.select('id, email, name, phone, created_at, last_login_at').order('created_at', { ascending: false }), unavailable, truncated),
     loadAuthFacts(admin),
-    pagedSelect(admin, 'businesses', (q) => q.select('id, user_id, name, sector, website, created_at').order('id'), unavailable),
+    pagedSelect(admin, 'businesses', (q) => q.select('id, user_id, name, sector, website, created_at').order('id'), unavailable, truncated),
     pagedSelect(
       admin,
       'google_ads_accounts',
@@ -103,7 +127,8 @@ export async function loadOperatorDataset(now = Date.now()): Promise<OperatorDat
         q
           .select('id, business_id, customer_id, customer_name, status, is_manager, google_status, linked_at, last_synced_at, last_optimized_at')
           .order('id'),
-      unavailable
+      unavailable,
+      truncated
     ),
     pagedSelect(
       admin,
@@ -112,21 +137,24 @@ export async function loadOperatorDataset(now = Date.now()): Promise<OperatorDat
         q
           .select('user_id, plan, billing_period, status, trial_ends_at, current_period_start, current_period_end, created_at, canceled_at, stripe_subscription_id')
           .order('created_at', { ascending: false }),
-      unavailable
+      unavailable,
+      truncated
     ),
-    pagedSelect(admin, 'audits', (q) => q.select('account_id, ran_at').order('ran_at', { ascending: false }), unavailable),
+    pagedSelect(admin, 'audits', (q) => q.select('account_id, ran_at').order('ran_at', { ascending: false }), unavailable, truncated),
     pagedSelect(
       admin,
       'account_access_overrides',
       (q) => q.select('user_id, kind, plan, expires_at, created_at, revoked_at').order('created_at', { ascending: false }),
-      unavailable
+      unavailable,
+      truncated
     ),
-    pagedSelect(admin, 'invoices', (q) => q.select('user_id, status, amount_sar, currency, paid_at, created_at').order('created_at', { ascending: false }), unavailable),
+    pagedSelect(admin, 'invoices', (q) => q.select('user_id, status, amount_sar, currency, paid_at, created_at').order('created_at', { ascending: false }), unavailable, truncated),
     pagedSelect(
       admin,
       'usage_events',
       (q) => q.select('user_id, feature, created_at').gte('created_at', monthAgo).order('created_at', { ascending: false }),
-      unavailable
+      unavailable,
+      truncated
     ),
     pagedSelect(
       admin,
@@ -136,13 +164,15 @@ export async function loadOperatorDataset(now = Date.now()): Promise<OperatorDat
           .select('account_id, status, severity, created_at, applied_at, execution_started_at')
           .or(`created_at.gte."${monthAgo}",status.eq.pending,status.eq.executing`)
           .order('created_at', { ascending: false }),
-      unavailable
+      unavailable,
+      truncated
     ),
     pagedSelect(
       admin,
       'ai_actions',
       (q) => q.select('account_id, created_at, rollback_status, reverted_at').gte('created_at', monthAgo).order('created_at', { ascending: false }),
-      unavailable
+      unavailable,
+      truncated
     ),
     pagedSelect(
       admin,
@@ -152,7 +182,8 @@ export async function loadOperatorDataset(now = Date.now()): Promise<OperatorDat
           .select('id, job_name, status, started_at, finished_at, duration_ms, processed, error_count, error_message')
           .gte('started_at', weekAgo)
           .order('started_at', { ascending: false }),
-      unavailable
+      unavailable,
+      truncated
     ),
     pagedSelect(
       admin,
@@ -163,7 +194,9 @@ export async function loadOperatorDataset(now = Date.now()): Promise<OperatorDat
           .eq('status', 'failed')
           .gte('last_attempt_at', weekAgo)
           .order('last_attempt_at', { ascending: false }),
-      unavailable
+      unavailable,
+      truncated,
+      'event_id'
     ),
     admin
       .from('operator_audit_log')
@@ -177,7 +210,7 @@ export async function loadOperatorDataset(now = Date.now()): Promise<OperatorDat
         }
         return (data ?? []) as Row[];
       }),
-    loadMonthlyPrices(),
+    loadPlanPrices(),
   ]);
 
   return {
@@ -196,8 +229,9 @@ export async function loadOperatorDataset(now = Date.now()): Promise<OperatorDat
     webhooks,
     auditLog,
     operatorEmails: parseModaafaOperatorEmails(),
-    monthlyPrices,
+    ...prices,
     unavailable: Array.from(new Set(unavailable)),
+    truncated: Array.from(new Set(truncated)),
   };
 }
 
@@ -249,7 +283,7 @@ export async function loadCustomerDetail(userId: string, now = Date.now()): Prom
     : [];
   const accountIds = accounts.map((row) => row.id);
 
-  const [subscriptions, invoices, overrides, usage, audits, recommendations, actions, auditLogResult, chatResult, monthlyPrices] =
+  const [subscriptions, invoices, overrides, usage, audits, recommendations, actions, auditLogResult, chatResult, prices] =
     await Promise.all([
       pagedSelect(
         admin,
@@ -313,7 +347,7 @@ export async function loadCustomerDetail(userId: string, now = Date.now()): Prom
         .order('created_at', { ascending: false })
         .limit(30),
       admin.from('chat_sessions').select('id', { count: 'exact', head: true }).eq('user_id', userId),
-      loadMonthlyPrices(),
+      loadPlanPrices(),
     ]);
 
   const usageByFeature: Record<string, number> = {};
@@ -343,7 +377,7 @@ export async function loadCustomerDetail(userId: string, now = Date.now()): Prom
     webhooks: [],
     auditLog: [],
     operatorEmails: parseModaafaOperatorEmails(),
-    monthlyPrices,
+    ...prices,
     unavailable: Array.from(new Set([...unavailable, ...(auditLogResult.error ? ['operator_audit_log'] : [])])),
   };
 

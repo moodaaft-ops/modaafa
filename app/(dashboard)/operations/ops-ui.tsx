@@ -169,10 +169,21 @@ export function MigrationNotice({ missing }: { missing: string[] }) {
     <div className="border border-warning/40 bg-warning/10 px-4 py-3 text-[13px] leading-6 text-foreground">
       <span className="font-semibold">ميقريشن مركز التشغيل ما انشغل بعد.</span> الأرقام كلها سليمة، بس الخطط المجانية
       والإيقاف وسجل الإجراءات ما تشتغل لين ينشغل{' '}
-      <code className="font-mono text-xs" dir="ltr">
+      <code className="break-all font-mono text-xs" dir="ltr">
         db/migrations/20261012_operator_console.sql
       </code>{' '}
       على Supabase.
     </div>
+  );
+}
+
+/** Shown when a table hit the read cap: counts drawn from it are a floor, not exact. */
+export function TruncatedNotice({ tables }: { tables?: string[] }) {
+  if (!tables || tables.length === 0) return null;
+  return (
+    <p className="border border-border-strong px-4 py-2.5 text-[13px] text-muted-foreground">
+      بعض الجداول أكبر من حد القراءة (<span dir="ltr" className="font-mono text-xs">{tables.join(', ')}</span>)، فالأرقام
+      المبنية عليها أقل من الحقيقة. وقتها ننقل الحساب لقاعدة البيانات.
+    </p>
   );
 }

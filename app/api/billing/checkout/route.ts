@@ -7,6 +7,8 @@ import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 import { getBillingCheckoutContext, TRIAL_DAYS } from '@/lib/billing/checkout-policy';
 import { isSameOriginRequest } from '@/lib/security/origin';
 import { isModaafaOperator } from '@/lib/platform/operators';
+import { readAccessOverrides } from '@/lib/billing/access-overrides';
+import { ACCOUNT_SUSPENDED_MESSAGE } from '@/lib/billing/entitlements';
 import { hasActiveGoogleAdsAccount } from '@/lib/accounts/selection';
 
 /**
@@ -40,6 +42,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.redirect(new URL('/billing?error=internal_access', req.url), 303);
     }
     return NextResponse.json({ error: 'internal_access' }, { status: 409 });
+  }
+  // A suspended account cannot start a new subscription until an operator
+  // lifts the suspension (the banner on every page says how to reach us).
+  if ((await readAccessOverrides(supabase, user.id)).suspended) {
+    if (isForm) return NextResponse.redirect(new URL('/billing?error=account_suspended', req.url), 303);
+    return NextResponse.json({ error: 'account_suspended', message: ACCOUNT_SUSPENDED_MESSAGE }, { status: 403 });
   }
   const payload = isForm ? Object.fromEntries((await req.formData()).entries()) : await req.json();
   const { plan, period } = payload;

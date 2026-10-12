@@ -45,6 +45,10 @@ export type OperatorDataset = {
   operatorEmails: string[];
   /** Monthly price per plan, SAR. */
   monthlyPrices: Record<'starter' | 'growth' | 'pro', number>;
+  /** Yearly price per plan, SAR, when Stripe has one. */
+  yearlyPrices?: Partial<Record<'starter' | 'growth' | 'pro', number | null>>;
+  /** Tables whose read hit the row cap: numbers drawn from them are a floor. */
+  truncated?: string[];
   /** Tables that could not be read (for example before a migration ran). */
   unavailable: string[];
 };
@@ -202,12 +206,17 @@ function pickSubscription(rows: Row[], now: number) {
 
 export function monthlyValueOf(
   subscription: { plan?: string | null; billing_period?: string | null } | null | undefined,
-  prices: OperatorDataset['monthlyPrices']
+  prices: OperatorDataset['monthlyPrices'],
+  yearly: OperatorDataset['yearlyPrices'] = {}
 ) {
   const plan = subscription?.plan as keyof typeof prices | undefined;
   if (!plan || !(plan in prices)) return 0;
-  // Yearly plans bill twelve months at a discount; the monthly list price is
-  // the conservative stand-in until the actual yearly amount is known.
+  if (subscription?.billing_period === 'yearly') {
+    const annual = yearly?.[plan];
+    // Yearly is billed once at a discount; spread it over twelve months. When
+    // Stripe has no yearly price we fall back to the monthly list price.
+    if (typeof annual === 'number' && annual > 0) return annual / 12;
+  }
   return prices[plan];
 }
 
@@ -261,7 +270,8 @@ export function buildCustomerProfiles(data: OperatorDataset, now = Date.now()): 
     const recs = recsByUser.get(user.id) ?? [];
     const overrides = summarizeOverrides(overridesByUser.get(user.id) ?? [], now);
 
-    const paid = invoices.filter((invoice) => invoice.status === 'paid');
+    // Stripe marks the 0 SAR invoice at trial start as paid; that is not a payment.
+    const paid = invoices.filter((invoice) => invoice.status === 'paid' && Number(invoice.amount_sar ?? 0) > 0);
     const sub = pickSubscription(subs, now);
     const subLive = sub ? isSubscriptionEntitled(sub, now) : false;
 
@@ -355,8 +365,8 @@ export function buildCustomerProfiles(data: OperatorDataset, now = Date.now()): 
       recsStuck,
       // Money follows Stripe, not access: a suspended or comp customer whose
       // Stripe subscription is live is still billed.
-      mrr: stripeStatus === 'active' || stripeStatus === 'past_due' ? monthlyValueOf(sub, data.monthlyPrices) : 0,
-      trialValue: stripeStatus === 'trialing' ? monthlyValueOf(sub, data.monthlyPrices) : 0,
+      mrr: stripeStatus === 'active' || stripeStatus === 'past_due' ? monthlyValueOf(sub, data.monthlyPrices, data.yearlyPrices) : 0,
+      trialValue: stripeStatus === 'trialing' ? monthlyValueOf(sub, data.monthlyPrices, data.yearlyPrices) : 0,
       isOperator: operatorEmails.has(String(user.email ?? '').toLowerCase()),
     };
   });
@@ -396,14 +406,19 @@ export function computeFunnel(profiles: CustomerProfile[], range: FunnelRange, n
   const cohort = profiles.filter(
     (profile) => !profile.isOperator && (days === null || ms(profile.createdAt) >= now - days * DAY_MS)
   );
+  // Cumulative: someone counts at a step when their furthest step is at or
+  // past it. A person who skipped a step (started a trial without an audit)
+  // still counts as having passed it, so each step is a subset of the one
+  // before and the conversion rates are real.
+  const stageIndex = (profile: CustomerProfile) => STAGES.indexOf(profile.stage);
   return STAGES.map((stage, index) => {
-    const reached = cohort.filter((profile) => profile.milestones[stage]).length;
-    const previous = index === 0 ? null : cohort.filter((profile) => profile.milestones[STAGES[index - 1]]).length;
+    const reached = cohort.filter((profile) => stageIndex(profile) >= index).length;
+    const previous = index === 0 ? null : cohort.filter((profile) => stageIndex(profile) >= index - 1).length;
     return {
       stage,
       label: STAGE_LABELS[stage],
       reached,
-      fromPrevious: previous === null ? null : previous === 0 ? 0 : Math.min(1, reached / previous),
+      fromPrevious: previous === null ? null : previous === 0 ? 0 : reached / previous,
       dropped: previous === null ? 0 : Math.max(0, previous - reached),
       stuckHere: cohort.filter((profile) => profile.stage === stage).length,
     };
@@ -837,6 +852,20 @@ export function computeEngineHealth(data: OperatorDataset, now = Date.now()): En
   const nonManager = data.accounts.filter((account) => !account.is_manager);
   const active = nonManager.filter((account) => account.status === 'active' && !isGoogleDisabled(account));
 
+  // Only accounts the sync job is supposed to touch can be "stale": the job
+  // covers billable owners (live Stripe or a free plan) who are not suspended.
+  const overridesByUser = groupBy(normalizeOverrideRows(data.overrides) as Row[], (row) => row.user_id);
+  const billable = new Set<string>();
+  for (const sub of data.subscriptions) if (isSubscriptionEntitled(sub, now)) billable.add(sub.user_id);
+  for (const [userId, rows] of overridesByUser) {
+    const live = summarizeOverrides(rows, now);
+    if (live.grant) billable.add(userId);
+    if (live.suspended) billable.delete(userId);
+  }
+  const ownerByBusiness = new Map<string, string>();
+  for (const business of data.businesses) ownerByBusiness.set(business.id, business.user_id);
+  const syncable = active.filter((account) => billable.has(ownerByBusiness.get(account.business_id) ?? ''));
+
   return {
     jobs,
     webhooksFailed: data.webhooks.length,
@@ -860,7 +889,7 @@ export function computeEngineHealth(data: OperatorDataset, now = Date.now()): En
       active: active.length,
       googleDisabled: nonManager.filter(isGoogleDisabled).length,
       revoked: nonManager.filter((account) => account.status === 'revoked').length,
-      staleSync: active.filter((account) => !account.last_synced_at || now - ms(account.last_synced_at) > DAY_MS).length,
+      staleSync: syncable.filter((account) => !account.last_synced_at || now - ms(account.last_synced_at) > DAY_MS).length,
     },
   };
 }

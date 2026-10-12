@@ -85,6 +85,29 @@ export function summarizeOverrides(rows: unknown, now = Date.now()): LiveAccessO
 
 let warnedMissingTable = false;
 
+/** Postgres "undefined table" or PostgREST "table not in schema cache". */
+export function isMissingTableError(error: unknown) {
+  const code = error && typeof error === 'object' ? (error as { code?: string }).code : undefined;
+  return code === '42P01' || code === 'PGRST205';
+}
+
+/**
+ * A missing table (migration not run yet) is expected and logged once. Any
+ * other error is logged every time: it means a suspension may not have been
+ * applied to this request, and that must be visible in the logs.
+ */
+function reportReadError(context: string, error: unknown) {
+  if (isMissingTableError(error)) {
+    if (!warnedMissingTable) {
+      warnedMissingTable = true;
+      console.warn(`${context}: account_access_overrides missing (migration not run); treating as none`);
+    }
+    return;
+  }
+  const detail = error && typeof error === 'object' ? { code: (error as any).code, message: (error as any).message } : error;
+  console.error(`${context}: could not read account_access_overrides; treating as none`, detail);
+}
+
 /**
  * Read one user's overrides with whatever client the caller has. Pages pass
  * the customer's own session (RLS lets them read their own rows); jobs pass the
@@ -99,48 +122,51 @@ export async function readAccessOverrides(supabase: any, userId: string, now = D
       .order('created_at', { ascending: false })
       .limit(20);
     if (error) {
-      if (!warnedMissingTable) {
-        warnedMissingTable = true;
-        console.warn('Access overrides unavailable; treating as none', { code: error.code, message: error.message });
-      }
+      reportReadError('Access overrides', error);
       return NO_OVERRIDES;
     }
     return summarizeOverrides(data, now);
   } catch (error) {
-    if (!warnedMissingTable) {
-      warnedMissingTable = true;
-      console.warn('Access overrides unavailable; treating as none', error);
-    }
+    reportReadError('Access overrides', error);
     return NO_OVERRIDES;
   }
 }
 
+const PAGE = 1000;
+
 /**
  * All live overrides, keyed by user. Used by the background jobs (service role)
- * to add free-plan users to the billable set and drop suspended ones.
+ * to add free-plan users to the billable set and drop suspended ones. Paged:
+ * PostgREST returns at most 1000 rows per request, and a suspended user past
+ * that row must still be dropped.
  */
 export async function readAllLiveOverrides(admin: any, now = Date.now()) {
   const byUser = new Map<string, LiveAccessOverrides>();
+  const grouped = new Map<string, AccessOverrideRow[]>();
   try {
-    const { data, error } = await admin
-      .from('account_access_overrides')
-      .select('user_id, kind, plan, expires_at, created_at, revoked_at')
-      .is('revoked_at', null)
-      .limit(10000);
-    if (error) {
-      console.warn('Access overrides unavailable for jobs; treating as none', { code: error.code });
-      return byUser;
-    }
-    const grouped = new Map<string, AccessOverrideRow[]>();
-    for (const row of normalizeOverrideRows(data)) {
-      if (!row.user_id) continue;
-      const list = grouped.get(row.user_id) ?? [];
-      list.push(row);
-      grouped.set(row.user_id, list);
+    for (let page = 0; page < 100; page += 1) {
+      const { data, error } = await admin
+        .from('account_access_overrides')
+        .select('id, user_id, kind, plan, expires_at, created_at, revoked_at')
+        .is('revoked_at', null)
+        .order('id', { ascending: true })
+        .range(page * PAGE, page * PAGE + PAGE - 1);
+      if (error) {
+        reportReadError('Access overrides for jobs', error);
+        return byUser;
+      }
+      const rows = normalizeOverrideRows(data);
+      for (const row of rows) {
+        if (!row.user_id) continue;
+        const list = grouped.get(row.user_id) ?? [];
+        list.push(row);
+        grouped.set(row.user_id, list);
+      }
+      if (!Array.isArray(data) || data.length < PAGE) break;
     }
     for (const [userId, rows] of grouped) byUser.set(userId, summarizeOverrides(rows, now));
   } catch (error) {
-    console.warn('Access overrides unavailable for jobs; treating as none', error);
+    reportReadError('Access overrides for jobs', error);
   }
   return byUser;
 }

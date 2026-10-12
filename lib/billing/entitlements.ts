@@ -86,8 +86,30 @@ export async function getSubscriptionAccess(
   userId: string | null | undefined,
   authenticatedEmail?: string | null
 ): Promise<SubscriptionAccess> {
+  return (await getSubscriptionAccessDetailed(supabase, userId, authenticatedEmail)).access;
+}
+
+export type DetailedSubscriptionAccess = {
+  /** What the customer can use: billing access with operator overrides applied. */
+  access: SubscriptionAccess;
+  /**
+   * Billing truth before overrides (Stripe, or operator internal access). The
+   * billing page renders from this, so a free plan or a suspension never hides
+   * a live Stripe subscription that is still charging the card.
+   */
+  billing: SubscriptionAccess;
+  overrides: LiveAccessOverrides;
+};
+
+export async function getSubscriptionAccessDetailed(
+  supabase: any,
+  userId: string | null | undefined,
+  authenticatedEmail?: string | null
+): Promise<DetailedSubscriptionAccess> {
+  const none: SubscriptionAccess = { active: false, plan: null, status: null, trialEndsAt: null, currentPeriodEnd: null };
+  const noOverrides: LiveAccessOverrides = { suspended: false, suspendedAt: null, grant: null };
   if (!userId) {
-    return { active: false, plan: null, status: null, trialEndsAt: null, currentPeriodEnd: null };
+    return { access: none, billing: none, overrides: noOverrides };
   }
 
   // Operators need to exercise the complete product without creating a fake
@@ -95,13 +117,14 @@ export async function getSubscriptionAccess(
   // operator session cannot create unmetered Anthropic or Google Ads spend.
   // The email must come from the authenticated server-side Supabase user.
   if (isModaafaOperator(authenticatedEmail)) {
-    return {
+    const internal: SubscriptionAccess = {
       active: true,
       plan: 'pro',
       status: 'internal',
       trialEndsAt: null,
       currentPeriodEnd: null,
     };
+    return { access: internal, billing: internal, overrides: noOverrides };
   }
 
   // Select by ENTITLEMENT, not by recency. Taking "the newest row" meant that
@@ -144,7 +167,7 @@ export async function getSubscriptionAccess(
       }
     : { active: false, plan: null, status: null, trialEndsAt: null, currentPeriodEnd: null };
 
-  return applyAccessOverrides(fromStripe, overrides);
+  return { access: applyAccessOverrides(fromStripe, overrides), billing: fromStripe, overrides };
 }
 
 /**

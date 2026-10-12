@@ -229,3 +229,26 @@ test('stuck executions count when older than 30 minutes', () => {
   const queue = buildAttentionQueue(buildCustomerProfiles(data, NOW), NOW);
   assert.equal(queue.find((item) => item.profile.id === 'u7')?.reason, 'execution_failed');
 });
+
+test('a 0 SAR invoice at trial start is not a payment', () => {
+  const data = sample();
+  data.invoices.push({ user_id: 'u6', status: 'paid', amount_sar: 0 });
+  const u6 = buildCustomerProfiles(data, NOW).find((p) => p.id === 'u6')!;
+  assert.equal(u6.milestones.paying, false);
+  assert.equal(u6.paidInvoices, 0);
+});
+
+test('yearly plans count a twelfth of the yearly price when Stripe has one', () => {
+  const data = sample();
+  data.subscriptions[1] = { ...data.subscriptions[1], billing_period: 'yearly' };
+  data.yearlyPrices = { pro: 24000 };
+  assert.equal(buildCustomerProfiles(data, NOW).find((p) => p.id === 'u7')!.mrr, 2000);
+});
+
+test('the funnel is cumulative: a trial without an audit still counts as past the audit step', () => {
+  const data = sample();
+  data.audits = data.audits.filter((audit) => audit.account_id !== 'a6');
+  const steps = computeFunnel(buildCustomerProfiles(data, NOW), 'all', NOW);
+  for (let i = 1; i < steps.length; i += 1) assert.ok(steps[i].reached <= steps[i - 1].reached);
+  assert.equal(steps.find((s) => s.stage === 'audited')!.reached, 3);
+});
