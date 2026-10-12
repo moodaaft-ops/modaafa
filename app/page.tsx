@@ -9,10 +9,10 @@ import { NONCE_HEADER } from '@/lib/security/csp';
 import { getAuditedAccountsForProof } from '@/lib/landing/proof-stats';
 import { cn, formatCurrency } from '@/lib/utils';
 import { CTA_TEXT, ownerConfig } from './landing/owner-config';
-import { PlanDemo } from './landing/plan-demo';
+import { HeroStage, RealScreen } from './landing/real-screens';
 import { SquareField } from './landing/square-field';
 import { StickyCta } from './landing/sticky-cta';
-import { DayLeaks, FlowDiagram, LimitVisual, MoveVisual, PlanScreen, type LimitKind, type MoveKind } from './landing/visuals';
+import { DayLeaks, FlowDiagram, LimitVisual, MoveVisual, type LimitKind, type MoveKind } from './landing/visuals';
 
 /*
  * Landing page, October 2026 rewrite.
@@ -183,26 +183,26 @@ export default async function HomePage({
       <StructuredData nonce={nonce} />
 
       {/* ------------------------------------------------------------------ Nav */}
-      <header className="sticky top-0 z-40 border-b border-brand-navy/10 bg-brand-paper/95 backdrop-blur-sm">
+      <header className="sticky top-0 z-40 border-b border-brand-paper/10 bg-brand-navy/95 text-brand-paper backdrop-blur-sm">
         <div className={cn(container, 'flex h-16 items-center justify-between gap-3')}>
           <Link href="/" className="flex-shrink-0" aria-label="مُضاعِف، الصفحة الرئيسية">
-            <Image src="/brand/modaafa-lockup-primary.svg" alt="مُضاعِف" width={136} height={32} priority className="h-8 w-auto" />
+            <Image src="/brand/modaafa-lockup-reversed.svg" alt="مُضاعِف" width={136} height={32} priority className="h-8 w-auto" />
           </Link>
 
-          <nav aria-label="أقسام الصفحة" className="hidden items-center gap-1 text-[14px] text-brand-slate md:flex">
-            <a href="#how" className="px-3 py-2 transition-colors hover:text-brand-navy">
+          <nav aria-label="أقسام الصفحة" className="hidden items-center gap-1 text-[14px] text-brand-paper/70 md:flex">
+            <a href="#how" className="px-3 py-2 transition-colors hover:text-brand-paper">
               كيف يشتغل
             </a>
-            <a href="#limits" className="px-3 py-2 transition-colors hover:text-brand-navy">
+            <a href="#limits" className="px-3 py-2 transition-colors hover:text-brand-paper">
               الحدود
             </a>
-            <a href="#ayman" className="px-3 py-2 transition-colors hover:text-brand-navy">
+            <a href="#ayman" className="px-3 py-2 transition-colors hover:text-brand-paper">
               مين وراه
             </a>
-            <a href="#pricing" className="px-3 py-2 transition-colors hover:text-brand-navy">
+            <a href="#pricing" className="px-3 py-2 transition-colors hover:text-brand-paper">
               الأسعار
             </a>
-            <a href="#faq" className="px-3 py-2 transition-colors hover:text-brand-navy">
+            <a href="#faq" className="px-3 py-2 transition-colors hover:text-brand-paper">
               أسئلة
             </a>
           </nav>
@@ -210,13 +210,13 @@ export default async function HomePage({
           <div className="flex items-center gap-1.5">
             <Link
               href="/login"
-              className="inline-flex h-10 items-center px-3 text-[14px] font-semibold text-brand-navy transition-colors hover:bg-brand-navy/5"
+              className="inline-flex h-10 items-center px-3 text-[14px] font-semibold text-brand-paper transition-colors hover:bg-brand-paper/10"
             >
               تسجيل الدخول
             </Link>
             <Link
               href="/login"
-              className="hidden h-10 items-center bg-brand-navy px-4 text-[14px] font-bold text-brand-paper transition-colors hover:bg-[#1c2540] sm:inline-flex"
+              className="hidden h-10 items-center bg-brand-paper px-4 text-[14px] font-bold text-brand-navy transition-colors hover:bg-white sm:inline-flex"
             >
               {CTA_TEXT}
             </Link>
@@ -225,31 +225,66 @@ export default async function HomePage({
       </header>
 
       {/* ----------------------------------------------------------------- Hero */}
-      <section className="relative isolate border-b border-brand-navy/10">
-        <SquareField tone="paper" id="sq-hero" fade="left" />
-        <div className={cn(container, 'grid items-end gap-10 pt-10 sm:pt-14 lg:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)] lg:gap-6 lg:pt-16')}>
-          <div className="pb-2 lg:pb-20">
+      {/* Founder-led and dark: Ayman's own line, with real cards from the
+          product (screenshots of the demo account) laid over his photo. */}
+      <section className="relative isolate bg-brand-navy text-brand-paper">
+        <SquareField tone="navy" id="sq-hero" fade="edges" />
+        <div className={cn(container, 'grid grid-cols-[minmax(0,1fr)] items-center gap-12 pb-16 pt-10 sm:pt-14 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)] lg:gap-14 lg:pb-24 lg:pt-16')}>
+          <div>
+            <p className="flex items-center gap-3 text-[14.5px] text-brand-paper/80">
+              <Image
+                src={ownerConfig.founderPhoto ?? '/landing/ayman-avatar-v4.jpg'}
+                alt=""
+                width={44}
+                height={44}
+                className="h-11 w-11 flex-shrink-0 object-cover"
+              />
+              <span>
+                <span className="font-bold text-brand-paper">أيمن أمين</span>، مؤسس وكالة مُضاعفة
+                {ownerConfig.founderHandle && (
+                  <>
+                    {' '}
+                    ·{' '}
+                    {ownerConfig.founderProfileUrl ? (
+                      <a
+                        href={ownerConfig.founderProfileUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        dir="ltr"
+                        className="font-numeric underline underline-offset-4"
+                      >
+                        {ownerConfig.founderHandle}
+                      </a>
+                    ) : (
+                      <span dir="ltr" className="font-numeric">
+                        {ownerConfig.founderHandle}
+                      </span>
+                    )}
+                  </>
+                )}
+              </span>
+            </p>
+
             {ownerConfig.googlePartner && (
-              <p className="inline-flex items-center gap-2 border border-brand-navy/25 px-3 py-1.5 text-[13px] font-semibold text-brand-navy">
+              <p className="mt-5 inline-flex items-center gap-2 border border-brand-paper/25 px-3 py-1.5 text-[13px] font-semibold">
                 <span className="h-2 w-2 bg-brand-signal" aria-hidden />
                 شريك قوقل المعتمد
               </p>
             )}
 
-            <h1 className="mt-5 font-display text-[2.45rem] font-semibold leading-[1.25] text-brand-navy sm:text-[3.4rem] lg:text-[4rem]">
-              كم تضيع من فلوسك في إعلانات قوقل؟
-              <br />
-              مُضاعِف يوريك وينها بالريال.
+            <h1 className="mt-6 font-display text-[2.3rem] font-semibold leading-[1.28] sm:text-[3rem] lg:text-[3.15rem]">
+              اللي أسويه لعملاء الوكالة كل صبح، صار يسويه مُضاعِف لحسابك.
             </h1>
 
-            <p className="mt-6 max-w-[34rem] text-[17px] leading-8 text-brand-navy/80 sm:text-[18px] sm:leading-9">
-              وما يتغير شي في حسابك إلا لما تضغط اعتمد.
+            <p className="mt-6 max-w-[36rem] text-[17px] leading-8 text-brand-paper/75 sm:text-[18.5px] sm:leading-9">
+              كل يوم أفتح حسابات عملائنا وأدور وين تنهدر الفلوس. حطيت هالقراءة في مُضاعِف: يقرا حسابك أنت في قوقل، ويقول لك وش توقف ووش
+              تزيد، وأنت اللي تعتمد.
             </p>
 
-            <div id="hero-cta" className="mt-7 flex flex-wrap items-center gap-3">
+            <div id="hero-cta" className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
               <Link
                 href="/login"
-                className="inline-flex h-14 items-center bg-brand-navy px-7 text-[16px] font-bold text-brand-paper transition-colors hover:bg-[#1c2540]"
+                className="inline-flex h-14 items-center justify-center bg-brand-paper px-7 text-[16px] font-bold text-brand-navy transition-colors hover:bg-white"
               >
                 {CTA_TEXT}
               </Link>
@@ -257,17 +292,17 @@ export default async function HomePage({
                 href={WHATSAPP_GENERAL}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex h-14 items-center gap-2 border border-brand-navy/25 px-5 text-[15px] font-semibold transition-colors hover:border-brand-navy"
+                className="inline-flex h-14 items-center justify-center gap-2 border border-brand-paper/35 px-6 text-[15px] font-semibold transition-colors hover:border-brand-paper"
               >
                 <MessageCircle className="h-[18px] w-[18px]" aria-hidden />
-                اسألني على الواتساب
+                كلّمني على الواتساب
               </a>
             </div>
-            <p className="mt-4 max-w-[34rem] text-[13.5px] leading-6 text-brand-slate">
-              الفحص الأول وإعادته مجاناً، وما يحتاج بطاقة. رقم الهدر تقدير من أرقام آخر 30 يوم في حسابك، مو وعد.
+            <p className="mt-4 max-w-[34rem] text-[13.5px] leading-6 text-brand-paper/55">
+              الفحص الأول وإعادته مجاناً، وما يحتاج بطاقة.
             </p>
             {auditedAccounts !== null && (
-              <p className="mt-3 flex items-center gap-2 text-[14px] font-semibold text-brand-navy">
+              <p className="mt-3 flex items-center gap-2 text-[14px] font-semibold">
                 <span className="h-2 w-2 flex-shrink-0 bg-brand-signal" aria-hidden />
                 <span>
                   فحصنا{' '}
@@ -280,63 +315,20 @@ export default async function HomePage({
             )}
           </div>
 
-          <div className="relative mx-auto w-full max-w-[30rem] lg:max-w-none">
-            <Image
-              src="/landing/ayman-portrait-v4.jpg"
-              alt="أيمن أمين، مؤسس مُضاعِف، بالثوب والشماغ وجواله في يده"
-              width={892}
-              height={1189}
-              priority
-              sizes="(min-width: 1024px) 40vw, (min-width: 640px) 30rem, 100vw"
-              className="block h-auto w-full"
-            />
-            {/* The photo stands in for the logo's big square: the yellow lamp
-                sits in its top-right corner and the small square touches its
-                bottom-left corner, as in the mark. Physical sides on purpose. */}
-            <span aria-hidden className="absolute right-0 top-0 h-5 w-5 bg-brand-signal motion-safe:animate-lamp sm:h-6 sm:w-6" />
-            <span aria-hidden className="absolute -bottom-14 -left-14 hidden h-14 w-14 bg-brand-navy lg:block" />
-            <div className="relative z-10 -mt-24 px-3 sm:px-6 lg:absolute lg:-bottom-14 lg:-start-28 lg:mt-0 lg:px-0">
-              <PlanDemo />
-            </div>
-          </div>
+          <HeroStage />
         </div>
       </section>
 
-      {/* ---------------------------------------------------- Who is behind it */}
-      <section aria-label="مين وراه" className="border-b border-brand-navy/10 bg-white">
-        <div className={cn(container, 'flex flex-wrap items-center gap-x-5 gap-y-3 py-5')}>
-          <Image
-            src={ownerConfig.founderPhoto ?? '/landing/ayman-avatar-v4.jpg'}
-            alt="أيمن أمين"
-            width={48}
-            height={48}
-            className="h-12 w-12 flex-shrink-0 object-cover"
-          />
-          <p className="min-w-0 flex-1 basis-[16rem] text-[14.5px] leading-7 text-brand-navy/85">
-            المنصة مبنية من فريق وكالة مُضاعفة، اللي يدير حسابات قوقل كل يوم.{' '}
-            <span className="font-bold text-brand-navy">أيمن أمين</span>
-            {ownerConfig.founderHandle && (
-              <>
-                {' '}
-                ·{' '}
-                {ownerConfig.founderProfileUrl ? (
-                  <a
-                    href={ownerConfig.founderProfileUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    dir="ltr"
-                    className="font-numeric underline underline-offset-4"
-                  >
-                    {ownerConfig.founderHandle}
-                  </a>
-                ) : (
-                  <span dir="ltr" className="font-numeric">
-                    {ownerConfig.founderHandle}
-                  </span>
-                )}
-              </>
-            )}
-          </p>
+      {/* ------------------------------------------------ The real screen */}
+      <section aria-label="شاشة المنصة" className="relative isolate border-b border-brand-navy/10 py-14 sm:py-24">
+        <div className={container}>
+          <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:items-end">
+            <h2 className="font-display text-[2rem] font-semibold leading-[1.3] sm:text-[2.6rem]">هذي الشاشة اللي تفتحها الصبح.</h2>
+            <p className="max-w-[30rem] text-[16px] leading-8 text-brand-slate lg:justify-self-end">
+              كل قرار معه سببه من أرقام حسابك، وزرين: اعتمد أو تجاهل. ولو اعتمدت وغيّرت رايك، تتراجع خلال 30 يوم.
+            </p>
+          </div>
+          <RealScreen />
         </div>
       </section>
 
@@ -397,20 +389,7 @@ export default async function HomePage({
             <FlowDiagram />
           </div>
 
-          {ownerConfig.reportSample ? (
-            <ReportSampleBlock sample={ownerConfig.reportSample} />
-          ) : (
-            <div className="mt-20 grid grid-cols-[minmax(0,1fr)] gap-10 lg:mt-24 lg:grid-cols-[minmax(0,0.62fr)_minmax(0,1.38fr)] lg:items-center lg:gap-14">
-              <div>
-                <h3 className="font-display text-[1.6rem] font-semibold leading-[1.35] sm:text-[1.9rem]">وهذي الشاشة اللي تفتحها الصبح</h3>
-                <p className="mt-4 max-w-[24rem] text-[15.5px] leading-8 text-brand-slate">
-                  خطة اليوم داخل المنصة. أهم قرار فوق، وكل قرار مكتوب جنبه وش يغيّر وليه. وإذا التتبع خربان، يطلع أول شي قبل أي
-                  قرار ميزانية.
-                </p>
-              </div>
-              <PlanScreen />
-            </div>
-          )}
+          {ownerConfig.reportSample && <ReportSampleBlock sample={ownerConfig.reportSample} />}
         </div>
       </section>
 
