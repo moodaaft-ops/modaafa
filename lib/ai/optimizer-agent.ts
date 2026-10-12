@@ -262,10 +262,10 @@ function sanitizeSnapshotForPrompt(snapshot: OptimizerSnapshot) {
   , 2);
 }
 
-export function sanitizePromptText(value: string) {
+export function sanitizePromptText(value: string, maxLength = 300) {
   return value
     .normalize('NFKC')
-    .slice(0, 300)
+    .slice(0, maxLength)
     // Remove invisible direction/zero-width controls that can split a command
     // visually while leaving it intelligible to the model.
     .replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/gi, '')
