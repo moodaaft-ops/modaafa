@@ -1,16 +1,17 @@
 -- =====================================================================
--- Scheduler for the stage follow-up emails — 2026-10-12
+-- Scheduler for the stage follow-up emails, 2026-10-12
 --
 -- DO NOT RUN until you are ready to switch the feature on. Order of
--- activation (nothing is sent before step 5):
---   1. run 20261012_user_stages.sql
---   2. set MESSAGES_UNSUBSCRIBE_SECRET in Vercel (any long random string)
---   3. read the texts (lib/stages/messages.ts) and set `approved: true` on the
+-- activation (nothing is sent before step 6):
+--   1. run 20261012_welcome_email.sql (the immediate-message PR, #81)
+--   2. run 20261013_user_stages.sql
+--   3. make sure UNSUBSCRIBE_SECRET (or CRON_SECRET) is set in Vercel, and
+--      the email provider keys the welcome email already needs
+--   4. read the texts (lib/stages/messages.ts) and set `approved: true` on the
 --      steps you accept (config/stage-followups.ts)
---   4. set STAGE_FOLLOWUPS_COHORT_START in config/stage-followups.ts to the
---      activation time, so everyone registered before it is excluded
---   5. set STAGE_FOLLOWUPS_ENABLED=true in Vercel and redeploy
---   6. run this file
+--   5. set STAGE_FOLLOWUPS_COHORT_START in config/stage-followups.ts to the
+--      activation time, so nobody registered before it is ever messaged
+--   6. set STAGE_FOLLOWUPS_ENABLED=true in Vercel and redeploy, then run this file
 --
 -- Check what would be sent without sending anything, at any time:
 --   GET https://ai.modaafa.com/api/cron/stage-followups?dry=1

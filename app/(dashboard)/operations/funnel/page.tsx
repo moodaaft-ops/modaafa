@@ -45,7 +45,7 @@ export default async function FunnelPage() {
       <div className="space-y-6 p-4 sm:p-6 lg:p-8">
         {loadError || !report ? (
           <Alert tone="danger">
-            تعذر قراءة الأرقام. غالباً ملف قاعدة البيانات الخاص بالمراحل (20261012_user_stages.sql) ما انشغّل بعد.
+            تعذر قراءة الأرقام. غالباً ملف قاعدة البيانات الخاص بالمراحل (20261013_user_stages.sql) ما انشغّل بعد.
           </Alert>
         ) : (
           <>

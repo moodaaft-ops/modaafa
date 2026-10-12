@@ -1,7 +1,7 @@
 /**
  * Shared vocabulary for user stages. These names are fixed across every
  * agent working on the platform: do not rename or add to them here without
- * changing the SQL in db/migrations/20261012_user_stages.sql as well.
+ * changing the SQL in db/migrations/20261013_user_stages.sql as well.
  */
 export const USER_STAGES = ['registered', 'connected', 'analysis_viewed', 'subscribed'] as const;
 export type UserStage = (typeof USER_STAGES)[number];
