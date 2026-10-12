@@ -56,6 +56,22 @@ export async function send(
   const rendered = def.renderEmail(user);
   if (!rendered) return { status: 'failed', reason: 'unsubscribe_secret_missing' };
 
+  if (def.dailyLimit) {
+    const since = new Date(new Date(now).getTime() - 24 * 60 * 60 * 1000).toISOString();
+    const { data: recent, error: recentError } = await supabase
+      .from('message_log')
+      .select('id')
+      .eq('user_id', user.id)
+      .eq('status', 'sent')
+      .gte('sent_at', since)
+      .limit(1)
+      .maybeSingle();
+    // If the log cannot be read the limit cannot be proven, so nothing goes
+    // out. A missed follow-up costs less than a double one.
+    if (recentError) return { status: 'failed', reason: 'daily_limit_lookup_failed' };
+    if (recent) return { status: 'skipped', reason: 'daily_limit' };
+  }
+
   const { data: claimed, error: claimError } = await supabase.rpc('claim_message', {
     p_user_id: user.id,
     p_channel: channel,
@@ -104,6 +120,8 @@ export async function send(
   }
 
   await finish({ status: 'sent', sent_at: now, provider_id: providerId ?? null, reason: null });
+
+  if (!def.sentEvent) return { status: 'sent', providerId };
 
   const { error: eventError } = await supabase.from('user_events').insert({
     user_id: user.id,
