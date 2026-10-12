@@ -44,13 +44,13 @@ export const metadata: Metadata = {
     type: 'website',
     locale: 'ar_SA',
     siteName: 'مُضاعِف',
-    images: [{ url: '/landing/og-landing-v2.png', width: 1200, height: 630, alt: 'أيمن أمين، مؤسس مُضاعِف' }],
+    images: [{ url: '/landing/og-landing-v3.png', width: 1200, height: 630, alt: 'أيمن أمين، مؤسس مُضاعِف' }],
   },
   twitter: {
     card: 'summary_large_image',
     title: 'مُضاعِف | كم تضيع من فلوسك في إعلانات قوقل؟ مُضاعِف يوريك وينها بالريال',
     description: 'خطة يومية لحساب إعلانات قوقل، وما يتغير شي إلا باعتمادك. الفحص الأول مجاني.',
-    images: ['/landing/og-landing-v2.png'],
+    images: ['/landing/og-landing-v3.png'],
   },
 };
 
@@ -280,10 +280,10 @@ export default async function HomePage({
 
           <div className="relative mx-auto w-full max-w-[30rem] lg:max-w-none">
             <Image
-              src="/landing/ayman-portrait-thobe.jpg"
+              src="/landing/ayman-portrait-v3.jpg"
               alt="أيمن أمين، مؤسس مُضاعِف، بالثوب والشماغ وجواله في يده"
-              width={896}
-              height={1200}
+              width={892}
+              height={1189}
               priority
               sizes="(min-width: 1024px) 40vw, (min-width: 640px) 30rem, 100vw"
               className="block h-auto w-full"
@@ -299,7 +299,7 @@ export default async function HomePage({
       <section aria-label="مين وراه" className="border-b border-brand-navy/10 bg-white">
         <div className={cn(container, 'flex flex-wrap items-center gap-x-5 gap-y-3 py-5')}>
           <Image
-            src={ownerConfig.founderPhoto ?? '/landing/ayman-avatar-thobe.jpg'}
+            src={ownerConfig.founderPhoto ?? '/landing/ayman-avatar-v3.jpg'}
             alt="أيمن أمين"
             width={48}
             height={48}
@@ -522,10 +522,10 @@ export default async function HomePage({
 
           <div className="order-1 lg:order-2">
             <Image
-              src="/landing/ayman-desk-thobe.jpg"
-              alt="أيمن أمين على مكتبه الصبح"
-              width={720}
-              height={900}
+              src="/landing/ayman-desk-v3.jpg"
+              alt="أيمن أمين على مكتبه الصبح، قدامه اللابتوب وفنجال قهوة وورقة معلّمة بالأصفر"
+              width={980}
+              height={1223}
               sizes="(min-width: 1024px) 34vw, 100vw"
               className="mx-auto block h-auto w-full max-w-[28rem] lg:max-w-none"
             />
@@ -860,7 +860,7 @@ export default async function HomePage({
         <div className={cn(container, 'flex flex-col gap-10 lg:flex-row lg:items-center lg:justify-between')}>
           <div className="flex items-start gap-5">
             <Image
-              src="/landing/ayman-avatar-thobe.jpg"
+              src="/landing/ayman-avatar-v3.jpg"
               alt=""
               width={80}
               height={80}
@@ -1015,7 +1015,7 @@ function StructuredData({ nonce }: { nonce?: string }) {
         name: 'أيمن أمين',
         alternateName: 'Ayman Amin',
         jobTitle: 'مؤسس وكالة مُضاعفة ومنصة مُضاعِف',
-        image: 'https://ai.modaafa.com/landing/ayman-portrait-thobe.jpg',
+        image: 'https://ai.modaafa.com/landing/ayman-portrait-v3.jpg',
         worksFor: { '@id': 'https://ai.modaafa.com/#org' },
       },
       {
