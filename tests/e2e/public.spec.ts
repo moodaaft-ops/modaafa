@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { CTA_TEXT } from '../../app/landing/owner-config';
 
 const publicPages = [
   { path: '/', heading: /قوقل|مُضاعِف|مضاعف/ },
@@ -34,7 +35,7 @@ test.describe('public launch surface', () => {
 
     await expect(page).toHaveTitle(/مُضاعِف|Modaafa/);
     await expect(page.getByRole('link', { name: 'تسجيل الدخول' }).first()).toHaveAttribute('href', '/login');
-    await expect(page.getByRole('link', { name: /افحص حسابك مجاناً/ }).first()).toHaveAttribute('href', '/login');
+    await expect(page.getByRole('link', { name: CTA_TEXT }).first()).toHaveAttribute('href', '/login');
   });
 
   // The landing page is always light (photo-led, brand palette), so the theme

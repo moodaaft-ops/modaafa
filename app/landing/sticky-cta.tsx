@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { MessageCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { CTA_TEXT } from './owner-config';
 
 /**
  * Phone-only bottom bar. It stays hidden while the hero's own buttons are on
@@ -39,7 +40,7 @@ export function StickyCta({ watchId, whatsappHref }: { watchId: string; whatsapp
           tabIndex={visible ? 0 : -1}
           className="flex h-12 flex-1 items-center justify-center bg-brand-navy text-[15px] font-bold text-brand-paper"
         >
-          افحص حسابك مجاناً
+          {CTA_TEXT}
         </Link>
         <a
           href={whatsappHref}

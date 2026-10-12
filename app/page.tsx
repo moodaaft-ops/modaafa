@@ -2,11 +2,13 @@ import type { Metadata } from 'next';
 import Image from 'next/image';
 import Link from 'next/link';
 import { headers } from 'next/headers';
-import { ChevronDown, MessageCircle } from 'lucide-react';
+import { ArrowLeft, ChevronDown, MessageCircle } from 'lucide-react';
 import { TikTokPixel } from '@/lib/analytics/tiktok-pixel';
 import { getPlanPriceAmounts, type PeriodKey, type PlanKey } from '@/lib/billing/stripe';
 import { NONCE_HEADER } from '@/lib/security/csp';
+import { getAuditedAccountsForProof } from '@/lib/landing/proof-stats';
 import { cn, formatCurrency } from '@/lib/utils';
+import { CTA_TEXT, ownerConfig } from './landing/owner-config';
 import { PlanDemo } from './landing/plan-demo';
 import { StickyCta } from './landing/sticky-cta';
 import { DayLeaks, FlowDiagram, LimitVisual, MoveVisual, PlanScreen, type LimitKind, type MoveKind } from './landing/visuals';
@@ -37,7 +39,7 @@ export const metadata: Metadata = {
     'مُضاعِف يقرا حساب إعلانات قوقل ويجهّز لك خطة يومية، كل قرار فيها معه سببه من أرقامك، وما يتغير شي في الحساب إلا باعتمادك. الفحص الأول مجاني وبدون بطاقة.',
   alternates: { canonical: '/' },
   openGraph: {
-    title: 'مُضاعِف | إعلاناتك في قوقل تصرف كل يوم. مين يقراها كل يوم؟',
+    title: 'مُضاعِف | كم تضيع من فلوسك في إعلانات قوقل؟ مُضاعِف يوريك وينها بالريال',
     description: 'خطة يومية لحساب إعلانات قوقل، كل قرار معه سببه، وما يتغير شي إلا باعتمادك. الفحص الأول مجاني.',
     type: 'website',
     locale: 'ar_SA',
@@ -46,7 +48,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'مُضاعِف | إعلاناتك في قوقل تصرف كل يوم. مين يقراها كل يوم؟',
+    title: 'مُضاعِف | كم تضيع من فلوسك في إعلانات قوقل؟ مُضاعِف يوريك وينها بالريال',
     description: 'خطة يومية لحساب إعلانات قوقل، وما يتغير شي إلا باعتمادك. الفحص الأول مجاني.',
     images: ['/landing/og-landing-v2.png'],
   },
@@ -66,6 +68,14 @@ const limits: Array<{ kind: LimitKind; value: string; unit: string; text: string
   { kind: 'cap', value: '50%', unit: 'سقف', text: 'أقصى زيادة لميزانية الحملة الوحدة خلال 24 ساعة، حتى لو اعتمدت أكثر من قرار.' },
   { kind: 'window', value: '30', unit: 'يوم', text: 'تقدر ترجع فيها أي تعديل اعتمدته، بضغطة.' },
   { kind: 'range', value: '20%', unit: 'حد', text: 'أقصى تحريك لهدف المزايدة في القرار الواحد.' },
+];
+
+const painLines = [
+  'أصرف على قوقل كل يوم، وما أدري وين راحت فلوسي.',
+  'تقرير الوكالة يجيني آخر الشهر، وما أفهم منه شي.',
+  'قوقل كل شوي يرسل لي توصية: زد الميزانية.',
+  'ما عندي وقت أفتح الحساب كل يوم، وأخاف أضغط شي يخرب الحملة.',
+  'أبي أحد يقول لي بالعربي وش أسوي، مو جداول.',
 ];
 
 const plans = [
@@ -93,7 +103,27 @@ const plans = [
   },
 ];
 
-const faq = [
+const faq: Array<{ q: string; a: string; whatsapp?: boolean; cta?: boolean }> = [
+  {
+    q: 'وش الفرق بينه وبين توصيات قوقل؟',
+    a: 'توصيات قوقل تجي من قوقل نفسه، وكثير منها يدفعك تزيد الميزانية. مُضاعِف يقرا أرقام حسابك أنت، ويكتب لكل قرار سببه، وأحياناً القرار إنك تنزّل أو توقف. وما يتغير شي إلا لما تضغط اعتمد.',
+    cta: true,
+  },
+  {
+    q: 'ما أفهم في الإعلانات، ينفع لي؟',
+    a: 'إيه. كل قرار مكتوب بالعربي ومعه سببه من أرقامك، وأنت تقرا وتقرر. وإذا قرار ما فهمته، اسأل المساعد داخل المنصة أو كلمني على الواتساب. وإذا ما اقتنعت لا تعتمده، ولا يتغير شي.',
+    cta: true,
+  },
+  {
+    q: 'ليش ما أسأل ChatGPT وخلاص؟',
+    a: 'تقدر تسأله، وللأسئلة العامة عن الإعلانات يكفي. لكن لو ما ربطته بحسابك فهو ما يشوف حملاتك ولا كلماتك ولا عبارات البحث اللي صرفت عليها، ويجاوبك على اللي تلصقه له بس. مُضاعِف يقرا الحساب نفسه، ويحط على التنفيذ سقف ميزانية وتراجع 30 يوم.',
+    cta: true,
+  },
+  {
+    q: 'ميزانيتي صغيرة، يستاهل؟',
+    a: `الفحص الأول مجاني، فتعرف قبل ما تدفع هل في هدر يستاهل. وصراحة، الاشتراك يبدأ من ${plans[0].monthlyPrice.toLocaleString('en-US')} ريال في الشهر، وإذا حسابك يصرف قليل ممكن ما يغطي نفسه. جرب الفحص أول، وحكم من أرقامك.`,
+    cta: true,
+  },
   {
     q: 'هل يعدّل في حسابي من نفسه؟',
     a: 'لا. كل تعديل يطلع لك كاقتراح فيه الحملة المستهدفة والقيمة الجديدة والسبب. ما يوصل قوقل شي قبل ما تضغط «اعتمد».',
@@ -144,6 +174,7 @@ export default async function HomePage({
   const period: PeriodKey = params?.period === 'yearly' ? 'yearly' : 'monthly';
   const priceAmounts = await getPlanPriceAmounts();
   const nonce = (await headers()).get(NONCE_HEADER) ?? undefined;
+  const auditedAccounts = await getAuditedAccountsForProof(ownerConfig.proofMinAccounts);
 
   return (
     <main className="min-h-screen w-full max-w-full overflow-x-clip bg-brand-paper text-brand-navy">
@@ -186,7 +217,7 @@ export default async function HomePage({
               href="/login"
               className="hidden h-10 items-center bg-brand-navy px-4 text-[14px] font-bold text-brand-paper transition-colors hover:bg-[#1c2540] sm:inline-flex"
             >
-              افحص حسابك مجاناً
+              {CTA_TEXT}
             </Link>
           </div>
         </div>
@@ -196,34 +227,29 @@ export default async function HomePage({
       <section className="border-b border-brand-navy/10">
         <div className={cn(container, 'grid items-end gap-10 pt-10 sm:pt-14 lg:grid-cols-[minmax(0,1.08fr)_minmax(0,0.92fr)] lg:gap-6 lg:pt-16')}>
           <div className="pb-2 lg:pb-20">
-            <p className="flex items-center gap-2.5 text-[14px] text-brand-slate">
-              <Image
-                src="/landing/ayman-avatar-thobe.jpg"
-                alt=""
-                width={36}
-                height={36}
-                className="h-9 w-9 object-cover"
-              />
-              بناه أيمن أمين، مؤسس وكالة مُضاعفة لإعلانات قوقل
-            </p>
+            {ownerConfig.googlePartner && (
+              <p className="inline-flex items-center gap-2 border border-brand-navy/25 px-3 py-1.5 text-[13px] font-semibold text-brand-navy">
+                <span className="h-2 w-2 bg-brand-signal" aria-hidden />
+                شريك قوقل المعتمد
+              </p>
+            )}
 
-            <h1 className="mt-6 font-display text-[2.45rem] font-semibold leading-[1.25] text-brand-navy sm:text-[3.4rem] lg:text-[4rem]">
-              إعلاناتك في قوقل تصرف كل يوم.
+            <h1 className="mt-5 font-display text-[2.45rem] font-semibold leading-[1.25] text-brand-navy sm:text-[3.4rem] lg:text-[4rem]">
+              كم تضيع من فلوسك في إعلانات قوقل؟
               <br />
-              مين يقراها كل يوم؟
+              مُضاعِف يوريك وينها بالريال.
             </h1>
 
             <p className="mt-6 max-w-[34rem] text-[17px] leading-8 text-brand-navy/80 sm:text-[18px] sm:leading-9">
-              مُضاعِف يقرا حساب إعلاناتك ويجهّز لك خطة اليوم: وش يتعدّل وليه، بأرقام حسابك أنت. وما يتغير شي في الحساب
-              إلا لما تضغط اعتمد.
+              وما يتغير شي في حسابك إلا لما تضغط اعتمد.
             </p>
 
-            <div id="hero-cta" className="mt-8 flex flex-wrap items-center gap-3">
+            <div id="hero-cta" className="mt-7 flex flex-wrap items-center gap-3">
               <Link
                 href="/login"
                 className="inline-flex h-14 items-center bg-brand-navy px-7 text-[16px] font-bold text-brand-paper transition-colors hover:bg-[#1c2540]"
               >
-                افحص حسابك مجاناً
+                {CTA_TEXT}
               </Link>
               <a
                 href={WHATSAPP_GENERAL}
@@ -235,7 +261,21 @@ export default async function HomePage({
                 اسألني على الواتساب
               </a>
             </div>
-            <p className="mt-4 text-[13.5px] text-brand-slate">الفحص الأول وإعادته مجاناً، وما يحتاج بطاقة.</p>
+            <p className="mt-4 max-w-[34rem] text-[13.5px] leading-6 text-brand-slate">
+              الفحص الأول وإعادته مجاناً، وما يحتاج بطاقة. رقم الهدر تقدير من أرقام آخر 30 يوم في حسابك، مو وعد.
+            </p>
+            {auditedAccounts !== null && (
+              <p className="mt-3 flex items-center gap-2 text-[14px] font-semibold text-brand-navy">
+                <span className="h-2 w-2 flex-shrink-0 bg-brand-signal" aria-hidden />
+                <span>
+                  فحصنا{' '}
+                  <span dir="ltr" className="font-numeric">
+                    {auditedAccounts.toLocaleString('en-US')}
+                  </span>{' '}
+                  حساب إعلانات قوقل لين الحين.
+                </span>
+              </p>
+            )}
           </div>
 
           <div className="relative mx-auto w-full max-w-[30rem] lg:max-w-none">
@@ -255,28 +295,88 @@ export default async function HomePage({
         </div>
       </section>
 
+      {/* ---------------------------------------------------- Who is behind it */}
+      <section aria-label="مين وراه" className="border-b border-brand-navy/10 bg-white">
+        <div className={cn(container, 'flex flex-wrap items-center gap-x-5 gap-y-3 py-5')}>
+          <Image
+            src={ownerConfig.founderPhoto ?? '/landing/ayman-avatar-thobe.jpg'}
+            alt="أيمن أمين"
+            width={48}
+            height={48}
+            className="h-12 w-12 flex-shrink-0 object-cover"
+          />
+          <p className="min-w-0 flex-1 basis-[16rem] text-[14.5px] leading-7 text-brand-navy/85">
+            المنصة مبنية من فريق وكالة مُضاعفة، اللي يدير حسابات قوقل كل يوم.{' '}
+            <span className="font-bold text-brand-navy">أيمن أمين</span>
+            {ownerConfig.founderHandle && (
+              <>
+                {' '}
+                ·{' '}
+                {ownerConfig.founderProfileUrl ? (
+                  <a
+                    href={ownerConfig.founderProfileUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    dir="ltr"
+                    className="font-numeric underline underline-offset-4"
+                  >
+                    {ownerConfig.founderHandle}
+                  </a>
+                ) : (
+                  <span dir="ltr" className="font-numeric">
+                    {ownerConfig.founderHandle}
+                  </span>
+                )}
+              </>
+            )}
+          </p>
+        </div>
+      </section>
+
+      {/* -------------------------------------------- Guarantee (hidden until set) */}
+      {ownerConfig.guarantee && (
+        <section aria-label="الضمان" className="border-b border-brand-navy/10 py-10 sm:py-14">
+          <div className={cn(container, 'grid gap-4 lg:grid-cols-[minmax(0,0.5fr)_minmax(0,1.5fr)] lg:gap-14')}>
+            <h2 className="font-display text-[1.6rem] font-semibold leading-[1.35] sm:text-[2rem]">الضمان</h2>
+            <div>
+              <p className="max-w-[40rem] text-[17px] leading-9 text-brand-navy/90">{ownerConfig.guarantee.text}</p>
+              <Link href="/refund" className="mt-4 inline-flex min-h-10 items-center text-[14.5px] font-semibold underline underline-offset-4">
+                اقرأ سياسة الاسترداد كاملة
+              </Link>
+            </div>
+          </div>
+        </section>
+      )}
+
       {/* ------------------------------------------------------- A normal day */}
       <section className="bg-brand-navy py-20 text-brand-paper sm:py-28">
         <div className={container}>
           <h2 className="max-w-[44rem] font-display text-[2rem] font-semibold leading-[1.3] sm:text-[2.75rem]">
             الإعلان ما يخرب فجأة. يخرب كل يوم شوي، وأنت مشغول بشغلك.
           </h2>
-          <p className="mt-5 max-w-[38rem] text-[16px] leading-8 text-brand-paper/70">
-            هذا يوم تمثيلي في حساب متجر عطور، ما أحد فتحه من أسبوع. ولا وحدة من هذي الأربع تطلّع لك تنبيه.
+          <ul className="mt-8 max-w-[40rem] divide-y divide-brand-paper/15 border-y border-brand-paper/15">
+            {painLines.map((line) => (
+              <li key={line} className="py-4 text-[17px] leading-8 sm:text-[18px]">
+                «{line}»
+              </li>
+            ))}
+          </ul>
+          <p className="mt-6 max-w-[38rem] text-[16px] leading-8 text-brand-paper/70">
+            وهذا يوم تمثيلي في حساب متجر عطور، ما أحد فتحه من أسبوع. ولا وحدة من الأربع تطلّع لك تنبيه.
           </p>
 
-          <div className="mt-14">
+          <div className="mt-12">
             <DayLeaks />
           </div>
 
           <p className="mt-12 max-w-[40rem] text-[20px] font-semibold leading-9 sm:text-[22px]">
-            كلها تنكشف بس لما أحد يقرا الأرقام. مُضاعِف يقراها كل يوم، ويقولك وش تسوي فيها.
+            كلها تنكشف بس لما أحد يقرا الأرقام. مُضاعِف يقراها كل يوم، وهو في صفك: يقولك وش تسوي، والقرار لك.
           </p>
         </div>
       </section>
 
       {/* -------------------------------------------------------- How it works */}
-      <section id="how" className="scroll-mt-16 py-20 sm:py-28">
+      <section id="how" className="scroll-mt-16 py-14 sm:py-28">
         <div className={container}>
           <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:items-end">
             <h2 className="font-display text-[2rem] font-semibold leading-[1.3] sm:text-[2.6rem]">من الربط إلى أول قرار في نفس اليوم</h2>
@@ -289,21 +389,25 @@ export default async function HomePage({
             <FlowDiagram />
           </div>
 
-          <div className="mt-20 grid grid-cols-[minmax(0,1fr)] gap-10 lg:mt-24 lg:grid-cols-[minmax(0,0.62fr)_minmax(0,1.38fr)] lg:items-center lg:gap-14">
-            <div>
-              <h3 className="font-display text-[1.6rem] font-semibold leading-[1.35] sm:text-[1.9rem]">وهذي الشاشة اللي تفتحها الصبح</h3>
-              <p className="mt-4 max-w-[24rem] text-[15.5px] leading-8 text-brand-slate">
-                خطة اليوم داخل المنصة. أهم قرار فوق، وكل قرار مكتوب جنبه وش يغيّر وليه. وإذا التتبع خربان، يطلع أول شي قبل أي
-                قرار ميزانية.
-              </p>
+          {ownerConfig.reportSample ? (
+            <ReportSampleBlock sample={ownerConfig.reportSample} />
+          ) : (
+            <div className="mt-20 grid grid-cols-[minmax(0,1fr)] gap-10 lg:mt-24 lg:grid-cols-[minmax(0,0.62fr)_minmax(0,1.38fr)] lg:items-center lg:gap-14">
+              <div>
+                <h3 className="font-display text-[1.6rem] font-semibold leading-[1.35] sm:text-[1.9rem]">وهذي الشاشة اللي تفتحها الصبح</h3>
+                <p className="mt-4 max-w-[24rem] text-[15.5px] leading-8 text-brand-slate">
+                  خطة اليوم داخل المنصة. أهم قرار فوق، وكل قرار مكتوب جنبه وش يغيّر وليه. وإذا التتبع خربان، يطلع أول شي قبل أي
+                  قرار ميزانية.
+                </p>
+              </div>
+              <PlanScreen />
             </div>
-            <PlanScreen />
-          </div>
+          )}
         </div>
       </section>
 
       {/* ------------------------------------------------- What it can change */}
-      <section className="border-y border-brand-navy/10 bg-white py-20 sm:py-28">
+      <section className="border-y border-brand-navy/10 bg-white py-14 sm:py-28">
         <div className={container}>
           <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:items-end">
             <h2 className="font-display text-[2rem] font-semibold leading-[1.3] sm:text-[2.6rem]">ست حركات بس. وكل وحدة لها شرط.</h2>
@@ -316,10 +420,10 @@ export default async function HomePage({
           <ul className="mt-12 grid gap-px border border-brand-navy/15 bg-brand-navy/15 md:grid-cols-2 lg:grid-cols-3">
             {moves.map((move) => (
               <li key={move.kind} className="flex flex-col bg-white">
-                <div className="h-[11.5rem] border-b border-brand-navy/10 bg-brand-paper/70 p-5">
+                <div className="hidden h-[11.5rem] border-b border-brand-navy/10 bg-brand-paper/70 p-5 md:block">
                   <MoveVisual kind={move.kind} />
                 </div>
-                <div className="p-6">
+                <div className="p-5 md:p-6">
                   <h3 className="text-[18px] font-bold leading-8">{move.name}</h3>
                   <p className="mt-1 text-[15px] leading-7 text-brand-slate">{move.rule}</p>
                 </div>
@@ -369,7 +473,7 @@ export default async function HomePage({
                   <span className="text-[13px] text-brand-paper/60">{limit.unit}</span>
                 </span>
                 <p className="text-[16px] leading-8">{limit.text}</p>
-                <div className="col-span-2 sm:col-span-1 sm:col-start-2">
+                <div className="col-span-2 hidden sm:col-span-1 sm:col-start-2 sm:block">
                   <LimitVisual kind={limit.kind} />
                 </div>
               </li>
@@ -379,7 +483,7 @@ export default async function HomePage({
       </section>
 
       {/* ------------------------------------------------------ Founder letter */}
-      <section id="ayman" className="scroll-mt-16 py-20 sm:py-28">
+      <section id="ayman" className="scroll-mt-16 py-14 sm:py-28">
         <div className={cn(container, 'grid items-center gap-12 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] lg:gap-20')}>
           <div className="order-2 lg:order-1">
             <h2 className="font-display text-[2rem] font-semibold leading-[1.3] sm:text-[2.6rem]">ليش بنيت مُضاعِف</h2>
@@ -429,10 +533,31 @@ export default async function HomePage({
         </div>
       </section>
 
+      {/* ------------------------------------- Testimonials (hidden until real) */}
+      {ownerConfig.testimonials.length > 0 && (
+        <section aria-label="تجارب عملاء" className="border-t border-brand-navy/10 py-14 sm:py-24">
+          <div className={container}>
+            <h2 className="font-display text-[1.8rem] font-semibold leading-[1.35] sm:text-[2.2rem]">وش صار عند غيرك</h2>
+            <ul className="mt-8 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {ownerConfig.testimonials.map((t) => (
+                <li key={`${t.name}-${t.business}`} className="flex flex-col border border-brand-navy/20 bg-white p-6">
+                  <p className="text-[17px] font-bold leading-8">
+                    من {t.before} إلى {t.after} خلال {t.period}
+                  </p>
+                  <p className="mt-auto pt-5 text-[14px] leading-6 text-brand-slate">
+                    <span className="font-semibold text-brand-navy">{t.name}</span>، {t.business}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </section>
+      )}
+
       {/* ---------------------------------------------------------------- Fit */}
       <section className="border-y border-brand-navy/10 bg-white py-16 sm:py-20">
         <div className={cn(container, 'grid gap-10 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] lg:gap-20')}>
-          <h2 className="font-display text-[1.8rem] font-semibold leading-[1.35] sm:text-[2.2rem]">قبل ما تسجّل، اعرف وش ما يسويه</h2>
+          <h2 className="font-display text-[1.8rem] font-semibold leading-[1.35] sm:text-[2.2rem]">لمين هو، ووش ما يسويه</h2>
           <ul className="space-y-5 text-[16px] leading-8">
             <li className="flex gap-3">
               <span className="mt-3 h-2 w-2 flex-shrink-0 bg-brand-navy" aria-hidden />
@@ -463,10 +588,41 @@ export default async function HomePage({
             </li>
           </ul>
         </div>
+
+        <div className={cn(container, 'mt-12 grid gap-4 md:grid-cols-2')}>
+          <article className="flex flex-col border border-brand-navy p-6 sm:p-8">
+            <h3 className="font-display text-[1.5rem] font-semibold leading-[1.35]">سوها بنفسك</h3>
+            <p className="mt-3 flex-1 text-[15.5px] leading-8 text-brand-navy/80">
+              تربط حسابك، وتقرا خطة اليوم، وتعتمد اللي يعجبك. المنصة تبدأ من {plans[0].monthlyPrice.toLocaleString('en-US')} ريال في الشهر،
+              والفحص الأول مجاني.
+            </p>
+            <Link
+              href="/login"
+              className="mt-6 inline-flex h-12 items-center justify-center bg-brand-navy px-6 text-[15px] font-bold text-brand-paper transition-colors hover:bg-[#1c2540]"
+            >
+              {CTA_TEXT}
+            </Link>
+          </article>
+          <article className="flex flex-col border border-brand-navy/20 bg-white p-6 sm:p-8">
+            <h3 className="font-display text-[1.5rem] font-semibold leading-[1.35]">خل فريق مُضاعفة يديرها عنك</h3>
+            <p className="mt-3 flex-1 text-[15.5px] leading-8 text-brand-navy/80">
+              إذا ما عندك وقت ولا تبي تدخل الحساب بنفسك، الفريق اللي بنى المنصة يدير إعلاناتك بدالك.
+            </p>
+            <a
+              href="https://modaafa.com/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-6 inline-flex h-12 items-center justify-center gap-2 border border-brand-navy px-6 text-[15px] font-bold text-brand-navy transition-colors hover:bg-brand-navy hover:text-brand-paper"
+            >
+              تعرّف على إدارة الفريق
+              <ArrowLeft className="h-4 w-4" aria-hidden />
+            </a>
+          </article>
+        </div>
       </section>
 
       {/* ------------------------------------------------------------ Pricing */}
-      <section id="pricing" className="scroll-mt-16 py-20 sm:py-28">
+      <section id="pricing" className="scroll-mt-16 py-14 sm:py-28">
         <div className={container}>
           <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
             <div>
@@ -495,18 +651,63 @@ export default async function HomePage({
 
           <div className="mt-10 flex flex-col gap-4 border border-brand-navy p-6 sm:flex-row sm:items-center sm:justify-between sm:p-8">
             <div>
-              <p className="text-[19px] font-bold">الفحص المجاني</p>
+              <p className="text-[19px] font-bold">{ownerConfig.freeAuditName ?? 'الفحص المجاني'}</p>
               <p className="mt-1 text-[15px] leading-7 text-brand-slate">
                 فحص كامل لحسابك وإعادة فحص وحدة بعده، وتقرا كل التوصيات. بدون بطاقة وبدون اشتراك.
               </p>
+              {ownerConfig.agencyAnalysisValueSar !== null && (
+                <p className="mt-2 text-[14.5px] leading-7 text-brand-navy">
+                  تحليل حساب بنفس العمق عند الوكالة قيمته{' '}
+                  <span dir="ltr" className="font-numeric font-semibold">
+                    {ownerConfig.agencyAnalysisValueSar.toLocaleString('en-US')}
+                  </span>{' '}
+                  ريال.
+                </p>
+              )}
             </div>
             <Link
               href="/login"
               className="inline-flex h-12 flex-shrink-0 items-center justify-center bg-brand-navy px-6 text-[15px] font-bold text-brand-paper transition-colors hover:bg-[#1c2540]"
             >
-              افحص حسابك مجاناً
+              {CTA_TEXT}
             </Link>
           </div>
+
+          {(ownerConfig.comparison.mediaBuyerSalarySar !== null || ownerConfig.comparison.agencyFeeSar !== null) && (
+            <dl className="mt-4 grid gap-px border border-brand-navy/15 bg-brand-navy/15 text-[15px] sm:grid-cols-3">
+              {ownerConfig.comparison.mediaBuyerSalarySar !== null && (
+                <div className="bg-white p-5">
+                  <dt className="text-brand-slate">راتب ميديا باير في الشهر</dt>
+                  <dd className="mt-1 font-bold">
+                    <span dir="ltr" className="font-numeric text-[1.5rem] font-medium">
+                      {ownerConfig.comparison.mediaBuyerSalarySar.toLocaleString('en-US')}
+                    </span>{' '}
+                    ريال
+                  </dd>
+                </div>
+              )}
+              {ownerConfig.comparison.agencyFeeSar !== null && (
+                <div className="bg-white p-5">
+                  <dt className="text-brand-slate">رسوم وكالة في الشهر</dt>
+                  <dd className="mt-1 font-bold">
+                    <span dir="ltr" className="font-numeric text-[1.5rem] font-medium">
+                      {ownerConfig.comparison.agencyFeeSar.toLocaleString('en-US')}
+                    </span>{' '}
+                    ريال
+                  </dd>
+                </div>
+              )}
+              <div className="bg-brand-navy p-5 text-brand-paper">
+                <dt className="text-brand-paper/70">مُضاعِف، من</dt>
+                <dd className="mt-1 font-bold">
+                  <span dir="ltr" className="font-numeric text-[1.5rem] font-medium">
+                    {plans[0].monthlyPrice.toLocaleString('en-US')}
+                  </span>{' '}
+                  ريال
+                </dd>
+              </div>
+            </dl>
+          )}
 
           <div className="mt-4 grid gap-4 md:grid-cols-3">
             {plans.map((plan) => {
@@ -538,6 +739,11 @@ export default async function HomePage({
                     )}
                   </div>
                   <p className={cn('mt-1 text-[14px] leading-6', dark ? 'text-brand-paper/65' : 'text-brand-slate')}>{plan.who}</p>
+                  {ownerConfig.planAudience[plan.id as 'starter' | 'growth' | 'pro'] && (
+                    <p className={cn('mt-2 text-[14px] font-semibold leading-6', dark ? 'text-brand-paper' : 'text-brand-navy')}>
+                      {ownerConfig.planAudience[plan.id as 'starter' | 'growth' | 'pro']}
+                    </p>
+                  )}
 
                   <div className="mt-6 flex min-h-12 items-baseline gap-2">
                     {displayAmount !== null ? (
@@ -600,7 +806,7 @@ export default async function HomePage({
       </section>
 
       {/* ---------------------------------------------------------------- FAQ */}
-      <section id="faq" className="scroll-mt-16 border-t border-brand-navy/10 bg-white py-20 sm:py-28">
+      <section id="faq" className="scroll-mt-16 border-t border-brand-navy/10 bg-white py-14 sm:py-28">
         <div className={cn(container, 'grid gap-10 lg:grid-cols-[minmax(0,0.7fr)_minmax(0,1.3fr)] lg:gap-20')}>
           <div>
             <h2 className="font-display text-[2rem] font-semibold leading-[1.3] sm:text-[2.6rem]">أسئلة قبل ما تربط حسابك</h2>
@@ -621,6 +827,14 @@ export default async function HomePage({
                 </summary>
                 <p className="max-w-[44rem] pb-6 text-[15.5px] leading-8 text-brand-navy/80">
                   {item.a}
+                  {item.cta && (
+                    <Link
+                      href="/login"
+                      className="mt-5 flex h-12 w-fit items-center bg-brand-navy px-6 text-[15px] font-bold text-brand-paper transition-colors hover:bg-[#1c2540]"
+                    >
+                      {CTA_TEXT}
+                    </Link>
+                  )}
                   {item.whatsapp && (
                     <>
                       {' '}
@@ -666,7 +880,7 @@ export default async function HomePage({
               href="/login"
               className="inline-flex h-14 items-center bg-brand-paper px-7 text-[16px] font-bold text-brand-navy transition-colors hover:bg-white"
             >
-              افحص حسابك مجاناً
+              {CTA_TEXT}
             </Link>
             <a
               href={WHATSAPP_GENERAL}
@@ -706,7 +920,11 @@ export default async function HomePage({
             <Link href="/data-deletion" className="inline-flex min-h-10 items-center px-2 transition-colors hover:text-brand-navy">
               حذف البيانات
             </Link>
-            <a href="mailto:moodaaft@gmail.com" className="inline-flex min-h-10 items-center px-2 transition-colors hover:text-brand-navy">
+            <a
+              href={ownerConfig.supportEmail ? `mailto:${ownerConfig.supportEmail}` : WHATSAPP_GENERAL}
+              {...(ownerConfig.supportEmail ? {} : { target: '_blank', rel: 'noopener noreferrer' })}
+              className="inline-flex min-h-10 items-center px-2 transition-colors hover:text-brand-navy"
+            >
               الدعم
             </a>
           </div>
@@ -715,6 +933,54 @@ export default async function HomePage({
 
       <StickyCta watchId="hero-cta" whatsappHref={WHATSAPP_GENERAL} />
     </main>
+  );
+}
+
+/** A real audit report, shown only when the owner supplies one in owner-config. */
+function ReportSampleBlock({ sample }: { sample: NonNullable<typeof ownerConfig.reportSample> }) {
+  return (
+    <div className="mt-14 grid gap-8 lg:mt-20 lg:grid-cols-[minmax(0,0.7fr)_minmax(0,1.3fr)] lg:items-center lg:gap-14">
+      <div>
+        <h3 className="font-display text-[1.6rem] font-semibold leading-[1.35] sm:text-[1.9rem]">
+          {ownerConfig.freeAuditName ?? 'الفحص المجاني'}: هذا تقرير حقيقي
+        </h3>
+        <p className="mt-4 max-w-[26rem] text-[15.5px] leading-8 text-brand-slate">
+          من حساب {sample.accountLabel}، كما طلع من الفحص بدون تعديل. تحت كل رقم نسبة تغطية البيانات، عشان تعرف كم من الحساب انقرا فعلاً.
+        </p>
+      </div>
+      <article className="border border-brand-navy bg-white p-5 sm:p-7">
+        <dl className="grid grid-cols-3 gap-px border border-brand-navy/15 bg-brand-navy/15 text-center">
+          <div className="bg-white p-3 sm:p-4">
+            <dt className="text-[12.5px] text-brand-slate">صحة الحساب</dt>
+            <dd dir="ltr" className="mt-1 font-numeric text-[1.6rem] font-medium leading-none sm:text-[2rem]">
+              {sample.healthScore}/100
+            </dd>
+          </div>
+          <div className="bg-white p-3 sm:p-4">
+            <dt className="text-[12.5px] text-brand-slate">هدر شهري متوقع</dt>
+            <dd className="mt-1 font-numeric text-[1.6rem] font-medium leading-none sm:text-[2rem]">
+              <span dir="ltr">{sample.estimatedWasteSar.toLocaleString('en-US')}</span>
+              <span className="ms-1 text-[13px] font-semibold">ريال</span>
+            </dd>
+          </div>
+          <div className="bg-white p-3 sm:p-4">
+            <dt className="text-[12.5px] text-brand-slate">تغطية البيانات</dt>
+            <dd dir="ltr" className="mt-1 font-numeric text-[1.6rem] font-medium leading-none sm:text-[2rem]">
+              {sample.coveragePct}%
+            </dd>
+          </div>
+        </dl>
+        {sample.findings.length > 0 && (
+          <ul className="mt-5 divide-y divide-brand-navy/10 border-t border-brand-navy/15">
+            {sample.findings.slice(0, 3).map((finding) => (
+              <li key={finding} className="py-3 text-[15px] leading-7">
+                {finding}
+              </li>
+            ))}
+          </ul>
+        )}
+      </article>
+    </div>
   );
 }
 
