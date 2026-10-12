@@ -228,6 +228,21 @@ UPDATE public.users u
    AND u.id = s.user_id
    AND public.stage_rank(u.stage) < s.rank;
 
+-- If the registration-before-value migration ran first, its grandfathered
+-- users have registered_at set and stage NULL ("the stage work owns
+-- back-filling it"). They are registered people, so they get 'registered'.
+-- People still mid-registration (registered_at NULL) keep a NULL stage.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'registered_at'
+  ) THEN
+    EXECUTE 'UPDATE public.users SET stage = ''registered'' WHERE stage IS NULL AND registered_at IS NOT NULL';
+  END IF;
+END;
+$$;
+
 -- Verification (run manually):
 --   -- users per current stage
 --   select stage, count(*) from public.users group by stage order by 1;
