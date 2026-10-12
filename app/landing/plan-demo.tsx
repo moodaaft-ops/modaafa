@@ -17,7 +17,10 @@ export function PlanDemo({ className }: { className?: string }) {
   return (
     <section
       aria-label="مثال على قرار من خطة اليوم"
-      className={cn('w-full max-w-[25rem] border border-brand-navy bg-white text-brand-navy', className)}
+      className={cn(
+        'w-full max-w-[25rem] border border-brand-navy bg-white text-brand-navy motion-safe:animate-fade-up motion-safe:[animation-delay:450ms]',
+        className
+      )}
     >
       <header className="flex items-center justify-between gap-3 border-b border-brand-navy/15 px-4 py-3">
         <div className="flex items-center gap-2">
@@ -25,7 +28,7 @@ export function PlanDemo({ className }: { className?: string }) {
             aria-hidden
             className={cn(
               'h-2.5 w-2.5 transition-colors duration-300',
-              state === 'pending' ? 'bg-brand-signal' : 'bg-brand-navy'
+              state === 'pending' ? 'bg-brand-signal motion-safe:animate-lamp' : 'bg-brand-navy'
             )}
           />
           <span className="text-[14px] font-bold">خطة اليوم</span>

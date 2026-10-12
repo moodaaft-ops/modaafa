@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import { headers } from 'next/headers';
-import { IBM_Plex_Mono, IBM_Plex_Sans_Arabic, Reem_Kufi } from 'next/font/google';
+import { IBM_Plex_Mono, IBM_Plex_Sans_Arabic, Readex_Pro } from 'next/font/google';
 import { NONCE_HEADER } from '@/lib/security/csp';
 import './globals.css';
 
@@ -15,9 +15,10 @@ const arabic = IBM_Plex_Sans_Arabic({
   fallback: ['system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
 });
 
-// Display face: square-leaning Kufi for headlines, matching the wordmark's
-// geometry. Used only for headings; body and controls stay on the UI face.
-const display = Reem_Kufi({
+// Display face: Readex Pro, a clean Kufi-derived sans that keeps the
+// wordmark's geometry without Reem Kufi's sharp joins (rejected by Ayman,
+// Oct 2026). Used only for marketing headlines; UI text stays on Plex.
+const display = Readex_Pro({
   subsets: ['arabic', 'latin'],
   weight: ['500', '600', '700'],
   variable: '--font-display',

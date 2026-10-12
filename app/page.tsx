@@ -9,6 +9,7 @@ import { NONCE_HEADER } from '@/lib/security/csp';
 import { cn, formatCurrency } from '@/lib/utils';
 import { PlanDemo } from './landing/plan-demo';
 import { StickyCta } from './landing/sticky-cta';
+import { DayLeaks, FlowDiagram, LimitVisual, MoveVisual, PlanScreen, type LimitKind, type MoveKind } from './landing/visuals';
 
 /*
  * Landing page, October 2026 rewrite.
@@ -41,56 +42,30 @@ export const metadata: Metadata = {
     type: 'website',
     locale: 'ar_SA',
     siteName: 'مُضاعِف',
-    images: [{ url: '/landing/og-landing.png', width: 1200, height: 630, alt: 'أيمن أمين، مؤسس مُضاعِف' }],
+    images: [{ url: '/landing/og-landing-v2.png', width: 1200, height: 630, alt: 'أيمن أمين، مؤسس مُضاعِف' }],
   },
   twitter: {
     card: 'summary_large_image',
     title: 'مُضاعِف | إعلاناتك في قوقل تصرف كل يوم. مين يقراها كل يوم؟',
     description: 'خطة يومية لحساب إعلانات قوقل، وما يتغير شي إلا باعتمادك. الفحص الأول مجاني.',
-    images: ['/landing/og-landing.png'],
+    images: ['/landing/og-landing-v2.png'],
   },
 };
 
-const day = [
-  { time: '9:10', period: 'ص', text: 'عبارة «عود مجاني» أخذت 14 ضغطة من الصبح. ولا طلب.' },
-  { time: '1:40', period: 'م', text: 'حملة الطلبات خلّصت ميزانيتها قبل الظهر، وسكتت وقت الذروة.' },
-  { time: '6:15', period: 'م', text: 'كلمة «عطورات» تصرف من أسبوعين، وما جابت تحويل واحد.' },
-  { time: '11:30', period: 'م', text: 'إعلان قوقل يقيّمه ضعيف، للحين يتناوب مع إعلانك الأقوى.' },
+const moves: Array<{ kind: MoveKind; name: string; rule: string }> = [
+  { kind: 'pause_keyword', name: 'يوقف كلمة تصرف بدون نتيجة', rule: 'بعد 7 أيام بيانات على الأقل، وأكثر من 20 ضغطة، وبدون تحويل.' },
+  { kind: 'add_keyword', name: 'يضيف عبارة بحث جابت طلبات', rule: 'إذا جابت تحويلين أو أكثر خلال 30 يوم وهي مو كلمة في حسابك.' },
+  { kind: 'add_negative', name: 'يمنع عبارة تاكل الميزانية', rule: '5 ضغطات أو أكثر بدون أي تحويل.' },
+  { kind: 'adjust_budget', name: 'يعدّل ميزانية حملة', rule: 'يرفع حتى 25% أو ينزّل حتى 30% في المرة، ولما الأرقام تبرر بس.' },
+  { kind: 'adjust_bid', name: 'يحرّك هدف المزايدة', rule: 'في حدود 20% زيادة أو نقص عن الهدف الحالي.' },
+  { kind: 'pause_ad', name: 'يوقف إعلان ضعيف', rule: 'لما قوقل يقيّمه ضعيف ونسبة ضغطه أقل من نص متوسط مجموعته.' },
 ];
 
-const steps = [
-  {
-    title: 'اربط حساب إعلانات قوقل',
-    body: 'تسجّل بحساب قوقل وتوافق من شاشة قوقل الرسمية. ما نطلب كلمة مرورك، والصلاحية لإعلانات قوقل بس.',
-  },
-  {
-    title: 'الفحص الأول مجاني',
-    body: 'يقرا آخر 30 يوم ويقولك وين تروح الفلوس، وهل تتبع التحويلات سليم أصلاً. بدون بطاقة.',
-  },
-  {
-    title: 'كل يوم تلقى خطة',
-    body: 'تفتح مُضاعِف وتلقى قرارات اليوم مرتبة حسب أثرها، وكل قرار معه سببه بالأرقام.',
-  },
-  {
-    title: 'أنت تعتمد، وهو ينفّذ',
-    body: 'تضغط اعتمد فيطبّق التعديل على حسابك في قوقل بنفسه. وإذا غيرت رأيك تتراجع خلال 30 يوم.',
-  },
-];
-
-const moves = [
-  { name: 'يوقف كلمة تصرف بدون نتيجة', rule: 'بعد 7 أيام بيانات على الأقل، وأكثر من 20 ضغطة، وبدون تحويل.' },
-  { name: 'يضيف عبارة بحث جابت طلبات', rule: 'إذا جابت تحويلين أو أكثر خلال 30 يوم وهي مو كلمة في حسابك.' },
-  { name: 'يمنع عبارة تاكل الميزانية', rule: '5 ضغطات أو أكثر بدون أي تحويل.' },
-  { name: 'يعدّل ميزانية حملة', rule: 'يرفع حتى 25% أو ينزّل حتى 30% في المرة، ولما الأرقام تبرر بس.' },
-  { name: 'يحرّك هدف المزايدة', rule: 'في حدود 20% زيادة أو نقص عن الهدف الحالي.' },
-  { name: 'يوقف إعلان ضعيف', rule: 'لما قوقل يقيّمه ضعيف ونسبة ضغطه أقل من نص متوسط مجموعته.' },
-];
-
-const limits = [
-  { value: '0', unit: 'تعديل', text: 'يوصل حسابك في قوقل بدون ما تضغط اعتمد.' },
-  { value: '50%', unit: 'سقف', text: 'أقصى زيادة لميزانية الحملة الوحدة خلال 24 ساعة، حتى لو اعتمدت أكثر من قرار.' },
-  { value: '30', unit: 'يوم', text: 'تقدر ترجع فيها أي تعديل اعتمدته، بضغطة.' },
-  { value: '20%', unit: 'حد', text: 'أقصى تحريك لهدف المزايدة في القرار الواحد.' },
+const limits: Array<{ kind: LimitKind; value: string; unit: string; text: string }> = [
+  { kind: 'gate', value: '0', unit: 'تعديل', text: 'يوصل حسابك في قوقل بدون ما تضغط اعتمد.' },
+  { kind: 'cap', value: '50%', unit: 'سقف', text: 'أقصى زيادة لميزانية الحملة الوحدة خلال 24 ساعة، حتى لو اعتمدت أكثر من قرار.' },
+  { kind: 'window', value: '30', unit: 'يوم', text: 'تقدر ترجع فيها أي تعديل اعتمدته، بضغطة.' },
+  { kind: 'range', value: '20%', unit: 'حد', text: 'أقصى تحريك لهدف المزايدة في القرار الواحد.' },
 ];
 
 const plans = [
@@ -223,7 +198,7 @@ export default async function HomePage({
           <div className="pb-2 lg:pb-20">
             <p className="flex items-center gap-2.5 text-[14px] text-brand-slate">
               <Image
-                src="/landing/ayman-amin-avatar.jpg"
+                src="/landing/ayman-avatar-thobe.jpg"
                 alt=""
                 width={36}
                 height={36}
@@ -232,7 +207,7 @@ export default async function HomePage({
               بناه أيمن أمين، مؤسس وكالة مُضاعفة لإعلانات قوقل
             </p>
 
-            <h1 className="mt-6 font-display text-[2.55rem] font-bold leading-[1.22] text-brand-navy sm:text-[3.4rem] lg:text-[4rem]">
+            <h1 className="mt-6 font-display text-[2.45rem] font-semibold leading-[1.25] text-brand-navy sm:text-[3.4rem] lg:text-[4rem]">
               إعلاناتك في قوقل تصرف كل يوم.
               <br />
               مين يقراها كل يوم؟
@@ -265,8 +240,8 @@ export default async function HomePage({
 
           <div className="relative mx-auto w-full max-w-[30rem] lg:max-w-none">
             <Image
-              src="/landing/ayman-amin-portrait.jpg"
-              alt="أيمن أمين، مؤسس مُضاعِف، ماسك جواله"
+              src="/landing/ayman-portrait-thobe.jpg"
+              alt="أيمن أمين، مؤسس مُضاعِف، بالثوب والشماغ وجواله في يده"
               width={896}
               height={1200}
               priority
@@ -283,29 +258,16 @@ export default async function HomePage({
       {/* ------------------------------------------------------- A normal day */}
       <section className="bg-brand-navy py-20 text-brand-paper sm:py-28">
         <div className={container}>
-          <h2 className="max-w-[44rem] font-display text-[2rem] font-bold leading-[1.3] sm:text-[2.75rem]">
+          <h2 className="max-w-[44rem] font-display text-[2rem] font-semibold leading-[1.3] sm:text-[2.75rem]">
             الإعلان ما يخرب فجأة. يخرب كل يوم شوي، وأنت مشغول بشغلك.
           </h2>
           <p className="mt-5 max-w-[38rem] text-[16px] leading-8 text-brand-paper/70">
-            هذا يوم تمثيلي في حساب متجر عطور، ما أحد فتحه من أسبوع. ولا وحدة من هذي تطلّع لك تنبيه.
+            هذا يوم تمثيلي في حساب متجر عطور، ما أحد فتحه من أسبوع. ولا وحدة من هذي الأربع تطلّع لك تنبيه.
           </p>
 
-          <ol className="mt-14 grid gap-px bg-brand-paper/15 sm:grid-cols-2 lg:grid-cols-4">
-            {day.map((item) => (
-              <li key={item.time} className="bg-brand-navy p-6 lg:pe-8">
-                <div className="flex items-center gap-2.5">
-                  <span className="h-2 w-2 bg-brand-signal" aria-hidden />
-                  <span className="text-[14px] text-brand-paper/60">
-                    <span dir="ltr" className="font-numeric text-[22px] font-medium text-brand-paper">
-                      {item.time}
-                    </span>{' '}
-                    {item.period}
-                  </span>
-                </div>
-                <p className="mt-4 text-[15.5px] leading-8">{item.text}</p>
-              </li>
-            ))}
-          </ol>
+          <div className="mt-14">
+            <DayLeaks />
+          </div>
 
           <p className="mt-12 max-w-[40rem] text-[20px] font-semibold leading-9 sm:text-[22px]">
             كلها تنكشف بس لما أحد يقرا الأرقام. مُضاعِف يقراها كل يوم، ويقولك وش تسوي فيها.
@@ -315,27 +277,28 @@ export default async function HomePage({
 
       {/* -------------------------------------------------------- How it works */}
       <section id="how" className="scroll-mt-16 py-20 sm:py-28">
-        <div className={cn(container, 'grid gap-12 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] lg:gap-20')}>
-          <div className="lg:sticky lg:top-28 lg:self-start">
-            <h2 className="font-display text-[2rem] font-bold leading-[1.3] sm:text-[2.6rem]">من الربط إلى أول قرار في نفس اليوم</h2>
-            <p className="mt-5 max-w-[26rem] text-[16px] leading-8 text-brand-slate">
+        <div className={container}>
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:items-end">
+            <h2 className="font-display text-[2rem] font-semibold leading-[1.3] sm:text-[2.6rem]">من الربط إلى أول قرار في نفس اليوم</h2>
+            <p className="max-w-[28rem] text-[16px] leading-8 text-brand-slate lg:justify-self-end">
               ما تحتاج تفهم في الإعلانات عشان تستخدمه. تحتاج تقرا السبب وتقرر.
             </p>
           </div>
 
-          <ol className="border-t border-brand-navy">
-            {steps.map((step, index) => (
-              <li key={step.title} className="grid grid-cols-[3.5rem_minmax(0,1fr)] gap-4 border-b border-brand-navy/15 py-7 sm:grid-cols-[5rem_minmax(0,1fr)]">
-                <span className="font-numeric text-[2rem] font-medium leading-none text-brand-navy/30 sm:text-[2.6rem]" aria-hidden>
-                  {index + 1}
-                </span>
-                <div>
-                  <h3 className="text-[19px] font-bold leading-8">{step.title}</h3>
-                  <p className="mt-1.5 max-w-[32rem] text-[15.5px] leading-8 text-brand-slate">{step.body}</p>
-                </div>
-              </li>
-            ))}
-          </ol>
+          <div className="mt-14 sm:mt-16">
+            <FlowDiagram />
+          </div>
+
+          <div className="mt-20 grid grid-cols-[minmax(0,1fr)] gap-10 lg:mt-24 lg:grid-cols-[minmax(0,0.62fr)_minmax(0,1.38fr)] lg:items-center lg:gap-14">
+            <div>
+              <h3 className="font-display text-[1.6rem] font-semibold leading-[1.35] sm:text-[1.9rem]">وهذي الشاشة اللي تفتحها الصبح</h3>
+              <p className="mt-4 max-w-[24rem] text-[15.5px] leading-8 text-brand-slate">
+                خطة اليوم داخل المنصة. أهم قرار فوق، وكل قرار مكتوب جنبه وش يغيّر وليه. وإذا التتبع خربان، يطلع أول شي قبل أي
+                قرار ميزانية.
+              </p>
+            </div>
+            <PlanScreen />
+          </div>
         </div>
       </section>
 
@@ -343,27 +306,27 @@ export default async function HomePage({
       <section className="border-y border-brand-navy/10 bg-white py-20 sm:py-28">
         <div className={container}>
           <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:items-end">
-            <h2 className="font-display text-[2rem] font-bold leading-[1.3] sm:text-[2.6rem]">ست حركات بس. وكل وحدة لها شرط.</h2>
+            <h2 className="font-display text-[2rem] font-semibold leading-[1.3] sm:text-[2.6rem]">ست حركات بس. وكل وحدة لها شرط.</h2>
             <p className="max-w-[30rem] text-[16px] leading-8 text-brand-slate lg:justify-self-end">
               ما يجرّب في حسابك ولا يقلب الحملات. هذي كل التعديلات اللي يقدر يقترحها، والشرط اللي لازم تحققه الأرقام قبل ما
               يقترح أي وحدة.
             </p>
           </div>
 
-          <dl className="mt-12 grid border-t border-brand-navy md:grid-cols-2">
-            {moves.map((move, index) => (
-              <div
-                key={move.name}
-                className={cn(
-                  'border-b border-brand-navy/15 py-6 md:pe-10',
-                  index % 2 === 1 && 'md:border-s md:ps-10 md:pe-0'
-                )}
-              >
-                <dt className="text-[18px] font-bold leading-8">{move.name}</dt>
-                <dd className="mt-1 text-[15px] leading-7 text-brand-slate">{move.rule}</dd>
-              </div>
+          <ul className="mt-12 grid gap-px border border-brand-navy/15 bg-brand-navy/15 md:grid-cols-2 lg:grid-cols-3">
+            {moves.map((move) => (
+              <li key={move.kind} className="flex flex-col bg-white">
+                <div className="h-[11.5rem] border-b border-brand-navy/10 bg-brand-paper/70 p-5">
+                  <MoveVisual kind={move.kind} />
+                </div>
+                <div className="p-6">
+                  <h3 className="text-[18px] font-bold leading-8">{move.name}</h3>
+                  <p className="mt-1 text-[15px] leading-7 text-brand-slate">{move.rule}</p>
+                </div>
+              </li>
             ))}
-          </dl>
+          </ul>
+          <p className="mt-3 text-[12.5px] text-brand-slate">الرسوم توضيحية بأرقام تمثيلية. الشروط تحتها هي المكتوبة في النظام.</p>
 
           <div className="mt-12 grid gap-6 md:grid-cols-2">
             <p className="border-s-2 border-brand-signal ps-5 text-[15.5px] leading-8">
@@ -382,7 +345,7 @@ export default async function HomePage({
       <section id="limits" className="scroll-mt-16 bg-brand-navy py-20 text-brand-paper sm:py-28">
         <div className={cn(container, 'grid gap-12 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:gap-20')}>
           <div>
-            <h2 className="font-display text-[2rem] font-bold leading-[1.3] sm:text-[2.6rem]">القرار بيدك، والحدود مكتوبة في النظام نفسه.</h2>
+            <h2 className="font-display text-[2rem] font-semibold leading-[1.3] sm:text-[2.6rem]">القرار بيدك، والحدود مكتوبة في النظام نفسه.</h2>
             <p className="mt-5 max-w-[28rem] text-[16px] leading-8 text-brand-paper/70">
               حتى لو اعتمدت كل شي بدون ما تقرا، فيه حدود ما يتعداها. حطيناها لأن أكثر شي يخوّف في أدوات الإعلانات هو الضغطة اللي
               تقلب الحساب.
@@ -396,8 +359,8 @@ export default async function HomePage({
           <ul className="border-t border-brand-paper/30">
             {limits.map((limit) => (
               <li
-                key={limit.text}
-                className="grid grid-cols-[6.5rem_minmax(0,1fr)] items-baseline gap-5 border-b border-brand-paper/15 py-6 sm:grid-cols-[8.5rem_minmax(0,1fr)]"
+                key={limit.kind}
+                className="grid grid-cols-[6.5rem_minmax(0,1fr)] gap-x-5 gap-y-5 border-b border-brand-paper/15 py-7 sm:grid-cols-[8.5rem_minmax(0,1fr)]"
               >
                 <span className="flex items-baseline gap-1.5">
                   <span dir="ltr" className="font-numeric text-[2.1rem] font-medium leading-none sm:text-[2.6rem]">
@@ -405,7 +368,10 @@ export default async function HomePage({
                   </span>
                   <span className="text-[13px] text-brand-paper/60">{limit.unit}</span>
                 </span>
-                <span className="text-[16px] leading-8">{limit.text}</span>
+                <p className="text-[16px] leading-8">{limit.text}</p>
+                <div className="col-span-2 sm:col-span-1 sm:col-start-2">
+                  <LimitVisual kind={limit.kind} />
+                </div>
               </li>
             ))}
           </ul>
@@ -416,7 +382,7 @@ export default async function HomePage({
       <section id="ayman" className="scroll-mt-16 py-20 sm:py-28">
         <div className={cn(container, 'grid items-center gap-12 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] lg:gap-20')}>
           <div className="order-2 lg:order-1">
-            <h2 className="font-display text-[2rem] font-bold leading-[1.3] sm:text-[2.6rem]">ليش بنيت مُضاعِف</h2>
+            <h2 className="font-display text-[2rem] font-semibold leading-[1.3] sm:text-[2.6rem]">ليش بنيت مُضاعِف</h2>
             <div className="mt-8 max-w-[36rem] space-y-5 text-[17px] leading-9 text-brand-navy/85">
               <p>
                 أنا أيمن أمين. أدير إعلانات قوقل لعملاء وكالة مُضاعفة: عيادة أسنان، ومعرض مراتب، وشركة أبواب، ومسابح. وقبل مُضاعفة
@@ -435,7 +401,7 @@ export default async function HomePage({
 
             <div className="mt-10 flex flex-wrap items-center gap-x-6 gap-y-4">
               <div>
-                <p className="font-display text-[1.6rem] font-bold leading-none">أيمن أمين</p>
+                <p className="font-display text-[1.6rem] font-semibold leading-none">أيمن أمين</p>
                 <p className="mt-2 text-[13.5px] text-brand-slate">مؤسس وكالة مُضاعفة ومنصة مُضاعِف</p>
               </div>
               <a
@@ -452,12 +418,12 @@ export default async function HomePage({
 
           <div className="order-1 lg:order-2">
             <Image
-              src="/landing/ayman-amin-letter.jpg"
-              alt="أيمن أمين"
+              src="/landing/ayman-desk-thobe.jpg"
+              alt="أيمن أمين على مكتبه الصبح"
               width={720}
               height={900}
               sizes="(min-width: 1024px) 34vw, 100vw"
-              className="mx-auto block h-auto w-full max-w-[28rem] grayscale lg:max-w-none"
+              className="mx-auto block h-auto w-full max-w-[28rem] lg:max-w-none"
             />
           </div>
         </div>
@@ -466,7 +432,7 @@ export default async function HomePage({
       {/* ---------------------------------------------------------------- Fit */}
       <section className="border-y border-brand-navy/10 bg-white py-16 sm:py-20">
         <div className={cn(container, 'grid gap-10 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] lg:gap-20')}>
-          <h2 className="font-display text-[1.8rem] font-bold leading-[1.35] sm:text-[2.2rem]">قبل ما تسجّل، اعرف وش ما يسويه</h2>
+          <h2 className="font-display text-[1.8rem] font-semibold leading-[1.35] sm:text-[2.2rem]">قبل ما تسجّل، اعرف وش ما يسويه</h2>
           <ul className="space-y-5 text-[16px] leading-8">
             <li className="flex gap-3">
               <span className="mt-3 h-2 w-2 flex-shrink-0 bg-brand-navy" aria-hidden />
@@ -504,7 +470,7 @@ export default async function HomePage({
         <div className={container}>
           <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
             <div>
-              <h2 className="font-display text-[2rem] font-bold leading-[1.3] sm:text-[2.6rem]">ابدأ بالفحص. والاشتراك لما تبي تنفّذ.</h2>
+              <h2 className="font-display text-[2rem] font-semibold leading-[1.3] sm:text-[2.6rem]">ابدأ بالفحص. والاشتراك لما تبي تنفّذ.</h2>
               <p className="mt-4 max-w-[36rem] text-[15.5px] leading-8 text-brand-slate">
                 الأسعار بالريال قبل الضريبة. واللي ما جرب قبل ياخذ 14 يوم تجربة لما يبدأ التنفيذ، ويلغي قبل أول خصم.
               </p>
@@ -637,7 +603,7 @@ export default async function HomePage({
       <section id="faq" className="scroll-mt-16 border-t border-brand-navy/10 bg-white py-20 sm:py-28">
         <div className={cn(container, 'grid gap-10 lg:grid-cols-[minmax(0,0.7fr)_minmax(0,1.3fr)] lg:gap-20')}>
           <div>
-            <h2 className="font-display text-[2rem] font-bold leading-[1.3] sm:text-[2.6rem]">أسئلة قبل ما تربط حسابك</h2>
+            <h2 className="font-display text-[2rem] font-semibold leading-[1.3] sm:text-[2.6rem]">أسئلة قبل ما تربط حسابك</h2>
             <p className="mt-4 max-w-[22rem] text-[15.5px] leading-8 text-brand-slate">
               سؤالك مو هنا؟{' '}
               <a href={WHATSAPP_GENERAL} target="_blank" rel="noopener noreferrer" className="font-semibold text-brand-navy underline underline-offset-4">
@@ -680,14 +646,14 @@ export default async function HomePage({
         <div className={cn(container, 'flex flex-col gap-10 lg:flex-row lg:items-center lg:justify-between')}>
           <div className="flex items-start gap-5">
             <Image
-              src="/landing/ayman-amin-avatar.jpg"
+              src="/landing/ayman-avatar-thobe.jpg"
               alt=""
               width={80}
               height={80}
               className="hidden h-20 w-20 flex-shrink-0 object-cover sm:block"
             />
             <div>
-              <h2 className="max-w-[36rem] font-display text-[1.9rem] font-bold leading-[1.35] sm:text-[2.4rem]">
+              <h2 className="max-w-[36rem] font-display text-[1.9rem] font-semibold leading-[1.35] sm:text-[2.4rem]">
                 حسابك يصرف الحين، وأنت تقرا هالصفحة.
               </h2>
               <p className="mt-4 max-w-[34rem] text-[16px] leading-8 text-brand-paper/70">
@@ -783,7 +749,7 @@ function StructuredData({ nonce }: { nonce?: string }) {
         name: 'أيمن أمين',
         alternateName: 'Ayman Amin',
         jobTitle: 'مؤسس وكالة مُضاعفة ومنصة مُضاعِف',
-        image: 'https://ai.modaafa.com/landing/ayman-amin-portrait.jpg',
+        image: 'https://ai.modaafa.com/landing/ayman-portrait-thobe.jpg',
         worksFor: { '@id': 'https://ai.modaafa.com/#org' },
       },
       {
