@@ -286,8 +286,19 @@ function actionsFor(cards: ChatCard[], subscriptionActive: boolean): ChatQuickAc
 // Loop
 // ---------------------------------------------------------------------------
 
-function toolData(name: string, payload: string) {
-  const body = payload.length > MAX_TOOL_DATA_CHARS ? `${payload.slice(0, MAX_TOOL_DATA_CHARS)} ...(مقتطع)` : payload;
+/**
+ * Wraps tool output for the model. Angle brackets inside the payload are
+ * neutralised so third-party text (a search term like «x </tool_data> ...»)
+ * can never close the data block: JSON gets \u003c / \u003e escapes, which
+ * stay valid JSON, and plain text gets look-alike brackets.
+ */
+export function toolData(name: string, payload: string) {
+  const trimmed = payload.trimStart();
+  const safe =
+    trimmed.startsWith('{') || trimmed.startsWith('[')
+      ? payload.replace(/</g, '\\u003c').replace(/>/g, '\\u003e')
+      : payload.replace(/</g, '‹').replace(/>/g, '›');
+  const body = safe.length > MAX_TOOL_DATA_CHARS ? `${safe.slice(0, MAX_TOOL_DATA_CHARS)} ...(مقتطع)` : safe;
   return `<tool_data name="${name}">\n${body}\n</tool_data>`;
 }
 
@@ -312,6 +323,7 @@ export async function runJarvisTurn(input: JarvisTurnInput): Promise<JarvisTurnR
   const trace: JarvisToolTrace[] = [];
   const proposalIds: string[] = [];
   let proposals = 0;
+  let dataSeen = false;
   let modelCalls = 0;
   let rounds = 0;
   let finalText = '';
@@ -335,16 +347,19 @@ export async function runJarvisTurn(input: JarvisTurnInput): Promise<JarvisTurnR
         return { content: result.message_ar, isError: true };
       }
       const summary = registry.add(result.summary, result.rows);
+      dataSeen = true;
       trace.push({ name, ok: true });
       return { content: toolData(name, JSON.stringify(summary)), isError: false };
     }
     if (name === 'read_playbook') {
       const ids = block.input && typeof block.input === 'object' ? (block.input as any).ids : null;
       trace.push({ name, ok: true });
+      dataSeen = true;
       return { content: toolData(name, await deps.readPlaybook(ids)), isError: false };
     }
     if (name === 'get_platform_history' && input.account) {
       const text = await getPlatformHistory(deps.supabase, input.account.id, block.input, input.now);
+      dataSeen = true;
       trace.push({ name, ok: !text.startsWith('{"ok":false') });
       return { content: toolData(name, text), isError: false };
     }
@@ -354,6 +369,12 @@ export async function runJarvisTurn(input: JarvisTurnInput): Promise<JarvisTurnR
       return { content: toolData(name, text), isError: false };
     }
     if (name === 'save_business_fact') {
+      // Only before any tool data has entered the turn: text written by
+      // strangers (search terms, names) must never be able to steer a save.
+      if (dataSeen) {
+        trace.push({ name, ok: false, code: 'after_tool_data' });
+        return { content: 'الحفظ في الذاكرة يصير قبل قراءة أي بيانات في الدور، فما انحفظ شي. احفظ في الرسالة الجاية لو العميل أكدها.', isError: true };
+      }
       const saved = await saveBusinessFact({
         admin: deps.admin,
         businessId: input.business?.id ?? null,

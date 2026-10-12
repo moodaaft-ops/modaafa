@@ -35,6 +35,7 @@ export type PrepareOperation = (typeof PREPARE_OPERATIONS)[number];
 export const MAX_PROPOSALS_PER_TURN = 3;
 export const MAX_OPEN_CHAT_PROPOSALS = 10;
 const SAME_TARGET_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const REPROPOSE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 
 export const PREPARE_CHANGE_TOOL = {
   name: 'prepare_change',
@@ -173,7 +174,8 @@ function resolveNegatives(ctx: PrepareContext, rows: EvidenceRow[], choices: Rec
         fail('not_waste', `العبارة ${row.ref} جابت تحويل أو مو من العبارات الضايعة، ما تنمنع.`);
       }
       items.push({
-        text: String(row.data.term ?? ''),
+        // The exact query Google saw; the sanitized `term` is only for the model.
+        text: String(row.data.term_raw ?? row.data.term ?? ''),
         campaign: String(row.data.campaign_resource_name ?? ''),
         campaignName: String(row.data.campaign_name ?? ''),
         cost: numberOf(row.data.cost),
@@ -223,20 +225,18 @@ function resolveNegatives(ctx: PrepareContext, rows: EvidenceRow[], choices: Rec
   const texts = items.map((item) => item.text);
   const campaignName = items[0].campaignName;
   const cost = items.reduce((sum, item) => sum + item.cost, 0);
+  const periodDays = Math.max(1, numberOf(rows[0].data.period_days) || 30);
   const matchLabel = matchType === 'EXACT' ? 'مطابقة تامة' : 'مطابقة عبارة';
 
   const single = texts.length === 1;
-  const payload = single
-    ? {
-        operation: 'add_negative_keyword' as const,
-        target_id: campaign,
-        params: { campaign_resource: campaign, keyword_text: texts[0], match_type: matchType },
-      }
-    : {
-        operation: 'add_negative_keywords_batch' as const,
-        target_id: campaign,
-        params: { campaign_resource: campaign, match_type: matchType, keywords: texts },
-      };
+  // Always a batch, even for one term: the batch preflight drops any negative
+  // that would block a converting term or an enabled keyword, and validates
+  // length. The single add_negative_keyword path has neither check.
+  const payload = {
+    operation: 'add_negative_keywords_batch' as const,
+    target_id: campaign,
+    params: { campaign_resource: campaign, match_type: matchType, keywords: texts },
+  };
 
   const warnings: string[] = [];
   if (matchType === 'PHRASE') {
@@ -253,7 +253,8 @@ function resolveNegatives(ctx: PrepareContext, rows: EvidenceRow[], choices: Rec
         ? `${money(item.cost, ctx.currencyCode)} صرف بدون تحويل في عبارات فيها الكلمة`
         : `${money(item.cost, ctx.currencyCode)} على ${item.clicks} نقرة بدون تحويل`,
     })),
-    monthlyAmount: cost,
+    // Spend over the read window, scaled to 30 days.
+    monthlyAmount: (cost * 30) / periodDays,
     // V1 "small" is exactly what autopilot may run: one EXACT negative for one wasted term.
     size: single && matchType === 'EXACT' && !anyWord ? 'small' : 'large',
     sameTargetKey: null,
@@ -300,7 +301,7 @@ function resolve(ctx: PrepareContext, operation: PrepareOperation, rows: Evidenc
           target_id: String(row.data.ad_group_resource_name ?? ''),
           params: {
             ad_group_resource: String(row.data.ad_group_resource_name ?? ''),
-            keyword_text: String(row.data.term ?? ''),
+            keyword_text: String(row.data.term_raw ?? row.data.term ?? ''),
             match_type: matchType,
             source: {
               clicks: numberOf(row.data.clicks),
@@ -328,6 +329,7 @@ function resolve(ctx: PrepareContext, operation: PrepareOperation, rows: Evidenc
 
     case 'pause_ad': {
       const row = one(rows, 'ad');
+      if (row.data.status !== undefined && row.data.status !== 'ENABLED') fail('not_enabled', 'الإعلان مو شغال أصلاً.');
       return {
         payload: { operation: 'pause_ad', target_id: String(row.data.ad_group_ad_resource_name ?? ''), params: {} },
         targetLabel: String(row.data.ad_group_name ?? ''),
@@ -508,13 +510,20 @@ export async function prepareChange(input: unknown, ctx: PrepareContext): Promis
       if (existing.status === 'pending' || existing.status === 'approved') {
         return {
           ok: true,
-          card: cardFor(finalResolved, existing.id, why, false, ctx.subscriptionActive),
+          card: { ...cardFor(finalResolved, existing.id, why, false, ctx.subscriptionActive), status: existing.status },
           recommendationId: existing.id,
           created: false,
           modelText: 'نفس التعديل مجهز قبل وينتظر اعتماد العميل. طلعت له نفس البطاقة.',
         };
       }
-      fail('already_handled', 'نفس التعديل انطبق قبل أو رفضه العميل. لا تقترحه مرة ثانية.');
+      if (existing.status === 'executing') fail('already_running', 'نفس التعديل قاعد يتنفذ الحين.');
+      // Autopilot treats applied/dismissed as permanent. In a conversation the
+      // customer may ask again later (re-pause a campaign after a rollback,
+      // revisit a «مو الحين»), so the chat waits a week instead of forever.
+      const createdAt = existing.created_at ? new Date(existing.created_at).getTime() : Number.NaN;
+      if (!Number.isFinite(createdAt) || ctx.now.getTime() - createdAt < REPROPOSE_AFTER_MS) {
+        fail('already_handled', 'نفس التعديل انطبق أو رفضه العميل خلال آخر أسبوع. لا تقترحه مرة ثانية الحين.');
+      }
     }
 
     const { count, error: countError } = await ctx.admin

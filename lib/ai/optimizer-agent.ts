@@ -285,7 +285,7 @@ export function sanitizePromptText(value: string, maxLength = 300) {
     // visually while leaving it intelligible to the model.
     .replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/gi, '')
     // Strip anything that looks like a role marker or a delimiter escape.
-    .replace(/<\/?\s*(account_data|system|assistant|human|user)[^>]*>/gi, ' ')
+    .replace(/<\/?\s*(account_data|tool_data|account_card|spoken|system|assistant|human|user)[^>]*>/gi, ' ')
     .replace(/\b(system|assistant|human|user)\s*:/gi, '$1 ')
     .replace(
       /(?:ignore|disregard|forget)[\s\p{P}\p{S}_]+(?:(?:all|any)[\s\p{P}\p{S}_]+)?(?:previous|prior|above)(?:[\s\p{P}\p{S}_]+(?:instructions?|directions?|rules?))?/giu,

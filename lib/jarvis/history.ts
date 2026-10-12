@@ -6,7 +6,12 @@
  */
 const ROLLBACK_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
-export async function annotateProposalStatuses(supabase: any, messages: Array<Record<string, any>>) {
+export async function annotateProposalStatuses(
+  supabase: any,
+  messages: Array<Record<string, any>>,
+  context: { accountId?: string | null; subscriptionActive?: boolean } = {}
+) {
+  messages = await annotateConsent(supabase, messages, context.accountId ?? null);
   const ids = new Set<string>();
   for (const message of messages) {
     for (const card of message?.tool_results?.cards ?? []) {
@@ -55,11 +60,36 @@ export async function annotateProposalStatuses(supabase: any, messages: Array<Re
           card?.kind === 'proposal'
             ? {
                 ...card,
+                ...(context.subscriptionActive === undefined ? {} : { canApprove: context.subscriptionActive }),
                 status: statuses.get(card.recommendationId) ?? 'dismissed',
                 undoActionId: undo.get(card.recommendationId) ?? undefined,
               }
             : card
         ),
+      },
+    };
+  });
+}
+
+/** A replayed consent card shows the stored answer instead of live buttons. */
+async function annotateConsent(supabase: any, messages: Array<Record<string, any>>, accountId: string | null) {
+  const hasConsent = messages.some((m) => (m?.tool_results?.cards ?? []).some((c: any) => c?.kind === 'consent'));
+  if (!hasConsent || !accountId) return messages;
+  const { data, error } = await supabase
+    .from('autopilot_settings')
+    .select('consent')
+    .eq('account_id', accountId)
+    .maybeSingle();
+  const answer = !error ? data?.consent?.answer : null;
+  if (answer !== 'auto_small' && answer !== 'always_ask') return messages;
+  return messages.map((message) => {
+    const cards = message?.tool_results?.cards;
+    if (!Array.isArray(cards) || !cards.some((card: any) => card?.kind === 'consent')) return message;
+    return {
+      ...message,
+      tool_results: {
+        ...message.tool_results,
+        cards: cards.map((card: any) => (card?.kind === 'consent' ? { ...card, answered: answer } : card)),
       },
     };
   });

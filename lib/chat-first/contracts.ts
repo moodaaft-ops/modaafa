@@ -99,12 +99,12 @@ export type ChatCard =
   /** Steps the customer does by hand (geo, schedule, tracking, new campaign). No execute button. */
   | { kind: 'manual_steps'; title: string; steps: string[] }
   /** A business fact saved from the customer's own words, with a delete button. */
-  | { kind: 'memory_saved'; factId: string; fact: string }
+  | { kind: 'memory_saved'; factId: string; fact: string; quote?: string }
   /**
    * The one permission question (spec 83, 5.2). The answer is stored by
    * /api/autopilot/consent; it never changes anything from voice.
    */
-  | { kind: 'consent'; accountCustomerId: string };
+  | { kind: 'consent'; accountCustomerId: string; answered?: 'auto_small' | 'always_ask' };
 
 export type ChatQuickAction = { label: string; action: ChatAction };
 

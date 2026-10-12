@@ -98,6 +98,7 @@ export const getAdsStatusTool: JarvisReadTool = {
           kind: 'ad',
           data: {
             role: 'weak',
+            status: ad.status,
             ad_group_ad_resource_name: ad.resource,
             ad_id: ad.adId,
             campaign_name: ad.campaign,
@@ -138,6 +139,8 @@ export const getAdsStatusTool: JarvisReadTool = {
         kind: 'ad',
         data: {
           role: 'policy',
+          // The policy query only reads ENABLED ads.
+          status: 'ENABLED',
           ad_group_ad_resource_name: str(row, 'ad_group_ad.resource_name'),
           ad_id: str(row, 'ad_group_ad.ad.id'),
           campaign_name: campaign,

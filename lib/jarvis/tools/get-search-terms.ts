@@ -34,6 +34,7 @@ const ALREADY_EXCLUDED = new Set(['EXCLUDED', 'ADDED_EXCLUDED']);
 
 type TermRow = {
   term: string;
+  termRaw: string;
   status: string;
   matchType: string;
   campaignId: string;
@@ -47,6 +48,11 @@ type TermRow = {
   conversions: number;
   value: number;
 };
+
+function periodDays(period: string) {
+  const match = /LAST_(\d+)_DAYS/.exec(period);
+  return match ? Number(match[1]) : 30;
+}
 
 export const getSearchTermsTool: JarvisReadTool = {
   name: 'get_search_terms',
@@ -100,6 +106,8 @@ export const getSearchTermsTool: JarvisReadTool = {
     const rows: TermRow[] = rawRows
       .map((row) => ({
         term: cleanText(str(row, 'search_term_view.search_term')),
+        // Untouched text for the server only (negative payloads); never sent to the model.
+        termRaw: str(row, 'search_term_view.search_term').trim(),
         status: enumLabel(str(row, 'search_term_view.status'), 'NONE'),
         matchType: enumLabel(str(row, 'segments.search_term_match_type'), 'UNKNOWN'),
         campaignId: str(row, 'campaign.id'),
@@ -144,6 +152,8 @@ export const getSearchTermsTool: JarvisReadTool = {
         data: {
           role,
           term: row.term,
+          term_raw: row.termRaw,
+          period_days: periodDays(period),
           status: row.status,
           match_type: row.matchType,
           campaign_id: row.campaignId,
@@ -220,6 +230,7 @@ export const getSearchTermsTool: JarvisReadTool = {
           ref,
           kind: 'negative_word',
           data: {
+            period_days: periodDays(period),
             word: candidate.word,
             key: candidate.key,
             cost: money(candidate.cost),

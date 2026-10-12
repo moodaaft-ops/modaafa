@@ -139,7 +139,7 @@ export async function POST(req: NextRequest) {
       turn = planTurn('وش التوصيات', state);
       userText = userText || 'وريني أهم توصية';
     }
-  } else if (isJarvisBrainEnabled(user.email) && hasAIBackend()) {
+  } else if (isJarvisBrainEnabled(user.email) && hasAIBackend() && (await brainTurnAllowed(req, user.id))) {
     // Jarvis brain. The session is created first so a prepared change can point
     // back to the conversation it came from.
     if (!sid) sid = await createSession(supabase, user.id, accountId, userText).catch(() => null);
@@ -226,6 +226,20 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ sessionId: sid, turn, saved: true, language, ...voiceGrant() });
 }
 
+/**
+ * The LLM budget is read once per turn and usage lands after the response, so
+ * parallel turns could all pass the check. A small per-minute cap on brain
+ * turns bounds that overshoot; above it the rule-based answer takes over.
+ */
+async function brainTurnAllowed(req: NextRequest, userId: string) {
+  try {
+    const rl = await checkRateLimit({ req, scope: 'jarvis_turn', limit: 6, windowSeconds: 60, identifier: userId });
+    return rl.allowed;
+  } catch {
+    return false;
+  }
+}
+
 async function createSession(supabase: any, userId: string, accountId: string | null, title: string): Promise<string> {
   const { data: created, error } = await supabase
     .from('chat_sessions')
@@ -262,6 +276,9 @@ export async function GET(req: NextRequest) {
       ? NextResponse.json({ error: 'session_not_found' }, { status: 404 })
       : NextResponse.json({ sessionId: null, messages: [] });
   }
-  const messages = await annotateProposalStatuses(supabase, result.messages);
+  const messages = await annotateProposalStatuses(supabase, result.messages, {
+    accountId,
+    subscriptionActive: loaded.state.subscriptionActive,
+  });
   return NextResponse.json({ sessionId: result.sessionId, messages });
 }

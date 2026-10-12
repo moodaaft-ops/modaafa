@@ -176,11 +176,12 @@ export async function recallMemory(supabase: any, businessId: string | null, inp
 
 /** Words that turn a "fact" into an instruction about permissions; those are never stored (spec 6.2). */
 const FORBIDDEN_FACT = /(نفذ|نفّذ|بدون ما تسأل|بدون اذن|بدون إذن|لا تسألني|صلاحي|وافق عني|execute|approve|permission)/i;
-const DIGIT_RUN = /\d[\d\s-]{7,}\d/; // card, account or phone numbers
+const DIGIT_RUN = /[0-9\u0660-\u0669\u06f0-\u06f9][0-9\u0660-\u0669\u06f0-\u06f9\s-]{7,}[0-9\u0660-\u0669\u06f0-\u06f9]/; // card, account or phone numbers in any digits
 
 function normalizeForQuote(value: string) {
   return value
-    .replace(/[ً-ٰٟـ]/g, '')
+    // Harakat (U+064B..U+065F), dagger alef and tatweel only; Arabic digits stay.
+    .replace(/[\u064b-\u065f\u0670\u0640]/g, '')
     .replace(/[إأآ]/g, 'ا')
     .replace(/\s+/g, ' ')
     .trim()
@@ -210,7 +211,7 @@ export async function saveBusinessFact(args: {
   if (!(MEMORY_KINDS as readonly string[]).includes(kind) || kind === 'outcome') {
     return { ok: false, modelText: 'نوع الحقيقة غير صالح.' };
   }
-  if (!fact || !quote || quote.length < 4) return { ok: false, modelText: 'الحقيقة والاقتباس مطلوبين.' };
+  if (!fact || !quote || quote.length < 8) return { ok: false, modelText: 'الحقيقة واقتباس واضح من كلام العميل مطلوبين.' };
   if (!normalizeForQuote(args.userMessage).includes(normalizeForQuote(quote))) {
     return { ok: false, modelText: 'الاقتباس مو موجود حرفياً في رسالة العميل، ما انحفظ شي.' };
   }
@@ -249,7 +250,7 @@ export async function saveBusinessFact(args: {
     if (error || !data?.id) return { ok: false, modelText: 'ما قدرت أحفظ الحين.' };
     return {
       ok: true,
-      card: { kind: 'memory_saved', factId: String(data.id), fact },
+      card: { kind: 'memory_saved', factId: String(data.id), fact, quote: quote.slice(0, 300) },
       modelText: 'انحفظت الحقيقة وطلعت للعميل بطاقة فيها زر حذف.',
     };
   } catch {

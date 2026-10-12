@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 import { isSameOriginRequest } from '@/lib/security/origin';
 import { createAdminClient, createServerClient } from '@/lib/supabase/server';
+import { isChatFirstEnabled } from '@/lib/chat-first/flag';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -12,6 +13,7 @@ export async function GET() {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  if (!isChatFirstEnabled(process.env, user.email)) return NextResponse.json({ error: 'not_found' }, { status: 404 });
 
   const { data: business } = await supabase.from('businesses').select('id').eq('user_id', user.id).maybeSingle();
   if (!business) return NextResponse.json({ facts: [] });
@@ -38,6 +40,7 @@ export async function DELETE(req: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  if (!isChatFirstEnabled(process.env, user.email)) return NextResponse.json({ error: 'not_found' }, { status: 404 });
 
   try {
     const rl = await checkRateLimit({ req, scope: 'jarvis_memory', limit: 30, windowSeconds: 600, identifier: user.id });

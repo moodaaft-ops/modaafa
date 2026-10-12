@@ -587,8 +587,9 @@ function ProposalCard({ card }: { card: Extract<ChatCard, { kind: 'proposal' }> 
           {card.canApprove ? (
             <RecommendationForm
               recId={card.recommendationId}
-              intent="approve_execute"
-              label="اعتمد"
+              // An already approved row only needs the final step; approve_execute would be refused as locked.
+              intent={card.status === 'approved' ? 'execute' : 'approve_execute'}
+              label={card.status === 'approved' ? 'نفّذ الحين' : 'اعتمد'}
               className={`${btn} border-primary bg-primary text-primary-foreground`}
             />
           ) : (
@@ -622,6 +623,7 @@ function MemoryCard({ card }: { card: Extract<ChatCard, { kind: 'memory_saved' }
     <div className="w-full max-w-[92%] rounded-xl border border-border bg-card p-3 text-[13px] leading-7">
       <p className="text-[11px] text-muted-foreground">حفظت عن نشاطك</p>
       <p className={state === 'deleted' ? 'line-through text-muted-foreground' : ''}>{card.fact}</p>
+      {card.quote && <p className="text-[12px] text-muted-foreground">من كلامك: «{card.quote}»</p>}
       {state !== 'deleted' && (
         <button
           type="button"
@@ -637,7 +639,7 @@ function MemoryCard({ card }: { card: Extract<ChatCard, { kind: 'memory_saved' }
 }
 
 function ConsentCard({ card }: { card: Extract<ChatCard, { kind: 'consent' }> }) {
-  const [answer, setAnswer] = useState<null | 'auto_small' | 'always_ask' | 'saving' | 'failed'>(null);
+  const [answer, setAnswer] = useState<null | 'auto_small' | 'always_ask' | 'saving' | 'failed'>(card.answered ?? null);
   async function choose(value: 'auto_small' | 'always_ask') {
     setAnswer('saving');
     try {

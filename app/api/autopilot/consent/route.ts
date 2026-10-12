@@ -6,6 +6,7 @@ import { AUTOPILOT_POLICY_VERSION, autopilotExecutionGloballyEnabled } from '@/l
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 import { isSameOriginRequest } from '@/lib/security/origin';
 import { createAdminClient, createServerClient } from '@/lib/supabase/server';
+import { isChatFirstEnabled } from '@/lib/chat-first/flag';
 
 /**
  * Stores the answer to the permission question from the chat card. It never
@@ -21,6 +22,8 @@ export async function POST(req: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+  // The question is only ever asked inside the chat-first screen.
+  if (!isChatFirstEnabled(process.env, user.email)) return NextResponse.json({ error: 'not_found' }, { status: 404 });
 
   try {
     const rl = await checkRateLimit({ req, scope: 'autopilot_consent', limit: 10, windowSeconds: 600, identifier: user.id });
