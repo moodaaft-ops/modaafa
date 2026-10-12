@@ -7,6 +7,7 @@ import type {
   ChatTurn,
 } from './contracts';
 import type { Understanding } from './understand';
+import { operationLabelAr } from '@/lib/ai/operation-labels';
 
 const AR_DIGITS = /[٠-٩]/g;
 function normalize(text: string) {
@@ -322,10 +323,14 @@ export function planApply(state: ChatState, rec: ChatRecommendation): ChatTurn {
 }
 
 function approvalCard(rec: ChatRecommendation): ChatCard {
+  const label = operationLabelAr(rec.operation);
+  const description = rec.description?.trim() || 'التغيير موصوف في تفاصيل التوصية بلوحة التفاصيل.';
   return {
     kind: 'approval',
     recommendationId: rec.id,
     title: rec.title,
-    changes: [rec.description?.trim() || 'التغيير موصوف في تفاصيل التوصية بلوحة التفاصيل.'],
+    // The operation name comes from the stored payload, not model text, so
+    // the card always says what kind of change the button will run.
+    changes: label ? [`نوع التغيير: ${label}`, description] : [description],
   };
 }

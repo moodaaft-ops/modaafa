@@ -33,7 +33,10 @@ export async function buildVoiceDeps(req: NextRequest): Promise<VoiceDeps & { su
     if (authUser) {
       user = { id: authUser.id, email: authUser.email ?? null };
       const subscription = await getSubscriptionAccess(supabase, authUser.id, authUser.email);
-      if (subscription.active && subscription.plan) {
+      if (subscription.suspended) {
+        // Suspended by an operator: no paid turns and no free allowance either.
+        tier = null;
+      } else if (subscription.active && subscription.plan) {
         planAssistantDailyLimit = PLAN_LIMITS[subscription.plan].assistant.limit;
         tier = 'paid';
       } else if (config.freeDailyTurns > 0) {

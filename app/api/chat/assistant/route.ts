@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient, createServerClient } from '@/lib/supabase/server';
 import { getLinkedGoogleAdsAccount, normalizeCustomerId } from '@/lib/accounts/selection';
 import { formatCurrency, formatNumberAr } from '@/lib/utils';
-import { createMessageForAgent, hasAIBackend } from '@/lib/ai/client';
+import { createMessageForAgent, hasAIBackend, type LlmCallMeta } from '@/lib/ai/client';
 import { detectIntent, type AssistantIntent } from '@/lib/ai/intent';
 import {
   assistantPromptContext,
@@ -240,6 +240,7 @@ export async function POST(req: NextRequest) {
       recommendations,
       isCampaignBuildRequest,
       intent,
+      usageMeta: { userId: user.id, accountId: account.id, feature: 'assistant', channel: 'text' },
     });
   } catch (error) {
     await refundFeatureUsage({ userId: user.id, usageEventId: usage.usageEventId });
@@ -365,6 +366,7 @@ async function buildReply({
   recommendations,
   isCampaignBuildRequest,
   intent,
+  usageMeta,
 }: {
   message: string;
   history: ChatTurn[];
@@ -372,6 +374,7 @@ async function buildReply({
   recommendations: AssistantRecommendationInput[];
   isCampaignBuildRequest: boolean;
   intent: AssistantIntent;
+  usageMeta?: LlmCallMeta;
 }) {
   const strictOnly = isStrictOnlyRequest(message);
   const draftCampaign = isCampaignBuildRequest ? buildCampaignDraft(message, analysis) : null;
@@ -389,6 +392,7 @@ async function buildReply({
     analysis,
     draftCampaign,
     intent,
+    usageMeta,
   });
   const selectedCampaigns = selectCampaignWindow(message, analysis);
   const { recent_7d: recent7 } = analysis.performance;
@@ -715,6 +719,7 @@ async function generateAssistantReply({
   analysis,
   draftCampaign,
   intent,
+  usageMeta,
 }: {
   userMessage: string;
   history: ChatTurn[];
@@ -722,6 +727,7 @@ async function generateAssistantReply({
   analysis: AssistantAnalysis;
   draftCampaign: ReturnType<typeof buildCampaignDraft> | null;
   intent: AssistantIntent;
+  usageMeta?: LlmCallMeta;
 }) {
   if (!hasAIBackend()) {
     return {
@@ -794,7 +800,7 @@ async function generateAssistantReply({
         'استخدم data_quality لتذكر حداثة البيانات وثقة التحليل عندما تؤثر على الحكم، ولا توحي بيقين غير موجود.',
       ].join('\n'),
       messages,
-    });
+    }, undefined, usageMeta);
 
     const text = response.content
       ?.filter((part: any) => part.type === 'text')

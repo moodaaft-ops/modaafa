@@ -8,6 +8,7 @@ import {
   type MeasurementDescriptor,
 } from '@/lib/ai/execution-preflight';
 import { checkGuardrails, executeAction } from '@/lib/ai/optimizer-agent';
+import { finalizeMeasurement, finalizeRollbackPayload } from '@/lib/ai/execution-result';
 import { refundFeatureUsage } from '@/lib/billing/entitlements';
 import { sendOpsAlert } from '@/lib/notifications/email';
 import { findBlockingAutopilotRecommendation } from './recommendation-dedupe';
@@ -308,34 +309,6 @@ async function markFailed(
     .eq('account_id', accountId)
     .eq('execution_key', executionKey)
     .eq('status', 'executing');
-}
-
-function firstResultResourceName(result: any): string | null {
-  return (
-    result?.results?.[0]?.resourceName ??
-    result?.results?.[0]?.resource_name ??
-    result?.resourceName ??
-    result?.resource_name ??
-    null
-  );
-}
-
-function finalizeRollbackPayload(payload: Record<string, unknown>, result: any) {
-  if (
-    payload.action_type !== 'remove_created_negative_keyword' &&
-    payload.action_type !== 'remove_created_keyword'
-  ) {
-    return payload;
-  }
-  return { ...payload, resource_name: firstResultResourceName(result) };
-}
-
-function finalizeMeasurement(measurement: MeasurementDescriptor | null, result: any) {
-  if (!measurement) return null;
-  if (measurement.level === 'created_criterion' && !measurement.resource) {
-    return { ...measurement, resource: firstResultResourceName(result) };
-  }
-  return measurement;
 }
 
 function categoryForAction(type: string) {

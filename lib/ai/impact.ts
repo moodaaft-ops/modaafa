@@ -13,15 +13,29 @@
  * prompts can cite what actually worked on THIS account.
  */
 
+import { recordOutcomeFact } from '../jarvis/outcomes';
+
 export type MetricTotals = { cost: number; clicks: number; conversions: number; conversion_value: number };
 
 type StoredMeasurement = {
-  level: 'budget_campaigns' | 'ad_group' | 'criterion' | 'ad' | 'created_criterion';
+  level: 'budget_campaigns' | 'ad_group' | 'criterion' | 'ad' | 'created_criterion' | 'campaign';
   resource: string | null;
   window_days?: number;
   before: MetricTotals | null;
   captured_at?: string;
 };
+
+export const MEASURED_ACTION_TYPES = [
+  'pause_keyword',
+  'add_negative_keyword',
+  'add_keyword',
+  'adjust_budget',
+  'adjust_bid',
+  'pause_ad',
+  'pause_campaign',
+  'enable_campaign',
+  'add_negative_keywords_batch',
+];
 
 const MEASURE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 const MEASURE_EXPIRY_MS = 45 * 24 * 60 * 60 * 1000;
@@ -32,6 +46,7 @@ const LEVEL_QUERIES: Record<StoredMeasurement['level'], { from: string; where: s
   criterion: { from: 'keyword_view', where: 'ad_group_criterion.resource_name' },
   created_criterion: { from: 'keyword_view', where: 'ad_group_criterion.resource_name' },
   ad: { from: 'ad_group_ad', where: 'ad_group_ad.resource_name' },
+  campaign: { from: 'campaign', where: 'campaign.resource_name' },
 };
 
 export function sumMetricRows(rows: any[]): MetricTotals {
@@ -87,12 +102,12 @@ export async function measureObservedImpacts({
 
   const { data: rows, error } = await supabase
     .from('ai_actions')
-    .select('id, payload, created_at')
+    .select('id, action_type, payload, created_at')
     .eq('account_id', accountId)
     .is('observed_impact', null)
     .gte('created_at', oldest)
     .lte('created_at', newest)
-    .in('action_type', ['pause_keyword', 'add_negative_keyword', 'add_keyword', 'adjust_budget', 'adjust_bid', 'pause_ad'])
+    .in('action_type', MEASURED_ACTION_TYPES)
     .order('created_at', { ascending: true })
     .limit(limit);
   if (error || !rows?.length) return { measured: 0, errors: error ? 1 : 0 };
@@ -122,12 +137,24 @@ export async function measureObservedImpacts({
             AND segments.date DURING LAST_7_DAYS
         `)
       );
+      const impact = computeObservedImpact(measurement.before, after);
       const { error: writeError } = await supabase
         .from('ai_actions')
-        .update({ observed_impact: computeObservedImpact(measurement.before, after) })
+        .update({ observed_impact: impact })
         .eq('id', row.id);
       if (writeError) errors += 1;
-      else measured += 1;
+      else {
+        measured += 1;
+        // Business memory (PR-J7): the brain can later cite what actually worked here.
+        await recordOutcomeFact({
+          supabase,
+          accountId,
+          actionId: row.id,
+          actionType: String((row as any).action_type ?? ''),
+          createdAt: row.created_at ?? null,
+          impact,
+        });
+      }
     } catch {
       errors += 1;
     }

@@ -21,9 +21,9 @@ export default async function AssistantPage({
   const params = await searchParams;
   // Task 02 links new users here with ?from=onboarding as a stopgap. With the
   // chat-first flag on, that entry belongs to /start; flag off, nothing changes.
-  if (isChatFirstEnabled() && params?.from === 'onboarding' && !params?.brief) redirect('/start');
   const { supabase, user } = await getRequestAuthContext();
   if (!user) redirect('/login');
+  if (isChatFirstEnabled(process.env, user.email) && params?.from === 'onboarding' && !params?.brief) redirect('/start');
   const [{ accounts, selectedAccount, selectedCustomerId }, subscription] = await Promise.all([
     getAccountWorkspace(user.id),
     getSubscriptionAccess(supabase, user.id, user.email),

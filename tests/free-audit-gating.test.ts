@@ -153,8 +153,9 @@ test('exhausted state is a 402 that tells the customer reports stay readable', (
 const read = (p: string) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
 
 test('apply route checks the subscription before any Google Ads call and reserves execute_action', () => {
-  const src = read('app/api/recommendations/action/route.ts');
-  assert.ok(src.indexOf('getSubscriptionAccess(') < src.indexOf('executeAction(safe, customer'));
+  assert.match(read('app/api/recommendations/action/route.ts'), /createRecommendationActionHandler\(\)/);
+  const src = read('lib/recommendations/action-handler.ts');
+  assert.ok(src.indexOf('getSubscriptionAccess(supabase') < src.indexOf('executeAction(safe, customer'));
   assert.ok(src.includes("feature: 'execute_action'"));
   assert.ok(src.includes('approve_before_execution'), 'customer approval stays required');
 });

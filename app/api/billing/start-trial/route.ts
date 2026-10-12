@@ -11,6 +11,7 @@ import {
 import { requireAppUrl } from '@/lib/platform/env';
 import { isSameOriginRequest } from '@/lib/security/origin';
 import { isModaafaOperator } from '@/lib/platform/operators';
+import { readAccessOverrides } from '@/lib/billing/access-overrides';
 import { hasActiveGoogleAdsAccount } from '@/lib/accounts/selection';
 
 const plans = ['starter', 'growth', 'pro'];
@@ -30,6 +31,9 @@ export async function POST(req: NextRequest) {
 
   if (isModaafaOperator(user.email)) {
     return NextResponse.redirect(new URL('/billing?error=internal_access', req.url), 303);
+  }
+  if ((await readAccessOverrides(supabase, user.id)).suspended) {
+    return NextResponse.redirect(new URL('/billing?error=account_suspended', req.url), 303);
   }
 
   try {

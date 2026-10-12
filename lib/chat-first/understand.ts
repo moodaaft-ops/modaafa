@@ -3,9 +3,9 @@ import type { ChatState } from './contracts';
 /**
  * Limited language layer for the chat-first entry.
  *
- * It reuses the platform's existing model path (`createMessageForAgent` with
- * the `assistant` role, the same one /api/chat/assistant uses). No new model,
- * no Opus. The model never calls tools and never touches the database: it
+ * It reuses the platform's existing model path (`createMessageForAgent`, on
+ * the cheap `jarvis_fast` role since this only classifies intent). No Opus.
+ * The model never calls tools and never touches the database: it
  * returns ONE small JSON object that is validated against a closed list, and
  * the planner turns that into buttons that hit the existing guarded routes.
  * Anything off-list, malformed or suspicious becomes `null` and the caller
