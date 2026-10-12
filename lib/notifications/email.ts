@@ -4,6 +4,10 @@ type EmailPayload = {
   to: string;
   subject: string;
   html: string;
+  /** Replaces the default "operational message" footer (used by follow-ups). */
+  footerHtml?: string;
+  /** Extra mail headers, for example List-Unsubscribe. */
+  headers?: Record<string, string>;
 };
 
 export async function sendEmail(payload: EmailPayload) {
@@ -24,7 +28,8 @@ export async function sendEmail(payload: EmailPayload) {
       from: from.trim(),
       to: [payload.to],
       subject: payload.subject,
-      html: emailShell(payload.html),
+      html: emailShell(payload.html, payload.footerHtml),
+      ...(payload.headers ? { headers: payload.headers } : {}),
     }),
   });
 
@@ -103,8 +108,10 @@ export function paymentFailedEmail() {
   };
 }
 
-function emailShell(content: string) {
-  return `<div dir="rtl" style="font-family:Arial,sans-serif;line-height:1.8;color:#0E1426;max-width:640px;margin:auto"><div style="padding:20px 0;font-size:22px;font-weight:700;color:#0E1426">مُضاعِف</div>${content}<hr style="border:0;border-top:1px solid #CDCFD4;margin:28px 0"><p style="font-size:12px;color:#586174">هذه رسالة تشغيلية تخص حسابك في منصة مُضاعِف.</p></div>`;
+function emailShell(content: string, footerHtml?: string) {
+  const footer =
+    footerHtml ?? '<p style="font-size:12px;color:#586174">هذه رسالة تشغيلية تخص حسابك في منصة مُضاعِف.</p>';
+  return `<div dir="rtl" style="font-family:Arial,sans-serif;line-height:1.8;color:#0E1426;max-width:640px;margin:auto"><div style="padding:20px 0;font-size:22px;font-weight:700;color:#0E1426">مُضاعِف</div>${content}<hr style="border:0;border-top:1px solid #CDCFD4;margin:28px 0">${footer}</div>`;
 }
 
 function escapeHtml(value: string) {

@@ -1,11 +1,13 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { after } from 'next/server';
 import Image from 'next/image';
 import { ThemeToggle } from '@/lib/ui/theme-toggle';
 import { getRequestAuthContext } from '@/lib/supabase/server';
 import { TikTokPixel } from '@/lib/analytics/tiktok-pixel';
 import { isRecentRegistration } from '@/lib/analytics/tiktok';
 import { LogoMark } from '@/lib/ui/logo';
+import { recordUserEvent } from '@/lib/stages/events';
 
 export const metadata: Metadata = {
   title: 'الإعداد الأول',
@@ -18,6 +20,9 @@ export default async function OnboardingLayout({ children }: { children: React.R
   // pixel at all, rather than one that loads and then sends nothing.
   const { user } = await getRequestAuthContext();
   const justRegistered = user && isRecentRegistration(user.created_at) ? user : null;
+  // First time a signed-in user sees any onboarding screen. Once per user,
+  // after the response, never throws.
+  if (user) after(() => recordUserEvent(user.id, 'onboarding_viewed'));
 
   return (
     // A faint radial wash behind the setup flow so the panels read as floating

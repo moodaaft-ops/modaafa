@@ -8,6 +8,7 @@ import {
 } from '@/lib/auth/google-ads-oauth-state';
 import { persistOAuthState } from '@/lib/auth/oauth-state-store';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
+import { recordUserEvent } from '@/lib/stages/events';
 
 /**
  * Step 1: User clicks "Connect Google Ads" → we redirect them to Google's consent screen.
@@ -67,6 +68,9 @@ export async function GET(req: NextRequest) {
   if (!storedServerSide) {
     console.warn('OAuth state not stored server-side; relying on cookie fallback');
   }
+
+  // The person pressed "connect": first click only, never throws.
+  await recordUserEvent(user.id, 'connect_clicked');
 
   const res = NextResponse.redirect(authUrl);
   res.cookies.set(GOOGLE_ADS_OAUTH_STATE_COOKIE, appendGoogleAdsOAuthState(req.cookies.get(GOOGLE_ADS_OAUTH_STATE_COOKIE)?.value, state), {
