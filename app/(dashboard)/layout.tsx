@@ -38,7 +38,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       pausedAccounts={pausedAccounts}
       selectedCustomerId={selectedCustomerId}
       isOperator={isModaafaOperator(user.email)}
-      chatFirst={isChatFirstEnabled()}
+      chatFirst={isChatFirstEnabled(process.env, user.email)}
     >
       {children}
     </DashboardChrome>

@@ -13,6 +13,8 @@
  * prompts can cite what actually worked on THIS account.
  */
 
+import { recordOutcomeFact } from '../jarvis/outcomes';
+
 export type MetricTotals = { cost: number; clicks: number; conversions: number; conversion_value: number };
 
 type StoredMeasurement = {
@@ -100,7 +102,7 @@ export async function measureObservedImpacts({
 
   const { data: rows, error } = await supabase
     .from('ai_actions')
-    .select('id, payload, created_at')
+    .select('id, action_type, payload, created_at')
     .eq('account_id', accountId)
     .is('observed_impact', null)
     .gte('created_at', oldest)
@@ -135,12 +137,24 @@ export async function measureObservedImpacts({
             AND segments.date DURING LAST_7_DAYS
         `)
       );
+      const impact = computeObservedImpact(measurement.before, after);
       const { error: writeError } = await supabase
         .from('ai_actions')
-        .update({ observed_impact: computeObservedImpact(measurement.before, after) })
+        .update({ observed_impact: impact })
         .eq('id', row.id);
       if (writeError) errors += 1;
-      else measured += 1;
+      else {
+        measured += 1;
+        // Business memory (PR-J7): the brain can later cite what actually worked here.
+        await recordOutcomeFact({
+          supabase,
+          accountId,
+          actionId: row.id,
+          actionType: String((row as any).action_type ?? ''),
+          createdAt: row.created_at ?? null,
+          impact,
+        });
+      }
     } catch {
       errors += 1;
     }

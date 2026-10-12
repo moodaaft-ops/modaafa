@@ -47,6 +47,10 @@ export type ChatAction =
   | { type: 'subscribe'; href: string }
   | { type: 'approve'; recommendationId: string }
   | { type: 'execute'; recommendationId: string }
+  /** Approve and execute in one press (PR-J5 intent). Rendered as a form post, never sent to the chat route. */
+  | { type: 'approve_execute'; recommendationId: string }
+  /** «مو الحين»: dismisses the pending recommendation through the same guarded route. */
+  | { type: 'dismiss'; recommendationId: string }
   | { type: 'open_dashboard'; href: string }
   | { type: 'say'; text: string };
 
@@ -68,7 +72,39 @@ export type ChatCard =
       status: ChatRecommendation['status'];
     }
   | { kind: 'subscription_required'; reason: string }
-  | { kind: 'approval'; recommendationId: string; title: string; changes: string[] };
+  | { kind: 'approval'; recommendationId: string; title: string; changes: string[] }
+  /**
+   * A change the brain prepared (prepare_change). Every number and name in it
+   * was built on the server from evidence rows, never typed by the model.
+   */
+  | {
+      kind: 'proposal';
+      recommendationId: string;
+      title: string;
+      why: string;
+      changes: string[];
+      warnings: string[];
+      /** V1 classification, shown only: 'small' could run on autopilot later, 'large' always asks. */
+      size: 'small' | 'large';
+      evidence: Array<{ label: string; value: string }>;
+      /** False when this is an older open proposal the brain found instead of creating a duplicate. */
+      created: boolean;
+      /** Subscriber at the time of the turn: the card shows «اعتمد», otherwise a subscribe link. */
+      canApprove: boolean;
+      /** Live status, filled in when history is replayed so stale buttons disappear. */
+      status?: ChatRecommendation['status'];
+      /** ai_actions id of the execution, when it can still be rolled back from the chat. */
+      undoActionId?: string;
+    }
+  /** Steps the customer does by hand (geo, schedule, tracking, new campaign). No execute button. */
+  | { kind: 'manual_steps'; title: string; steps: string[] }
+  /** A business fact saved from the customer's own words, with a delete button. */
+  | { kind: 'memory_saved'; factId: string; fact: string }
+  /**
+   * The one permission question (spec 83, 5.2). The answer is stored by
+   * /api/autopilot/consent; it never changes anything from voice.
+   */
+  | { kind: 'consent'; accountCustomerId: string };
 
 export type ChatQuickAction = { label: string; action: ChatAction };
 
@@ -77,6 +113,8 @@ export type ChatTurn = {
   reply: string;
   cards: ChatCard[];
   actions: ChatQuickAction[];
+  /** Short text for the voice reply (max 600 chars). Absent: the voice path speaks `reply`. */
+  spoken?: string;
 };
 
 export type ChatIntent =
@@ -97,6 +135,8 @@ export type ChatLanguageMeta = {
   limited?: { scope: 'free' | 'subscriber'; resetsAt: string | null };
   /** Set when the model path failed and the rules answered instead. */
   degraded?: boolean;
+  /** 'jarvis' when the turn went through the Jarvis brain (or its fallback). */
+  engine?: 'jarvis';
 };
 
 /**

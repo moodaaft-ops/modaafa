@@ -78,6 +78,9 @@ CREATE TABLE IF NOT EXISTS google_ads_accounts (
   last_synced_at TIMESTAMPTZ,
   last_sync_attempt_at TIMESTAMPTZ,
   last_optimized_at TIMESTAMPTZ,
+  -- Validate-only probe result (PR-J6): can Modaafa write to this account at all?
+  write_access TEXT NOT NULL DEFAULT 'unknown' CHECK (write_access IN ('full', 'read_only', 'unknown')),
+  write_access_checked_at TIMESTAMPTZ,
   UNIQUE(business_id, customer_id)
 );
 
@@ -192,6 +195,17 @@ CREATE TABLE IF NOT EXISTS autopilot_settings (
   paused_at TIMESTAMPTZ,
   pause_reason TEXT,
   last_run_at TIMESTAMPTZ,
+  -- The customer's answer to the one permission question (PR-J6). A record of
+  -- consent only: it never changes `mode` by itself.
+  consent JSONB CONSTRAINT autopilot_settings_consent_shape CHECK (
+    consent IS NULL OR (
+      jsonb_typeof(consent) = 'object'
+      AND consent->>'answer' IN ('auto_small', 'always_ask')
+      AND consent->>'channel' IN ('chat', 'voice', 'settings')
+    )
+  ),
+  small_spend_cap NUMERIC(10, 2) CONSTRAINT autopilot_settings_small_spend_cap_range
+    CHECK (small_spend_cap IS NULL OR (small_spend_cap >= 0 AND small_spend_cap <= 100000)),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -589,6 +603,32 @@ CREATE INDEX idx_jarvis_playbook_chunks_version ON jarvis_playbook_chunks(versio
 COMMENT ON TABLE jarvis_playbook_chunks IS
   'Chunked Google Ads playbook for the Jarvis assistant. Service role only; no browser access. Loaded manually by scripts/jarvis/import-playbook.ts.';
 
+-- Facts about the business for the Jarvis brain (PR-J7). Owner reads; the
+-- server writes with the service role after proving ownership.
+CREATE TABLE IF NOT EXISTS business_memory (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  account_id UUID REFERENCES google_ads_accounts(id) ON DELETE SET NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('margin', 'product', 'season', 'schedule', 'geo', 'goal',
+    'capacity', 'constraint', 'preference', 'agency', 'outcome', 'other')),
+  fact_ar TEXT NOT NULL CHECK (char_length(fact_ar) BETWEEN 1 AND 300),
+  data JSONB NOT NULL DEFAULT '{}'::JSONB,
+  source TEXT NOT NULL CHECK (source IN ('chat', 'voice', 'onboarding', 'action_outcome', 'weekly_review', 'settings')),
+  source_ref TEXT,
+  basis TEXT NOT NULL CHECK (basis IN ('stated', 'measured', 'inferred')),
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'superseded', 'deleted')),
+  superseded_by UUID REFERENCES business_memory(id),
+  valid_from DATE,
+  valid_until DATE,
+  last_used_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_business_memory_active ON business_memory(business_id, status, kind);
+CREATE UNIQUE INDEX business_memory_outcome_ref_idx ON business_memory(source_ref)
+  WHERE source = 'action_outcome' AND source_ref IS NOT NULL;
+
 -- =====================================================
 -- ROW LEVEL SECURITY (RLS)
 -- =====================================================
@@ -615,6 +655,7 @@ ALTER TABLE processed_webhook_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sector_benchmarks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE llm_usage ENABLE ROW LEVEL SECURITY;
 ALTER TABLE jarvis_playbook_chunks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE business_memory ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY sector_benchmarks_read ON sector_benchmarks
   FOR SELECT TO authenticated USING (true);
@@ -646,6 +687,9 @@ CREATE POLICY recs_owner_only ON recommendations
     SELECT id FROM google_ads_accounts
     WHERE business_id IN (SELECT id FROM businesses WHERE user_id = auth.uid())
   ));
+
+CREATE POLICY business_memory_owner_read ON business_memory
+  FOR SELECT USING (business_id IN (SELECT id FROM businesses WHERE user_id = auth.uid()));
 
 CREATE POLICY actions_owner_only ON ai_actions
   FOR ALL USING (account_id IN (
@@ -716,6 +760,9 @@ REVOKE ALL ON TABLE llm_usage FROM PUBLIC, anon, authenticated, service_role;
 GRANT SELECT, INSERT ON TABLE llm_usage TO service_role;
 REVOKE ALL ON TABLE jarvis_playbook_chunks FROM PUBLIC, anon, authenticated, service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE jarvis_playbook_chunks TO service_role;
+REVOKE ALL ON TABLE business_memory FROM PUBLIC, anon, authenticated, service_role;
+GRANT SELECT ON TABLE business_memory TO authenticated;
+GRANT SELECT, INSERT, UPDATE ON TABLE business_memory TO service_role;
 
 -- Metering rows are created through consume_feature_usage() only and refunded
 -- by the service role only.

@@ -19,6 +19,13 @@ const NOTICE: Record<string, string> = {
   'error:manual_review_required': 'هذي التوصية تحتاج مراجعتك اليدوية من لوحة التفاصيل.',
   'error:approve_before_execution': 'لازم توافق على التغيير قبل التنفيذ.',
   'error:blocked_by_guardrails': 'حمايات الحساب أوقفت هذا التغيير عشان ما يضرك.',
+  updated: 'تمام، شلته من القائمة.',
+  reverted: 'رجّعت التغيير مثل ما كان.',
+  'error:rollback_unavailable': 'التراجع ما عاد متاح لهذا التغيير (مر عليه أكثر من 30 يوم أو انرجع قبل).',
+  'error:rollback_failed': 'قوقل رفض التراجع وما تغيّر شي. اسألني وأشوف السبب.',
+  'error:recommendation_locked': 'هذا الاقتراح انطبق أو انشال قبل.',
+  'error:execution_failed': 'قوقل رفض التغيير وما تغيّر شي في حسابك. اسألني وأشوف السبب.',
+  'error:already_executing': 'التغيير قاعد يتنفذ الحين.',
 };
 
 let counter = 0;
@@ -34,6 +41,7 @@ export function StartClient({
   voiceEnabled?: boolean;
 }) {
   const [voiceOpen, setVoiceOpen] = useState(false);
+  const [memoryOpen, setMemoryOpen] = useState(false);
   const [items, setItems] = useState<Item[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [text, setText] = useState('');
@@ -363,7 +371,11 @@ export function StartClient({
           onClose={() => setVoiceOpen(false)}
         />
       )}
-      <div className="border-t border-border px-3 py-2 text-center text-xs text-muted-foreground">
+      {memoryOpen && <MemoryPanel onClose={() => setMemoryOpen(false)} />}
+      <div className="flex items-center justify-center gap-4 border-t border-border px-3 py-2 text-center text-xs text-muted-foreground">
+        <button type="button" onClick={() => setMemoryOpen((open) => !open)} className="underline underline-offset-4">
+          وش أعرف عن نشاطك
+        </button>
         <Link href="/dashboard" className="underline underline-offset-4">
           تبي التفاصيل؟ افتح اللوحة الكاملة
         </Link>
@@ -374,6 +386,7 @@ export function StartClient({
 
 function quickStart(): ChatQuickAction[] {
   return [
+    { label: 'وش خطة اليوم؟', action: { type: 'say', text: 'وش أهم شي أسويه اليوم في إعلاناتي؟' } },
     { label: 'وش وضع حسابي؟', action: { type: 'say', text: 'وش وضع حسابي' } },
     { label: 'افحص حسابي', action: { type: 'say', text: 'افحص حسابي' } },
     { label: 'وش أحسن خطوة؟', action: { type: 'say', text: 'وش التوصيات' } },
@@ -381,7 +394,9 @@ function quickStart(): ChatQuickAction[] {
 }
 
 function recIdOf(a: ChatAction) {
-  return a.type === 'approve' || a.type === 'execute' ? a.recommendationId : null;
+  return a.type === 'approve' || a.type === 'execute' || a.type === 'approve_execute' || a.type === 'dismiss'
+    ? a.recommendationId
+    : null;
 }
 
 function ActionButton({
@@ -405,23 +420,43 @@ function ActionButton({
       </Link>
     );
   }
-  if ((a.type === 'approve' || a.type === 'execute') && recId) {
+  if ((a.type === 'approve' || a.type === 'execute' || a.type === 'approve_execute' || a.type === 'dismiss') && recId) {
     // Goes through the existing guarded route; it redirects back to /start.
-    return (
-      <form method="post" action="/api/recommendations/action">
-        <input type="hidden" name="recommendation_id" value={recId} />
-        <input type="hidden" name="intent" value={a.type} />
-        <input type="hidden" name="next" value="/start" />
-        <button type="submit" disabled={disabled} className={cls}>
-          {q.label}
-        </button>
-      </form>
-    );
+    return <RecommendationForm recId={recId} intent={a.type} label={q.label} className={cls} disabled={disabled} />;
   }
   return (
     <button type="button" disabled={disabled} onClick={() => onAction(a, q.label)} className={cls}>
       {q.label}
     </button>
+  );
+}
+
+/**
+ * The ONLY way this screen reaches the approval route: a plain HTML form a
+ * person taps. Voice turns never post here (tests/voice-server.test.ts).
+ */
+function RecommendationForm({
+  recId,
+  intent,
+  label,
+  className,
+  disabled = false,
+}: {
+  recId: string;
+  intent: 'approve' | 'execute' | 'approve_execute' | 'dismiss';
+  label: string;
+  className: string;
+  disabled?: boolean;
+}) {
+  return (
+    <form method="post" action="/api/recommendations/action">
+      <input type="hidden" name="recommendation_id" value={recId} />
+      <input type="hidden" name="intent" value={intent} />
+      <input type="hidden" name="next" value="/start" />
+      <button type="submit" disabled={disabled} className={className}>
+        {label}
+      </button>
+    </form>
   );
 }
 
@@ -478,5 +513,234 @@ function CardView({ card }: { card: ChatCard }) {
           ))}
         </div>
       );
+    case 'proposal':
+      return <ProposalCard card={card} />;
+    case 'manual_steps':
+      return (
+        <div className={box}>
+          <p className="text-[11px] text-muted-foreground">خطوات تسويها بنفسك</p>
+          <p className="font-semibold">{card.title}</p>
+          <ol className="list-decimal ps-5">
+            {card.steps.map((step, i) => (
+              <li key={i}>{step}</li>
+            ))}
+          </ol>
+        </div>
+      );
+    case 'memory_saved':
+      return <MemoryCard card={card} />;
+    case 'consent':
+      return <ConsentCard card={card} />;
   }
+}
+
+const OPEN_STATUSES = new Set(['pending', 'approved']);
+
+function ProposalCard({ card }: { card: Extract<ChatCard, { kind: 'proposal' }> }) {
+  const live = !card.status || OPEN_STATUSES.has(card.status);
+  const btn =
+    'rounded-xl border px-3.5 py-2 text-[13px] font-medium disabled:opacity-50';
+  return (
+    <div id={`card-${card.recommendationId}`} className="w-full max-w-[92%] rounded-xl border border-primary/40 bg-card p-3 text-[13px] leading-7">
+      <p className="text-[11px] text-muted-foreground">
+        {card.size === 'small' ? 'تعديل صغير' : 'يحتاج اعتمادك'}
+        {card.status === 'applied' ? ' · انطبق' : card.status === 'dismissed' ? ' · انشال' : card.status === 'failed' ? ' · ما انطبق' : ''}
+      </p>
+      <p className="font-semibold">{card.title}</p>
+      <p className="text-muted-foreground">{card.why}</p>
+      <ul className="mt-1 list-disc ps-5">
+        {card.changes.map((c, i) => (
+          <li key={i}>{c}</li>
+        ))}
+      </ul>
+      {card.warnings.map((w, i) => (
+        <p key={i} className="mt-1 text-[12px] text-red-600 dark:text-red-400">
+          {w}
+        </p>
+      ))}
+      {card.evidence.length > 0 && (
+        <details className="mt-1">
+          <summary className="cursor-pointer text-[12px] text-muted-foreground">وش هي؟</summary>
+          <table className="mt-1 w-full text-[12px]">
+            <tbody>
+              {card.evidence.map((e, i) => (
+                <tr key={i} className="border-t border-border/60">
+                  <td className="py-1 pe-2 font-medium">{e.label}</td>
+                  <td className="py-1 text-muted-foreground">{e.value}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
+      )}
+      {card.status === 'applied' && card.undoActionId && (
+        <form method="post" action="/api/actions/rollback" className="mt-2">
+          <input type="hidden" name="action_id" value={card.undoActionId} />
+          <input type="hidden" name="next" value="/start" />
+          <button type="submit" className={`${btn} border-border`}>
+            تراجع عن التغيير
+          </button>
+        </form>
+      )}
+      {live && (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {card.canApprove ? (
+            <RecommendationForm
+              recId={card.recommendationId}
+              intent="approve_execute"
+              label="اعتمد"
+              className={`${btn} border-primary bg-primary text-primary-foreground`}
+            />
+          ) : (
+            <Link href="/billing" className={`${btn} border-primary/30 bg-primary/[0.07]`}>
+              فعّل الاشتراك عشان تعتمد
+            </Link>
+          )}
+          <RecommendationForm recId={card.recommendationId} intent="dismiss" label="مو الحين" className={`${btn} border-border`} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MemoryCard({ card }: { card: Extract<ChatCard, { kind: 'memory_saved' }> }) {
+  const [state, setState] = useState<'saved' | 'deleting' | 'deleted' | 'failed'>('saved');
+  async function remove() {
+    setState('deleting');
+    try {
+      const res = await fetch('/api/jarvis/memory', {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id: card.factId }),
+      });
+      setState(res.ok ? 'deleted' : 'failed');
+    } catch {
+      setState('failed');
+    }
+  }
+  return (
+    <div className="w-full max-w-[92%] rounded-xl border border-border bg-card p-3 text-[13px] leading-7">
+      <p className="text-[11px] text-muted-foreground">حفظت عن نشاطك</p>
+      <p className={state === 'deleted' ? 'line-through text-muted-foreground' : ''}>{card.fact}</p>
+      {state !== 'deleted' && (
+        <button
+          type="button"
+          onClick={remove}
+          disabled={state === 'deleting'}
+          className="mt-1 text-[12px] text-muted-foreground underline disabled:opacity-50"
+        >
+          {state === 'failed' ? 'ما انحذفت، جرّب مرة ثانية' : 'احذفها'}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function ConsentCard({ card }: { card: Extract<ChatCard, { kind: 'consent' }> }) {
+  const [answer, setAnswer] = useState<null | 'auto_small' | 'always_ask' | 'saving' | 'failed'>(null);
+  async function choose(value: 'auto_small' | 'always_ask') {
+    setAnswer('saving');
+    try {
+      const res = await fetch('/api/autopilot/consent', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ customerId: card.accountCustomerId, answer: value, channel: 'chat' }),
+      });
+      setAnswer(res.ok ? value : 'failed');
+    } catch {
+      setAnswer('failed');
+    }
+  }
+  const btn = 'rounded-xl border px-3.5 py-2 text-[13px] font-medium disabled:opacity-50';
+  if (answer === 'auto_small' || answer === 'always_ask') {
+    return (
+      <div className="w-full max-w-[92%] rounded-xl border border-border bg-card p-3 text-[13px] leading-7">
+        {answer === 'auto_small'
+          ? 'تمام. أول ما يفتح التنفيذ التلقائي في المنصة أشغّله لك على التعديلات الصغيرة بس، وللحين أجهز وأنت تعتمد.'
+          : 'تمام، بستأذنك في كل تعديل.'}
+      </div>
+    );
+  }
+  return (
+    <div className="w-full max-w-[92%] rounded-xl border border-primary/40 bg-card p-3 text-[13px] leading-7">
+      <p className="font-semibold">سؤال واحد قبل نكمل</p>
+      <p>
+        التعديلات الصغيرة، مثل إني أمنع إعلانك يطلع لعبارة بحث واضح إنها مو لك وصرفت بدون فايدة، تبيني أسويها لحالي
+        وأبلغك؟ أي شي يلمس الميزانية أو يوقف حملة أو يغيّر المزايدة بستأذنك فيه دايماً، وكل شي أسويه تقدر تتراجع عنه خلال
+        30 يوم.
+      </p>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <button type="button" disabled={answer === 'saving'} onClick={() => choose('auto_small')} className={`${btn} border-primary bg-primary text-primary-foreground`}>
+          سوّها وبلغني
+        </button>
+        <button type="button" disabled={answer === 'saving'} onClick={() => choose('always_ask')} className={`${btn} border-border`}>
+          استأذني في كل شي
+        </button>
+      </div>
+      {answer === 'failed' && <p className="mt-1 text-[12px] text-red-600">ما انحفظ اختيارك، جرّب مرة ثانية.</p>}
+    </div>
+  );
+}
+
+type MemoryRow = { id: string; kind: string; fact_ar: string; source: string; basis: string; created_at: string };
+
+const MEMORY_SOURCE: Record<string, string> = {
+  chat: 'من كلامك',
+  voice: 'من كلامك بالصوت',
+  onboarding: 'من التعريف',
+  action_outcome: 'نتيجة تعديل مقاسة',
+  weekly_review: 'ملاحظة أسبوعية',
+  settings: 'من الإعدادات',
+};
+
+/** «وش أعرف عن نشاطك»: every saved fact with its source and a delete button (spec 83, 6.4). */
+function MemoryPanel({ onClose }: { onClose: () => void }) {
+  const [rows, setRows] = useState<MemoryRow[] | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let live = true;
+    fetch('/api/jarvis/memory', { cache: 'no-store' })
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error('unavailable'))))
+      .then((data) => live && setRows(Array.isArray(data.facts) ? data.facts : []))
+      .catch(() => live && setFailed(true));
+    return () => {
+      live = false;
+    };
+  }, []);
+  async function remove(id: string) {
+    const res = await fetch('/api/jarvis/memory', {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id }),
+    }).catch(() => null);
+    if (res?.ok) setRows((cur) => (cur ?? []).filter((row) => row.id !== id));
+  }
+  return (
+    <div className="max-h-64 overflow-y-auto border-t border-border bg-card px-3 py-2 text-[13px] leading-7">
+      <div className="mb-1 flex items-center justify-between">
+        <p className="font-semibold">وش أعرف عن نشاطك</p>
+        <button type="button" onClick={onClose} className="text-xs text-muted-foreground underline">
+          سكّر
+        </button>
+      </div>
+      {failed && <p className="text-muted-foreground">ما قدرت أفتح الذاكرة الحين.</p>}
+      {!failed && rows === null && <p className="text-muted-foreground">ثواني…</p>}
+      {rows?.length === 0 && (
+        <p className="text-muted-foreground">ما حفظت شي للحين. قل لي مثلاً «رمضان أقوى موسم عندي» وأحفظها.</p>
+      )}
+      <ul className="space-y-1">
+        {rows?.map((row) => (
+          <li key={row.id} className="flex items-start justify-between gap-2 border-b border-border/50 pb-1">
+            <span>
+              {row.fact_ar}
+              <span className="ms-1 text-[11px] text-muted-foreground">({MEMORY_SOURCE[row.source] ?? row.source})</span>
+            </span>
+            <button type="button" onClick={() => remove(row.id)} className="shrink-0 text-[12px] text-muted-foreground underline">
+              احذف
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }

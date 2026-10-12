@@ -448,3 +448,48 @@ function sumMetricRows(rows: any[]) {
 function escapeGaql(value: string) {
   return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
+
+export type WriteAccess = 'full' | 'read_only' | 'unknown';
+
+const WRITE_DENIED_CODES = new Set(['USER_PERMISSION_DENIED', 'ACTION_NOT_PERMITTED']);
+
+/**
+ * Can Modaafa write to this account at all (spec 83, 5.5)? Re-submits the
+ * first enabled campaign's budget at its CURRENT amount with validateOnly
+ * hard-coded to true, so Google checks permissions and nothing is applied.
+ * A permission error means the linked login is read-only (typical for an
+ * agency-managed account). Anything else that fails is "unknown", never a
+ * guess.
+ */
+export async function probeWriteAccess(customer: any): Promise<WriteAccess> {
+  let rows: any[];
+  try {
+    rows = await customer.query(`
+      SELECT campaign_budget.resource_name, campaign_budget.amount_micros
+      FROM campaign
+      WHERE campaign.status = 'ENABLED'
+      LIMIT 1
+    `);
+  } catch {
+    return 'unknown';
+  }
+  const budget = rows?.[0]?.campaignBudget ?? rows?.[0]?.campaign_budget;
+  const resourceName = String(budget?.resourceName ?? budget?.resource_name ?? '');
+  const amount = Number(budget?.amountMicros ?? budget?.amount_micros ?? 0);
+  if (!/^customers\/\d+\/campaignBudgets\/\d+$/.test(resourceName) || !(amount > 0)) return 'unknown';
+
+  try {
+    await customer.campaignBudgets.update([{ resource_name: resourceName, amount_micros: amount }], {
+      validateOnly: true,
+    });
+    return 'full';
+  } catch (error) {
+    for (const candidate of errorChain(error)) {
+      const codes = Array.isArray((candidate as any).codes) ? ((candidate as any).codes as string[]) : [];
+      if (codes.some((code) => WRITE_DENIED_CODES.has(code))) return 'read_only';
+      const message = String(candidate.message ?? '');
+      if ([...WRITE_DENIED_CODES].some((code) => message.includes(code))) return 'read_only';
+    }
+    return 'unknown';
+  }
+}

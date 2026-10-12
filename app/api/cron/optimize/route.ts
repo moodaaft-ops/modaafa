@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createHash } from 'node:crypto';
+import { actionFingerprint, categoryForAction, severityForAction } from '@/lib/ai/action-fingerprint';
 import { createAdminClient } from '@/lib/supabase/server';
 import { describeError } from '@/lib/supabase/query-errors';
 import { getCustomer, getGoogleAdsErrorCodes } from '@/lib/google-ads/client';
@@ -1289,48 +1290,3 @@ async function maybeGenerateWeeklyReport({
   return true;
 }
 
-function actionFingerprint(accountId: string, action: any) {
-  // Fingerprint the STABLE identity of the change only. Hashing the whole
-  // action folded in `reason_ar`/`reason_en`/`expected_impact`, which the model
-  // regenerates with different wording and rounding every night — so the hash
-  // changed each run, the dedupe select missed, and the user accumulated one
-  // near-identical pending recommendation per night per finding.
-  const identity = {
-    type: action?.type ?? null,
-    target_id: action?.target_id ?? null,
-    params: action?.params ?? {},
-  };
-  return createHash('sha256')
-    .update(`${accountId}:${stableStringify(identity)}`)
-    .digest('hex');
-}
-
-function stableStringify(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
-  if (value && typeof value === 'object') {
-    return `{${Object.entries(value as Record<string, unknown>)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`)
-      .join(',')}}`;
-  }
-  return JSON.stringify(value);
-}
-
-function categoryForAction(type: string) {
-  const map: Record<string, string> = {
-    pause_keyword: 'keywords',
-    add_negative_keyword: 'keywords',
-    add_keyword: 'keywords',
-    adjust_budget: 'budget',
-    adjust_bid: 'bidding',
-    pause_ad: 'ads',
-  };
-  return map[type] ?? 'structure';
-}
-
-function severityForAction(action: { expected_impact?: { delta_sar_per_month?: number } }) {
-  const impact = Number(action.expected_impact?.delta_sar_per_month ?? 0);
-  if (impact >= 1000) return 'critical';
-  if (impact >= 250) return 'medium';
-  return 'growth';
-}
