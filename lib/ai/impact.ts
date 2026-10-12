@@ -16,12 +16,24 @@
 export type MetricTotals = { cost: number; clicks: number; conversions: number; conversion_value: number };
 
 type StoredMeasurement = {
-  level: 'budget_campaigns' | 'ad_group' | 'criterion' | 'ad' | 'created_criterion';
+  level: 'budget_campaigns' | 'ad_group' | 'criterion' | 'ad' | 'created_criterion' | 'campaign';
   resource: string | null;
   window_days?: number;
   before: MetricTotals | null;
   captured_at?: string;
 };
+
+export const MEASURED_ACTION_TYPES = [
+  'pause_keyword',
+  'add_negative_keyword',
+  'add_keyword',
+  'adjust_budget',
+  'adjust_bid',
+  'pause_ad',
+  'pause_campaign',
+  'enable_campaign',
+  'add_negative_keywords_batch',
+];
 
 const MEASURE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 const MEASURE_EXPIRY_MS = 45 * 24 * 60 * 60 * 1000;
@@ -32,6 +44,7 @@ const LEVEL_QUERIES: Record<StoredMeasurement['level'], { from: string; where: s
   criterion: { from: 'keyword_view', where: 'ad_group_criterion.resource_name' },
   created_criterion: { from: 'keyword_view', where: 'ad_group_criterion.resource_name' },
   ad: { from: 'ad_group_ad', where: 'ad_group_ad.resource_name' },
+  campaign: { from: 'campaign', where: 'campaign.resource_name' },
 };
 
 export function sumMetricRows(rows: any[]): MetricTotals {
@@ -92,7 +105,7 @@ export async function measureObservedImpacts({
     .is('observed_impact', null)
     .gte('created_at', oldest)
     .lte('created_at', newest)
-    .in('action_type', ['pause_keyword', 'add_negative_keyword', 'add_keyword', 'adjust_budget', 'adjust_bid', 'pause_ad'])
+    .in('action_type', MEASURED_ACTION_TYPES)
     .order('created_at', { ascending: true })
     .limit(limit);
   if (error || !rows?.length) return { measured: 0, errors: error ? 1 : 0 };

@@ -11,6 +11,8 @@ export type ChatRecommendation = {
   status: 'pending' | 'approved' | 'executing' | 'applied' | 'dismissed' | 'failed';
   /** True only when the stored payload can actually be pushed to Google Ads. */
   executable: boolean;
+  /** action_payload.operation, used only to name the change on the approval card. */
+  operation?: string | null;
 };
 
 export type ChatAuditSummary = {
