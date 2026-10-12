@@ -34,7 +34,17 @@ function count(value: number | null | undefined) {
  * seconds: metering must not be able to break or slow down an answer. Failures
  * are logged without payloads, ids or keys.
  */
+/**
+ * Until migration 20261012_llm_usage runs, every insert fails with "table not
+ * found". Say so once, then stay quiet for ten minutes instead of logging an
+ * error on every model call.
+ */
+const MISSING_TABLE_CODES = new Set(['42P01', 'PGRST205']);
+const MISSING_TABLE_BACKOFF_MS = 10 * 60 * 1000;
+let missingTableUntil = 0;
+
 export async function recordLlmUsage(entry: LlmUsageEntry): Promise<void> {
+  if (missingTableUntil > Date.now()) return;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const admin = createAdminClient();
@@ -63,7 +73,13 @@ export async function recordLlmUsage(entry: LlmUsageEntry): Promise<void> {
     if (result === 'timeout') {
       console.error('llm_usage insert timed out');
     } else if (result.error) {
-      console.error('llm_usage insert failed', { code: result.error.code ?? null });
+      const code = result.error.code ?? null;
+      if (code && MISSING_TABLE_CODES.has(code)) {
+        missingTableUntil = Date.now() + MISSING_TABLE_BACKOFF_MS;
+        console.warn('llm_usage table is missing; run migration 20261012_llm_usage. Metering paused for 10 minutes.');
+      } else {
+        console.error('llm_usage insert failed', { code });
+      }
     }
   } catch (error) {
     console.error('llm_usage record failed', { name: error instanceof Error ? error.name : 'UnknownError' });
