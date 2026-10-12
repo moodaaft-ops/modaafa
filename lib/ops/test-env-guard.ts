@@ -28,6 +28,10 @@ export function parseDbTarget(connectionString: string): TestTarget {
   } catch {
     throw new Error('SUPABASE_DB_URL is not a valid connection URL.');
   }
+  // Only a PostgreSQL URL is a database target. Anything else (https:, file:, ...) is not one.
+  if (url.protocol !== 'postgres:' && url.protocol !== 'postgresql:') {
+    throw new Error('SUPABASE_DB_URL must be a postgres:// or postgresql:// URL.');
+  }
   // libpq lets the query string override the host (?host=, ?hostaddr=, ?service=), so a URL that looks
   // local in its authority can still connect somewhere else. Only harmless parameters are accepted.
   for (const key of url.searchParams.keys()) {
@@ -36,7 +40,9 @@ export function parseDbTarget(connectionString: string): TestTarget {
     }
   }
   if (url.hostname.includes(',')) throw new Error('A list of hosts in the connection string is not accepted.');
-  return { host: url.hostname.toLowerCase(), user: decodeURIComponent(url.username).toLowerCase() };
+  // URL keeps the brackets of an IPv6 literal ([::1]); the guard compares the bare address.
+  const host = url.hostname.toLowerCase().replace(/^\[(.*)\]$/, '$1');
+  return { host, user: decodeURIComponent(url.username).toLowerCase() };
 }
 
 const SAFE_URL_PARAMETERS = new Set(['sslmode', 'connect_timeout', 'application_name']);
