@@ -130,7 +130,7 @@ test('/optimizer shows the lock, reads only id and status of recommendations wit
   const page = strip(read('app/(dashboard)/optimizer/page.tsx'));
   assert.match(page, /const locked = !hasProductAccess\(subscription\)/);
   assert.match(page, /locked\s*\?\s*'id, status'/);
-  assert.match(page, /locked \? \(\s*lock \? \(\s*<PlanLock/);
+  assert.match(page, /locked \? \(\s*lock \? \(\s*(?:\/\/[^\n]*\n\s*)?<div[^>]*>\s*<PlanLock/);
   // The execution log and its rollback form are outside the lock: undoing is never gated.
   const logAt = page.indexOf('id="execution-log"');
   const lockAt = page.indexOf('<PlanLock');

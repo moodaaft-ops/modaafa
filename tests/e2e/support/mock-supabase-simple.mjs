@@ -312,3 +312,64 @@ SCENARIOS['pages-new'] = () => ({
   campaigns_cache: [], reports: [], invoices: [], subscriptions: [],
 });
 // ===== END restyle-pages block =====
+
+// ===== BEGIN review-fixes block =====
+// Synthetic data for the undo list, the stopped-subscription paywall and the locked /audit and /optimizer.
+// Additive only: it adds scenarios, it changes none. The reversible rows carry the resource of THIS account
+// (customers/1234567890/…), the way the rollback route and the list both require.
+//   undo          like home, plus changes that can still be undone, and some that cannot (not reversible,
+//                 already undone, older than 30 days, another account's)
+//   undo_many     like undo, but with seven undoable changes (the list shows five and links to the rest)
+//   undo_unpaid   like unpaid_home plus the same changes: the undo is never behind the paywall
+//   past_due      like unpaid_home, but the subscription's last payment failed and its grace is over
+//   paused        like unpaid_home, but the subscription is paused
+//   unpaid_audit  like unpaid_home, with an audit from the current engine and an AI narrative on record
+const reversible = (n, text, type, hours) => ({
+  id: `77777777-7777-4777-8777-7777777777${String(n).padStart(2, '0')}`, account_id: A1, action_type: type,
+  description_ar: text, created_at: hoursAgo(hours), reverted_at: null, rollback_status: null,
+  rollback_payload: { reversible: true, resource_name: `customers/1234567890/campaignCriteria/1000~${2000 + n}` },
+});
+const undoable = [
+  reversible(11, 'منعت إعلانك يطلع لعبارة «عطور رخيصة»', 'add_negative_keyword', 5),
+  reversible(12, 'أوقفت كلمة «عود مجاني» لأنها صرفت بدون طلبات', 'pause_keyword', 30),
+];
+const notUndoable = [
+  { ...reversible(21, 'غيّرت ميزانية حملة العلامة', 'adjust_budget', 8), rollback_payload: { reversible: false, resource_name: 'customers/1234567890/campaigns/1002' } },
+  { ...reversible(22, 'أوقفت إعلان قديم', 'pause_ad', 9), reverted_at: hoursAgo(2) },
+  reversible(23, 'منعت عبارة من أكثر من شهر', 'add_negative_keyword', 24 * 40),
+  { ...reversible(24, 'تغيير على حساب ثاني', 'pause_campaign', 4), account_id: '33333333-3333-4333-8333-3333333333ff' },
+];
+const manyUndoable = [
+  ...undoable,
+  reversible(13, 'أوقفت حملة «حماية اسم العلامة» ليومين', 'pause_campaign', 52),
+  reversible(14, 'منعت عبارة «عطور مقلدة»', 'add_negative_keyword', 70),
+  reversible(15, 'أوقفت كلمة «بخور رخيص»', 'pause_keyword', 90),
+  reversible(16, 'منعت عبارة «تقليد عود»', 'add_negative_keyword', 110),
+  reversible(17, 'أوقفت إعلان «خصم 90 بالمية»', 'pause_ad', 130),
+];
+SCENARIOS.undo = () => ({ ...SCENARIOS.home(), ai_actions: [...undoable, ...notUndoable] });
+SCENARIOS.undo_many = () => ({ ...SCENARIOS.home(), ai_actions: [...manyUndoable, ...notUndoable] });
+SCENARIOS.undo_unpaid = () => ({ ...SCENARIOS.unpaid_home(), ai_actions: [...undoable, ...notUndoable] });
+const stoppedSubscription = (status) => ({
+  id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaac', user_id: UID, plan: 'growth', billing_period: 'monthly', status,
+  stripe_subscription_id: 'sub_mock_stopped', stripe_customer_id: 'cus_mock_stopped', trial_ends_at: null,
+  current_period_start: new Date(Date.now() - 10 * 864e5).toISOString(), current_period_end: new Date(Date.now() + 20 * 864e5).toISOString(),
+  created_at: hoursAgo(24 * 40), canceled_at: null,
+});
+SCENARIOS.past_due = () => ({ ...SCENARIOS.unpaid_home(), subscriptions: [stoppedSubscription('past_due')] });
+SCENARIOS.paused = () => ({ ...SCENARIOS.unpaid_home(), subscriptions: [stoppedSubscription('paused')] });
+SCENARIOS.unpaid_audit = () => ({
+  ...SCENARIOS.unpaid_home(),
+  audits: [{
+    ...audit,
+    metrics_snapshot: {
+      audit_engine_version: 2,
+      ai_narrative: {
+        headline_ar: 'العنوان السري للقراءة الذكية', executive_summary_ar: 'ملخص سري للقراءة الذكية',
+        priorities_ar: ['أولوية سرية للقراءة الذكية'], risks_ar: [], growth_ar: [],
+      },
+    },
+  }],
+});
+reset(scenario);
+// ===== END review-fixes block =====

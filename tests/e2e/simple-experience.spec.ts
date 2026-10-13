@@ -532,3 +532,296 @@ test('on a phone the chat menu opens inside the drawer and Escape closes only th
   await expect(trigger).toBeFocused();
   await noSidewaysOverflow(page);
 });
+
+// ---------------------------------------------------------------------------
+// Review fixes: the undo on /home, a stopped subscription, the chat that loses
+// access mid-conversation, and the locked /audit and /optimizer
+// ---------------------------------------------------------------------------
+
+const UNDO_FIRST = 'منعت إعلانك يطلع لعبارة «عطور رخيصة»';
+const UNDO_SECOND = 'أوقفت كلمة «عود مجاني» لأنها صرفت بدون طلبات';
+const NOT_UNDOABLE = ['غيّرت ميزانية حملة العلامة', 'أوقفت إعلان قديم', 'منعت عبارة من أكثر من شهر', 'تغيير على حساب ثاني'];
+/** Text that exists only behind the lock: the reasons of the locked decisions and the AI narrative. */
+const LOCKED_SECRETS = [
+  'آخر 7 أيام خلصت الميزانية قبل الساعة 12',
+  'جابت 4 طلبات من حملة ثانية بتكلفة أقل',
+  'إضافة السعر في الإعلان تقلل الضغطات',
+  'العنوان السري للقراءة الذكية',
+  'ملخص سري للقراءة الذكية',
+  'أولوية سرية للقراءة الذكية',
+];
+
+function watchConsoleErrors(page: Page) {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error') errors.push(message.text());
+  });
+  return errors;
+}
+
+/** The rollback route needs the real Google Ads API; here the form's request is caught and answered the way the route answers. */
+async function interceptRollback(page: Page, location: string) {
+  const posted: string[] = [];
+  await page.route('**/api/actions/rollback', async (route) => {
+    posted.push(route.request().postData() ?? '');
+    await route.fulfill({ status: 303, headers: { location } });
+  });
+  return posted;
+}
+
+test('«التغييرات الأخيرة» lists what can still be undone, newest first, and «رجّعه» asks first, then posts to the rollback route', async ({ page, baseURL }) => {
+  await scenario('undo');
+  await signIn(page, baseURL);
+  const errors = watchConsoleErrors(page);
+  const posted = await interceptRollback(page, '/home?reverted=1');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/home');
+
+  const recent = page.getByRole('region', { name: 'التغييرات الأخيرة' });
+  await expect(recent).toBeVisible();
+  const rows = recent.getByRole('listitem');
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toContainText(UNDO_FIRST);
+  await expect(rows.nth(1)).toContainText(UNDO_SECOND);
+  await expect(rows.nth(0)).toContainText('قبل');
+  // Only what the rollback route would accept: not reversible, already undone, over 30 days, another account.
+  for (const text of NOT_UNDOABLE) await expect(page.getByText(text)).toHaveCount(0);
+  await expect(recent.getByRole('link', { name: 'شوف كل التغييرات' })).toHaveCount(0);
+  await expect(recent.getByRole('button', { name: 'رجّعه' })).toHaveCount(2);
+  await expect(recent.getByText('تقدر ترجّع أي تغيير خلال 30 يوم.')).toBeVisible();
+  await noSidewaysOverflow(page);
+
+  // «رجّعه» asks once more, and «لا، خلّه» drops the question.
+  await recent.getByRole('button', { name: 'رجّعه' }).first().click();
+  await expect(recent.getByText('ترجّع هذا التعديل؟')).toBeVisible();
+  await recent.getByRole('button', { name: 'لا، خلّه' }).click();
+  await expect(recent.getByText('ترجّع هذا التعديل؟')).toHaveCount(0);
+
+  await recent.getByRole('button', { name: 'رجّعه' }).first().click();
+  await recent.getByRole('button', { name: 'إيه، رجّعه' }).click();
+  await expect(page).toHaveURL(/\/home\?reverted=1$/);
+  expect(posted).toHaveLength(1);
+  const form = new URLSearchParams(posted[0]);
+  expect(form.get('action_id')).toBe('77777777-7777-4777-8777-777777777711');
+  expect(form.get('next')).toBe('/home');
+  await expect(page.getByText('رجّعت التغيير مثل ما كان.')).toBeVisible();
+  expect(errors).toEqual([]);
+  await scenario('home');
+});
+
+test('with more than five undoable changes the list shows five and links to the whole log', async ({ page, baseURL }) => {
+  await scenario('undo_many');
+  await signIn(page, baseURL);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/home');
+  const recent = page.getByRole('region', { name: 'التغييرات الأخيرة' });
+  await expect(recent.getByRole('listitem')).toHaveCount(5);
+  const all = recent.getByRole('link', { name: 'شوف كل التغييرات' });
+  await expect(all).toHaveAttribute('href', '/optimizer#execution-log');
+  await noSidewaysOverflow(page);
+  await scenario('home');
+});
+
+test('right after an apply (/home?executed=1) the undo list is there, above the day\'s decisions', async ({ page, baseURL }) => {
+  await scenario('undo');
+  await signIn(page, baseURL);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/home?executed=1');
+  const recent = page.getByRole('region', { name: 'التغييرات الأخيرة' });
+  await expect(recent).toBeVisible();
+  await expect(recent.getByRole('button', { name: 'رجّعه' }).first()).toBeVisible();
+  const decisions = page.getByRole('heading', { name: 'قرارات اليوم' });
+  await expect(decisions).toBeVisible();
+  const recentTop = (await recent.boundingBox())!.y;
+  const decisionsTop = (await decisions.boundingBox())!.y;
+  expect(recentTop).toBeLessThan(decisionsTop);
+  await scenario('home');
+});
+
+test('without a plan the undo list is on /home too, under the plan, and «رجّعه» works from there', async ({ page, baseURL }) => {
+  await scenario('undo_unpaid');
+  await signIn(page, baseURL);
+  const errors = watchConsoleErrors(page);
+  const posted = await interceptRollback(page, '/home?reverted=1');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/home');
+  await expect(page.getByRole('region', { name: 'خطتك جاهزة' })).toBeVisible();
+  const recent = page.getByRole('region', { name: 'التغييرات الأخيرة' });
+  await expect(recent.getByRole('listitem')).toHaveCount(2);
+  await expect(recent.getByRole('listitem').first()).toContainText(UNDO_FIRST);
+  await noSidewaysOverflow(page);
+
+  await recent.getByRole('button', { name: 'رجّعه' }).first().click();
+  await expect(recent.getByText('ترجّع هذا التعديل؟')).toBeVisible();
+  await recent.getByRole('button', { name: 'إيه، رجّعه' }).click();
+  await expect(page).toHaveURL(/\/home\?reverted=1$/);
+  expect(new URLSearchParams(posted[0]).get('next')).toBe('/home');
+  // The locked home answers an undo with the same words as the full home.
+  await expect(page.getByText('رجّعت التغيير مثل ما كان.')).toBeVisible();
+  await expect(page.getByRole('region', { name: 'خطتك جاهزة' })).toBeVisible();
+
+  await page.goto('/home?executed=1');
+  await expect(page.getByRole('region', { name: 'التغييرات الأخيرة' })).toBeVisible();
+  expect(errors).toEqual([]);
+  await scenario('home');
+});
+
+test('a subscription whose payment failed gets «حدّث بطاقتك وكمّل» to /billing, not a checkout that refuses it', async ({ page, baseURL }) => {
+  await scenario('past_due');
+  await signIn(page, baseURL);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/home');
+  await expect(page.getByRole('region', { name: 'خطتك جاهزة' })).toBeVisible();
+  const cta = page.getByRole('link', { name: 'حدّث بطاقتك وكمّل' });
+  await expect(cta).toHaveAttribute('href', '/billing');
+  await expect(page.getByText('اشتراكك موقوف لأن آخر دفعة ما مرت.').first()).toBeVisible();
+  // Nothing on the page still sends this person to the trial checkout.
+  await expect(page.getByRole('link', { name: /ابدأ 14 يوم مجاناً|فعّل اشتراكك/ })).toHaveCount(0);
+  await expect(page.locator('a[href="/onboarding/trial"]')).toHaveCount(0);
+  await noSidewaysOverflow(page);
+
+  // The same button in the sheet the chat bar opens.
+  await page.getByRole('button', { name: /اشتراكك موقوف لأن آخر دفعة ما مرت/ }).click();
+  const sheet = page.getByRole('dialog');
+  await expect(sheet.getByRole('link', { name: 'حدّث بطاقتك وكمّل' })).toHaveAttribute('href', '/billing');
+  await page.keyboard.press('Escape');
+
+  // The checkout entry sends this person on to /billing instead of rendering a dead end.
+  await page.goto('/onboarding/trial');
+  await expect(page).toHaveURL(/\/billing(\?|$)/, { timeout: 15_000 });
+  await scenario('home');
+});
+
+test('a paused subscription says so and also goes to /billing', async ({ page, baseURL }) => {
+  await scenario('paused');
+  await signIn(page, baseURL);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/home');
+  await expect(page.getByText('اشتراكك موقوف. فعّله من صفحة الاشتراك.').first()).toBeVisible();
+  await expect(page.getByText('آخر دفعة ما مرت')).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'فعّل اشتراكك' }).first()).toHaveAttribute('href', '/billing');
+  await expect(page.locator('a[href="/onboarding/trial"]')).toHaveCount(0);
+  await scenario('home');
+});
+
+test('when the chat route answers 402 the thread says the plan stopped, with the way forward and no retry', async ({ page, baseURL }) => {
+  await scenario('home');
+  await signIn(page, baseURL);
+  await page.route('**/api/chat/start', (route) =>
+    route.request().method() === 'POST'
+      ? route.fulfill({ status: 402, contentType: 'application/json', body: JSON.stringify({ error: 'subscription_required' }) })
+      : route.continue()
+  );
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/home');
+  await page.getByPlaceholder('اكتب لـمُضاعِف…').fill('وش وضع حسابي');
+  await page.getByRole('button', { name: 'إرسال' }).click();
+  await expect(page.getByText('انتهت تجربتك. فعّل اشتراكك عشان تكمل المحادثة.')).toBeVisible();
+  await expect(page.getByRole('link', { name: 'فعّل اشتراكك' })).toHaveAttribute('href', '/billing');
+  await expect(page.getByText('صار خلل عندنا')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /أعد المحاولة/ })).toHaveCount(0);
+  await noSidewaysOverflow(page);
+});
+
+test('when the chat route answers 403 account_suspended the thread shows the suspension and no button', async ({ page, baseURL }) => {
+  await scenario('home');
+  await signIn(page, baseURL);
+  const message = 'حسابك موقوف مؤقتاً، ولن تُنفذ أي عملية عليه حتى يُعاد تفعيله. تواصل معنا على واتساب 0541004029.';
+  await page.route('**/api/chat/start', (route) =>
+    route.request().method() === 'POST'
+      ? route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ error: 'account_suspended', message }) })
+      : route.continue()
+  );
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/home');
+  await page.getByPlaceholder('اكتب لـمُضاعِف…').fill('وش وضع حسابي');
+  await page.getByRole('button', { name: 'إرسال' }).click();
+  await expect(page.getByText(message)).toBeVisible();
+  await expect(page.getByRole('link', { name: 'فعّل اشتراكك' })).toHaveCount(0);
+  await expect(page.getByText('صار خلل عندنا')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /أعد المحاولة/ })).toHaveCount(0);
+});
+
+test('if the plan really ended while /home was open, the next message ends on the paywall', async ({ page, baseURL }) => {
+  await scenario('home');
+  await signIn(page, baseURL);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/home');
+  await expect(page.getByPlaceholder('اكتب لـمُضاعِف…')).toBeVisible();
+  // The trial ends behind the open page.
+  await scenario('unpaid_home');
+  await page.getByPlaceholder('اكتب لـمُضاعِف…').fill('وش وضع حسابي');
+  await page.getByRole('button', { name: 'إرسال' }).click();
+  // The refresh re-reads the page, which is now «خطتك جاهزة» with its CTA.
+  await expect(page.getByRole('region', { name: 'خطتك جاهزة' })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('link', { name: 'ابدأ 14 يوم مجاناً' })).toBeVisible();
+  await scenario('home');
+});
+
+test('/audit without a plan is the same lock as /home: one decision open, the rest titles, no reasons or narrative anywhere', async ({ page, baseURL }) => {
+  await scenario('unpaid_audit');
+  await signIn(page, baseURL);
+  const errors = watchConsoleErrors(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/audit');
+  const plan = page.getByRole('region', { name: 'خطتك جاهزة' });
+  await expect(plan).toBeVisible();
+  await expect(plan.getByText(FIRST_DECISION)).toBeVisible();
+  await expect(plan.getByText('العبارة جابت 96 ضغطة في 30 يوم', { exact: false })).toBeVisible();
+  await expect(plan.getByRole('listitem')).toHaveCount(LOCKED_TITLES.length);
+  for (const title of LOCKED_TITLES) await expect(plan.getByText(title)).toBeVisible();
+  const cta = page.getByRole('link', { name: 'ابدأ 14 يوم مجاناً' });
+  await expect(cta).toHaveAttribute('href', '/onboarding/trial');
+  // The full page's pieces are gone.
+  await expect(page.getByText('ليش هذا مهم؟')).toHaveCount(0);
+  await expect(page.getByText('عرض دليل الحساب والتفاصيل الفنية')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /تجهيز/ })).toHaveCount(0);
+  await expect(page.getByText('خطة التحسين')).toHaveCount(0);
+  for (const secret of LOCKED_SECRETS) await expect(page.getByText(secret, { exact: false })).toHaveCount(0);
+  await noSidewaysOverflow(page);
+
+  // Not only hidden: the secrets are not in the page the server sent at all.
+  const html = await (await page.request.get('/audit')).text();
+  for (const secret of LOCKED_SECRETS) expect(html.includes(secret), secret).toBe(false);
+  expect(html.includes('412'), 'the first decision is open').toBe(true);
+  expect(errors).toEqual([]);
+  await scenario('home');
+});
+
+test('/optimizer without a plan locks the recommendations but keeps the execution log and its undo', async ({ page, baseURL }) => {
+  await scenario('undo_unpaid');
+  await signIn(page, baseURL);
+  const errors = watchConsoleErrors(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/optimizer');
+  const plan = page.getByRole('region', { name: 'خطتك جاهزة' });
+  await expect(plan).toBeVisible();
+  await expect(plan.getByText(FIRST_DECISION)).toBeVisible();
+  for (const title of LOCKED_TITLES) await expect(plan.getByText(title)).toBeVisible();
+  await expect(page.getByRole('link', { name: 'ابدأ 14 يوم مجاناً' })).toHaveAttribute('href', '/onboarding/trial');
+  await expect(page.getByRole('button', { name: /^(اعتماد|تنفيذ|تجاهل)$/ })).toHaveCount(0);
+  await expect(page.getByText('التعديل الفعلي عند التنفيذ')).toHaveCount(0);
+  for (const secret of LOCKED_SECRETS) await expect(page.getByText(secret, { exact: false })).toHaveCount(0);
+  // Undoing is never behind the paywall: the log and its button are still there.
+  const log = page.locator('#execution-log');
+  await expect(log).toContainText(UNDO_FIRST);
+  // (The fake backend ignores the account filter, so it also hands back the other account's row.)
+  await expect(log.getByRole('button', { name: 'التراجع عن التنفيذ' }).first()).toBeVisible();
+  await noSidewaysOverflow(page);
+
+  const html = await (await page.request.get('/optimizer')).text();
+  for (const secret of LOCKED_SECRETS) expect(html.includes(secret), secret).toBe(false);
+  expect(errors).toEqual([]);
+  await scenario('home');
+});
+
+test('with a plan /audit and /optimizer are unchanged: the reasons and the actions are there', async ({ page, baseURL }) => {
+  await scenario('home');
+  await signIn(page, baseURL);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/optimizer');
+  await expect(page.getByRole('region', { name: 'خطتك جاهزة' })).toHaveCount(0);
+  await expect(page.getByText('العبارة جابت 96 ضغطة في 30 يوم', { exact: false })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'اعتماد' }).first()).toBeVisible();
+});

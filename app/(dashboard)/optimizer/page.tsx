@@ -120,12 +120,15 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
             <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
               {locked ? (
                 lock ? (
-                  <PlanLock
-                    plan={lock.plan}
-                    trialEligible={lock.trialEligible}
-                    cta={lock.cta}
-                    suspended={Boolean(subscription.suspended)}
-                  />
+                  // Beside the log the card keeps its own height instead of stretching to the log's.
+                  <div className="lg:self-start">
+                    <PlanLock
+                      plan={lock.plan}
+                      trialEligible={lock.trialEligible}
+                      cta={lock.cta}
+                      suspended={Boolean(subscription.suspended)}
+                    />
+                  </div>
                 ) : (
                   <section className="surface-card p-5">
                     <div className="text-[14px] font-semibold">التوصيات</div>
