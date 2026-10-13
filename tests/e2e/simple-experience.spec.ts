@@ -388,3 +388,147 @@ test('the plan and the sheet at 390px and at desktop width have no sideways scro
   }
   await scenario('home');
 });
+
+// Chat management in the sidebar: rename, delete and search (api: /api/chat/sessions/[id]).
+const CHAT_ONE = 'وين تروح فلوسي في الإعلانات؟';
+const CHAT_ONE_ID = '99999999-9999-4999-8999-999999999901';
+const CHAT_TWO = 'ليش الطلبات قليلة في الويكند؟';
+
+function chatRow(page: Page, title: string) {
+  return page.getByRole('listitem').filter({ has: page.getByRole('link', { name: title }) });
+}
+
+test('a chat is renamed from its «⋯» menu, Enter saves, and the new name survives a reload', async ({ page, baseURL }) => {
+  await scenario('home');
+  await signIn(page, baseURL);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/home');
+  const row = chatRow(page, CHAT_ONE);
+  await row.hover();
+  await row.getByRole('button', { name: 'خيارات المحادثة' }).click();
+  const menu = page.getByRole('menu', { name: 'خيارات المحادثة' });
+  await expect(menu.getByRole('menuitem', { name: 'إعادة تسمية' })).toBeVisible();
+  await expect(menu.getByRole('menuitem', { name: 'حذف' })).toBeVisible();
+  await menu.getByRole('menuitem', { name: 'إعادة تسمية' }).click();
+  const input = page.getByRole('textbox', { name: 'اسم المحادثة' });
+  await expect(input).toBeFocused();
+  await input.fill('ميزانية نوفمبر');
+  await input.press('Enter');
+  await expect(page.getByRole('link', { name: 'ميزانية نوفمبر' })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('link', { name: CHAT_ONE })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: CHAT_TWO })).toBeVisible();
+  // Saved on the server, not only on screen.
+  await page.reload();
+  await expect(page.getByRole('link', { name: 'ميزانية نوفمبر' })).toBeVisible();
+  await expect(page.getByRole('link', { name: CHAT_ONE })).toHaveCount(0);
+});
+
+test('Escape drops a rename, and a failed save says so and keeps the old name', async ({ page, baseURL }) => {
+  await scenario('home');
+  await signIn(page, baseURL);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/home');
+  const open = async () => {
+    const row = chatRow(page, CHAT_ONE);
+    await row.hover();
+    await row.getByRole('button', { name: 'خيارات المحادثة' }).click();
+    await page.getByRole('menuitem', { name: 'إعادة تسمية' }).click();
+    return page.getByRole('textbox', { name: 'اسم المحادثة' });
+  };
+  let input = await open();
+  await input.fill('اسم ما ينحفظ');
+  await input.press('Escape');
+  await expect(input).toHaveCount(0);
+  await expect(page.getByRole('link', { name: CHAT_ONE })).toBeVisible();
+
+  await page.route('**/api/chat/sessions/*', (route) =>
+    route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'update_failed' }) })
+  );
+  input = await open();
+  await input.fill('اسم ثاني');
+  await input.press('Enter');
+  await expect(page.getByText('ما قدرت أحفظ الاسم. جرّب مرة ثانية.')).toBeVisible({ timeout: 15_000 });
+  await expect(input).toHaveValue('اسم ثاني');
+  await input.press('Escape');
+  await expect(page.getByRole('link', { name: CHAT_ONE })).toBeVisible();
+  await page.unroute('**/api/chat/sessions/*');
+});
+
+test('deleting the open chat asks first, then lands on a new chat and the chat is gone from the list', async ({ page, baseURL }) => {
+  await scenario('home');
+  await signIn(page, baseURL);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`/home?c=${CHAT_ONE_ID}`);
+  await expect(page.getByText('صرفت عليها 412 ريال', { exact: false })).toBeVisible();
+  const row = chatRow(page, CHAT_ONE);
+  await row.hover();
+  await row.getByRole('button', { name: 'خيارات المحادثة' }).click();
+  await page.getByRole('menuitem', { name: 'حذف' }).click();
+  const confirm = page.getByRole('alertdialog');
+  await expect(confirm.getByText('تحذف المحادثة؟ ما تقدر ترجعها.')).toBeVisible();
+  // «إلغاء» leaves everything as it was.
+  await confirm.getByRole('button', { name: 'إلغاء' }).click();
+  await expect(confirm).toHaveCount(0);
+  await expect(page).toHaveURL(new RegExp(`\\?c=${CHAT_ONE_ID}$`));
+  await row.hover();
+  await row.getByRole('button', { name: 'خيارات المحادثة' }).click();
+  await page.getByRole('menuitem', { name: 'حذف' }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: 'حذف' }).click();
+  await expect(page).toHaveURL(/\/home\?new=1$/, { timeout: 15_000 });
+  await expect(page.getByRole('link', { name: CHAT_ONE })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: CHAT_TWO })).toBeVisible();
+  await expect(page.getByText('صرفت عليها 412 ريال', { exact: false })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'قرارات اليوم' })).toBeVisible({ timeout: 15_000 });
+});
+
+test('with more than 8 chats a search box appears above «محادثاتك» and filters by title', async ({ page, baseURL }) => {
+  await scenario('home');
+  // Eight more chats on top of the two the scenario has.
+  const extra = Array.from({ length: 8 }, (_, i) => ({
+    id: `99999999-9999-4999-8999-9999999999${String(10 + i)}`,
+    user_id: '11111111-1111-4111-8111-111111111111',
+    account_id: '33333333-3333-4333-8333-333333333333',
+    title: i === 3 ? 'خطة ميزانية رمضان' : `تقرير الأسبوع ${i + 1}`,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }));
+  await fetch(`${MOCK}/rest/v1/chat_sessions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(extra),
+  });
+  await signIn(page, baseURL);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/home');
+  const search = page.getByRole('textbox', { name: 'دوّر في محادثاتك' });
+  await expect(search).toBeVisible();
+  await expect(page.getByRole('link', { name: /^تقرير الأسبوع/ })).toHaveCount(7);
+  await search.fill('ميزانيه');
+  await expect(page.getByRole('link', { name: 'خطة ميزانية رمضان' })).toBeVisible();
+  await expect(page.getByRole('link', { name: /^تقرير الأسبوع/ })).toHaveCount(0);
+  await search.fill('ما له وجود');
+  await expect(page.getByText('ما لقيت محادثة بهالاسم.')).toBeVisible();
+  await page.getByRole('button', { name: 'امسح البحث' }).click();
+  await expect(page.getByRole('link', { name: /^تقرير الأسبوع/ })).toHaveCount(7);
+  await scenario('home');
+});
+
+test('on a phone the chat menu opens inside the drawer and Escape closes only the menu', async ({ page, baseURL }) => {
+  await scenario('home');
+  await signIn(page, baseURL);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/home');
+  await pick(page, 'القائمة');
+  const drawer = page.getByRole('dialog');
+  const trigger = drawer.getByRole('button', { name: 'خيارات المحادثة' }).first();
+  await trigger.click();
+  const menu = page.getByRole('menu', { name: 'خيارات المحادثة' });
+  await expect(menu).toBeVisible();
+  const box = await menu.boundingBox();
+  expect(box && box.x >= 0 && box.x + box.width <= 390).toBeTruthy();
+  await page.keyboard.press('Escape');
+  await expect(menu).toHaveCount(0);
+  await expect(drawer).toBeVisible();
+  await expect(trigger).toBeFocused();
+  await noSidewaysOverflow(page);
+});

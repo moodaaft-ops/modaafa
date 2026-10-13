@@ -166,6 +166,17 @@ function readBody(req) {
   });
 }
 
+// PostgREST-style `?id=eq.…&user_id=eq.…` filters and `?select=a,b` for the chat_sessions PATCH/DELETE below.
+function matching(rows, params) {
+  const skip = new Set(['select', 'order', 'limit', 'offset']);
+  return rows.filter((row) => [...params].every(([key, value]) => skip.has(key) || !value.startsWith('eq.') || String(row[key]) === value.slice(3)));
+}
+function columns(rows, select) {
+  if (!select || select === '*') return rows;
+  const wanted = select.split(',');
+  return rows.map((row) => Object.fromEntries(wanted.map((key) => [key, row[key]])));
+}
+
 http.createServer(async (req, res) => {
   const u = new URL(req.url, 'http://x');
   const send = (code, body, h = {}) => {
@@ -199,7 +210,19 @@ http.createServer(async (req, res) => {
     if (req.method === 'PATCH') {
       const body = await readBody(req);
       if (name === 'businesses' && body && tables.businesses[0]) Object.assign(tables.businesses[0], body);
+      if (name === 'chat_sessions' && body) {
+        const hit = matching(rows, u.searchParams);
+        for (const row of hit) Object.assign(row, body, { updated_at: new Date().toISOString() });
+        return send(200, columns(hit, u.searchParams.get('select')));
+      }
       return send(200, []);
+    }
+    if (req.method === 'DELETE' && name === 'chat_sessions') {
+      const hit = matching(rows, u.searchParams);
+      tables.chat_sessions = rows.filter((row) => !hit.includes(row));
+      // The real table cascades to the messages.
+      tables.chat_messages = (tables.chat_messages ?? []).filter((m) => !hit.some((row) => row.id === m.session_id));
+      return send(200, columns(hit, u.searchParams.get('select')));
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(204, []);
     let out = rows;
