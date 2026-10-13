@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { Check, ChevronLeft, RotateCcw } from 'lucide-react';
+import { ChevronLeft } from 'lucide-react';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import { getRequestAuthContext, createAdminClient } from '@/lib/supabase/server';
@@ -8,8 +8,6 @@ import { getSubscriptionAccess } from '@/lib/billing/entitlements';
 import { buildExecutableAction } from '@/lib/ai/executable-action';
 import { readVoiceConfig } from '@/lib/ai/voice-session';
 import { TikTokPixel } from '@/lib/analytics/tiktok-pixel';
-import { ASSISTANT } from '@/lib/assistant/persona';
-import { AssistantAvatar } from '@/lib/ui/assistant-avatar';
 import { impactLabel, monthlyImpact } from '@/lib/onboarding/first-opportunities';
 import { isSimpleExperience } from '@/lib/setup/mode';
 import { readLedger } from '@/lib/setup/load';
@@ -27,7 +25,8 @@ import { cn, formatCurrency, timeAgoAr } from '@/lib/utils';
 import { operationLabelAr } from '@/lib/ai/operation-labels';
 import { AskAssistant } from './ask-assistant';
 import { ApproveInline } from './approve-inline';
-import { HomeChat } from './home-chat';
+import { HomeThread } from './home-thread';
+import type { ChatQuickAction } from '@/lib/chat-first/contracts';
 
 export const metadata = { title: 'الرئيسية' };
 
@@ -44,6 +43,7 @@ type Decision = {
 };
 
 const VISIBLE_DECISIONS = 3;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export default async function HomePage({
   searchParams,
@@ -117,168 +117,114 @@ export default async function HomePage({
   const firstName = firstNameFrom(user.user_metadata ?? null);
   const accountName = googleAdsAccountDisplayName(selectedAccount);
 
+  const openChat = params.c && UUID.test(params.c) ? params.c : null;
+  const quietWeek = week.spend <= 0 && week.results <= 0;
+  const lastChange = actions[0] ?? null;
+
+  // The chips under the opening message: the next useful step for this account.
+  const introActions: ChatQuickAction[] = [
+    ...(quietWeek
+      ? [{ label: 'ليش حملاتي واقفة؟', action: { type: 'say' as const, text: 'ليش حملاتي واقفة وما تصرف؟' } }]
+      : [{ label: 'وين تروح فلوسي؟', action: { type: 'say' as const, text: 'وين تروح فلوسي في الإعلانات؟' } }]),
+    ...(!audit || quietWeek
+      ? [{ label: audit ? 'افحص حسابي من جديد' : 'افحص حسابي', action: { type: 'run_audit' as const, customerId: selectedAccount.customer_id } }]
+      : [{ label: 'ليش الطلبات قليلة؟', action: { type: 'say' as const, text: 'ليش الطلبات قليلة؟' } }]),
+    ...(missing.length > 0
+      ? [{ label: 'كمّل تعريف نشاطك، دقيقة', action: { type: 'open_dashboard' as const, href: '/onboarding?edit=1' } }]
+      : [{ label: 'وش وضع حسابي؟', action: { type: 'say' as const, text: 'وش وضع حسابي' } }]),
+  ];
+
+  const intro = (
+    <div className="space-y-4">
+      {notice && (
+        <p
+          role="status"
+          className={cn(
+            'rounded-[14px] px-4 py-2.5 text-[14px] font-semibold leading-7',
+            notice.tone === 'ok' ? 'bg-success-soft text-foreground' : 'bg-danger-soft text-danger'
+          )}
+        >
+          {notice.text}
+        </p>
+      )}
+      <p className="text-[14px] text-muted-foreground">
+        {greetingFor()}
+        {firstName ? ` ${firstName}` : ''}
+      </p>
+      <p className="text-[19px] font-semibold leading-9 sm:text-[21px]">{summaryLine({ week, decisions: decisions.length, money })}</p>
+
+      {!quietWeek && (
+        <dl className="grid grid-cols-3 overflow-hidden rounded-[18px] border border-border/80 bg-card">
+          <Stat label="الصرف، 7 أيام" value={money(week.spend)} />
+          <Stat label="النتائج" value={week.results.toLocaleString('en-US', { maximumFractionDigits: 1 })} />
+          <Stat label="تكلفة النتيجة" value={week.costPerResult === null ? 'ما فيه' : money(week.costPerResult)} />
+        </dl>
+      )}
+
+      {decisions.length > 0 && (
+        <section aria-labelledby="decisions-title" className="space-y-3 pt-1">
+          <h2 id="decisions-title" className="text-[15px] font-bold">
+            قرارات اليوم <span className="numeric font-normal text-muted-foreground">({decisions.length})</span>
+          </h2>
+          <ol className="space-y-3">
+            {decisions.slice(0, VISIBLE_DECISIONS).map((decision) => (
+              <DecisionCard key={decision.id} decision={decision} currency={currency} subscribed={access.active} />
+            ))}
+          </ol>
+          {decisions.length > VISIBLE_DECISIONS && (
+            <details className="group">
+              <summary className="inline-flex min-h-9 cursor-pointer list-none items-center gap-1.5 rounded-full px-3 text-[14px] font-semibold hover:bg-muted [&::-webkit-details-marker]:hidden">
+                <ChevronLeft className="h-4 w-4 transition-transform group-open:-rotate-90" />
+                وريني الباقي ({decisions.length - VISIBLE_DECISIONS})
+              </summary>
+              <ol className="mt-3 space-y-3">
+                {decisions.slice(VISIBLE_DECISIONS).map((decision) => (
+                  <DecisionCard key={decision.id} decision={decision} currency={currency} subscribed={access.active} />
+                ))}
+              </ol>
+            </details>
+          )}
+        </section>
+      )}
+
+      <p className="text-[14.5px] leading-8 text-muted-foreground">
+        {audit
+          ? `صحة حسابك ${audit.health_score ?? '؟'} من 100${healthWord(audit.health_score) ? `، ${healthWord(audit.health_score)}` : ''}، وآخر فحص ${timeAgoAr(audit.ran_at)}.`
+          : 'ما فحصت حسابك للحين.'}
+        {lastChange
+          ? ` آخر شي غيّرته: ${String(lastChange.description_ar ?? '').slice(0, 90)}${lastChange.reverted_at ? ' (رجّعته)' : ` (${timeAgoAr(lastChange.created_at)})`}.`
+          : ''}
+      </p>
+      <p className="text-[12.5px] text-muted-foreground">
+        {accountName}
+        {selectedAccount.last_synced_at ? `، آخر تحديث ${timeAgoAr(selectedAccount.last_synced_at)}` : ''}
+      </p>
+    </div>
+  );
+
   return (
-    <div className="lg:grid lg:h-full lg:grid-cols-[minmax(360px,430px)_minmax(0,1fr)]">
+    <div className="h-full">
       {params.subscribed === '1' && access.active && access.status !== 'internal' && (
         <TikTokPixel conversion={{ event: 'Subscribe', userId: user.id }} />
       )}
+      <HomeThread
+        // A new token (sidebar's «محادثة جديدة») or another chat remounts a clean thread.
+        key={openChat ?? params.new ?? 'home'}
+        customerId={selectedAccount.customer_id}
+        voiceEnabled={readVoiceConfig().enabled}
+        restoreSessionId={openChat}
+        intro={openChat ? null : intro}
+        introActions={openChat ? undefined : introActions}
+      />
+    </div>
+  );
+}
 
-      {/* RTL: the chat takes the first (right) column, the day's content the left one. */}
-      <div className="lg:col-start-2 lg:row-start-1 lg:h-full lg:overflow-y-auto scrollbar-thin">
-        <div className="mx-auto max-w-[760px] space-y-7 px-4 pb-28 pt-5 sm:px-6 lg:pb-10 lg:pt-8">
-          {notice && (
-            <p
-              role="status"
-              className={cn(
-                'border px-4 py-3 text-[14px] font-semibold leading-7',
-                notice.tone === 'ok' ? 'border-foreground/20 bg-card text-foreground' : 'border-danger/40 bg-danger-soft text-danger'
-              )}
-            >
-              {notice.text}
-            </p>
-          )}
-
-          {/* the assistant's read of the account: the one thing this screen leads with. */}
-          <section className="bg-foreground px-5 py-6 text-background sm:px-7 sm:py-7">
-            <div className="flex items-center gap-2.5">
-              <AssistantAvatar size={34} className="border-background/25 bg-background text-foreground" />
-              <p className="text-[13.5px] text-background/75">
-                {greetingFor()}
-                {firstName ? ` ${firstName}` : ''}، معك {ASSISTANT.name}
-              </p>
-            </div>
-            <p className="mt-4 text-[20px] font-semibold leading-[1.75] sm:text-[23px]">
-              {summaryLine({ week, decisions: decisions.length, money })}
-            </p>
-            <dl className="mt-6 grid grid-cols-3 border-t border-background/15 pt-4">
-              <div>
-                <dt className="text-[12px] text-background/65">الصرف، 7 أيام</dt>
-                <dd className="numeric mt-1 text-[17px] font-bold sm:text-[20px]">{money(week.spend)}</dd>
-              </div>
-              <div className="border-s border-background/15 ps-3 sm:ps-5">
-                <dt className="text-[12px] text-background/65">النتائج</dt>
-                <dd className="numeric mt-1 text-[17px] font-bold sm:text-[20px]">
-                  {week.results.toLocaleString('en-US', { maximumFractionDigits: 1 })}
-                </dd>
-              </div>
-              <div className="border-s border-background/15 ps-3 sm:ps-5">
-                <dt className="text-[12px] text-background/65">تكلفة النتيجة</dt>
-                <dd className="numeric mt-1 text-[17px] font-bold sm:text-[20px]">
-                  {week.costPerResult === null ? <span className="text-[14px] font-semibold text-background/70">ما فيه</span> : money(week.costPerResult)}
-                </dd>
-              </div>
-            </dl>
-            <p className="mt-4 text-[12px] text-background/60">
-              {accountName}
-              {selectedAccount.last_synced_at ? `، آخر تحديث ${timeAgoAr(selectedAccount.last_synced_at)}` : ''}
-            </p>
-          </section>
-
-          {/* Today's decisions */}
-          <section aria-labelledby="decisions-title">
-            <div className="flex items-baseline justify-between gap-3">
-              <h2 id="decisions-title" className="text-[19px] font-bold">
-                قرارات اليوم
-              </h2>
-              {decisions.length > 0 && (
-                <span className="numeric text-[13px] text-muted-foreground">{decisions.length}</span>
-              )}
-            </div>
-            {decisions.length === 0 ? (
-              <div className="mt-3 flex items-start gap-3 border border-border bg-card px-4 py-4">
-                <Check className="mt-1 h-5 w-5 flex-shrink-0 text-success" />
-                <div>
-                  <p className="text-[15px] font-semibold">ما فيه شي يحتاجك الحين.</p>
-                  <p className="mt-0.5 text-[13.5px] leading-6 text-muted-foreground">
-                    أقرأ حسابك كل يوم، وأول ما يطلع شي يستاهل يطلع لك هنا.
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <>
-                <ol className="mt-3 space-y-3">
-                  {decisions.slice(0, VISIBLE_DECISIONS).map((decision) => (
-                    <DecisionCard key={decision.id} decision={decision} currency={currency} subscribed={access.active} />
-                  ))}
-                </ol>
-                {decisions.length > VISIBLE_DECISIONS && (
-                  <details className="group mt-3">
-                    <summary className="flex min-h-11 cursor-pointer list-none items-center gap-1.5 text-[14px] font-semibold text-foreground">
-                      <ChevronLeft className="h-4 w-4 transition-transform group-open:-rotate-90" />
-                      وريني الباقي ({decisions.length - VISIBLE_DECISIONS})
-                    </summary>
-                    <ol className="mt-2 space-y-3">
-                      {decisions.slice(VISIBLE_DECISIONS).map((decision) => (
-                        <DecisionCard key={decision.id} decision={decision} currency={currency} subscribed={access.active} />
-                      ))}
-                    </ol>
-                  </details>
-                )}
-              </>
-            )}
-          </section>
-
-          {missing.length > 0 && (
-            <section className="flex flex-wrap items-center justify-between gap-3 border border-border bg-card px-4 py-4">
-              <div className="min-w-0">
-                <p className="text-[15px] font-semibold">خلني أعرف نشاطك أكثر</p>
-                <p className="mt-0.5 text-[13.5px] leading-6 text-muted-foreground">
-                  أسئلة سريعة بضغطة، وتخلي قراراتي على مقاس نشاطك.
-                </p>
-              </div>
-              <Link
-                href="/onboarding?edit=1"
-                className="inline-flex h-11 items-center bg-primary px-5 text-[14.5px] font-bold text-primary-foreground"
-              >
-                دقيقة وحدة
-              </Link>
-            </section>
-          )}
-
-          {/* Account health */}
-          <section className="grid gap-3 sm:grid-cols-2">
-            <div className="border border-border bg-card px-4 py-4">
-              <p className="text-[13px] text-muted-foreground">صحة الحساب</p>
-              {audit ? (
-                <>
-                  <p className="mt-1 flex items-baseline gap-2">
-                    <span className="numeric text-[28px] font-bold leading-none">{audit.health_score ?? '؟'}</span>
-                    <span className="text-[13px] text-muted-foreground">من 100، {healthWord(audit.health_score) ?? ''}</span>
-                  </p>
-                  <p className="mt-2 text-[12.5px] text-muted-foreground">آخر فحص {timeAgoAr(audit.ran_at)}</p>
-                </>
-              ) : (
-                <p className="mt-1 text-[14px]">ما انفحص الحساب للحين.</p>
-              )}
-              <AskAssistant text="افحص حسابي" label="افحص حسابي من جديد" className="mt-1 -ms-1">
-                <RotateCcw className="h-4 w-4" />
-                افحصه من جديد
-              </AskAssistant>
-            </div>
-            <div className="border border-border bg-card px-4 py-4">
-              <p className="text-[13px] text-muted-foreground">آخر شي تغيّر في حسابك</p>
-              {actions.length === 0 ? (
-                <p className="mt-1 text-[14px] leading-7">ما نفّذت شي للحين. أول ما تعتمد قرار يطلع هنا.</p>
-              ) : (
-                <ul className="mt-1.5 space-y-2">
-                  {actions.map((action: any) => (
-                    <li key={action.id} className="text-[13.5px] leading-6">
-                      <span className={cn(action.reverted_at && 'text-muted-foreground line-through')}>
-                        {String(action.description_ar ?? '').slice(0, 110)}
-                      </span>
-                      <span className="block text-[12px] text-muted-foreground">
-                        {action.reverted_at ? 'رجعته' : timeAgoAr(action.created_at)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </section>
-        </div>
-      </div>
-
-      <HomeChat customerId={selectedAccount.customer_id} voiceEnabled={readVoiceConfig().enabled} />
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="border-s border-border/70 px-4 py-3 first:border-s-0">
+      <dt className="text-[12px] text-muted-foreground">{label}</dt>
+      <dd className="numeric mt-0.5 text-[17px] font-bold sm:text-[19px]">{value}</dd>
     </div>
   );
 }
@@ -298,13 +244,13 @@ function DecisionCard({
     decision.severity === 'critical' ? 'bg-danger' : decision.severity === 'medium' ? 'bg-signal' : 'bg-muted-foreground';
   const approved = decision.status === 'approved';
   return (
-    <li className="border border-border bg-card">
-      <div className="px-4 pb-3 pt-4">
+    <li className="rounded-[18px] border border-border/80 bg-card">
+      <div className="px-4 pb-2 pt-4">
         <p className="flex items-center gap-2 text-[12.5px] font-semibold text-muted-foreground">
-          <span className={cn('h-2 w-2', tone)} aria-hidden />
+          <span className={cn('h-2 w-2 rounded-full', tone)} aria-hidden />
           {approved ? 'وافقت عليه، باقي التنفيذ' : SEVERITY_WORD[decision.severity ?? ''] ?? 'قرار'}
         </p>
-        <p className="mt-1.5 text-[16px] font-semibold leading-7">{decision.title}</p>
+        <p className="mt-1.5 text-[15.5px] font-semibold leading-7">{decision.title}</p>
         {decision.description && (
           <p className="mt-1 line-clamp-2 text-[13.5px] leading-6 text-muted-foreground">{decision.description}</p>
         )}
@@ -314,7 +260,7 @@ function DecisionCard({
           </p>
         )}
       </div>
-      <div className="flex flex-wrap items-center gap-2 border-t border-border px-3 py-2.5">
+      <div className="flex flex-wrap items-center gap-2 px-3 pb-3 pt-1">
         {decision.executable ? (
           subscribed ? (
             <ApproveInline
@@ -326,7 +272,7 @@ function DecisionCard({
           ) : (
             <Link
               href="/onboarding/trial"
-              className="inline-flex h-10 items-center bg-primary px-4 text-[14px] font-bold text-primary-foreground"
+              className="inline-flex h-9 items-center rounded-full bg-primary px-4 text-[13.5px] font-bold text-primary-foreground"
             >
               فعّل اشتراكك وأنفذها
             </Link>
@@ -368,8 +314,8 @@ function DecisionForm({
       <button
         type="submit"
         className={cn(
-          'inline-flex h-10 items-center px-4 text-[14px] font-bold',
-          primary ? 'bg-primary text-primary-foreground' : 'border border-border bg-background text-foreground'
+          'inline-flex h-9 items-center rounded-full px-4 text-[13.5px] font-bold',
+          primary ? 'bg-primary text-primary-foreground' : 'border border-border bg-background text-foreground hover:bg-muted'
         )}
       >
         {children}

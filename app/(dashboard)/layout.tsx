@@ -9,6 +9,7 @@ import { readAccessOverrides } from '@/lib/billing/access-overrides';
 import { SuspendedBanner } from './suspended-banner';
 import { SimpleChrome } from './simple-chrome';
 import { isSimpleExperience } from '@/lib/setup/mode';
+import { listRecentChats } from '@/lib/chat-first/sessions';
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { supabase, user } = await getRequestAuthContext();
@@ -40,8 +41,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // business for them.
   if (!business) redirect('/onboarding');
 
-  // The simple experience: one header, a short menu, and «مُضاعِف» on /home.
+  // The simple experience: a ChatGPT-style sidebar and «مُضاعِف» as the home screen.
   if (isSimpleExperience(process.env, user.email)) {
+    const selectedAccount = accounts.find((account) => account.customer_id === selectedCustomerId) ?? null;
+    const recentChats = await listRecentChats({ supabase, userId: user.id, accountId: selectedAccount?.id ?? null });
     return (
       <SimpleChrome
         brandName={business?.name ?? user.email ?? 'مساحة العمل'}
@@ -51,6 +54,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         pausedAccounts={pausedAccounts}
         selectedCustomerId={selectedCustomerId}
         isOperator={isModaafaOperator(user.email)}
+        recentChats={recentChats}
       >
         {overrides.suspended && <SuspendedBanner />}
         {children}

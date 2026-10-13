@@ -35,6 +35,10 @@ test('the summary says what happened and what to do, without inventing numbers',
   );
   assert.match(summaryLine({ week: { ...week, results: 0, costPerResult: null }, decisions: 0, money }), /ما انسجلت ولا نتيجة/);
   assert.match(summaryLine({ week: { ...week, hasData: false }, decisions: 0, money }), /ما شفت صرف/);
+  // Live campaigns with zero spend must not read "you spent 0 SAR".
+  const idle = summaryLine({ week: { ...week, spend: 0, results: 0, costPerResult: null }, decisions: 0, money });
+  assert.match(idle, /ما شفت صرف/);
+  assert.doesNotMatch(idle, /صرفت 0/);
   assert.equal(decisionsLabel(1), 'قرار واحد');
   assert.equal(decisionsLabel(2), 'قرارين');
   assert.equal(decisionsLabel(11), '11 قرار');

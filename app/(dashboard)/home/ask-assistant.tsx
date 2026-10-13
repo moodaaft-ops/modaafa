@@ -28,7 +28,7 @@ export function AskAssistant({
         )
       }
       className={cn(
-        'inline-flex min-h-10 items-center gap-1.5 px-1 text-[13.5px] font-semibold text-muted-foreground underline-offset-4 hover:text-foreground hover:underline',
+        'inline-flex min-h-9 items-center gap-1.5 rounded-full px-3 text-[13.5px] font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground',
         className
       )}
     >

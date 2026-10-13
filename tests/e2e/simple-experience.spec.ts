@@ -84,7 +84,7 @@ test('the questions are one tap each and end on the audit result', async ({ page
   await noSidewaysOverflow(page);
 });
 
-test('home leads with the day in words, today\'s decisions and the chat', async ({ page, baseURL }) => {
+test('home opens with the day in words and today\'s decisions as the first message', async ({ page, baseURL }) => {
   await scenario('home');
   await signIn(page, baseURL);
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -98,17 +98,34 @@ test('home leads with the day in words, today\'s decisions and the chat', async 
   await expect(page.getByPlaceholder('اكتب لـمُضاعِف…')).toBeVisible();
 });
 
-test('on a phone the chat waits behind one bar and opens full screen', async ({ page, baseURL }) => {
+test('on a phone home is the conversation, and the menu holds chats and sections', async ({ page, baseURL }) => {
   await scenario('home');
   await signIn(page, baseURL);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/home');
   await noSidewaysOverflow(page);
-  await pick(page, /اكتب لـمُضاعِف أو اسأله/);
-  await expect(page.getByRole('button', { name: 'سكّر المحادثة' })).toBeVisible();
-  await pick(page, 'سكّر المحادثة');
+  await expect(page.getByPlaceholder('اكتب لـمُضاعِف…')).toBeVisible();
   await pick(page, 'القائمة');
-  for (const item of ['الرئيسية', 'حملاتي', 'التقارير', 'الاشتراك', 'الإعدادات']) {
-    await expect(page.getByRole('dialog').getByRole('link', { name: item })).toBeVisible();
+  const menu = page.getByRole('dialog');
+  await expect(menu.getByRole('button', { name: 'محادثة جديدة' })).toBeVisible();
+  for (const item of ['حملاتي', 'التقارير', 'الاشتراك', 'الإعدادات']) {
+    await expect(menu.getByRole('link', { name: item })).toBeVisible();
   }
+  await expect(menu.getByRole('link', { name: 'وين تروح فلوسي في الإعلانات؟' })).toBeVisible();
+  // A past chat reopens with its own messages, not today's briefing.
+  await menu.getByRole('link', { name: 'وين تروح فلوسي في الإعلانات؟' }).click();
+  await expect(page).toHaveURL(/\?c=99999999-9999-4999-8999-999999999901$/);
+  await expect(page.getByText('صرفت عليها 412 ريال', { exact: false })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'قرارات اليوم' })).toHaveCount(0);
+  await expect(page.getByRole('dialog')).toBeHidden();
+});
+
+test('a quiet account gets one next step instead of a page of zeros', async ({ page, baseURL }) => {
+  await scenario('quiet');
+  await signIn(page, baseURL);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/home');
+  await expect(page.getByText('ما شفت صرف في حسابك', { exact: false })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'افحص حسابي' })).toBeVisible();
+  await expect(page.getByText('الصرف، 7 أيام')).toHaveCount(0);
 });
