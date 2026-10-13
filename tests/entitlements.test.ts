@@ -198,7 +198,9 @@ test('no per-plan limit lookup bypasses effectiveLimitPlan', () => {
   };
   roots.forEach(walk);
   assert.deepEqual(offenders, []);
-  // The LLM budget is plan-keyed too: its only caller must go through the same helper.
-  const turn = readFileSync(resolve(__dirname, '..', 'lib/jarvis/turn.ts'), 'utf8');
-  assert.match(turn, /plan: effectiveLimitPlan\(subscription\)/);
+  // The LLM budget is plan-keyed too (PLAN_PRICE_SAR): the helper is applied inside
+  // lib/ai/usage.ts, so no caller can skip it. Its price table is read in one place only.
+  const usage = readFileSync(resolve(__dirname, '..', 'lib/ai/usage.ts'), 'utf8');
+  assert.match(usage, /budgetCapsFor\(\{ plan: effectiveLimitPlan\(\{ plan: plan \?\? null, status \}\)/);
+  assert.equal((usage.match(/PLAN_PRICE_SAR\[/g) ?? []).length, 1);
 });

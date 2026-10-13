@@ -1,5 +1,5 @@
 import { createAdminClient } from '@/lib/supabase/server';
-import type { BillingPlan } from '@/lib/billing/entitlements';
+import { effectiveLimitPlan, type BillingPlan } from '@/lib/billing/entitlements';
 
 export type LlmChannel = 'text' | 'voice' | 'cron';
 
@@ -192,7 +192,14 @@ export type LlmBudgetState = BudgetEvaluation & {
 
 export type LlmBudgetInput = {
   userId: string;
+  /** The plan the customer chose (`SubscriptionAccess.plan`), NOT a limit plan. */
   plan?: BillingPlan | null;
+  /**
+   * `SubscriptionAccess.status`. Required on purpose: the budget is a share of
+   * the plan price, and a trial runs on Starter (see effectiveLimitPlan), so the
+   * status is what decides which plan prices the caps. Callers cannot skip it.
+   */
+  status: string | null;
   subscriptionActive: boolean;
   isOperator: boolean;
   now?: Date;
@@ -230,10 +237,12 @@ async function readSpendFromDatabase(userId: string, since: Date): Promise<numbe
  * paying users out.
  */
 export async function llmBudgetState(
-  { userId, plan, subscriptionActive, isOperator, now = new Date() }: LlmBudgetInput,
+  { userId, plan, status, subscriptionActive, isOperator, now = new Date() }: LlmBudgetInput,
   deps: LlmBudgetDeps = {}
 ): Promise<LlmBudgetState> {
-  const caps = budgetCapsFor({ plan, subscriptionActive });
+  // A trial is budgeted as Starter whatever plan it picked; a paid plan, an
+  // operator grant ('comp') and internal access keep theirs.
+  const caps = budgetCapsFor({ plan: effectiveLimitPlan({ plan: plan ?? null, status }), subscriptionActive });
   const okState = (monthSpentUsd: number, daySpentUsd: number, unknown: boolean): LlmBudgetState => ({
     level: 'ok',
     limitedBy: null,
