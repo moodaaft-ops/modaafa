@@ -156,6 +156,8 @@ export const PLAN_COPY = {
   reasonPastDue: 'اشتراكك موقوف لأن آخر دفعة ما مرت.',
   /** A subscription exists but is paused (or in a state the card cannot explain). */
   reasonPaused: 'اشتراكك موقوف. فعّله من صفحة الاشتراك.',
+  /** An operator suspended the account: there is no button to give. */
+  suspendedLine: 'حسابك موقوف مؤقتاً. كلمنا على الواتساب ونرتبه معك.',
 } as const;
 
 /** The card's heading follows what the audit found; «خطتك جاهزة» only when there is a plan. */

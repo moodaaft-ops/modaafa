@@ -1,5 +1,6 @@
 import { buildExecutableAction } from '@/lib/ai/executable-action';
-import { buildPlan, type Plan, type PlanRecommendation } from './plan';
+import { getBillingCheckoutContext } from '@/lib/billing/checkout-policy';
+import { buildPlan, paywallCtaFromCheckout, type PaywallCta, type Plan, type PlanRecommendation } from './plan';
 
 /** Pending and approved decisions, newest first: the same rows /home lists as «قرارات اليوم». */
 export const PLAN_DECISION_LIMIT = 30;
@@ -49,4 +50,26 @@ export async function loadPlan(
     recommendations: toPlanRecommendations(recsRes?.error ? [] : recsRes?.data ?? []),
     currency: args.currency,
   });
+}
+
+/** What a locked screen needs: the plan, and where its one button goes. */
+export type PlanLockData = { plan: Plan; trialEligible: boolean; cta: PaywallCta };
+
+/**
+ * The plan lock for a screen other than /home (the audit, the approvals
+ * screen): the same plan and the same CTA /home shows, so every place a person
+ * without access can open says the same thing. A suspended account gets no
+ * checkout read and no button (the caller shows the suspension line).
+ */
+export async function loadPlanLock(
+  supabase: any,
+  args: { accountId: string; currency?: string | null; userId: string; userEmail?: string | null; suspended?: boolean }
+): Promise<PlanLockData> {
+  const [plan, checkout] = await Promise.all([
+    loadPlan(supabase, { accountId: args.accountId, currency: args.currency }),
+    args.suspended
+      ? Promise.resolve(null)
+      : getBillingCheckoutContext(supabase, args.userId, args.userEmail).catch(() => null),
+  ]);
+  return { plan, trialEligible: Boolean(checkout?.trialEligible), cta: paywallCtaFromCheckout(checkout) };
 }

@@ -8,9 +8,10 @@ import {
   type ConnectJobSnapshot,
   type ConnectPhase,
 } from '@/lib/onboarding/connect-progress';
-import { impactLabel, monthlyImpact, pickFirstOpportunities, type OpportunityRow } from '@/lib/onboarding/first-opportunities';
+import { firstFindings, type OpportunityRow } from '@/lib/onboarding/first-opportunities';
 import { getSubscriptionAccess } from '@/lib/billing/entitlements';
 import { getBillingCheckoutContext } from '@/lib/billing/checkout-policy';
+import { hasProductAccess } from '@/lib/billing/access-gate';
 import { readFreeAuditView } from '@/lib/chat-first/free-audit-view';
 import { loadPlan } from '@/lib/plan/load';
 import { paywallCta, paywallCtaFromCheckout, type PaywallCta, type Plan } from '@/lib/plan/plan';
@@ -172,13 +173,9 @@ export async function loadSetupState(supabase: any, user: User, opts: { edit?: b
         .limit(50);
       const rows = (recs?.error ? [] : recs?.data ?? []) as OpportunityRow[];
       findingsTotal = rows.length;
-      findings = pickFirstOpportunities(rows).map((rec) => ({
-        id: rec.id,
-        title: rec.title,
-        severity: rec.severity ?? null,
-        impactLabel: impactLabel(rec),
-        impactAmount: monthlyImpact(rec),
-      }));
+      // Without access the amounts of the top decisions stay on the server
+      // (this state goes whole to the browser): only titles are sent.
+      findings = firstFindings(rows, hasProductAccess(access));
     }
   }
 

@@ -36,6 +36,30 @@ export function pickFirstOpportunities<T extends OpportunityRow>(rows: T[], limi
     .slice(0, limit);
 }
 
+export type FirstFinding = {
+  id: string;
+  title: string;
+  severity: string | null;
+  impactLabel: string | null;
+  impactAmount: number;
+};
+
+/**
+ * The top opportunities as the setup screen receives them. That state is sent
+ * whole to the browser, so for someone without access (`open` false) the
+ * amounts stay out of it: «خطتك جاهزة» opens only the first decision, and the
+ * rest are titles.
+ */
+export function firstFindings(rows: OpportunityRow[], open: boolean, limit = 3): FirstFinding[] {
+  return pickFirstOpportunities(rows, limit).map((rec) => ({
+    id: rec.id,
+    title: rec.title,
+    severity: rec.severity ?? null,
+    impactLabel: open ? impactLabel(rec) : null,
+    impactAmount: open ? monthlyImpact(rec) : 0,
+  }));
+}
+
 /** Arabic count of recommendations with the right plural form. */
 export function recommendationsCountLabel(count: number) {
   if (count <= 0) return 'لا توجد توصيات';
