@@ -49,6 +49,10 @@ import {
   finishJobRun,
   getBillableBusinessIds,
   getOptimizerAllowedAccountIds,
+  chunkIds,
+  pickOptimizerBatch,
+  OPTIMIZER_DETAIL_BATCH_SIZE,
+  type OptimizerAllowedAccount,
   hasRecentCompletedRun,
   startJobRun,
 } from '@/lib/platform/jobs';
@@ -134,19 +138,19 @@ async function runOptimizerCron(req: NextRequest) {
   }
 
   // Plan cap: the optimizer works on at most OPTIMIZER_ACCOUNTS_PER_PLAN accounts
-  // per user (a trial counts as Starter). Accounts over the cap stay linked and
+  // per user (a trial 1, Starter 3, Growth 10, Pro 50). Accounts over the cap stay linked and
   // visible; they are only left out of this automatic, model-spending pass.
-  let allowedAccountIds: string[];
+  let allowedAccounts: OptimizerAllowedAccount[];
   let skippedOverPlanCap: number;
   try {
-    ({ allowedAccountIds, skippedOverPlanCap } = await getOptimizerAllowedAccountIds(supabase));
+    ({ allowedAccounts, skippedOverPlanCap } = await getOptimizerAllowedAccountIds(supabase));
   } catch (error) {
     // Fail closed: running uncapped is exactly the spend this guard prevents.
     await finishJobRun({ supabase, job, status: 'failed', errors: [error] });
     await safeOpsAlert('تعذر تحديد حسابات التحسين المسموحة لكل باقة', error);
     return NextResponse.json({ error: 'optimizer_cap_lookup_failed' }, { status: 500 });
   }
-  if (allowedAccountIds.length === 0) {
+  if (allowedAccounts.length === 0) {
     await finishJobRun({
       supabase,
       job,
@@ -181,18 +185,32 @@ async function runOptimizerCron(req: NextRequest) {
     req.nextUrl.searchParams.get('force') === '1'
       ? null
       : optimizerCooldownCutoffIso(Date.now(), OPTIMIZE_ACCOUNT_COOLDOWN_HOURS);
-  let accountQuery = supabase
-    .from('google_ads_accounts')
-    .select('id, customer_id, customer_name, manager_id, currency_code, refresh_token_encrypted, business_id')
-    .eq('status', 'active')
-    .not('is_manager', 'is', true)
-    .in('id', allowedAccountIds);
-  if (cooldownCutoff) {
-    accountQuery = accountQuery.or(`last_optimized_at.is.null,last_optimized_at.lt.${cooldownCutoff}`);
+  // Cooldown, round-robin order, the batch limit and the cooled-down count are
+  // all decided in memory from the cursor the cap helper already read. An
+  // `.in('id', ...)` over every allowed account puts up to 50 uuids per user in
+  // one URL and fails the whole cron once the user base is large; only the
+  // accounts actually chosen are fetched below, in small batches.
+  const { batchIds, cooledDownAccounts } = pickOptimizerBatch({
+    accounts: allowedAccounts,
+    cooldownCutoffIso: cooldownCutoff,
+    limit: OPTIMIZE_ACCOUNT_LIMIT,
+  });
+
+  const detailRows: Array<Record<string, any>> = [];
+  let accountLookupError: unknown = null;
+  for (const idBatch of chunkIds(batchIds, OPTIMIZER_DETAIL_BATCH_SIZE)) {
+    const { data, error } = await supabase
+      .from('google_ads_accounts')
+      .select('id, customer_id, customer_name, manager_id, currency_code, refresh_token_encrypted, business_id')
+      .eq('status', 'active')
+      .not('is_manager', 'is', true)
+      .in('id', idBatch);
+    if (error) {
+      accountLookupError = error;
+      break;
+    }
+    detailRows.push(...(data ?? []));
   }
-  const { data: accounts, error: accountLookupError } = await accountQuery
-    .order('last_optimized_at', { ascending: true, nullsFirst: true })
-    .limit(OPTIMIZE_ACCOUNT_LIMIT);
 
   if (accountLookupError) {
     await finishJobRun({ supabase, job, status: 'failed', errors: [accountLookupError] });
@@ -200,19 +218,13 @@ async function runOptimizerCron(req: NextRequest) {
     return NextResponse.json({ error: 'account_lookup_failed' }, { status: 500 });
   }
 
-  // Informational only (it feeds the cost readings), so a failure here never
-  // blocks the run.
-  let cooledDownAccounts = 0;
-  if (cooldownCutoff) {
-    const { count } = await supabase
-      .from('google_ads_accounts')
-      .select('id', { count: 'exact', head: true })
-      .eq('status', 'active')
-      .not('is_manager', 'is', true)
-      .in('id', allowedAccountIds)
-      .gte('last_optimized_at', cooldownCutoff);
-    cooledDownAccounts = count ?? 0;
-  }
+  // Batches come back in arbitrary order: restore the oldest-first order the
+  // round-robin picked. An account that went inactive between the cap read and
+  // here simply drops out.
+  const batchPosition = new Map(batchIds.map((id, index) => [id, index]));
+  const accounts = detailRows.sort(
+    (a, b) => (batchPosition.get(a.id) ?? 0) - (batchPosition.get(b.id) ?? 0)
+  );
 
   if (!accounts || accounts.length === 0) {
     await finishJobRun({

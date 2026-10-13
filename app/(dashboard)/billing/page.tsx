@@ -18,6 +18,7 @@ import {
   TRIAL_STARTER_LIMITS_NOTE,
   trialIneligibleNotice,
 } from '@/lib/billing/trial-copy';
+import { OPTIMIZER_ACCOUNTS_PER_PLAN, optimizerAccountsLine } from '@/lib/billing/optimizer-caps';
 import { hasActiveGoogleAdsAccount } from '@/lib/accounts/selection';
 import { getSubscriptionAccessDetailed } from '@/lib/billing/entitlements';
 import {
@@ -55,7 +56,12 @@ const plans = [
     nameEn: 'Starter',
     monthlyPrice: 500,
     limit: 'للبداية وإدارة العمل اليومي',
-    features: ['20 محادثة ذكية يومياً', 'فحصان أسبوعياً', '5 مزامنات يدوية يومياً'],
+    features: [
+      '20 محادثة ذكية يومياً',
+      'فحصان أسبوعياً',
+      '5 مزامنات يدوية يومياً',
+      optimizerAccountsLine(OPTIMIZER_ACCOUNTS_PER_PLAN.starter),
+    ],
   },
   {
     id: 'growth' as PlanKey,
@@ -63,7 +69,12 @@ const plans = [
     nameEn: 'Growth',
     monthlyPrice: 1200,
     limit: 'للشركات النشطة والمتابعة اليومية',
-    features: ['100 محادثة ذكية يومياً', '7 فحوصات أسبوعياً', '20 تنفيذاً ومزامنة يومياً'],
+    features: [
+      '100 محادثة ذكية يومياً',
+      '7 فحوصات أسبوعياً',
+      '20 تنفيذاً ومزامنة يومياً',
+      optimizerAccountsLine(OPTIMIZER_ACCOUNTS_PER_PLAN.growth),
+    ],
     highlighted: true,
   },
   {
@@ -72,7 +83,12 @@ const plans = [
     nameEn: 'Pro',
     monthlyPrice: 2500,
     limit: 'للوكالات والاستخدام المكثف',
-    features: ['500 محادثة ذكية يومياً', '70 فحصاً أسبوعياً', '100 تنفيذ ومزامنة يومياً'],
+    features: [
+      '500 محادثة ذكية يومياً',
+      '70 فحصاً أسبوعياً',
+      '100 تنفيذ ومزامنة يومياً',
+      optimizerAccountsLine(OPTIMIZER_ACCOUNTS_PER_PLAN.pro),
+    ],
   },
 ];
 

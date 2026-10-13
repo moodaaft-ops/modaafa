@@ -10,6 +10,9 @@ import {
   readAllLiveOverrides,
   type LiveAccessOverrides,
 } from '@/lib/billing/access-overrides';
+import { OPTIMIZER_ACCOUNTS_PER_PLAN, type OptimizerPlan } from '@/lib/billing/optimizer-caps';
+
+export { OPTIMIZER_ACCOUNTS_PER_PLAN } from '@/lib/billing/optimizer-caps';
 
 /**
  * A `running` row older than this is a corpse: maxDuration is 300s, so any
@@ -163,8 +166,9 @@ async function selectAllRows<T>(
 }
 
 /**
- * Every billable user and the plan whose LIMITS apply to them (a trial runs on
- * Starter, see effectiveLimitPlan). One definition of "billable" for all the
+ * Every billable user and the level whose LIMITS apply to them: a Stripe trial is
+ * its own level ('trial', which runs on Starter limits, see effectiveLimitPlan),
+ * everyone else is their effective plan. One definition of "billable" for all the
  * background jobs:
  *   - a user with an entitled Stripe subscription row,
  *   - plus a user with an operator free-plan grant,
@@ -191,7 +195,7 @@ async function loadBillableUserPlans(supabase: any, now = Date.now()) {
     rowsByUser.set(row.user_id, list);
   }
 
-  const plans = new Map<string, BillingPlan>();
+  const plans = new Map<string, OptimizerPlan>();
   for (const [userId, rows] of rowsByUser) {
     if (!rows.some((row) => isSubscriptionEntitled(row, now))) continue;
     plans.set(userId, limitPlanFor(rows, overrides.get(userId) ?? NO_OVERRIDES, now));
@@ -205,8 +209,15 @@ async function loadBillableUserPlans(supabase: any, now = Date.now()) {
   return plans;
 }
 
-function limitPlanFor(rows: Array<Record<string, any>>, overrides: LiveAccessOverrides, now: number) {
+function limitPlanFor(
+  rows: Array<Record<string, any>>,
+  overrides: LiveAccessOverrides,
+  now: number
+): OptimizerPlan {
   const access = applyAccessOverrides(subscriptionAccessFromRows(rows, now), overrides);
+  // Only a Stripe trial that no operator grant outranks counts as 'trial': the
+  // grant replaces the status with 'comp', which keeps its plan.
+  if (access.status === 'trialing') return 'trial';
   // An unreadable plan on an entitled row must not unlock the biggest cap.
   return effectiveLimitPlan(access) ?? 'starter';
 }
@@ -231,17 +242,6 @@ export async function getBillableBusinessIds(supabase: any) {
 // Optimizer account cap per plan
 // ---------------------------------------------------------------------------
 
-/**
- * How many Google Ads accounts the AUTOMATIC background optimizer works on per
- * user. A trial counts as Starter (effectiveLimitPlan). This bounds model spend
- * only: it never changes what a user can link, switch to, or see.
- */
-export const OPTIMIZER_ACCOUNTS_PER_PLAN: Record<BillingPlan, number> = {
-  starter: 1,
-  growth: 3,
-  pro: 25,
-};
-
 export type OptimizerCapBusiness = {
   id: string;
   user_id: string;
@@ -254,7 +254,12 @@ export type OptimizerCapAccount = {
   customer_id: string;
   /** google_ads_accounts has no created_at; linked_at is set once, on first link. */
   linked_at?: string | null;
+  /** The optimizer's round-robin cursor. */
+  last_optimized_at?: string | null;
 };
+
+/** An account the cap lets the optimizer work on, with the cursor the route needs. */
+export type OptimizerAllowedAccount = { id: string; last_optimized_at: string | null };
 
 const digitsOnly = (value: string | null | undefined) => (value ?? '').replace(/\D/g, '');
 
@@ -280,7 +285,7 @@ export function selectOptimizerAccountIds({
   businesses,
   accounts,
 }: {
-  planByUser: ReadonlyMap<string, BillingPlan>;
+  planByUser: ReadonlyMap<string, OptimizerPlan>;
   businesses: OptimizerCapBusiness[];
   accounts: OptimizerCapAccount[];
 }) {
@@ -299,10 +304,10 @@ export function selectOptimizerAccountIds({
     byUser.set(business.user_id, list);
   }
 
-  const allowedAccountIds: string[] = [];
+  const allowedAccounts: OptimizerAllowedAccount[] = [];
   let skippedOverPlanCap = 0;
   for (const [userId, list] of byUser) {
-    const cap = OPTIMIZER_ACCOUNTS_PER_PLAN[planByUser.get(userId) ?? 'starter'];
+    const cap = OPTIMIZER_ACCOUNTS_PER_PLAN[planByUser.get(userId) ?? 'trial'];
     list.sort((a, b) => {
       if (a.selected !== b.selected) return a.selected ? -1 : 1;
       const linkedA = linkedAtMs(a.linked_at);
@@ -310,22 +315,33 @@ export function selectOptimizerAccountIds({
       if (linkedA !== linkedB) return linkedA < linkedB ? -1 : 1;
       return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
     });
-    list.slice(0, cap).forEach((account) => allowedAccountIds.push(account.id));
+    list
+      .slice(0, cap)
+      .forEach((account) =>
+        allowedAccounts.push({ id: account.id, last_optimized_at: account.last_optimized_at ?? null })
+      );
     skippedOverPlanCap += Math.max(0, list.length - cap);
   }
-  return { allowedAccountIds, skippedOverPlanCap };
+  return {
+    allowedAccounts,
+    allowedAccountIds: allowedAccounts.map((account) => account.id),
+    skippedOverPlanCap,
+  };
 }
 
 /**
- * The account ids the optimize cron may process for the billable users, and how
- * many it left out because they are over the plan cap. Reads and chunks IN
- * lists like getBillableBusinessIds. Throws on a read error: the cron treats
- * that like a failed subscription lookup instead of running uncapped.
+ * The accounts the optimize cron may process for the billable users (with their
+ * round-robin cursor), and how many it left out because they are over the plan
+ * cap. Reads and chunks IN lists like getBillableBusinessIds. Throws on a read
+ * error: the cron treats that like a failed subscription lookup instead of
+ * running uncapped.
  */
 export async function getOptimizerAllowedAccountIds(supabase: any) {
   const planByUser = await loadBillableUserPlans(supabase);
   const userIds = Array.from(planByUser.keys()).sort();
-  if (userIds.length === 0) return { allowedAccountIds: [] as string[], skippedOverPlanCap: 0 };
+  if (userIds.length === 0) {
+    return { allowedAccounts: [] as OptimizerAllowedAccount[], allowedAccountIds: [] as string[], skippedOverPlanCap: 0 };
+  }
 
   const businesses: OptimizerCapBusiness[] = [];
   for (let index = 0; index < userIds.length; index += 200) {
@@ -348,7 +364,7 @@ export async function getOptimizerAllowedAccountIds(supabase: any) {
       ...(await selectAllRows<OptimizerCapAccount>(supabase, (q) =>
         q
           .from('google_ads_accounts')
-          .select('id, business_id, customer_id, linked_at')
+          .select('id, business_id, customer_id, linked_at, last_optimized_at')
           .eq('status', 'active')
           .not('is_manager', 'is', true)
           .in('business_id', chunk)
@@ -358,6 +374,67 @@ export async function getOptimizerAllowedAccountIds(supabase: any) {
   }
 
   return selectOptimizerAccountIds({ planByUser, businesses, accounts });
+}
+
+/** Most ids one `.in('id', ...)` request may carry. Keeps the URL well under any proxy limit. */
+export const OPTIMIZER_DETAIL_BATCH_SIZE = 60;
+
+export function chunkIds<T>(ids: readonly T[], size = OPTIMIZER_DETAIL_BATCH_SIZE): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < ids.length; index += size) chunks.push(ids.slice(index, index + size));
+  return chunks;
+}
+
+/**
+ * Cooldown, round-robin order and batch limit applied in memory to the allowed
+ * accounts, so the database is never asked for a 50-uuid IN list per user.
+ *
+ *   - `cooldownCutoffIso` null means no cooldown (force runs, cooldown 0).
+ *   - Eligible: never optimized, or last optimized strictly before the cutoff.
+ *   - Cooled down: last optimized at or after the cutoff (the informational count).
+ *   - Order: oldest cursor first, never-optimized first, then id for a stable tie.
+ *   - At most `limit` ids.
+ */
+export function pickOptimizerBatch({
+  accounts,
+  cooldownCutoffIso,
+  limit,
+}: {
+  accounts: readonly OptimizerAllowedAccount[];
+  cooldownCutoffIso: string | null;
+  limit: number;
+}) {
+  const cutoffMs = cooldownCutoffIso ? new Date(cooldownCutoffIso).getTime() : NaN;
+  const useCutoff = Number.isFinite(cutoffMs);
+  const cursorMs = (account: OptimizerAllowedAccount) => {
+    const ms = account.last_optimized_at ? new Date(account.last_optimized_at).getTime() : NaN;
+    return Number.isFinite(ms) ? ms : null;
+  };
+
+  const eligible: Array<{ id: string; cursor: number | null }> = [];
+  let cooledDownAccounts = 0;
+  for (const account of accounts) {
+    const cursor = cursorMs(account);
+    if (useCutoff && cursor !== null && cursor >= cutoffMs) {
+      cooledDownAccounts += 1;
+      continue;
+    }
+    eligible.push({ id: account.id, cursor });
+  }
+
+  eligible.sort((a, b) => {
+    if (a.cursor !== b.cursor) {
+      if (a.cursor === null) return -1;
+      if (b.cursor === null) return 1;
+      return a.cursor - b.cursor;
+    }
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
+
+  return {
+    batchIds: eligible.slice(0, Math.max(0, limit)).map((account) => account.id),
+    cooledDownAccounts,
+  };
 }
 
 function errorText(error: unknown) {

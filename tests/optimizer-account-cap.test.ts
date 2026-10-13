@@ -1,16 +1,22 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
   OPTIMIZER_ACCOUNTS_PER_PLAN,
+  OPTIMIZER_DETAIL_BATCH_SIZE,
+  chunkIds,
   getBillableBusinessIds,
   getOptimizerAllowedAccountIds,
+  pickOptimizerBatch,
   selectOptimizerAccountIds,
+  type OptimizerAllowedAccount,
   type OptimizerCapAccount,
   type OptimizerCapBusiness,
 } from '../lib/platform/jobs';
+import { optimizerAccountsLine, type OptimizerPlan } from '../lib/billing/optimizer-caps';
 
-const plans = (entries: Record<string, 'starter' | 'growth' | 'pro'>) => new Map(Object.entries(entries));
+const plans = (entries: Record<string, OptimizerPlan>) => new Map(Object.entries(entries));
 
 function accountsFor(businessId: string, count: number, prefix = 'a') {
   return Array.from({ length: count }, (_, index): OptimizerCapAccount => ({
@@ -21,16 +27,16 @@ function accountsFor(businessId: string, count: number, prefix = 'a') {
   }));
 }
 
-test('the per-plan caps are 1, 3 and 25 accounts', () => {
-  assert.deepEqual(OPTIMIZER_ACCOUNTS_PER_PLAN, { starter: 1, growth: 3, pro: 25 });
+test('the per-plan caps are trial 1, starter 3, growth 10 and pro 50 accounts', () => {
+  assert.deepEqual(OPTIMIZER_ACCOUNTS_PER_PLAN, { trial: 1, starter: 3, growth: 10, pro: 50 });
 });
 
-test('a starter user keeps one account: the selected one, whichever it is', () => {
+test('a trial user keeps one account: the selected one, whichever it is', () => {
   const businesses: OptimizerCapBusiness[] = [
     { id: 'b1', user_id: 'u1', selected_google_ads_customer_id: '1000000003' },
   ];
   const accounts = accountsFor('b1', 3);
-  const result = selectOptimizerAccountIds({ planByUser: plans({ u1: 'starter' }), businesses, accounts });
+  const result = selectOptimizerAccountIds({ planByUser: plans({ u1: 'trial' }), businesses, accounts });
   assert.deepEqual(result.allowedAccountIds, ['a03']);
   assert.equal(result.skippedOverPlanCap, 2);
 });
@@ -43,10 +49,10 @@ test('with no selected account the oldest link wins, then the id', () => {
     { id: 'c', business_id: 'b1', customer_id: '1000000003', linked_at: '2026-01-01T00:00:00.000Z' },
     { id: 'n', business_id: 'b1', customer_id: '1000000004', linked_at: null },
   ];
-  const growth = selectOptimizerAccountIds({ planByUser: plans({ u1: 'growth' }), businesses, accounts });
+  const starter = selectOptimizerAccountIds({ planByUser: plans({ u1: 'starter' }), businesses, accounts });
   // Jan 1 twice (c before m by id), then March; the unlinked-date row is last.
-  assert.deepEqual(growth.allowedAccountIds, ['c', 'm', 'z']);
-  assert.equal(growth.skippedOverPlanCap, 1);
+  assert.deepEqual(starter.allowedAccountIds, ['c', 'm', 'z']);
+  assert.equal(starter.skippedOverPlanCap, 1);
 });
 
 test('the selected account comes first even when it was linked last, then the oldest fill the rest', () => {
@@ -54,7 +60,7 @@ test('the selected account comes first even when it was linked last, then the ol
     { id: 'b1', user_id: 'u1', selected_google_ads_customer_id: '1000000005' },
   ];
   const accounts = accountsFor('b1', 5);
-  const result = selectOptimizerAccountIds({ planByUser: plans({ u1: 'growth' }), businesses, accounts });
+  const result = selectOptimizerAccountIds({ planByUser: plans({ u1: 'starter' }), businesses, accounts });
   assert.deepEqual(result.allowedAccountIds, ['a05', 'a01', 'a02']);
 });
 
@@ -63,23 +69,52 @@ test('a selected customer id stored with dashes still matches', () => {
     { id: 'b1', user_id: 'u1', selected_google_ads_customer_id: '100-000-0002' },
   ];
   const result = selectOptimizerAccountIds({
-    planByUser: plans({ u1: 'starter' }),
+    planByUser: plans({ u1: 'trial' }),
     businesses,
     accounts: accountsFor('b1', 3),
   });
   assert.deepEqual(result.allowedAccountIds, ['a02']);
 });
 
-test('a pro user keeps 25 of 30 and the rest are counted as skipped', () => {
+test('a pro user keeps 50 of 60 and the rest are counted as skipped', () => {
   const businesses: OptimizerCapBusiness[] = [{ id: 'b1', user_id: 'u1' }];
   const result = selectOptimizerAccountIds({
     planByUser: plans({ u1: 'pro' }),
     businesses,
-    accounts: accountsFor('b1', 30),
+    accounts: accountsFor('b1', 60),
   });
-  assert.equal(result.allowedAccountIds.length, 25);
-  assert.equal(result.skippedOverPlanCap, 5);
-  assert.ok(!result.allowedAccountIds.includes('a30'));
+  assert.equal(result.allowedAccountIds.length, 50);
+  assert.equal(result.skippedOverPlanCap, 10);
+  assert.ok(!result.allowedAccountIds.includes('a60'));
+});
+
+test('a growth user keeps 10 of 12 and a starter user 3 of 12', () => {
+  const businesses: OptimizerCapBusiness[] = [
+    { id: 'b1', user_id: 'g' },
+    { id: 'b2', user_id: 's' },
+  ];
+  const result = selectOptimizerAccountIds({
+    planByUser: plans({ g: 'growth', s: 'starter' }),
+    businesses,
+    accounts: [...accountsFor('b1', 12, 'g'), ...accountsFor('b2', 12, 's')],
+  });
+  assert.equal(result.allowedAccountIds.filter((id) => id.startsWith('g')).length, 10);
+  assert.equal(result.allowedAccountIds.filter((id) => id.startsWith('s')).length, 3);
+  assert.equal(result.skippedOverPlanCap, 2 + 9);
+});
+
+test('a trial is a level of its own: a paid Starter keeps 3 where a trial keeps 1', () => {
+  const businesses: OptimizerCapBusiness[] = [
+    { id: 'b1', user_id: 't' },
+    { id: 'b2', user_id: 's' },
+  ];
+  const result = selectOptimizerAccountIds({
+    planByUser: plans({ t: 'trial', s: 'starter' }),
+    businesses,
+    accounts: [...accountsFor('b1', 4, 't'), ...accountsFor('b2', 4, 's')],
+  });
+  assert.equal(result.allowedAccountIds.filter((id) => id.startsWith('t')).length, 1);
+  assert.equal(result.allowedAccountIds.filter((id) => id.startsWith('s')).length, 3);
 });
 
 test('a user under the cap keeps everything and skips nothing', () => {
@@ -104,7 +139,7 @@ test('the cap is per USER: two businesses of one user share it, two users do not
     ...accountsFor('b3', 2, 'z'),
   ];
   const result = selectOptimizerAccountIds({
-    planByUser: plans({ u1: 'starter', u2: 'starter' }),
+    planByUser: plans({ u1: 'trial', u2: 'trial' }),
     businesses,
     accounts,
   });
@@ -131,9 +166,9 @@ test('the choice does not depend on the order the rows arrive in', () => {
     { id: 'b1', user_id: 'u1', selected_google_ads_customer_id: '1000000004' },
   ];
   const accounts = accountsFor('b1', 6);
-  const forward = selectOptimizerAccountIds({ planByUser: plans({ u1: 'growth' }), businesses, accounts });
+  const forward = selectOptimizerAccountIds({ planByUser: plans({ u1: 'starter' }), businesses, accounts });
   const backward = selectOptimizerAccountIds({
-    planByUser: plans({ u1: 'growth' }),
+    planByUser: plans({ u1: 'starter' }),
     businesses,
     accounts: [...accounts].reverse(),
   });
@@ -230,24 +265,46 @@ function world(extra: { subscriptions: Row[]; overrides?: Row[]; accountsPerUser
   });
 }
 
-test('a trialing Pro user is capped like Starter, an active Pro user like Pro', async () => {
+test('a trial gets 1 whatever its plan, a paid Starter 3, Growth 10 and Pro all of up to 50', async () => {
   const database = world({
     subscriptions: [
       subscriptionRow('trial-pro', { status: 'trialing', trial_ends_at: iso(10 * DAY) }),
+      subscriptionRow('trial-starter', { plan: 'starter', status: 'trialing', trial_ends_at: iso(10 * DAY) }),
       subscriptionRow('paid-pro'),
       subscriptionRow('paid-growth', { plan: 'growth' }),
       subscriptionRow('paid-starter', { plan: 'starter' }),
     ],
-    accountsPerUser: 5,
+    accountsPerUser: 12,
   });
   const result = await getOptimizerAllowedAccountIds(database);
   const countFor = (userId: string) => result.allowedAccountIds.filter((id) => id.startsWith(`${userId}-`)).length;
   assert.equal(countFor('trial-pro'), 1);
-  assert.equal(countFor('paid-pro'), 5);
-  assert.equal(countFor('paid-growth'), 3);
-  assert.equal(countFor('paid-starter'), 1);
-  // trial-pro 4 + paid-growth 2 + paid-starter 4
-  assert.equal(result.skippedOverPlanCap, 10);
+  assert.equal(countFor('trial-starter'), 1);
+  assert.equal(countFor('paid-pro'), 12);
+  assert.equal(countFor('paid-growth'), 10);
+  assert.equal(countFor('paid-starter'), 3);
+  // trial-pro 11 + trial-starter 11 + paid-growth 2 + paid-starter 9
+  assert.equal(result.skippedOverPlanCap, 33);
+});
+
+test('the helper hands the cron the round-robin cursor of every allowed account', async () => {
+  const database = fakeDatabase({
+    subscriptions: [subscriptionRow('u1')],
+    account_access_overrides: [],
+    businesses: [{ id: 'b1', user_id: 'u1', selected_google_ads_customer_id: null }],
+    google_ads_accounts: [
+      { id: 'fresh', business_id: 'b1', customer_id: '3000000001', status: 'active', is_manager: false, linked_at: '2026-01-01T00:00:00.000Z', last_optimized_at: '2026-10-13T01:00:00.000Z' },
+      { id: 'never', business_id: 'b1', customer_id: '3000000002', status: 'active', is_manager: false, linked_at: '2026-01-02T00:00:00.000Z', last_optimized_at: null },
+    ],
+  });
+  const result = await getOptimizerAllowedAccountIds(database);
+  assert.deepEqual(
+    [...result.allowedAccounts].sort((a, b) => a.id.localeCompare(b.id)),
+    [
+      { id: 'fresh', last_optimized_at: '2026-10-13T01:00:00.000Z' },
+      { id: 'never', last_optimized_at: null },
+    ]
+  );
 });
 
 test('a free-plan grant uses the granted plan, a suspension removes the user entirely', async () => {
@@ -263,12 +320,12 @@ test('a free-plan grant uses the granted plan, a suspension removes the user ent
       { user_id: 'grant-only', kind: 'plan_grant', plan: 'growth', expires_at: null, created_at: iso(-DAY), revoked_at: null },
       { user_id: 'suspended-pro', kind: 'suspension', plan: null, expires_at: null, created_at: iso(-DAY), revoked_at: null },
     ],
-    accountsPerUser: 5,
+    accountsPerUser: 12,
   });
   const result = await getOptimizerAllowedAccountIds(database);
   const countFor = (userId: string) => result.allowedAccountIds.filter((id) => id.startsWith(`${userId}-`)).length;
-  assert.equal(countFor('trial-starter'), 5);
-  assert.equal(countFor('grant-only'), 3);
+  assert.equal(countFor('trial-starter'), 12);
+  assert.equal(countFor('grant-only'), 10);
   assert.equal(countFor('suspended-pro'), 0);
 });
 
@@ -323,4 +380,135 @@ test('getBillableBusinessIds still returns exactly the businesses of the billabl
     ids.sort(),
     ['b-grant-only', 'b-paid-pro', 'b-past-due-recent', 'b-trial'].sort()
   );
+});
+
+
+// ---------------------------------------------------------------------------
+// In-memory cooldown / ordering / limit, and batched detail fetch
+// ---------------------------------------------------------------------------
+
+const HOUR = 3600 * 1000;
+const NOW_MS = Date.parse('2026-10-13T12:00:00.000Z');
+const cutoff = new Date(NOW_MS - 12 * HOUR).toISOString();
+const at = (hoursAgo: number): string => new Date(NOW_MS - hoursAgo * HOUR).toISOString();
+
+test('pickOptimizerBatch leaves cooled-down accounts out and counts them', () => {
+  const accounts: OptimizerAllowedAccount[] = [
+    { id: 'recent', last_optimized_at: at(1) },
+    { id: 'old', last_optimized_at: at(30) },
+    { id: 'never', last_optimized_at: null },
+    { id: 'edge', last_optimized_at: cutoff },
+  ];
+  const result = pickOptimizerBatch({ accounts, cooldownCutoffIso: cutoff, limit: 60 });
+  // Exactly at the cutoff is still cooled down (the old filter was strictly "lt").
+  assert.deepEqual(result.batchIds, ['never', 'old']);
+  assert.equal(result.cooledDownAccounts, 2);
+});
+
+test('pickOptimizerBatch with no cutoff (force run) keeps everything and counts no cooldown', () => {
+  const accounts: OptimizerAllowedAccount[] = [
+    { id: 'recent', last_optimized_at: at(1) },
+    { id: 'old', last_optimized_at: at(30) },
+  ];
+  const result = pickOptimizerBatch({ accounts, cooldownCutoffIso: null, limit: 60 });
+  assert.deepEqual(result.batchIds, ['old', 'recent']);
+  assert.equal(result.cooledDownAccounts, 0);
+});
+
+test('pickOptimizerBatch orders oldest first with never-optimized first and a stable id tie-break', () => {
+  const accounts: OptimizerAllowedAccount[] = [
+    { id: 'c', last_optimized_at: at(20) },
+    { id: 'b', last_optimized_at: at(40) },
+    { id: 'z-never', last_optimized_at: null },
+    { id: 'a-never', last_optimized_at: null },
+    { id: 'a', last_optimized_at: at(20) },
+  ];
+  const result = pickOptimizerBatch({ accounts, cooldownCutoffIso: cutoff, limit: 60 });
+  assert.deepEqual(result.batchIds, ['a-never', 'z-never', 'b', 'a', 'c']);
+});
+
+test('pickOptimizerBatch applies the limit after the cooldown, and the cooled-down count ignores the limit', () => {
+  const accounts: OptimizerAllowedAccount[] = [
+    ...Array.from({ length: 5 }, (_, index) => ({ id: `cool${index}`, last_optimized_at: at(2) })),
+    ...Array.from({ length: 5 }, (_, index) => ({ id: `due${index}`, last_optimized_at: at(24 + index) })),
+  ];
+  const result = pickOptimizerBatch({ accounts, cooldownCutoffIso: cutoff, limit: 3 });
+  // Oldest cursor first: due4 (28h), due3, due2.
+  assert.deepEqual(result.batchIds, ['due4', 'due3', 'due2']);
+  assert.equal(result.cooledDownAccounts, 5);
+});
+
+test('pickOptimizerBatch treats an unreadable cursor as never optimized and a bad cutoff as no cooldown', () => {
+  const accounts: OptimizerAllowedAccount[] = [
+    { id: 'junk', last_optimized_at: 'not-a-date' },
+    { id: 'ok', last_optimized_at: at(1) },
+  ];
+  assert.deepEqual(pickOptimizerBatch({ accounts, cooldownCutoffIso: cutoff, limit: 10 }).batchIds, ['junk']);
+  assert.deepEqual(pickOptimizerBatch({ accounts, cooldownCutoffIso: 'nope', limit: 10 }).batchIds, ['junk', 'ok']);
+  assert.deepEqual(pickOptimizerBatch({ accounts: [], cooldownCutoffIso: cutoff, limit: 10 }), {
+    batchIds: [],
+    cooledDownAccounts: 0,
+  });
+  assert.deepEqual(pickOptimizerBatch({ accounts, cooldownCutoffIso: null, limit: 0 }).batchIds, []);
+});
+
+test('chunkIds never builds a request with more than 60 ids and loses none', () => {
+  assert.ok(OPTIMIZER_DETAIL_BATCH_SIZE <= 60);
+  const ids = Array.from({ length: 125 }, (_, index) => `id-${index}`);
+  const chunks = chunkIds(ids);
+  assert.deepEqual(chunks.map((chunk) => chunk.length), [60, 60, 5]);
+  assert.deepEqual(chunks.flat(), ids);
+  assert.deepEqual(chunkIds([]), []);
+  assert.deepEqual(chunkIds(['a']), [['a']]);
+});
+
+test('at the Pro cap of 50 per user and many users, the allowed list is big but no request carries it', async () => {
+  const users = Array.from({ length: 6 }, (_, index) => `pro-${index}`);
+  const database = world({ subscriptions: users.map((userId) => subscriptionRow(userId)), accountsPerUser: 50 });
+  const result = await getOptimizerAllowedAccountIds(database);
+  assert.equal(result.allowedAccounts.length, 300);
+  // The cron's batch is bounded by the limit, and its requests by the batch size.
+  const batch = pickOptimizerBatch({ accounts: result.allowedAccounts, cooldownCutoffIso: cutoff, limit: 100 });
+  assert.equal(batch.batchIds.length, 100);
+  assert.ok(chunkIds(batch.batchIds).every((chunk) => chunk.length <= 60));
+});
+
+test('the optimize cron no longer sends the allowed list in one .in(id) and fetches details in batches', () => {
+  const source = readFileSync(new URL('../app/api/cron/optimize/route.ts', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /\.in\('id', allowedAccountIds\)/);
+  assert.doesNotMatch(source, /allowedAccountIds/);
+  assert.match(source, /pickOptimizerBatch\(/);
+  assert.match(source, /chunkIds\(batchIds, OPTIMIZER_DETAIL_BATCH_SIZE\)/);
+  assert.match(source, /\.in\('id', idBatch\)/);
+  // The Supabase side no longer filters on the cursor: it is decided in memory.
+  assert.doesNotMatch(source, /last_optimized_at\.is\.null/);
+  assert.doesNotMatch(source, /\.gte\('last_optimized_at'/);
+});
+
+// ---------------------------------------------------------------------------
+// The billing page line
+// ---------------------------------------------------------------------------
+
+test('the plan card line has the right Arabic number agreement and no dash', () => {
+  assert.equal(optimizerAccountsLine(1), 'الخطة اليومية التلقائية لحساب واحد');
+  assert.equal(optimizerAccountsLine(3), 'الخطة اليومية التلقائية لحد 3 حسابات');
+  assert.equal(optimizerAccountsLine(10), 'الخطة اليومية التلقائية لحد 10 حسابات');
+  assert.equal(optimizerAccountsLine(50), 'الخطة اليومية التلقائية لحد 50 حساب');
+  for (const count of [1, 2, 3, 10, 11, 50]) assert.doesNotMatch(optimizerAccountsLine(count), /[\u2013\u2014]/);
+});
+
+test('every plan card on the billing page carries its optimizer line, and the home page does not', () => {
+  const billing = readFileSync(new URL('../app/(dashboard)/billing/page.tsx', import.meta.url), 'utf8');
+  for (const plan of ['starter', 'growth', 'pro'] as const) {
+    assert.ok(
+      billing.includes(`optimizerAccountsLine(OPTIMIZER_ACCOUNTS_PER_PLAN.${plan})`),
+      `${plan} card shows its optimizer line`
+    );
+  }
+  const home = readFileSync(new URL('../app/page.tsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(home, /الخطة اليومية التلقائية|optimizerAccountsLine/);
+  // The numbers shown are the numbers enforced.
+  assert.equal(optimizerAccountsLine(OPTIMIZER_ACCOUNTS_PER_PLAN.starter), 'الخطة اليومية التلقائية لحد 3 حسابات');
+  assert.equal(optimizerAccountsLine(OPTIMIZER_ACCOUNTS_PER_PLAN.growth), 'الخطة اليومية التلقائية لحد 10 حسابات');
+  assert.equal(optimizerAccountsLine(OPTIMIZER_ACCOUNTS_PER_PLAN.pro), 'الخطة اليومية التلقائية لحد 50 حساب');
 });
