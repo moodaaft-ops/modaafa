@@ -1,3 +1,4 @@
+import type Anthropic from '@anthropic-ai/sdk';
 import { createMessageForAgent, hasAIBackend } from './client';
 import type { Customer } from 'google-ads-api';
 import { createAdminClient } from '../supabase/server';
@@ -185,6 +186,19 @@ export interface OptimizerAction {
   };
 }
 
+/**
+ * The rules are identical for every account in a run, so the first call writes
+ * them to the prompt cache and the following ones read them at 5% of the input
+ * price (Sonnet 5.5 caches from 512 tokens; this block is roughly 2k). The
+ * SDK's TextBlockParam type predates cache_control but the API accepts it, the
+ * same cast lib/jarvis/brain.ts uses.
+ */
+export function optimizerSystemBlocks() {
+  return [
+    { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
+  ] as unknown as Anthropic.TextBlockParam[];
+}
+
 export async function decideOptimizations(
   snapshot: OptimizerSnapshot,
   /** Account owner, so the hourly optimizer's cost is attributed to them. */
@@ -194,7 +208,7 @@ export async function decideOptimizations(
 
   const response = await createMessageForAgent('optimizer', {
     max_tokens: 4000,
-    system: SYSTEM_PROMPT,
+    system: optimizerSystemBlocks(),
     messages: [
       {
         role: 'user',
@@ -268,13 +282,42 @@ function isWellFormedAction(action: any): action is OptimizerAction {
 }
 
 /**
- * Serialize the snapshot for the prompt, neutralising instruction-shaped
- * sequences in every third-party-controlled string.
+ * What the model reads for `budget_utilization`. The cron builds each row as
+ * { campaign, campaign_budget, spend_7d, utilization } where the first two are
+ * the very objects already sent in `campaigns`, so repeating them only cost
+ * tokens. The row keeps the campaign's resource name as the join key and its
+ * name for the Arabic reason text; the budget resource and amount stay in the
+ * matching `campaigns` row, which is where the prompt tells the model to copy
+ * them from. Server-side grounding still runs on the full snapshot.
  */
-function sanitizeSnapshotForPrompt(snapshot: OptimizerSnapshot) {
-  return JSON.stringify(snapshot, (_key, value) =>
+function promptBudgetUtilization(rows: any[] | undefined) {
+  if (!Array.isArray(rows)) return rows;
+  return rows.map((row) => {
+    const campaign = row?.campaign ?? {};
+    return {
+      campaign_resource: campaign.resource_name ?? campaign.resourceName ?? null,
+      campaign_name: campaign.name ?? null,
+      spend_7d: typeof row?.spend_7d === 'number' ? Math.round(row.spend_7d * 100) / 100 : row?.spend_7d,
+      utilization:
+        typeof row?.utilization === 'number' ? Math.round(row.utilization * 1000) / 1000 : row?.utilization,
+    };
+  });
+}
+
+/**
+ * Serialize the snapshot for the prompt, neutralising instruction-shaped
+ * sequences in every third-party-controlled string. Compact on purpose: the
+ * old two-space indent added whitespace tokens to every nested row, and the
+ * model reads minified JSON just as well.
+ */
+export function sanitizeSnapshotForPrompt(snapshot: OptimizerSnapshot) {
+  const forPrompt = {
+    ...snapshot,
+    budget_utilization: promptBudgetUtilization(snapshot.budget_utilization),
+  };
+  return JSON.stringify(forPrompt, (_key, value) =>
     typeof value === 'string' ? sanitizePromptText(value) : value
-  , 2);
+  );
 }
 
 export function sanitizePromptText(value: string, maxLength = 300) {

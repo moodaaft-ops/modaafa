@@ -52,8 +52,10 @@ import { hasValidCronAuthorization } from '@/lib/security/cron-auth';
 import { createTimeBudget, mapLimit } from '@/lib/platform/concurrency';
 import {
   OPTIMIZE_ACCOUNT_CONCURRENCY,
+  OPTIMIZE_ACCOUNT_COOLDOWN_HOURS,
   OPTIMIZE_ACCOUNT_LIMIT,
 } from '@/lib/platform/job-capacity';
+import { isSnapshotIdle, optimizerCooldownCutoffIso } from '@/lib/ai/optimizer-cost-guards';
 
 /**
  * Cron endpoint - runs hourly via Vercel Cron.
@@ -132,12 +134,23 @@ async function runOptimizerCron(req: NextRequest) {
   // each, inside a 300s function. Past ~20 accounts the job was killed
   // mid-loop, `finishJobRun` never ran, and because the ordering was unstable
   // it was the same accounts that got skipped every night.
-  const { data: accounts, error: accountLookupError } = await supabase
+  //
+  // Cost guard: an account that was optimized less than OPTIMIZE_ACCOUNT_COOLDOWN_HOURS
+  // ago is left out. Its 7 and 30 day windows have barely moved, so another
+  // pass would pay for the same answer. `last_optimized_at` is the same cursor
+  // the round-robin uses, and it advances on failure too, so a failing account
+  // also rests instead of being retried every slot.
+  const cooldownCutoff = optimizerCooldownCutoffIso(Date.now(), OPTIMIZE_ACCOUNT_COOLDOWN_HOURS);
+  let accountQuery = supabase
     .from('google_ads_accounts')
     .select('id, customer_id, customer_name, manager_id, currency_code, refresh_token_encrypted, business_id')
     .eq('status', 'active')
     .not('is_manager', 'is', true)
-    .in('business_id', businessIds)
+    .in('business_id', businessIds);
+  if (cooldownCutoff) {
+    accountQuery = accountQuery.or(`last_optimized_at.is.null,last_optimized_at.lt.${cooldownCutoff}`);
+  }
+  const { data: accounts, error: accountLookupError } = await accountQuery
     .order('last_optimized_at', { ascending: true, nullsFirst: true })
     .limit(OPTIMIZE_ACCOUNT_LIMIT);
 
@@ -147,9 +160,32 @@ async function runOptimizerCron(req: NextRequest) {
     return NextResponse.json({ error: 'account_lookup_failed' }, { status: 500 });
   }
 
+  // Informational only (it feeds the cost readings), so a failure here never
+  // blocks the run.
+  let cooledDownAccounts = 0;
+  if (cooldownCutoff) {
+    const { count } = await supabase
+      .from('google_ads_accounts')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'active')
+      .not('is_manager', 'is', true)
+      .in('business_id', businessIds)
+      .gte('last_optimized_at', cooldownCutoff);
+    cooledDownAccounts = count ?? 0;
+  }
+
   if (!accounts || accounts.length === 0) {
-    await finishJobRun({ supabase, job, status: 'success', details: { note: 'No active accounts found' } });
-    return NextResponse.json({ processed: 0 });
+    await finishJobRun({
+      supabase,
+      job,
+      status: 'success',
+      details: {
+        note: cooledDownAccounts > 0 ? 'All active accounts are inside the optimizer cooldown' : 'No active accounts found',
+        cooldown_hours: OPTIMIZE_ACCOUNT_COOLDOWN_HOURS,
+        cooled_down_accounts: cooledDownAccounts,
+      },
+    });
+    return NextResponse.json({ processed: 0, cooled_down_accounts: cooledDownAccounts });
   }
 
   // Business context feeds the optimizer the way a real buyer is briefed:
@@ -214,6 +250,11 @@ async function runOptimizerCron(req: NextRequest) {
     impacts_measured: 0,
     opportunities_queued: 0,
     benchmarks_refreshed: 0,
+    /** Accounts that reached the model (the paid step). */
+    model_calls: 0,
+    /** Accounts with nothing to act on, so the model was not asked. */
+    skipped_idle: 0,
+    cooled_down_accounts: cooledDownAccounts,
     errors: [] as string[],
   };
   // One benchmark read per distinct (sector, currency) per run, not per account.
@@ -273,10 +314,17 @@ async function runOptimizerCron(req: NextRequest) {
         sectorBenchmark
       );
 
-      // Get AI decisions
-      const actions = await decideOptimizations(snapshot, {
-        userId: businessContext?.user_id ?? null,
-      });
+      // Get AI decisions. An account with no spend and no evidence rows gives
+      // the model nothing to act on, so we skip the paid call and record a
+      // plain no-action instead.
+      const idle = isSnapshotIdle(snapshot);
+      const actions = idle
+        ? []
+        : await decideOptimizations(snapshot, {
+            userId: businessContext?.user_id ?? null,
+          });
+      if (idle) results.skipped_idle++;
+      else results.model_calls++;
 
       const settings =
         settingsByAccount.get(account.id) ?? normalizeAutopilotSettings(account.id);
@@ -295,6 +343,12 @@ async function runOptimizerCron(req: NextRequest) {
           jobRunId: job.id,
           mode: settings.mode,
           decision: 'no_action',
+          ...(idle
+            ? {
+                reasonAr: 'الحساب بلا إنفاق ولا مؤشرات تستدعي تعديلًا هذا الأسبوع، فلم نستدع النموذج',
+                metadata: { skipped_model_call: true, reason: 'idle_snapshot' },
+              }
+            : {}),
         });
       }
 
@@ -702,6 +756,12 @@ async function runOptimizerCron(req: NextRequest) {
       skipped_for_time: skippedForTime,
       batch_limit: OPTIMIZE_ACCOUNT_LIMIT,
       concurrency: OPTIMIZE_ACCOUNT_CONCURRENCY,
+      // Cost readings: how many accounts reached the paid model call, how many
+      // were skipped as idle, and how many rested in the cooldown this run.
+      cooldown_hours: OPTIMIZE_ACCOUNT_COOLDOWN_HOURS,
+      cooled_down_accounts: cooledDownAccounts,
+      model_calls: results.model_calls,
+      skipped_idle: results.skipped_idle,
     },
   });
   if (alertPlan?.send) {
