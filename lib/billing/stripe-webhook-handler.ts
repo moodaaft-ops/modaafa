@@ -275,11 +275,13 @@ export function createStripeWebhookHandler(
           break;
         }
 
-        // Disputes. NOTE: the Stripe webhook endpoint must have
-        // `charge.dispute.created` enabled (it is in REQUIRED_WEBHOOK_EVENTS in
-        // lib/billing/stripe.ts, so /api/health reports it missing). A customer who
-        // disputes a charge keeps using the product while the dispute runs unless
-        // the subscription ends, and the dispute fee is lost either way.
+        // Disputes. NOTE: the Stripe webhook endpoint should have
+        // `charge.dispute.created` enabled. It is in RECOMMENDED_WEBHOOK_EVENTS in
+        // lib/billing/stripe.ts, so /api/health lists it as
+        // `webhook.missing_recommended_events` but stays launch_ready without it
+        // (deliberately NOT in REQUIRED_WEBHOOK_EVENTS). A customer who disputes a
+        // charge keeps using the product while the dispute runs unless the
+        // subscription ends, and the dispute fee is lost either way.
         case 'charge.dispute.created': {
           const dispute = event.data.object as any;
           const disputeId = stripeObjectId(dispute?.id);
