@@ -8,6 +8,7 @@ import {
   trialIneligibleNotice,
 } from '../lib/billing/trial-copy';
 import { auditAccessMessage } from '../lib/billing/free-audit';
+import { CONNECT_ERROR_MESSAGES, connectErrorRetryHelps } from '../lib/onboarding/connect-progress';
 
 const read = (p: string) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
 
@@ -34,6 +35,7 @@ test('new copy has no em or en dashes and uses the Arabic comma', () => {
     trialIneligibleNotice('ads_account_used')!,
     trialIneligibleNotice('disposable_email')!,
     auditAccessMessage('free_accounts_exhausted')!,
+    CONNECT_ERROR_MESSAGES.trial_account_used,
   ];
   for (const text of copy) {
     assert.doesNotMatch(text, DASHES, text);
@@ -57,4 +59,27 @@ test('the onboarding trial page maps card_trial_used, the notices and the Starte
 
 test('the card-guard redirect code is the one both pages map', () => {
   assert.match(read('app/api/billing/checkout/complete/route.ts'), /'card_trial_used'/);
+});
+
+test('the connect error trial_account_used has its own message, shown by the preparing screen', () => {
+  const message = CONNECT_ERROR_MESSAGES.trial_account_used;
+  assert.equal(
+    message,
+    'حسابات الإعلانات هذي أخذت تجربتها المجانية قبل، فما نقدر نفعّلها خلال تجربتك. بعد أول دفعة أعد الربط وتشتغل مباشرة.'
+  );
+  assert.notEqual(message, CONNECT_ERROR_MESSAGES.connect_failed);
+  assert.doesNotMatch(message, DASHES);
+  assert.ok(message.includes('،') && !message.includes(','));
+  // The job writes this exact code (lib/onboarding/connect-job.ts) and the status route passes it through.
+  assert.match(read('lib/onboarding/connect-job.ts'), /error: 'trial_account_used'/);
+  assert.match(read('app/onboarding/preparing/preparing-accounts.tsx'), /CONNECT_ERROR_MESSAGES\[view\.error \?\? ''\]/);
+});
+
+test('a reconnect is not offered for an error a reconnect cannot fix', () => {
+  assert.equal(connectErrorRetryHelps('trial_account_used'), false);
+  for (const error of ['timeout', 'db_error', 'connect_failed', null]) {
+    assert.equal(connectErrorRetryHelps(error), true, String(error));
+  }
+  const src = read('app/onboarding/preparing/preparing-accounts.tsx');
+  assert.match(src, /connectErrorRetryHelps\(view\.error\)/);
 });
