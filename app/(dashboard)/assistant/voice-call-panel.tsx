@@ -692,9 +692,6 @@ export const VoiceCallPanel = forwardRef<
           إنهاء
         </button>
       </div>
-      <p className="mt-2 px-2 text-center text-[11.5px] leading-5 text-muted-foreground">
-        الميكروفون مفتوح لين تضغط إنهاء. صوتك يتحول نص عند ElevenLabs وما نحفظه عندنا، والرد يبقى مكتوب في المحادثة.
-      </p>
     </div>
   );
 });
