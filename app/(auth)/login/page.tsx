@@ -241,6 +241,13 @@ export default function LoginPage() {
               دخولك آمن، ولا ننفّذ أي تعديل على إعلاناتك بدون موافقتك.
             </div>
 
+            <p className="mt-6 text-center text-sm text-muted-foreground">
+              ما عندك حساب؟{' '}
+              <a href="/register" className="font-semibold text-foreground underline underline-offset-4">
+                أنشئ حسابك
+              </a>
+            </p>
+
             <p className="mt-6 text-center text-xs text-muted-foreground">
               بدخولك توافق على{' '}
               <a href="/terms" className="font-medium text-primary hover:underline dark:text-primary">

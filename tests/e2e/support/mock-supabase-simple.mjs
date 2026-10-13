@@ -101,7 +101,7 @@ let tables = {};
 function reset(name) {
   scenario = SCENARIOS[name] ? name : 'questions';
   tables = {
-    users: [{ id: UID, email: user.email, name: 'Ayman Amin', preferred_lang: 'ar' }],
+    users: [{ id: UID, email: user.email, name: 'Ayman Amin', preferred_lang: 'ar', registered_at: hoursAgo(5) }],
     autopilot_settings: [], business_memory: [], chat_sessions: [], chat_messages: [], usage_events: [],
     billing_trial_grants: [], billing_trial_ledger: [], free_audit_ledger: [], sector_benchmarks: [], account_access_overrides: [],
     ...SCENARIOS[scenario](),

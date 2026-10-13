@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
-import { getRequestAuthContext } from '@/lib/supabase/server';
+import { createAdminClient, getRequestAuthContext } from '@/lib/supabase/server';
+import { isRegistrationComplete, REGISTRATION_COMPLETE_PATH } from '@/lib/registration/gate';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { DashboardChrome } from './dashboard-chrome';
 import { isModaafaOperator } from '@/lib/platform/operators';
@@ -12,6 +13,9 @@ import { isSimpleExperience } from '@/lib/setup/mode';
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { supabase, user } = await getRequestAuthContext();
   if (!user) redirect('/login');
+
+  // Nobody reaches the platform before leaving name, email and phone.
+  if (!(await isRegistrationComplete(createAdminClient(), user.id))) redirect(REGISTRATION_COMPLETE_PATH);
 
   // One workspace load, and pass the known user id so getUserBusiness does not
   // re-call auth.getUser() internally. This layout previously ran its own
