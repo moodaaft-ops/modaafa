@@ -118,12 +118,13 @@ export default async function HomePage({
   const accountName = googleAdsAccountDisplayName(selectedAccount);
 
   return (
-    <div className="lg:grid lg:h-full lg:grid-cols-[minmax(0,1fr)_minmax(360px,430px)]">
+    <div className="lg:grid lg:h-full lg:grid-cols-[minmax(360px,430px)_minmax(0,1fr)]">
       {params.subscribed === '1' && access.active && access.status !== 'internal' && (
         <TikTokPixel conversion={{ event: 'Subscribe', userId: user.id }} />
       )}
 
-      <div className="lg:h-full lg:overflow-y-auto scrollbar-thin">
+      {/* RTL: the chat takes the first (right) column, the day's content the left one. */}
+      <div className="lg:col-start-2 lg:row-start-1 lg:h-full lg:overflow-y-auto scrollbar-thin">
         <div className="mx-auto max-w-[760px] space-y-7 px-4 pb-28 pt-5 sm:px-6 lg:pb-10 lg:pt-8">
           {notice && (
             <p

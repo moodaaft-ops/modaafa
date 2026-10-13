@@ -149,8 +149,9 @@ export function SimpleChrome({
         aria-modal="true"
         aria-label="القائمة"
         className={cn(
-          'fixed inset-y-0 start-0 z-50 flex w-[min(340px,88vw)] flex-col border-e border-border bg-background transition-transform duration-200 ease-out',
-          open ? 'translate-x-0' : 'invisible rtl:translate-x-full ltr:-translate-x-full'
+          'fixed inset-y-0 end-0 z-50 flex w-[min(340px,88vw)] flex-col border-s border-border bg-background transition-transform duration-200 ease-out',
+          // Opens from the same side as the menu button (the end side).
+          open ? 'translate-x-0' : 'invisible rtl:-translate-x-full ltr:translate-x-full'
         )}
       >
         <div className="flex h-14 items-center justify-between gap-2 border-b border-border px-4">
