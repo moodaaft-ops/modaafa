@@ -8,7 +8,7 @@ import { hasProductAccess } from '@/lib/billing/access-gate';
 import { getBillingCheckoutContext } from '@/lib/billing/checkout-policy';
 import { readFreeAuditView } from '@/lib/chat-first/free-audit-view';
 import { toPlanRecommendations } from '@/lib/plan/load';
-import { buildPlan } from '@/lib/plan/plan';
+import { buildPlan, paywallCtaFromCheckout } from '@/lib/plan/plan';
 import { buildExecutableAction } from '@/lib/ai/executable-action';
 import { readVoiceConfig } from '@/lib/ai/voice-session';
 import { TikTokPixel } from '@/lib/analytics/tiktok-pixel';
@@ -141,6 +141,7 @@ export default async function HomePage({
           key={params.new ?? 'home'}
           plan={plan}
           trialEligible={Boolean(checkout?.trialEligible)}
+          cta={paywallCtaFromCheckout(checkout)}
           suspended={Boolean(access.suspended)}
           greeting={`${greetingFor()}${lockedFirstName ? ` ${lockedFirstName}` : ''}`}
           voiceEnabled={readVoiceConfig().enabled}

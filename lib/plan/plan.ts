@@ -127,6 +127,8 @@ export function buildPlan(input: {
 
 /** The existing checkout entry (start-trial), unchanged: the paywall only links to it. */
 export const PLAN_CHECKOUT_PATH = '/onboarding/trial';
+/** Where someone who already has a subscription goes: the page with the Stripe portal button. */
+export const PLAN_BILLING_PATH = '/billing';
 /** Where «أشوف الخطة بعدين» goes. */
 export const PLAN_LATER_PATH = '/home';
 /** The trial length the copy below speaks about. */
@@ -149,6 +151,11 @@ export const PLAN_COPY = {
   lockedBarPaid: 'المحادثة مع مُضاعِف تنفتح مع اشتراكك',
   later: 'أشوف الخطة بعدين',
   runAudit: 'افحص حسابي مجاناً',
+  /** A subscription exists but its last payment did not go through. */
+  ctaUpdateCard: 'حدّث بطاقتك وكمّل',
+  reasonPastDue: 'اشتراكك موقوف لأن آخر دفعة ما مرت.',
+  /** A subscription exists but is paused (or in a state the card cannot explain). */
+  reasonPaused: 'اشتراكك موقوف. فعّله من صفحة الاشتراك.',
 } as const;
 
 /** The card's heading follows what the audit found; «خطتك جاهزة» only when there is a plan. */
@@ -160,6 +167,61 @@ export function planTitle(kind: PlanKind) {
 
 export function ctaLabel(trialEligible: boolean) {
   return trialEligible ? PLAN_COPY.ctaTrial : PLAN_COPY.ctaPaid;
+}
+
+/**
+ * The one way forward on a paywall: where the button goes, what it says and,
+ * when there is one, the single line saying why the plan is stopped.
+ *
+ * - trial / subscribe: nobody has a subscription yet. The checkout entry
+ *   (start-trial) starts one.
+ * - billing: a subscription already exists (trialing, active, past_due or
+ *   paused) but it gives no access. The checkout entry refuses with
+ *   «already_subscribed» for it, so the button goes to /billing instead, where
+ *   the Stripe portal button lives.
+ */
+export type PaywallCta = {
+  kind: 'trial' | 'subscribe' | 'billing';
+  href: string;
+  label: string;
+  reason: string | null;
+};
+
+const PAYMENT_FAILED_STATUSES = new Set(['past_due', 'unpaid']);
+
+export function paywallCta(input: {
+  trialEligible: boolean;
+  /** An existing subscription in a live state that does not grant access (decided by the caller). */
+  hasSubscription?: boolean;
+  /** That subscription's Stripe status. */
+  subscriptionStatus?: string | null;
+}): PaywallCta {
+  if (input.hasSubscription) {
+    const paymentFailed = PAYMENT_FAILED_STATUSES.has(String(input.subscriptionStatus ?? '').toLowerCase());
+    return {
+      kind: 'billing',
+      href: PLAN_BILLING_PATH,
+      label: paymentFailed ? PLAN_COPY.ctaUpdateCard : PLAN_COPY.ctaPaid,
+      reason: paymentFailed ? PLAN_COPY.reasonPastDue : PLAN_COPY.reasonPaused,
+    };
+  }
+  return {
+    kind: input.trialEligible ? 'trial' : 'subscribe',
+    href: PLAN_CHECKOUT_PATH,
+    label: ctaLabel(input.trialEligible),
+    reason: null,
+  };
+}
+
+/** The CTA for what the checkout policy found (null when it could not be read: the plain checkout entry). */
+export function paywallCtaFromCheckout(
+  checkout: { trialEligible?: boolean; activeSubscriptionId?: string | null; activeSubscriptionStatus?: string | null } | null | undefined
+): PaywallCta {
+  return paywallCta({
+    trialEligible: Boolean(checkout?.trialEligible),
+    hasSubscription: Boolean(checkout?.activeSubscriptionId),
+    subscriptionStatus: checkout?.activeSubscriptionStatus ?? null,
+  });
 }
 
 export function cancelLine(trialEligible: boolean) {

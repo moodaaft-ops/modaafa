@@ -63,6 +63,10 @@ export default async function TrialPage({
     getBillingCheckoutContext(supabase, user.id, user.email),
     getPlanPriceAmounts(),
   ]);
+  // A subscription already exists but gives no access (a payment that did not
+  // go through, paused): start-trial refuses it with «already_subscribed», so
+  // this page would be a dead end. The card and the portal live on /billing.
+  if (checkout.activeSubscriptionId) redirect('/billing');
   const trialEligible = checkout.trialEligible;
   // The eligibility check could not run: say so and offer a retry, never a
   // paid start (the checkout route refuses it too).

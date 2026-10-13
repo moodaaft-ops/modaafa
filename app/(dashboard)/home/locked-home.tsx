@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useCallback, useRef, useState } from 'react';
 import { AudioLines, Lock } from 'lucide-react';
-import { PLAN_COPY, lockedBarLine, type Plan, type PlanSheetReason } from '@/lib/plan/plan';
+import { PLAN_COPY, lockedBarLine, type PaywallCta, type Plan, type PlanSheetReason } from '@/lib/plan/plan';
 import {
   PlanCancelLine,
   PlanCard,
@@ -24,6 +24,7 @@ import { cn } from '@/lib/utils';
 export function LockedHome({
   plan,
   trialEligible,
+  cta,
   suspended,
   greeting,
   voiceEnabled,
@@ -34,6 +35,8 @@ export function LockedHome({
 }: {
   plan: Plan;
   trialEligible: boolean;
+  /** Where the button goes. A stopped subscription points to /billing; absent means the trial checkout. */
+  cta?: PaywallCta;
   suspended: boolean;
   greeting: string;
   voiceEnabled: boolean;
@@ -96,7 +99,9 @@ export function LockedHome({
               )}
             >
               <Lock className="h-4 w-4 flex-shrink-0" aria-hidden />
-              <span className="min-w-0">{suspended ? 'حسابك موقوف مؤقتاً' : lockedBarLine(trialEligible)}</span>
+              <span className="min-w-0">
+                {suspended ? 'حسابك موقوف مؤقتاً' : cta?.reason ?? lockedBarLine(trialEligible)}
+              </span>
             </button>
             {voiceEnabled && (
               <button
@@ -109,17 +114,24 @@ export function LockedHome({
               </button>
             )}
           </div>
-          {!suspended && <PlanCtaButton trialEligible={trialEligible} className="mt-2 h-12 text-[15.5px]" />}
+          {!suspended && <PlanCtaButton trialEligible={trialEligible} cta={cta} className="mt-2 h-12 text-[15.5px]" />}
         </div>
         {!suspended && (
           <div className="mt-2 space-y-1 px-2">
-            <PlanCancelLine trialEligible={trialEligible} className="text-[11.5px] leading-5" />
+            {cta?.kind !== 'billing' && <PlanCancelLine trialEligible={trialEligible} className="text-[11.5px] leading-5" />}
             <PlanTrust className="text-[11.5px] leading-5" />
           </div>
         )}
       </div>
 
-      <PlanSheet open={sheet !== null} reason={lastReason.current} trialEligible={trialEligible} suspended={suspended} onClose={close} />
+      <PlanSheet
+        open={sheet !== null}
+        reason={lastReason.current}
+        trialEligible={trialEligible}
+        cta={cta}
+        suspended={suspended}
+        onClose={close}
+      />
     </div>
   );
 }

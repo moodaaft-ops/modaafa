@@ -1016,7 +1016,7 @@ function DockView({
     case 'plan':
       return (
         <div className="space-y-1">
-          <PlanCta trialEligible={state.trialEligible} />
+          <PlanCta trialEligible={state.trialEligible} cta={state.cta} />
           <Link
             href={PLAN_LATER_PATH}
             className="flex h-12 w-full items-center justify-center rounded-full text-[15px] font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"

@@ -7,13 +7,13 @@ import { SEVERITY_WORD } from '@/lib/home/briefing';
 import { trapTabKey } from '@/lib/ui/focus-trap';
 import { cn, formatCurrency } from '@/lib/utils';
 import {
-  PLAN_CHECKOUT_PATH,
   PLAN_COPY,
   cancelLine,
-  ctaLabel,
+  paywallCta,
   planSubtitle,
   planTitle,
   sheetLine,
+  type PaywallCta,
   type Plan,
   type PlanSheetReason,
 } from './plan';
@@ -200,16 +200,23 @@ function ScoreRing({ score, word }: { score: number; word: string | null }) {
 
 // ------------------------------------------------------------------ the CTA
 
-/** The one way forward: the existing trial checkout entry. */
+/**
+ * The one way forward. By default the existing trial checkout entry; when a
+ * subscription already exists but gives no access, `cta` points to /billing
+ * (the checkout entry would refuse it with «already_subscribed»).
+ */
 export function PlanCtaButton({
   trialEligible,
+  cta,
   className,
   onNavigate,
 }: {
   trialEligible: boolean;
+  cta?: PaywallCta;
   className?: string;
   onNavigate?: () => void;
 }) {
+  const target = cta ?? paywallCta({ trialEligible });
   const [loading, setLoading] = useState(false);
   useEffect(() => {
     // Coming back with the browser's back button must not leave the button spinning.
@@ -219,7 +226,7 @@ export function PlanCtaButton({
   }, []);
   return (
     <Link
-      href={PLAN_CHECKOUT_PATH}
+      href={target.href}
       prefetch={false}
       aria-busy={loading}
       onClick={() => {
@@ -232,7 +239,7 @@ export function PlanCtaButton({
       )}
     >
       {loading && <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden />}
-      {ctaLabel(trialEligible)}
+      {target.label}
     </Link>
   );
 }
@@ -250,12 +257,23 @@ export function PlanTrust({ className }: { className?: string }) {
   );
 }
 
-/** Button, the one-line cancel promise and the trust line, in that order. */
-export function PlanCta({ trialEligible, className }: { trialEligible: boolean; className?: string }) {
+/** The line saying why the plan is stopped, above the button of someone who already has a subscription. */
+export function PlanCtaReason({ cta, className }: { cta: PaywallCta | undefined; className?: string }) {
+  if (!cta?.reason) return null;
+  return <p className={cn('text-center text-[14px] font-semibold leading-6', className)}>{cta.reason}</p>;
+}
+
+/**
+ * The reason (only for a stopped subscription), the button, the one-line
+ * cancel promise and the trust line, in that order. A stopped subscription has
+ * nothing to cancel, so it gets no cancel promise.
+ */
+export function PlanCta({ trialEligible, cta, className }: { trialEligible: boolean; cta?: PaywallCta; className?: string }) {
   return (
     <div className={cn('space-y-2', className)}>
-      <PlanCtaButton trialEligible={trialEligible} />
-      <PlanCancelLine trialEligible={trialEligible} />
+      <PlanCtaReason cta={cta} />
+      <PlanCtaButton trialEligible={trialEligible} cta={cta} />
+      {cta?.kind !== 'billing' && <PlanCancelLine trialEligible={trialEligible} />}
       <PlanTrust />
     </div>
   );
@@ -272,12 +290,14 @@ export function PlanSheet({
   open,
   reason,
   trialEligible,
+  cta,
   suspended = false,
   onClose,
 }: {
   open: boolean;
   reason: PlanSheetReason;
   trialEligible: boolean;
+  cta?: PaywallCta;
   suspended?: boolean;
   onClose: () => void;
 }) {
@@ -327,7 +347,9 @@ export function PlanSheet({
             <p className="mt-1 text-[14.5px] leading-7 text-muted-foreground">
               {suspended
                 ? 'المحادثة والتنفيذ واقفين لين نرجّع التفعيل. كلمنا على الواتساب ونرتبه معك.'
-                : sheetLine(reason, trialEligible)}
+                : cta?.kind === 'billing' && cta.reason
+                  ? cta.reason
+                  : sheetLine(reason, trialEligible)}
             </p>
           </div>
           <button
@@ -342,7 +364,8 @@ export function PlanSheet({
         </div>
         {!suspended && (
           <div className="mt-5 space-y-3">
-            <PlanCta trialEligible={trialEligible} />
+            {/* The sheet's own line above already says why; the CTA adds only the button. */}
+            <PlanCta trialEligible={trialEligible} cta={cta && { ...cta, reason: null }} />
             <button
               type="button"
               onClick={onClose}

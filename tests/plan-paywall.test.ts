@@ -203,7 +203,9 @@ const read = (path: string) => readFileSync(path, 'utf8');
 test('the paywall components make no request at all: the CTA is a plain link to the existing checkout entry', () => {
   const view = read('lib/plan/plan-paywall.tsx');
   assert.ok(!/\bfetch\s*\(/.test(view) && !view.includes('XMLHttpRequest') && !view.includes('/api/'));
-  assert.ok(view.includes('PLAN_CHECKOUT_PATH'));
+  // The default CTA is the checkout entry (paywallCta); a stopped subscription points to /billing instead.
+  assert.ok(view.includes('paywallCta') && view.includes('target.href'));
+  assert.match(read('lib/plan/plan.ts').toString(), /href: PLAN_CHECKOUT_PATH/);
   assert.equal(read('lib/plan/plan.ts').match(/PLAN_CHECKOUT_PATH = '([^']+)'/)?.[1], '/onboarding/trial');
 });
 
