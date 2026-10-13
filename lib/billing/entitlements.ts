@@ -172,27 +172,41 @@ export async function getSubscriptionAccessDetailed(
   ]);
   if (error) console.error('Failed to read subscription access', error);
 
-  const subscriptions = (rows ?? []) as Array<Record<string, any>>;
-  const live = subscriptions.filter((row) => isSubscriptionEntitled(row));
+  const fromStripe = subscriptionAccessFromRows((rows ?? []) as Array<Record<string, any>>);
+
+  return { access: applyAccessOverrides(fromStripe, overrides), billing: fromStripe, overrides };
+}
+
+/**
+ * The access one user's subscription rows grant, before operator overrides.
+ *
+ * Picks the most privileged ENTITLED row (highest plan, then latest period end),
+ * falling back to the newest row so a lapsed customer still reports their last
+ * plan and status. Shared by the per-request check above and the background jobs
+ * (lib/platform/jobs.ts), so a job and a page cannot disagree about a plan.
+ */
+export function subscriptionAccessFromRows(
+  rows: Array<Record<string, any>>,
+  now = Date.now()
+): SubscriptionAccess {
+  const live = rows.filter((row) => isSubscriptionEntitled(row, now));
   const subscription =
     live.sort((a, b) => {
       const rank = (PLAN_RANK[b.plan as BillingPlan] ?? 0) - (PLAN_RANK[a.plan as BillingPlan] ?? 0);
       if (rank !== 0) return rank;
       return new Date(b.current_period_end ?? 0).getTime() - new Date(a.current_period_end ?? 0).getTime();
-    })[0] ?? subscriptions[0];
+    })[0] ?? rows[0];
 
   const plan = subscription && isBillingPlan(subscription.plan) ? subscription.plan : null;
-  const fromStripe: SubscriptionAccess = subscription
+  return subscription
     ? {
-        active: Boolean(plan && isSubscriptionEntitled(subscription)),
+        active: Boolean(plan && isSubscriptionEntitled(subscription, now)),
         plan,
         status: subscription.status ?? null,
         trialEndsAt: subscription.trial_ends_at ?? null,
         currentPeriodEnd: subscription.current_period_end ?? null,
       }
     : { active: false, plan: null, status: null, trialEndsAt: null, currentPeriodEnd: null };
-
-  return { access: applyAccessOverrides(fromStripe, overrides), billing: fromStripe, overrides };
 }
 
 /**

@@ -45,7 +45,13 @@ import {
   generateWeeklyNarrative,
   type CampaignWeekRow,
 } from '@/lib/ai/report-agent';
-import { finishJobRun, getBillableBusinessIds, hasRecentCompletedRun, startJobRun } from '@/lib/platform/jobs';
+import {
+  finishJobRun,
+  getBillableBusinessIds,
+  getOptimizerAllowedAccountIds,
+  hasRecentCompletedRun,
+  startJobRun,
+} from '@/lib/platform/jobs';
 import { sendOpsAlert } from '@/lib/notifications/email';
 import { planOpsAlert } from '@/lib/platform/ops-alerts';
 import { hasValidCronAuthorization } from '@/lib/security/cron-auth';
@@ -127,6 +133,36 @@ async function runOptimizerCron(req: NextRequest) {
     return NextResponse.json({ processed: 0, skipped: 'no_billable_businesses' });
   }
 
+  // Plan cap: the optimizer works on at most OPTIMIZER_ACCOUNTS_PER_PLAN accounts
+  // per user (a trial counts as Starter). Accounts over the cap stay linked and
+  // visible; they are only left out of this automatic, model-spending pass.
+  let allowedAccountIds: string[];
+  let skippedOverPlanCap: number;
+  try {
+    ({ allowedAccountIds, skippedOverPlanCap } = await getOptimizerAllowedAccountIds(supabase));
+  } catch (error) {
+    // Fail closed: running uncapped is exactly the spend this guard prevents.
+    await finishJobRun({ supabase, job, status: 'failed', errors: [error] });
+    await safeOpsAlert('تعذر تحديد حسابات التحسين المسموحة لكل باقة', error);
+    return NextResponse.json({ error: 'optimizer_cap_lookup_failed' }, { status: 500 });
+  }
+  if (allowedAccountIds.length === 0) {
+    await finishJobRun({
+      supabase,
+      job,
+      status: 'success',
+      details: {
+        note: 'No active accounts found',
+        cooldown_hours: OPTIMIZE_ACCOUNT_COOLDOWN_HOURS,
+        cooled_down_accounts: 0,
+        skipped_over_plan_cap: skippedOverPlanCap,
+        model_calls: 0,
+        skipped_idle: 0,
+      },
+    });
+    return NextResponse.json({ processed: 0, skipped_over_plan_cap: skippedOverPlanCap });
+  }
+
   // Get active accounts. Live execution is intentionally opt-in.
   //
   // Bounded and round-robin ordered: this used to select EVERY active account
@@ -150,7 +186,7 @@ async function runOptimizerCron(req: NextRequest) {
     .select('id, customer_id, customer_name, manager_id, currency_code, refresh_token_encrypted, business_id')
     .eq('status', 'active')
     .not('is_manager', 'is', true)
-    .in('business_id', businessIds);
+    .in('id', allowedAccountIds);
   if (cooldownCutoff) {
     accountQuery = accountQuery.or(`last_optimized_at.is.null,last_optimized_at.lt.${cooldownCutoff}`);
   }
@@ -173,7 +209,7 @@ async function runOptimizerCron(req: NextRequest) {
       .select('id', { count: 'exact', head: true })
       .eq('status', 'active')
       .not('is_manager', 'is', true)
-      .in('business_id', businessIds)
+      .in('id', allowedAccountIds)
       .gte('last_optimized_at', cooldownCutoff);
     cooledDownAccounts = count ?? 0;
   }
@@ -187,6 +223,7 @@ async function runOptimizerCron(req: NextRequest) {
         note: cooledDownAccounts > 0 ? 'All active accounts are inside the optimizer cooldown' : 'No active accounts found',
         cooldown_hours: OPTIMIZE_ACCOUNT_COOLDOWN_HOURS,
         cooled_down_accounts: cooledDownAccounts,
+        skipped_over_plan_cap: skippedOverPlanCap,
         // Counted as a guard run on the cost page: these are the runs that save the most.
         model_calls: 0,
         skipped_idle: 0,
@@ -769,6 +806,9 @@ async function runOptimizerCron(req: NextRequest) {
       // were skipped as idle, and how many rested in the cooldown this run.
       cooldown_hours: OPTIMIZE_ACCOUNT_COOLDOWN_HOURS,
       cooled_down_accounts: cooledDownAccounts,
+      // Active accounts left out because their owner is over the plan cap
+      // (lib/platform/jobs.ts OPTIMIZER_ACCOUNTS_PER_PLAN).
+      skipped_over_plan_cap: skippedOverPlanCap,
       model_calls: results.model_calls,
       skipped_idle: results.skipped_idle,
     },
