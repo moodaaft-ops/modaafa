@@ -50,3 +50,15 @@ export function percent(value: number | null) {
   if (value === null) return '—';
   return `${Math.round(value * 100)}%`;
 }
+
+const usdFormats = new Map<number, Intl.NumberFormat>();
+
+/** "$1.23" with Latin digits. Callers wrap it in <bdi dir="ltr"> so the sign stays in front. */
+export function usd(amount: number, digits = 2) {
+  let format = usdFormats.get(digits);
+  if (!format) {
+    format = new Intl.NumberFormat('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits, useGrouping: false });
+    usdFormats.set(digits, format);
+  }
+  return `$${format.format(amount)}`;
+}

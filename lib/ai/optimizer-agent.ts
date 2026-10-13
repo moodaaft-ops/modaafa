@@ -1,5 +1,4 @@
-import type Anthropic from '@anthropic-ai/sdk';
-import { createMessageForAgent, hasAIBackend } from './client';
+import { cachedSystemBlock, createMessageForAgent, hasAIBackend } from './client';
 import type { Customer } from 'google-ads-api';
 import { createAdminClient } from '../supabase/server';
 
@@ -189,14 +188,10 @@ export interface OptimizerAction {
 /**
  * The rules are identical for every account in a run, so the first call writes
  * them to the prompt cache and the following ones read them at 5% of the input
- * price (Sonnet 5.5 caches from 512 tokens; this block is roughly 2k). The
- * SDK's TextBlockParam type predates cache_control but the API accepts it, the
- * same cast lib/jarvis/brain.ts uses.
+ * price (Sonnet 5.5 caches from 512 tokens; this block is roughly 2k).
  */
 export function optimizerSystemBlocks() {
-  return [
-    { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
-  ] as unknown as Anthropic.TextBlockParam[];
+  return cachedSystemBlock(SYSTEM_PROMPT);
 }
 
 export async function decideOptimizations(
