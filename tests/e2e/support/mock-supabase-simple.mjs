@@ -193,3 +193,76 @@ http.createServer(async (req, res) => {
   }
   send(404, { message: 'mock: ' + u.pathname });
 }).listen(54321, '127.0.0.1', () => console.log(`mock supabase (simple, ${scenario}) on 54321`));
+
+// ===== BEGIN restyle-pages block =====
+// Synthetic data for /campaigns, /reports, /billing and /settings. Additive only: it adds scenarios, it changes none.
+//   pages      set up, live Stripe subscription, six campaigns, reports, three invoices
+//   pages-new  set up, nothing paid yet (plan picker), no campaigns, reports or invoices
+const pageCamp = (i, name, type, status, budget, cost30, conv30) => ({
+  id: `88888888-8888-4888-8888-8888888809${String(i).padStart(2, '0')}`, account_id: A1, google_campaign_id: 2000 + i,
+  name, type, status, daily_budget: budget, bidding_strategy: 'MAXIMIZE_CONVERSIONS',
+  metrics_7d: { cost: Math.round(cost30 / 4), clicks: 120, impressions: 4000, conversions: Math.round(conv30 / 4) },
+  metrics_30d: { cost: cost30, clicks: 520, impressions: 17000, conversions: conv30 },
+  last_synced_at: hoursAgo(3),
+});
+const pageCampaigns = [
+  pageCamp(0, 'بحث العطور', 'SEARCH', 'ENABLED', 150, 2480, 36),
+  pageCamp(1, 'الأداء الأقصى للمتجر', 'PERFORMANCE_MAX', 'ENABLED', 200, 1920, 28),
+  pageCamp(2, 'حماية اسم العلامة', 'SEARCH', 'ENABLED', 40, 560, 11),
+  pageCamp(3, 'تسوق منتجات العود', 'SHOPPING', 'ENABLED', 90, 410, 4),
+  pageCamp(4, 'إعادة الاستهداف للزوار', 'DISPLAY', 'PAUSED', 60, 130, 1),
+  pageCamp(5, 'حملة رمضان الماضي', 'SEARCH', 'PAUSED', 120, 0, 0),
+];
+const pageReports = [
+  {
+    id: 'aaaaaaaa-0000-4000-8000-000000000001', account_id: A1, period_type: 'weekly', generated_at: hoursAgo(20),
+    summary_ar: 'صرفت هالأسبوع أكثر من اللي قبله بشوي، بس الطلبات زادت أكثر من الصرف. أغلب الزيادة جات من حملة «بحث العطور» بعد ما أوقفت عبارة «عطور رخيصة».',
+    metrics: {
+      kind: 'weekly_performance', currency_code: 'SAR',
+      totals: { this_week: { cost: 1240, conversions: 18 }, prior_week: { cost: 1105, conversions: 13 }, delta: { cost: 135, conversions: 5, cpa_this: 68.9, cpa_prior: 85 } },
+      highlights_ar: ['حملة «بحث العطور» جابت 9 طلبات بتكلفة أقل من الأسبوع اللي قبله', 'حملة «الأداء الأقصى للمتجر» ميزانيتها تخلص قبل العصر'],
+      next_week_ar: 'وزّع ميزانية «الأداء الأقصى للمتجر» على ساعات اليوم كلها عشان تلحق طلبات المساء',
+    },
+  },
+  {
+    id: 'aaaaaaaa-0000-4000-8000-000000000002', account_id: A1, period_type: 'custom', generated_at: hoursAgo(26),
+    summary_ar: 'فحصت حسابك ولقيت 4 نقاط تحتاج قرار، أهمها عبارة صرفت عليها بدون ولا طلب.',
+    metrics: { kind: 'audit_summary', health_score: 58, recommendations_count: 4, estimated_monthly_waste_sar: 1840, currency_code: 'SAR' },
+  },
+  {
+    id: 'aaaaaaaa-0000-4000-8000-000000000003', account_id: A1, period_type: 'weekly', generated_at: hoursAgo(190),
+    summary_ar: 'الأسبوع كان هادي، الصرف ثابت تقريباً والطلبات نزلت شوي في الويكند.',
+    metrics: {
+      kind: 'weekly_performance', currency_code: 'SAR',
+      totals: { this_week: { cost: 1105, conversions: 13 }, prior_week: { cost: 1150, conversions: 15 }, delta: { cost: -45, conversions: -2, cpa_this: 85, cpa_prior: 76.7 } },
+      highlights_ar: ['الطلبات نزلت يوم الجمعة والسبت'],
+      next_week_ar: null,
+    },
+  },
+  {
+    id: 'aaaaaaaa-0000-4000-8000-000000000004', account_id: A1, period_type: 'monthly', generated_at: hoursAgo(700),
+    summary_ar: 'ملخص الشهر الماضي محفوظ.',
+    metrics: { kind: 'audit_summary', health_score: 64, recommendations_count: 6, estimated_monthly_waste_sar: 0, currency_code: 'SAR' },
+  },
+];
+const pageInvoices = [
+  { invoice_number: 'INV-0003', amount_sar: 1200, currency: 'SAR', status: 'paid', invoice_url: 'https://example.com/invoice/3', created_at: hoursAgo(120) },
+  { invoice_number: 'INV-0002', amount_sar: 1200, currency: 'SAR', status: 'paid', invoice_url: 'https://example.com/invoice/2', created_at: hoursAgo(120 + 720) },
+  { invoice_number: 'INV-0001', amount_sar: 500, currency: 'SAR', status: 'paid', invoice_url: null, created_at: hoursAgo(120 + 1440) },
+];
+SCENARIOS.pages = () => ({
+  ...SCENARIOS.home(),
+  campaigns_cache: pageCampaigns,
+  reports: pageReports,
+  invoices: pageInvoices,
+  subscriptions: [{
+    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab', user_id: UID, plan: 'growth', billing_period: 'monthly', status: 'active',
+    stripe_subscription_id: 'sub_mock_123', stripe_customer_id: 'cus_mock_123', trial_ends_at: null,
+    current_period_start: hoursAgo(120), current_period_end: new Date(Date.now() + 25 * 864e5).toISOString(), created_at: hoursAgo(1500), canceled_at: null,
+  }],
+});
+SCENARIOS['pages-new'] = () => ({
+  ...SCENARIOS.home(),
+  campaigns_cache: [], reports: [], invoices: [], subscriptions: [],
+});
+// ===== END restyle-pages block =====
