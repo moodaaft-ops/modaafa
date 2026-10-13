@@ -75,8 +75,10 @@ export function RecentChats({ chats, activeChat }: { chats: RecentChat[]; active
     if (activeChat !== id) focusAfterDelete.current = (shown[index + 1] ?? shown[index - 1])?.id ?? '';
     setGone((previous) => (previous.includes(id) ? previous : [...previous, id]));
     // The chat on screen is gone: land on a fresh one instead of an empty thread.
-    if (activeChat === id) router.replace('/home?new=1');
-    router.refresh();
+    // A full navigation, because a client-side replace here was dropped now and
+    // then (about one in eight runs) and left the deleted chat on screen.
+    if (activeChat === id) window.location.replace('/home?new=1');
+    else router.refresh();
   }
 
   return (
