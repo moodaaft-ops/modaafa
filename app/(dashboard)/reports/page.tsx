@@ -1,13 +1,11 @@
-import { BarChart3, Link2 } from 'lucide-react';
+import { ChevronLeft } from 'lucide-react';
 import { redirect } from 'next/navigation';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import { getRequestAuthContext } from '@/lib/supabase/server';
 import { assertSupabaseRead } from '@/lib/supabase/query-errors';
-import { formatCurrency, timeAgoAr } from '@/lib/utils';
-import { PageHeader } from '@/lib/ui/page-header';
-import { EmptyState } from '@/lib/ui/empty-state';
-import { buttonClasses } from '@/lib/ui/button';
+import { cn, formatCurrency, timeAgoAr } from '@/lib/utils';
+import { CARD, CalmEmpty, CalmHeading, CalmPage, CalmTitle, Tag, pill } from '../calm-page';
 
 export const metadata = {
   title: 'التقارير',
@@ -29,87 +27,130 @@ export default async function ReportsPage() {
   const reports = reportsResult.data;
 
   const accountName = selectedAccount ? googleAdsAccountDisplayName(selectedAccount) : 'الحساب المختار';
+  const [latest, ...earlier] = (reports ?? []) as any[];
 
   return (
-    <>
-      <PageHeader
-        icon={BarChart3}
+    <CalmPage>
+      <CalmTitle
         title="التقارير"
         description="تقرير أسبوعي ذكي يشرح لماذا تغيّر الأداء، وملخصات محفوظة بعد كل فحص."
         account={selectedAccount ? { name: accountName, customerId: selectedAccount.customer_id } : null}
       />
-      <div className="p-4 sm:p-6 lg:p-8">
-        {accounts.length === 0 ? (
-          <EmptyState
-            icon={Link2}
-            title="اربط حساب إعلانات Google أولاً"
-            description="بعد الربط وتشغيل الفحص ستظهر التقارير المحفوظة هنا."
-            action={
-              <a href="/onboarding/connect" className={buttonClasses({ variant: 'primary', size: 'lg' })}>
-                ربط حساب
-              </a>
-            }
-          />
-        ) : (reports ?? []).length === 0 ? (
-          <EmptyState
-            icon={BarChart3}
-            title="لا توجد تقارير محفوظة بعد"
-            description="شغّل فحص الحساب لإنشاء أول تقرير أداء لهذا الحساب."
-            action={
-              <a href="/audit" className={buttonClasses({ variant: 'primary', size: 'lg' })}>
-                تشغيل الفحص
-              </a>
-            }
-          />
-        ) : (
-          <section className="surface-card overflow-hidden">
-            <div className="divide-y divide-border">
-              {(reports ?? []).map((report: any) =>
-                report.metrics?.kind === 'weekly_performance' ? (
-                  <WeeklyPerformanceReport
-                    key={report.id}
-                    report={report}
-                    fallbackCurrency={selectedAccount?.currency_code}
-                  />
-                ) : (
-                  <article key={report.id} className="p-5">
-                    <div className="flex items-center justify-between gap-4">
-                      <h2 className="text-[14px] font-semibold">
-                        {report.metrics?.kind === 'audit_summary'
-                          ? 'ملخص فحص الحساب'
-                          : periodLabel(report.period_type)}
-                      </h2>
-                      <span className="text-xs text-muted-foreground">{timeAgoAr(report.generated_at)}</span>
+
+      {accounts.length === 0 ? (
+        <CalmEmpty title="اربط حساب إعلانات Google أولاً" description="بعد الربط وتشغيل الفحص ستظهر التقارير المحفوظة هنا.">
+          <a href="/onboarding/connect" className={pill.primary}>
+            ربط حساب
+          </a>
+        </CalmEmpty>
+      ) : !latest ? (
+        <CalmEmpty title="لا توجد تقارير محفوظة بعد" description="شغّل فحص الحساب لإنشاء أول تقرير أداء لهذا الحساب.">
+          <a href="/audit" className={pill.primary}>
+            تشغيل الفحص
+          </a>
+        </CalmEmpty>
+      ) : (
+        <>
+          {/* The newest report is the page: open, full size. */}
+          <article className={cn(CARD, 'mt-8 p-5 sm:p-7')}>
+            <ReportBody report={latest} fallbackCurrency={selectedAccount?.currency_code} />
+          </article>
+
+          {earlier.length > 0 && (
+            <section className="mt-10" aria-labelledby="earlier-reports-title">
+              <CalmHeading id="earlier-reports-title" title="تقارير سابقة" className="mb-3" />
+              <div className={cn(CARD, 'divide-y divide-border/70 overflow-hidden')}>
+                {earlier.map((report) => (
+                  <details key={report.id} className="group">
+                    <summary className="flex min-h-[64px] cursor-pointer list-none items-center justify-between gap-3 px-5 py-3 transition-colors hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
+                      <span className="min-w-0">
+                        <span className="block text-[15px] font-semibold leading-7">{reportTitle(report)}</span>
+                        <span className="block text-[13px] leading-6 text-muted-foreground">{timeAgoAr(report.generated_at)}</span>
+                      </span>
+                      <ChevronLeft className="h-4 w-4 flex-shrink-0 text-muted-foreground transition-transform group-open:-rotate-90" aria-hidden />
+                    </summary>
+                    <div className="px-5 pb-6 pt-1">
+                      <ReportBody report={report} fallbackCurrency={selectedAccount?.currency_code} showHeader={false} />
                     </div>
-                    <p className="mt-2 text-sm leading-7 text-muted-foreground">
-                      {report.summary_ar ?? 'تقرير محفوظ بدون ملخص.'}
-                    </p>
-                    <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                      <ReportMetric
-                        label="صحة الحساب"
-                        value={report.metrics?.health_score ? `${report.metrics.health_score}/100` : '—'}
-                      />
-                      <ReportMetric label="عدد التوصيات" value={report.metrics?.recommendations_count ?? '—'} />
-                      <ReportMetric
-                        label="تسريب متوقع"
-                        value={
-                          report.metrics?.estimated_monthly_waste_sar
-                            ? formatCurrency(
-                                report.metrics.estimated_monthly_waste_sar,
-                                report.metrics.currency_code ?? selectedAccount?.currency_code
-                              )
-                            : '—'
-                        }
-                      />
-                    </div>
-                  </article>
-                )
-              )}
-            </div>
-          </section>
-        )}
+                  </details>
+                ))}
+              </div>
+            </section>
+          )}
+        </>
+      )}
+    </CalmPage>
+  );
+}
+
+function reportTitle(report: any) {
+  if (report.metrics?.kind === 'weekly_performance') return 'التقرير الأسبوعي الذكي';
+  return report.metrics?.kind === 'audit_summary' ? 'ملخص فحص الحساب' : periodLabel(report.period_type);
+}
+
+function ReportBody({
+  report,
+  fallbackCurrency,
+  showHeader = true,
+}: {
+  report: any;
+  fallbackCurrency?: string | null;
+  showHeader?: boolean;
+}) {
+  return report.metrics?.kind === 'weekly_performance' ? (
+    <WeeklyPerformanceReport report={report} fallbackCurrency={fallbackCurrency} showHeader={showHeader} />
+  ) : (
+    <SavedReport report={report} fallbackCurrency={fallbackCurrency} showHeader={showHeader} />
+  );
+}
+
+function ReportHeader({ title, tag, generatedAt }: { title: string; tag?: string; generatedAt: string }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+      <div className="flex flex-wrap items-center gap-2.5">
+        <h2 className="text-[18px] font-bold leading-8">{title}</h2>
+        {tag && <Tag>{tag}</Tag>}
       </div>
-    </>
+      <span className="text-[13px] text-muted-foreground">{timeAgoAr(generatedAt)}</span>
+    </div>
+  );
+}
+
+/** Audit summaries and the period reports saved before the weekly one existed. */
+function SavedReport({
+  report,
+  fallbackCurrency,
+  showHeader,
+}: {
+  report: any;
+  fallbackCurrency?: string | null;
+  showHeader: boolean;
+}) {
+  return (
+    <div>
+      {showHeader && <ReportHeader title={reportTitle(report)} generatedAt={report.generated_at} />}
+      <p className={cn('text-[15.5px] leading-8 text-foreground', showHeader && 'mt-3')}>
+        {report.summary_ar ?? 'تقرير محفوظ بدون ملخص.'}
+      </p>
+      <Stats>
+        <Stat
+          label="صحة الحساب"
+          value={report.metrics?.health_score ? `${report.metrics.health_score}/100` : NONE}
+        />
+        <Stat label="عدد التوصيات" value={report.metrics?.recommendations_count ?? NONE} />
+        <Stat
+          label="تسريب متوقع"
+          value={
+            report.metrics?.estimated_monthly_waste_sar
+              ? formatCurrency(
+                  report.metrics.estimated_monthly_waste_sar,
+                  report.metrics.currency_code ?? fallbackCurrency
+                )
+              : NONE
+          }
+        />
+      </Stats>
+    </div>
   );
 }
 
@@ -118,7 +159,15 @@ export default async function ReportsPage() {
  * the change, and what to focus on next — written by the reporter agent from
  * pre-computed numbers, so nothing here is invented.
  */
-function WeeklyPerformanceReport({ report, fallbackCurrency }: { report: any; fallbackCurrency?: string | null }) {
+function WeeklyPerformanceReport({
+  report,
+  fallbackCurrency,
+  showHeader,
+}: {
+  report: any;
+  fallbackCurrency?: string | null;
+  showHeader: boolean;
+}) {
   const metrics = report.metrics ?? {};
   const currency = metrics.currency_code ?? fallbackCurrency;
   const totals = metrics.totals ?? {};
@@ -128,20 +177,14 @@ function WeeklyPerformanceReport({ report, fallbackCurrency }: { report: any; fa
   const highlights: string[] = Array.isArray(metrics.highlights_ar) ? metrics.highlights_ar : [];
 
   return (
-    <article className="p-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <h2 className="text-[14px] font-semibold">التقرير الأسبوعي الذكي</h2>
-          <span className="rounded-full bg-primary/12 px-2 py-0.5 text-[10.5px] font-semibold text-primary ring-1 ring-inset ring-primary/25">
-            لماذا تغيّر الأداء؟
-          </span>
-        </div>
-        <span className="text-xs text-muted-foreground">{timeAgoAr(report.generated_at)}</span>
-      </div>
+    <div>
+      {showHeader && (
+        <ReportHeader title="التقرير الأسبوعي الذكي" tag="لماذا تغيّر الأداء؟" generatedAt={report.generated_at} />
+      )}
 
-      <p className="mt-3 text-sm leading-8 text-foreground">{report.summary_ar}</p>
+      <p className={cn('text-[16px] leading-9 text-foreground', showHeader && 'mt-3')}>{report.summary_ar}</p>
 
-      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+      <Stats>
         <WeekDelta
           label="الإنفاق"
           current={formatCurrency(current.cost ?? 0, currency)}
@@ -156,21 +199,18 @@ function WeeklyPerformanceReport({ report, fallbackCurrency }: { report: any; fa
           delta={delta.conversions ?? 0}
           formatDelta={(value) => String(Math.abs(Number(value.toFixed(2))))}
         />
-        <ReportMetric
+        <Stat
           label="تكلفة التحويل"
-          value={
-            delta.cpa_this != null
-              ? `${formatCurrency(delta.cpa_this, currency)}${delta.cpa_prior != null ? ` (كانت ${formatCurrency(delta.cpa_prior, currency)})` : ''}`
-              : '—'
-          }
+          value={delta.cpa_this != null ? formatCurrency(delta.cpa_this, currency) : NONE}
+          note={delta.cpa_this != null && delta.cpa_prior != null ? `كانت ${formatCurrency(delta.cpa_prior, currency)}` : undefined}
         />
-      </div>
+      </Stats>
 
       {highlights.length > 0 && (
-        <ul className="mt-4 space-y-1.5">
+        <ul className="mt-5 space-y-2">
           {highlights.map((item) => (
-            <li key={item} className="flex items-start gap-2 text-[13px] leading-7 text-foreground-subtle">
-              <span className="mt-2.5 h-1 w-1 flex-shrink-0 rounded-full bg-primary" aria-hidden />
+            <li key={item} className="flex items-start gap-3 text-[14.5px] leading-8 text-foreground">
+              <span className="mt-3 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-foreground/50" aria-hidden />
               {item}
             </li>
           ))}
@@ -178,16 +218,42 @@ function WeeklyPerformanceReport({ report, fallbackCurrency }: { report: any; fa
       )}
 
       {metrics.next_week_ar && (
-        <div className="mt-4 rounded-lg border border-primary/20 bg-primary/[0.05] px-4 py-3 text-[13px] leading-7 text-foreground-subtle">
-          <span className="font-semibold text-primary">تركيز الأسبوع القادم: </span>
+        <p className="mt-5 rounded-[14px] bg-muted px-4 py-3 text-[14.5px] leading-8 text-foreground">
+          <span className="font-bold">تركيز الأسبوع القادم: </span>
           {metrics.next_week_ar}
-        </div>
+        </p>
       )}
 
-      <div className="mt-3 text-[11px] text-muted-foreground">
+      <p className="mt-4 text-[12.5px] leading-6 text-muted-foreground">
         مقارنة آخر 7 أيام بالأسبوع الذي قبله{prior.cost != null ? ` (إنفاق الأسبوع السابق ${formatCurrency(prior.cost ?? 0, currency)})` : ''}.
-      </div>
-    </article>
+      </p>
+    </div>
+  );
+}
+
+const NONE = 'ما فيه';
+
+/** Three numbers in one strip with hairline dividers, like the week strip on the home. */
+function Stats({ children }: { children: React.ReactNode }) {
+  return (
+    <dl className="mt-5 grid grid-cols-1 divide-y divide-border/70 overflow-hidden rounded-[16px] border border-border/80 sm:grid-cols-3 sm:divide-y-0">
+      {children}
+    </dl>
+  );
+}
+
+const STAT_CELL =
+  'flex items-baseline justify-between gap-3 px-4 py-3 sm:block sm:border-s sm:border-border/70 sm:py-3.5 sm:first:border-s-0';
+
+function Stat({ label, value, note }: { label: string; value: string | number; note?: string }) {
+  return (
+    <div className={STAT_CELL}>
+      <dt className="text-[13px] text-muted-foreground">{label}</dt>
+      <dd className="text-end sm:mt-1 sm:text-start">
+        <span className="numeric text-[18px] font-bold leading-7">{value}</span>
+        {note && <span className="numeric block text-[12.5px] leading-5 text-muted-foreground">{note}</span>}
+      </dd>
+    </div>
   );
 }
 
@@ -209,28 +275,19 @@ function WeekDelta({
     direction === 'flat' || neutral
       ? 'text-muted-foreground'
       : direction === 'up'
-        ? 'text-success dark:text-success'
-        : 'text-danger dark:text-danger';
+        ? 'text-success'
+        : 'text-danger';
   return (
-    <div className="rounded-lg border border-border bg-background-elevated px-4 py-3">
-      <div className="text-[11px] font-medium text-foreground-subtle">{label}</div>
-      <div className="mt-1.5 flex items-baseline gap-2">
-        <span className="text-[17px] font-semibold numeric">{current}</span>
+    <div className={STAT_CELL}>
+      <dt className="text-[13px] text-muted-foreground">{label}</dt>
+      <dd className="text-end sm:mt-1 sm:text-start">
+        <span className="numeric text-[18px] font-bold leading-7">{current}</span>
         {direction !== 'flat' && (
-          <span className={`text-[11.5px] font-semibold numeric ${tone}`}>
+          <span className={`numeric block text-[12.5px] font-semibold leading-5 ${tone}`}>
             {direction === 'up' ? '▲' : '▼'} {formatDelta(delta)}
           </span>
         )}
-      </div>
-    </div>
-  );
-}
-
-function ReportMetric({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="rounded-lg border border-border bg-background-elevated px-4 py-3">
-      <div className="text-[11px] font-medium uppercase text-foreground-subtle">{label}</div>
-      <div className="mt-1.5 text-[17px] font-semibold numeric">{value}</div>
+      </dd>
     </div>
   );
 }
