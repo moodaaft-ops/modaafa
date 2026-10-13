@@ -4,30 +4,13 @@ import { createAdminClient, createServerClient } from '@/lib/supabase/server';
 import { decrypt } from '@/lib/crypto';
 import { getCustomer } from '@/lib/google-ads/client';
 import { executeRollback } from '@/lib/ai/optimizer-agent';
+import { rollbackResourcesScoped } from '@/lib/ai/rollback-scope';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 import { safeLocalPath } from '@/lib/security/redirect';
 import { sendOpsAlert } from '@/lib/notifications/email';
 import { isSameOriginRequest } from '@/lib/security/origin';
 
 const ROLLBACK_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
-
-/**
- * Every resource named in a rollback payload must live under the SELECTED
- * account's customer id. Defence in depth: `ai_actions` writes are now
- * service-role only, but if a crafted `rollback_payload` ever reached this
- * path it would otherwise be executed verbatim as a live Google Ads mutation
- * against whatever `customers/<id>/…` it named.
- */
-function rollbackResourcesScoped(rollback: Record<string, any>, customerId: string): boolean {
-  const cid = String(customerId ?? '').replace(/\D/g, '');
-  if (!cid) return false;
-  const prefix = `customers/${cid}/`;
-  const resources = [rollback.budget_resource, rollback.resource_name, rollback.ad_group_resource].filter(
-    (value): value is string => typeof value === 'string' && value.length > 0
-  );
-  if (resources.length === 0) return false;
-  return resources.every((value) => value.startsWith(prefix));
-}
 
 export async function POST(req: NextRequest) {
   // Defence in depth against cross-site POSTs; see lib/security/origin.ts.

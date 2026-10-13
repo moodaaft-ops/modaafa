@@ -98,6 +98,7 @@ async function build(supabase: any, account: any, subscriptionActive: boolean): 
     severity: r.severity ?? null,
     status: r.status,
     executable: Boolean(buildExecutableAction(r.action_payload, r)),
+    operation: typeof r.action_payload?.operation === 'string' ? r.action_payload.operation : null,
   }));
 
   return {

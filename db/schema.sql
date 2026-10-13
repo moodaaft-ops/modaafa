@@ -78,6 +78,9 @@ CREATE TABLE IF NOT EXISTS google_ads_accounts (
   last_synced_at TIMESTAMPTZ,
   last_sync_attempt_at TIMESTAMPTZ,
   last_optimized_at TIMESTAMPTZ,
+  -- Validate-only probe result (PR-J6): can Modaafa write to this account at all?
+  write_access TEXT NOT NULL DEFAULT 'unknown' CHECK (write_access IN ('full', 'read_only', 'unknown')),
+  write_access_checked_at TIMESTAMPTZ,
   UNIQUE(business_id, customer_id)
 );
 
@@ -192,6 +195,17 @@ CREATE TABLE IF NOT EXISTS autopilot_settings (
   paused_at TIMESTAMPTZ,
   pause_reason TEXT,
   last_run_at TIMESTAMPTZ,
+  -- The customer's answer to the one permission question (PR-J6). A record of
+  -- consent only: it never changes `mode` by itself.
+  consent JSONB CONSTRAINT autopilot_settings_consent_shape CHECK (
+    consent IS NULL OR (
+      jsonb_typeof(consent) = 'object'
+      AND consent->>'answer' IN ('auto_small', 'always_ask')
+      AND consent->>'channel' IN ('chat', 'voice', 'settings')
+    )
+  ),
+  small_spend_cap NUMERIC(10, 2) CONSTRAINT autopilot_settings_small_spend_cap_range
+    CHECK (small_spend_cap IS NULL OR (small_spend_cap >= 0 AND small_spend_cap <= 100000)),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -520,6 +534,101 @@ CREATE TABLE IF NOT EXISTS sector_benchmarks (
   UNIQUE (sector, currency_code, window_days)
 );
 
+-- LLM usage and cost ledger: one row per successful Anthropic call, written
+-- from createMessageForAgent. Service role only: RLS enabled with no policy.
+CREATE TABLE IF NOT EXISTS llm_usage (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  account_id UUID REFERENCES google_ads_accounts(id) ON DELETE SET NULL,
+  feature TEXT NOT NULL CHECK (char_length(feature) <= 60),
+  channel TEXT CHECK (channel IN ('text', 'voice', 'cron')),
+  model TEXT NOT NULL,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+  cost_usd NUMERIC(12, 6) NOT NULL DEFAULT 0,
+  priced BOOLEAN NOT NULL DEFAULT TRUE,
+  tool_rounds SMALLINT NOT NULL DEFAULT 0,
+  latency_ms INTEGER,
+  pricing_version TEXT,
+  playbook_version TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_llm_usage_user_created ON llm_usage(user_id, created_at DESC);
+CREATE INDEX idx_llm_usage_created ON llm_usage(created_at DESC);
+
+COMMENT ON TABLE llm_usage IS
+  'Append-only ledger of Anthropic calls with token counts and computed USD cost. Service role only; no browser access.';
+
+CREATE OR REPLACE FUNCTION public.llm_usage_cost_since(p_user_id UUID, p_since TIMESTAMPTZ)
+RETURNS NUMERIC
+LANGUAGE SQL
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  SELECT COALESCE(SUM(cost_usd), 0)::NUMERIC
+  FROM public.llm_usage
+  WHERE user_id = p_user_id
+    AND created_at >= p_since;
+$$;
+
+REVOKE ALL ON FUNCTION public.llm_usage_cost_since(UUID, TIMESTAMPTZ)
+  FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.llm_usage_cost_since(UUID, TIMESTAMPTZ)
+  TO service_role;
+
+-- Jarvis playbook: the Google Ads knowledge the assistant reads on demand, one
+-- chunk per row, loaded manually by scripts/jarvis/import-playbook.ts. Service
+-- role only: RLS enabled with no policy.
+CREATE TABLE IF NOT EXISTS jarvis_playbook_chunks (
+  id TEXT PRIMARY KEY CHECK (id ~ '^[a-z]{2,6}-[0-9]{2,3}$'),
+  version TEXT NOT NULL CHECK (char_length(version) BETWEEN 1 AND 64),
+  file TEXT NOT NULL,
+  section TEXT,
+  title_ar TEXT NOT NULL,
+  summary_ar TEXT NOT NULL,
+  tags TEXT[] NOT NULL DEFAULT '{}',
+  campaign_types TEXT[] NOT NULL DEFAULT '{}',
+  volatile BOOLEAN NOT NULL DEFAULT FALSE,
+  tokens INTEGER NOT NULL CHECK (tokens > 0),
+  body_ar TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_jarvis_playbook_chunks_version ON jarvis_playbook_chunks(version);
+
+COMMENT ON TABLE jarvis_playbook_chunks IS
+  'Chunked Google Ads playbook for the Jarvis assistant. Service role only; no browser access. Loaded manually by scripts/jarvis/import-playbook.ts.';
+
+-- Facts about the business for the Jarvis brain (PR-J7). Owner reads; the
+-- server writes with the service role after proving ownership.
+CREATE TABLE IF NOT EXISTS business_memory (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  account_id UUID REFERENCES google_ads_accounts(id) ON DELETE SET NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('margin', 'product', 'season', 'schedule', 'geo', 'goal',
+    'capacity', 'constraint', 'preference', 'agency', 'outcome', 'other')),
+  fact_ar TEXT NOT NULL CHECK (char_length(fact_ar) BETWEEN 1 AND 300),
+  data JSONB NOT NULL DEFAULT '{}'::JSONB,
+  source TEXT NOT NULL CHECK (source IN ('chat', 'voice', 'onboarding', 'action_outcome', 'weekly_review', 'settings')),
+  source_ref TEXT,
+  basis TEXT NOT NULL CHECK (basis IN ('stated', 'measured', 'inferred')),
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'superseded', 'deleted')),
+  superseded_by UUID REFERENCES business_memory(id),
+  valid_from DATE,
+  valid_until DATE,
+  last_used_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_business_memory_active ON business_memory(business_id, status, kind);
+CREATE UNIQUE INDEX business_memory_outcome_ref_idx ON business_memory(source_ref)
+  WHERE source = 'action_outcome' AND source_ref IS NOT NULL;
+
 -- =====================================================
 -- ROW LEVEL SECURITY (RLS)
 -- =====================================================
@@ -544,6 +653,9 @@ ALTER TABLE billing_trial_grants ENABLE ROW LEVEL SECURITY;
 ALTER TABLE job_runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE processed_webhook_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sector_benchmarks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE llm_usage ENABLE ROW LEVEL SECURITY;
+ALTER TABLE jarvis_playbook_chunks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE business_memory ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY sector_benchmarks_read ON sector_benchmarks
   FOR SELECT TO authenticated USING (true);
@@ -575,6 +687,9 @@ CREATE POLICY recs_owner_only ON recommendations
     SELECT id FROM google_ads_accounts
     WHERE business_id IN (SELECT id FROM businesses WHERE user_id = auth.uid())
   ));
+
+CREATE POLICY business_memory_owner_read ON business_memory
+  FOR SELECT USING (business_id IN (SELECT id FROM businesses WHERE user_id = auth.uid()));
 
 CREATE POLICY actions_owner_only ON ai_actions
   FOR ALL USING (account_id IN (
@@ -641,6 +756,13 @@ REVOKE INSERT, UPDATE, DELETE ON subscriptions FROM anon, authenticated;
 REVOKE INSERT, UPDATE, DELETE ON invoices FROM anon, authenticated;
 REVOKE INSERT, UPDATE, DELETE ON billing_trial_grants FROM anon, authenticated;
 REVOKE ALL ON TABLE billing_trial_ledger FROM anon, authenticated;
+REVOKE ALL ON TABLE llm_usage FROM PUBLIC, anon, authenticated, service_role;
+GRANT SELECT, INSERT ON TABLE llm_usage TO service_role;
+REVOKE ALL ON TABLE jarvis_playbook_chunks FROM PUBLIC, anon, authenticated, service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE jarvis_playbook_chunks TO service_role;
+REVOKE ALL ON TABLE business_memory FROM PUBLIC, anon, authenticated, service_role;
+GRANT SELECT ON TABLE business_memory TO authenticated;
+GRANT SELECT, INSERT, UPDATE ON TABLE business_memory TO service_role;
 
 -- Metering rows are created through consume_feature_usage() only and refunded
 -- by the service role only.
@@ -982,3 +1104,97 @@ GRANT EXECUTE ON FUNCTION public.consume_feature_usage(UUID, TEXT, UUID, INTEGER
 REVOKE ALL ON FUNCTION public.refund_feature_usage(UUID, UUID) FROM public;
 REVOKE ALL ON FUNCTION public.refund_feature_usage(UUID, UUID) FROM anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.refund_feature_usage(UUID, UUID) TO service_role;
+
+-- =====================================================
+-- OPERATOR CONSOLE (db/migrations/20261012_operator_console.sql)
+-- =====================================================
+
+create table if not exists public.account_access_overrides (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.users(id) on delete cascade,
+  kind text not null check (kind in ('suspension', 'plan_grant')),
+  plan text check (plan is null or plan in ('starter', 'growth', 'pro')),
+  expires_at timestamptz,
+  created_at timestamptz not null default now(),
+  revoked_at timestamptz,
+  constraint account_access_overrides_plan_matches_kind check (
+    (kind = 'plan_grant' and plan is not null)
+    or (kind = 'suspension' and plan is null)
+  )
+);
+
+create unique index if not exists account_access_overrides_one_live
+  on public.account_access_overrides (user_id, kind)
+  where revoked_at is null;
+
+create index if not exists account_access_overrides_user_idx
+  on public.account_access_overrides (user_id, created_at desc);
+
+alter table public.account_access_overrides enable row level security;
+revoke all on table public.account_access_overrides from public, anon, authenticated, service_role;
+grant select on table public.account_access_overrides to authenticated;
+grant select, insert, update on table public.account_access_overrides to service_role;
+
+drop policy if exists account_access_overrides_owner_read on public.account_access_overrides;
+create policy account_access_overrides_owner_read
+  on public.account_access_overrides
+  for select
+  to authenticated
+  using (user_id = auth.uid());
+
+-- Replace a customer's free plan in ONE transaction: revoke the live grant and
+-- insert the new one together, so a failed insert can never leave the customer
+-- without the grant they already had. Service role only (the operator API).
+create or replace function public.operator_replace_plan_grant(
+  p_user_id uuid,
+  p_plan text,
+  p_expires_at timestamptz
+)
+returns uuid
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $$
+declare
+  v_id uuid;
+begin
+  update public.account_access_overrides
+  set revoked_at = now()
+  where user_id = p_user_id and kind = 'plan_grant' and revoked_at is null;
+
+  insert into public.account_access_overrides (user_id, kind, plan, expires_at)
+  values (p_user_id, 'plan_grant', p_plan, p_expires_at)
+  returning id into v_id;
+
+  return v_id;
+end;
+$$;
+
+revoke all on function public.operator_replace_plan_grant(uuid, text, timestamptz) from public, anon, authenticated, service_role;
+grant execute on function public.operator_replace_plan_grant(uuid, text, timestamptz) to service_role;
+
+create table if not exists public.operator_audit_log (
+  id uuid primary key default gen_random_uuid(),
+  operator_user_id uuid not null,
+  operator_email text not null,
+  action text not null check (
+    action in ('extend_trial', 'grant_plan', 'revoke_plan', 'suspend', 'unsuspend')
+  ),
+  target_user_id uuid,
+  status text not null default 'started' check (status in ('started', 'succeeded', 'failed')),
+  reason text check (reason is null or char_length(reason) <= 500),
+  details jsonb not null default '{}'::jsonb,
+  error_message text,
+  created_at timestamptz not null default now(),
+  finished_at timestamptz
+);
+
+create index if not exists operator_audit_log_target_idx
+  on public.operator_audit_log (target_user_id, created_at desc);
+
+create index if not exists operator_audit_log_created_idx
+  on public.operator_audit_log (created_at desc);
+
+alter table public.operator_audit_log enable row level security;
+revoke all on table public.operator_audit_log from public, anon, authenticated, service_role;
+grant select, insert, update on table public.operator_audit_log to service_role;

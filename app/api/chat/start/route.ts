@@ -1,3 +1,5 @@
+import { readAccessOverrides } from '@/lib/billing/access-overrides';
+import { ACCOUNT_SUSPENDED_MESSAGE } from '@/lib/billing/entitlements';
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase/server';
 import { SELECTED_ADS_ACCOUNT_COOKIE } from '@/lib/accounts/selection';
@@ -14,33 +16,58 @@ import { createMessageForAgent, hasAIBackend } from '@/lib/ai/client';
 import { readVoiceConfig } from '@/lib/ai/voice-session';
 import { grantSpeech, verifyChatVoiceTicket } from '@/lib/ai/voice-server';
 import { voiceLimiter, voiceSessionStore } from '@/lib/ai/voice-route-deps';
+import { isJarvisBrainEnabled } from '@/lib/jarvis/flag';
+import { answerWithJarvis } from '@/lib/jarvis/turn';
+import { annotateProposalStatuses } from '@/lib/jarvis/history';
+import type { JarvisToolTrace } from '@/lib/jarvis/brain';
 
 const MAX_MESSAGE = 1000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Existing model path (assistant role). No new model, no Opus. */
-const callAssistantModel: ModelCall = async ({ system, user, maxTokens }) => {
-  const response = await createMessageForAgent('assistant', {
-    max_tokens: maxTokens,
-    system,
-    messages: [{ role: 'user', content: user }],
-  });
-  return (
-    response.content
-      ?.filter((part: any) => part.type === 'text')
-      .map((part: any) => part.text)
-      .join('\n')
-      .trim() ?? null
-  );
-};
+/**
+ * Intent classification only (max 450 tokens, no tools), so it runs on the
+ * cheap fast tier. The user id is attached per request so the cost lands on the
+ * right subscriber.
+ */
+const callAssistantModel =
+  (userId: string, accountId: string | null, channel: 'text' | 'voice'): ModelCall =>
+  async ({ system, user, maxTokens }) => {
+    const response = await createMessageForAgent(
+      'jarvis_fast',
+      {
+        max_tokens: maxTokens,
+        system,
+        messages: [{ role: 'user', content: user }],
+      },
+      undefined,
+      { userId, accountId, feature: 'chat_start_language', channel }
+    );
+    return (
+      response.content
+        ?.filter((part: any) => part.type === 'text')
+        .map((part: any) => part.text)
+        .join('\n')
+        .trim() ?? null
+    );
+  };
 
-async function authed(req: NextRequest) {
-  if (!isChatFirstEnabled()) return { res: NextResponse.json({ error: 'not_found' }, { status: 404 }) };
+async function authed(req: NextRequest): Promise<{ res?: NextResponse; supabase?: any; user?: any }> {
+  const notFound = { res: NextResponse.json({ error: 'not_found' }, { status: 404 }) as NextResponse };
+  const mode = process.env.CHAT_FIRST_ENTRY;
+  if (mode !== 'true' && mode !== 'operators') return notFound;
   const supabase = await createServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) return { res: NextResponse.json({ error: 'unauthorized' }, { status: 401 }) };
+  // In allowlist mode an outsider, signed in or not, sees the same 404 as when the flag is off.
+  if (!user) return mode === 'true' ? { res: NextResponse.json({ error: 'unauthorized' }, { status: 401 }) } : notFound;
+  if (!isChatFirstEnabled(process.env, user.email)) return notFound;
+  // An operator-suspended account gets no model calls at all, free tier included.
+  if ((await readAccessOverrides(supabase, user.id)).suspended) {
+    return {
+      res: NextResponse.json({ error: 'account_suspended', message: ACCOUNT_SUSPENDED_MESSAGE }, { status: 403 }),
+    };
+  }
   try {
     const rl = await checkRateLimit({ req, scope: 'chat_start', limit: 60, windowSeconds: 60, identifier: user.id });
     if (!rl.allowed) {
@@ -104,6 +131,8 @@ export async function POST(req: NextRequest) {
   }
 
   let turn: ChatTurn;
+  let sid = sessionId;
+  let toolTrace: JarvisToolTrace[] | null = null;
   let userText = message;
   let language: ChatLanguageMeta = { source: 'rules' };
   if (action?.type === 'request_apply' || action?.type === 'show_recommendation') {
@@ -118,12 +147,44 @@ export async function POST(req: NextRequest) {
       turn = planTurn('وش التوصيات', state);
       userText = userText || 'وريني أهم توصية';
     }
+  } else if (isJarvisBrainEnabled(user.email) && hasAIBackend() && (await brainTurnAllowed(req, user.id))) {
+    // Jarvis brain. The session is created first so a prepared change can point
+    // back to the conversation it came from.
+    if (!sid) sid = await createSession(supabase, user.id, accountId, userText).catch(() => null);
+    try {
+      const answer = await answerWithJarvis({
+        supabase,
+        user,
+        accountId,
+        state,
+        message,
+        channel: voiceCheck ? 'voice' : 'text',
+        sessionId: sid,
+      });
+      if (answer.kind === 'budget_exhausted') {
+        turn = planTurn(message, state);
+        turn = {
+          ...turn,
+          reply: `${turn.reply}\n\n(وصلت حد التحليل الذكي لهذي الفترة. الأزرار والاعتماد والتراجع شغالة، والتحليل يرجع مع بداية اليوم أو الشهر الجديد.)`,
+          actions: [...turn.actions, { label: 'شوف الباقات', action: { type: 'subscribe', href: '/billing' } }],
+        };
+        language = { source: 'rules', engine: 'jarvis', limited: { scope: state.subscriptionActive ? 'subscriber' : 'free', resetsAt: null } };
+      } else {
+        turn = answer.result.turn;
+        toolTrace = answer.result.tools;
+        language = { source: 'model', engine: 'jarvis', ...(answer.budget.level === 'degraded' ? { degraded: true } : {}) };
+      }
+    } catch (error) {
+      console.error('jarvis brain failed, answering with rules', { name: error instanceof Error ? error.name : 'unknown' });
+      turn = planTurn(message, state);
+      language = { source: 'rules', engine: 'jarvis', degraded: true };
+    }
   } else {
     const resolved = await resolveLanguage({
       message,
       state,
       hasBackend: hasAIBackend(),
-      call: callAssistantModel,
+      call: callAssistantModel(user.id, accountId ?? null, voiceCheck ? 'voice' : 'text'),
       checkAllowance: async (scope) => {
         const r = await checkRateLimit({
           req,
@@ -149,26 +210,18 @@ export async function POST(req: NextRequest) {
   // can only ever play what this route produced for this ticket.
   const voiceGrant = () =>
     voiceCheck?.ok
-      ? { voice: grantSpeech({ config: voiceConfig, nowMs: () => Date.now() }, user.id, voiceCheck, turn.reply) }
+      ? { voice: grantSpeech({ config: voiceConfig, nowMs: () => Date.now() }, user.id, voiceCheck, turn.spoken ?? turn.reply) }
       : {};
 
-  let sid = sessionId;
   try {
-    if (!sid) {
-      const { data: created, error } = await supabase
-        .from('chat_sessions')
-        .insert({ user_id: user.id, account_id: accountId, title: userText.slice(0, 60) })
-        .select('id')
-        .single();
-      if (error) throw error;
-      sid = created.id;
-    }
+    if (!sid) sid = await createSession(supabase, user.id, accountId, userText);
     const { error: msgError } = await supabase.from('chat_messages').insert([
       { session_id: sid, role: 'user', content: userText },
       {
         session_id: sid,
         role: 'assistant',
         content: turn.reply,
+        ...(toolTrace ? { tool_calls: toolTrace } : {}),
         tool_results: { cards: turn.cards, actions: turn.actions, intent: turn.intent },
       },
     ]);
@@ -179,6 +232,30 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ sessionId: sid, turn, saved: false, language, ...voiceGrant() });
   }
   return NextResponse.json({ sessionId: sid, turn, saved: true, language, ...voiceGrant() });
+}
+
+/**
+ * The LLM budget is read once per turn and usage lands after the response, so
+ * parallel turns could all pass the check. A small per-minute cap on brain
+ * turns bounds that overshoot; above it the rule-based answer takes over.
+ */
+async function brainTurnAllowed(req: NextRequest, userId: string) {
+  try {
+    const rl = await checkRateLimit({ req, scope: 'jarvis_turn', limit: 6, windowSeconds: 60, identifier: userId });
+    return rl.allowed;
+  } catch {
+    return false;
+  }
+}
+
+async function createSession(supabase: any, userId: string, accountId: string | null, title: string): Promise<string> {
+  const { data: created, error } = await supabase
+    .from('chat_sessions')
+    .insert({ user_id: userId, account_id: accountId, title: title.slice(0, 60) })
+    .select('id')
+    .single();
+  if (error) throw error;
+  return created.id;
 }
 
 export async function GET(req: NextRequest) {
@@ -207,5 +284,9 @@ export async function GET(req: NextRequest) {
       ? NextResponse.json({ error: 'session_not_found' }, { status: 404 })
       : NextResponse.json({ sessionId: null, messages: [] });
   }
-  return NextResponse.json({ sessionId: result.sessionId, messages: result.messages });
+  const messages = await annotateProposalStatuses(supabase, result.messages, {
+    accountId,
+    subscriptionActive: loaded.state.subscriptionActive,
+  });
+  return NextResponse.json({ sessionId: result.sessionId, messages });
 }

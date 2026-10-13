@@ -18,6 +18,7 @@ export type AuditAccessFailure =
   | 'audit_in_progress'
   | 'quota_exceeded'
   | 'subscription_required'
+  | 'account_suspended'
   | 'usage_storage_unavailable';
 
 export type AuditAccess =
@@ -39,6 +40,7 @@ export type AuditAccess =
   | { ok: false; reason: AuditAccessFailure; resetsAt?: string };
 
 export function auditAccessStatus(reason?: string) {
+  if (reason === 'account_suspended') return 403;
   if (reason === 'free_audits_exhausted' || reason === 'subscription_required') return 402;
   if (reason === 'audit_in_progress') return 409;
   if (reason === 'quota_exceeded') return 429;
@@ -135,6 +137,9 @@ export async function reserveAuditAccess({
     console.error('Failed to read subscription for audit access', error);
     return { ok: false, reason: 'usage_storage_unavailable' };
   }
+
+  // A suspended account gets neither its plan allowance nor the free audits.
+  if (subscription.suspended) return { ok: false, reason: 'account_suspended' };
 
   if (subscription.active && subscription.plan) {
     const usage = await deps.consumeFeatureUsage({

@@ -5,9 +5,11 @@ import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { DashboardChrome } from './dashboard-chrome';
 import { isModaafaOperator } from '@/lib/platform/operators';
 import { isChatFirstEnabled } from '@/lib/chat-first/flag';
+import { readAccessOverrides } from '@/lib/billing/access-overrides';
+import { SuspendedBanner } from './suspended-banner';
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const { user } = await getRequestAuthContext();
+  const { supabase, user } = await getRequestAuthContext();
   if (!user) redirect('/login');
 
   // Nobody reaches the platform before leaving name, email and phone.
@@ -19,7 +21,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // again) AND let that reload auth — three redundant round trips on every hard
   // navigation and every router.refresh() (account switch, sync). The business
   // the workspace already resolved is reused for the brand name below.
-  const workspace = await getAccountWorkspace(user.id);
+  const [workspace, overrides] = await Promise.all([
+    getAccountWorkspace(user.id),
+    readAccessOverrides(supabase, user.id),
+  ]);
   const { business, accounts, revokedAccounts, pausedAccounts, selectedCustomerId } = workspace;
 
   // Send a first-time user through onboarding.
@@ -42,8 +47,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
       pausedAccounts={pausedAccounts}
       selectedCustomerId={selectedCustomerId}
       isOperator={isModaafaOperator(user.email)}
-      chatFirst={isChatFirstEnabled()}
+      chatFirst={isChatFirstEnabled(process.env, user.email)}
     >
+      {overrides.suspended && <SuspendedBanner />}
       {children}
     </DashboardChrome>
   );

@@ -1,8 +1,9 @@
 import type { OptimizerAction } from './optimizer-agent';
+import { cleanNegativeKeywordBatch, NEGATIVE_BATCH_MATCH_TYPES } from './executable-action';
 
 /** Where and how the nightly measurement pass evaluates an applied action. */
 export type MeasurementDescriptor = {
-  level: 'budget_campaigns' | 'ad_group' | 'criterion' | 'ad' | 'created_criterion';
+  level: 'budget_campaigns' | 'ad_group' | 'criterion' | 'ad' | 'created_criterion' | 'campaign';
   resource: string | null;
   window_days: number;
   before: { cost: number; clicks: number; conversions: number; conversion_value: number } | null;
@@ -186,6 +187,74 @@ export async function prepareActionForExecution(action: OptimizerAction, custome
       action_type: 'remove_created_negative_keyword',
       resource_name_from_result: true,
     };
+  } else if (action.type === 'pause_campaign' || action.type === 'enable_campaign') {
+    const campaignResource = action.target_id;
+    const rows = await customer.query(`
+      SELECT campaign.resource_name, campaign.status, campaign_budget.amount_micros
+      FROM campaign
+      WHERE campaign.resource_name = '${escapeGaql(campaignResource)}'
+      LIMIT 1
+    `);
+    const campaign = rows[0]?.campaign;
+    const previousStatus = normalizeCampaignStatus(campaign?.status);
+    if (!campaign || !previousStatus) throw new Error('Unable to read campaign status before execution');
+
+    if (action.type === 'pause_campaign') {
+      if (previousStatus !== 'ENABLED') {
+        throw new Error(`Campaign is ${previousStatus}, not ENABLED; nothing to pause.`);
+      }
+    } else {
+      if (previousStatus !== 'PAUSED') {
+        throw new Error(`Campaign is ${previousStatus}, not PAUSED; only a paused campaign can be enabled.`);
+      }
+      const budget = rows[0]?.campaignBudget ?? rows[0]?.campaign_budget;
+      const budgetMicros = Number(budget?.amountMicros ?? budget?.amount_micros ?? 0);
+      if (!(Number.isFinite(budgetMicros) && budgetMicros > 0)) {
+        throw new Error('Campaign has no positive daily budget; refusing to enable it.');
+      }
+      params.budget_amount_micros = budgetMicros;
+    }
+    params.previous_status = previousStatus;
+    rollbackPayload = {
+      reversible: true,
+      action_type: 'restore_campaign_status',
+      campaign_resource: campaignResource,
+      status: previousStatus,
+    };
+    measurement = {
+      level: 'campaign',
+      resource: campaignResource,
+      window_days: 7,
+      before: await readSevenDayMetrics(customer, 'campaign', 'campaign.resource_name', campaignResource),
+      captured_at: capturedAt,
+    };
+  } else if (action.type === 'add_negative_keywords_batch') {
+    const campaignResource = String(params.campaign_resource ?? '');
+    const matchType = String(params.match_type ?? '').trim();
+    const candidates = cleanNegativeKeywordBatch(params.keywords);
+    if (!campaignResource || !NEGATIVE_BATCH_MATCH_TYPES.includes(matchType) || !candidates) {
+      throw new Error('Negative keyword batch is malformed');
+    }
+    const { keep, dropped } = await filterNegativeKeywordBatch(customer, campaignResource, matchType, candidates);
+    params.keywords = keep;
+    params.dropped = dropped;
+    if (keep.length === 0) {
+      throw new Error(
+        `Every keyword in the batch was dropped (${dropped.map((d) => `${d.text}: ${d.reason}`).join('; ')}); nothing to add.`
+      );
+    }
+    rollbackPayload = {
+      reversible: true,
+      action_type: 'remove_created_negative_keywords',
+      resource_names_from_result: true,
+    };
+    measurement = {
+      level: 'campaign',
+      resource: campaignResource,
+      window_days: 7,
+      before: await readSevenDayMetrics(customer, 'campaign', 'campaign.resource_name', campaignResource),
+      captured_at: capturedAt,
+    };
   } else if (action.type === 'add_keyword') {
     const keywordText = String(params.keyword_text ?? '').trim();
     const matchType = String(params.match_type ?? '').trim();
@@ -215,6 +284,131 @@ export async function prepareActionForExecution(action: OptimizerAction, custome
   }
 
   return { action: { ...action, params }, rollbackPayload, measurement };
+}
+
+export type DroppedNegativeKeyword = {
+  text: string;
+  reason: 'already_negative' | 'blocks_converting_search_term' | 'blocks_enabled_keyword';
+};
+
+/**
+ * Drop batch candidates that are redundant or that would block traffic the
+ * campaign is already winning:
+ *  - already a campaign negative with the same match type;
+ *  - would block a search term that converted in the last 30 days;
+ *  - would block one of the campaign's enabled positive keywords.
+ * Any read failure propagates: a batch is never sent unchecked.
+ */
+export async function filterNegativeKeywordBatch(
+  customer: any,
+  campaignResource: string,
+  matchType: string,
+  candidates: string[]
+): Promise<{ keep: string[]; dropped: DroppedNegativeKeyword[] }> {
+  const campaign = escapeGaql(campaignResource);
+  const existingRows = await customer.query(`
+    SELECT campaign_criterion.resource_name, campaign_criterion.keyword.text, campaign_criterion.keyword.match_type
+    FROM campaign_criterion
+    WHERE campaign_criterion.campaign = '${campaign}'
+      AND campaign_criterion.negative = TRUE
+      AND campaign_criterion.type = 'KEYWORD'
+      AND campaign_criterion.status != 'REMOVED'
+  `);
+  const convertingRows = await customer.query(`
+    SELECT search_term_view.search_term, metrics.conversions
+    FROM search_term_view
+    WHERE campaign.resource_name = '${campaign}'
+      AND segments.date DURING LAST_30_DAYS
+      AND metrics.conversions > 0
+  `);
+  const keywordRows = await customer.query(`
+    SELECT ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type
+    FROM keyword_view
+    WHERE campaign.resource_name = '${campaign}'
+      AND ad_group_criterion.status = 'ENABLED'
+      AND ad_group_criterion.negative = FALSE
+  `);
+
+  const existing = new Set<string>();
+  for (const row of existingRows ?? []) {
+    const criterion = row?.campaignCriterion ?? row?.campaign_criterion;
+    const keyword = criterion?.keyword;
+    const text = typeof keyword?.text === 'string' ? keyword.text : '';
+    const rowMatch = String(keyword?.matchType ?? keyword?.match_type ?? '');
+    if (text && rowMatch === matchType) existing.add(normalizeKeywordText(text));
+  }
+  const convertingTerms = (convertingRows ?? [])
+    .map((row: any) => row?.searchTermView?.searchTerm ?? row?.search_term_view?.search_term)
+    .filter((value: unknown): value is string => typeof value === 'string' && value.trim().length > 0)
+    .map(normalizeKeywordText);
+  const enabledKeywords = (keywordRows ?? [])
+    .map((row: any) => (row?.adGroupCriterion ?? row?.ad_group_criterion)?.keyword?.text)
+    .filter((value: unknown): value is string => typeof value === 'string' && value.trim().length > 0)
+    .map(normalizeKeywordText);
+
+  const keep: string[] = [];
+  const dropped: DroppedNegativeKeyword[] = [];
+  for (const text of candidates) {
+    const normalized = normalizeKeywordText(text);
+    if (existing.has(normalized)) {
+      dropped.push({ text, reason: 'already_negative' });
+    } else if (convertingTerms.some((term: string) => negativeWouldBlock(normalized, matchType, term))) {
+      dropped.push({ text, reason: 'blocks_converting_search_term' });
+    } else if (enabledKeywords.some((keyword: string) => negativeWouldBlock(normalized, matchType, keyword))) {
+      dropped.push({ text, reason: 'blocks_enabled_keyword' });
+    } else {
+      keep.push(text);
+    }
+  }
+  return { keep, dropped };
+}
+
+/**
+ * Comparison form for conflict checks only (never sent to Google): trimmed,
+ * single-spaced, lower-cased, Arabic alef variants folded to ا, ta marbuta to
+ * ه, alef maqsura to ي, and diacritics/tatweel removed. Folding makes the
+ * check MORE conservative: a candidate that differs from a converting term
+ * only by spelling variant is treated as a conflict and dropped.
+ */
+export function normalizeKeywordText(value: string) {
+  return value
+    .normalize('NFKC')
+    .replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, '')
+    .replace(/[\u064b-\u065f\u0670\u0640]/g, '')
+    .replace(/[أإآ]/g, 'ا')
+    .replace(/ة/g, 'ه')
+    .replace(/ى/g, 'ي')
+    .toLocaleLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Would a negative of this match type block `target` (a normalized search
+ * term or keyword)? EXACT blocks only an identical query. PHRASE blocks a
+ * query containing the phrase words in the same order; Google requires them
+ * to be adjacent, but this check accepts gaps too, which can only drop more
+ * candidates, never fewer.
+ */
+export function negativeWouldBlock(normalizedNegative: string, matchType: string, normalizedTarget: string) {
+  if (!normalizedNegative || !normalizedTarget) return false;
+  if (matchType === 'EXACT') return normalizedNegative === normalizedTarget;
+  const needle = normalizedNegative.split(' ');
+  const haystack = normalizedTarget.split(' ');
+  let index = 0;
+  for (const word of haystack) {
+    if (word === needle[index]) index += 1;
+    if (index === needle.length) return true;
+  }
+  return false;
+}
+
+const CAMPAIGN_STATUS_BY_NUMBER: Record<number, string> = { 2: 'ENABLED', 3: 'PAUSED', 4: 'REMOVED' };
+
+function normalizeCampaignStatus(value: unknown): string | null {
+  if (typeof value === 'number') return CAMPAIGN_STATUS_BY_NUMBER[value] ?? null;
+  if (typeof value !== 'string' || !value.trim()) return null;
+  return value.trim().toUpperCase();
 }
 
 async function readSevenDayMetrics(
@@ -253,4 +447,49 @@ function sumMetricRows(rows: any[]) {
 
 function escapeGaql(value: string) {
   return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+export type WriteAccess = 'full' | 'read_only' | 'unknown';
+
+const WRITE_DENIED_CODES = new Set(['USER_PERMISSION_DENIED', 'ACTION_NOT_PERMITTED']);
+
+/**
+ * Can Modaafa write to this account at all (spec 83, 5.5)? Re-submits the
+ * first enabled campaign's budget at its CURRENT amount with validateOnly
+ * hard-coded to true, so Google checks permissions and nothing is applied.
+ * A permission error means the linked login is read-only (typical for an
+ * agency-managed account). Anything else that fails is "unknown", never a
+ * guess.
+ */
+export async function probeWriteAccess(customer: any): Promise<WriteAccess> {
+  let rows: any[];
+  try {
+    rows = await customer.query(`
+      SELECT campaign_budget.resource_name, campaign_budget.amount_micros
+      FROM campaign
+      WHERE campaign.status = 'ENABLED'
+      LIMIT 1
+    `);
+  } catch {
+    return 'unknown';
+  }
+  const budget = rows?.[0]?.campaignBudget ?? rows?.[0]?.campaign_budget;
+  const resourceName = String(budget?.resourceName ?? budget?.resource_name ?? '');
+  const amount = Number(budget?.amountMicros ?? budget?.amount_micros ?? 0);
+  if (!/^customers\/\d+\/campaignBudgets\/\d+$/.test(resourceName) || !(amount > 0)) return 'unknown';
+
+  try {
+    await customer.campaignBudgets.update([{ resource_name: resourceName, amount_micros: amount }], {
+      validateOnly: true,
+    });
+    return 'full';
+  } catch (error) {
+    for (const candidate of errorChain(error)) {
+      const codes = Array.isArray((candidate as any).codes) ? ((candidate as any).codes as string[]) : [];
+      if (codes.some((code) => WRITE_DENIED_CODES.has(code))) return 'read_only';
+      const message = String(candidate.message ?? '');
+      if ([...WRITE_DENIED_CODES].some((code) => message.includes(code))) return 'read_only';
+    }
+    return 'unknown';
+  }
 }
