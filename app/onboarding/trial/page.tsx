@@ -17,6 +17,7 @@ import {
   TRIAL_CHECK_FAILED_MESSAGE,
   TRIAL_STARTER_LIMITS_NOTE,
   trialIneligibleNotice,
+  trialPageIntro,
 } from '@/lib/billing/trial-copy';
 import { Alert } from '@/lib/ui/alert';
 import { buttonClasses } from '@/lib/ui/button';
@@ -84,9 +85,9 @@ export default async function TrialPage({
             {trialEligible ? `ابدأ تجربتك ${daysLabel(TRIAL_DAYS)}` : checkFailed ? 'تابع تفعيل اشتراكك' : 'فعّل اشتراكك'}
           </h2>
           <p className="mt-2 max-w-2xl text-sm leading-7 text-muted-foreground">
-            الفحص وقراءة التوصيات مفتوحة لك بدون اشتراك. الاشتراك يفعّل تنفيذ التوصيات على{' '}
-            <span className="font-semibold text-foreground">{googleAdsAccountDisplayName(selectedAccount)}</span>
-            ، وكل تنفيذ يبقى بعد معاينتك وموافقتك.
+            {trialPageIntro(trialEligible)} وكل تنفيذ على{' '}
+            <span className="font-semibold text-foreground">{googleAdsAccountDisplayName(selectedAccount)}</span>{' '}
+            يبقى بعد معاينتك وموافقتك.
           </p>
         </div>
 
