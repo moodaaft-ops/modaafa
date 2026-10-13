@@ -184,7 +184,7 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
                 )}
               </section>
 
-              <section className="surface-card overflow-hidden">
+              <section id="execution-log" className="surface-card scroll-mt-4 overflow-hidden">
                 <div className="border-b border-border px-5 py-4">
                   <div className="text-[14px] font-semibold">سجل التنفيذ</div>
                   <p className="mt-1 text-xs leading-6 text-muted-foreground">أثر واضح لكل قرار اعتمدته أو نفّذته المنصة لاحقاً.</p>

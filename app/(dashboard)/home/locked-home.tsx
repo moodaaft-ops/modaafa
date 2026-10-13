@@ -30,6 +30,7 @@ export function LockedHome({
   notice,
   auditHref,
   accountLine,
+  recentChanges,
 }: {
   plan: Plan;
   trialEligible: boolean;
@@ -40,6 +41,8 @@ export function LockedHome({
   /** Set when there is no audit yet and a free one is still available. */
   auditHref?: string | null;
   accountLine?: string | null;
+  /** «التغييرات الأخيرة» with «رجّعه»: the undo is never behind the paywall. */
+  recentChanges?: React.ReactNode;
 }) {
   const [sheet, setSheet] = useState<PlanSheetReason | null>(null);
   const lastReason = useRef<PlanSheetReason>('default');
@@ -75,6 +78,7 @@ export function LockedHome({
                   </div>
                 )}
               </PlanCard>
+              {recentChanges}
               {accountLine && <p className="text-[12.5px] text-muted-foreground">{accountLine}</p>}
             </div>
           </div>

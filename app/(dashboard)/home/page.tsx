@@ -15,11 +15,13 @@ import { TikTokPixel } from '@/lib/analytics/tiktok-pixel';
 import { impactLabel, monthlyImpact } from '@/lib/onboarding/first-opportunities';
 import { isSimpleExperience } from '@/lib/setup/mode';
 import { readLedger } from '@/lib/setup/load';
+import { loadRecentChanges } from '@/lib/home/recent-changes';
 import { keysAnsweredByProfile, missingCoreKeys, type SetupKey } from '@/lib/setup/questions';
 import { firstNameFrom, healthWord } from '@/lib/setup/stage';
 import {
   SEVERITY_WORD,
   greetingFor,
+  lockedNoticeFrom,
   noticeFrom,
   orderDecisions,
   summaryLine,
@@ -31,6 +33,7 @@ import { AskAssistant } from './ask-assistant';
 import { ApproveInline } from './approve-inline';
 import { HomeThread } from './home-thread';
 import { LockedHome } from './locked-home';
+import { RecentChanges } from './recent-changes';
 import type { ChatQuickAction } from '@/lib/chat-first/contracts';
 
 export const metadata = { title: 'الرئيسية' };
@@ -71,7 +74,7 @@ export default async function HomePage({
     admin = null;
   }
 
-  const [campaignsRes, auditRes, recsRes, actionsRes, access, ledger] = await Promise.all([
+  const [campaignsRes, auditRes, recsRes, actionsRes, access, ledger, recentChanges] = await Promise.all([
     supabase.from('campaigns_cache').select('status, metrics_7d').eq('account_id', selectedAccount.id).limit(500),
     supabase
       .from('audits')
@@ -96,9 +99,19 @@ export default async function HomePage({
       .limit(3),
     getSubscriptionAccess(supabase, user.id, user.email),
     readLedger(admin, business.id),
+    // The undo is never gated: it renders below for someone with a plan and for someone without.
+    loadRecentChanges(supabase, { accountId: selectedAccount.id, customerId: selectedAccount.customer_id }),
   ]);
 
   const currency = (selectedAccount.currency_code ?? 'SAR').toUpperCase();
+  const hasRecentChanges = recentChanges.items.length > 0;
+  const recentChangesSection = hasRecentChanges ? (
+    <RecentChanges
+      className="pt-1"
+      items={recentChanges.items.map((item) => ({ id: item.id, text: item.text, when: timeAgoAr(item.createdAt) }))}
+      more={recentChanges.more}
+    />
+  ) : null;
 
   // No subscription, no live trial, no operator free plan: «خطتك جاهزة» instead
   // of the conversation. This branch renders no chat client at all, so the page
@@ -119,7 +132,7 @@ export default async function HomePage({
       currency,
     });
     const lockedName = googleAdsAccountDisplayName(selectedAccount);
-    const lockedNotice = params.error ? noticeFrom({ error: params.error }) : null;
+    const lockedNotice = lockedNoticeFrom(params);
     const lockedFirstName = firstNameFrom(user.user_metadata ?? null);
     return (
       <div className="h-full">
@@ -135,11 +148,18 @@ export default async function HomePage({
           accountLine={lockedName}
           notice={
             lockedNotice ? (
-              <p role="status" className="rounded-[14px] bg-danger-soft px-4 py-2.5 text-[14px] font-semibold leading-7 text-danger">
+              <p
+                role="status"
+                className={cn(
+                  'rounded-[14px] px-4 py-2.5 text-[14px] font-semibold leading-7',
+                  lockedNotice.tone === 'ok' ? 'bg-success-soft text-foreground' : 'bg-danger-soft text-danger'
+                )}
+              >
                 {lockedNotice.text}
               </p>
             ) : null
           }
+          recentChanges={recentChangesSection}
         />
       </div>
     );
@@ -198,6 +218,8 @@ export default async function HomePage({
           {notice.text}
         </p>
       )}
+      {/* Right after applying a change the undo is the first thing under the confirmation. */}
+      {params.executed && recentChangesSection}
       <p className="text-[14px] text-muted-foreground">
         {greetingFor()}
         {firstName ? ` ${firstName}` : ''}
@@ -238,11 +260,14 @@ export default async function HomePage({
         </section>
       )}
 
+      {!params.executed && recentChangesSection}
+
       <p className="text-[14.5px] leading-8 text-muted-foreground">
         {audit
           ? `صحة حسابك ${audit.health_score ?? '؟'} من 100${healthWord(audit.health_score) ? `، ${healthWord(audit.health_score)}` : ''}، وآخر فحص ${timeAgoAr(audit.ran_at)}.`
           : 'ما فحصت حسابك للحين.'}
-        {lastChange
+        {/* With undoable changes listed above, the list says it; the sentence stays for changes that can no longer be undone. */}
+        {lastChange && !hasRecentChanges
           ? ` آخر شي غيّرته: ${String(lastChange.description_ar ?? '').slice(0, 90)}${lastChange.reverted_at ? ' (رجّعته)' : ` (${timeAgoAr(lastChange.created_at)})`}.`
           : ''}
       </p>

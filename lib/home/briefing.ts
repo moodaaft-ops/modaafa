@@ -111,6 +111,8 @@ export const HOME_NOTICES: Record<string, { tone: 'ok' | 'bad'; text: string }> 
   'error:blocked_by_guardrails': { tone: 'bad', text: 'حمايات الحساب وقفت هذا التغيير عشان ما يضرك.' },
   'error:rollback_unavailable': { tone: 'bad', text: 'التراجع ما عاد متاح لهذا التغيير.' },
   'error:rollback_failed': { tone: 'bad', text: 'قوقل رفض التراجع وما تغيّر شي. اسألني وأشوف السبب.' },
+  'error:rollback_recording_failed': { tone: 'bad', text: 'التراجع وصل قوقل بس ما قدرنا نأكد حفظه عندنا. لا تعيده، وفريقنا يراجعه معك.' },
+  'error:action_not_found': { tone: 'bad', text: 'ما لقيت هذا التغيير في حسابك.' },
   'error:recommendation_locked': { tone: 'bad', text: 'هذا القرار انطبق أو انشال قبل.' },
   'error:execution_failed': { tone: 'bad', text: 'قوقل رفض التغيير وما تغيّر شي في حسابك. اسألني وأشوف السبب.' },
   'error:already_executing': { tone: 'ok', text: 'التغيير قاعد يتنفذ الحين.' },
@@ -122,5 +124,17 @@ export function noticeFrom(params: Record<string, string | undefined> | null | u
     if (params[key]) return HOME_NOTICES[key];
   }
   if (params.error) return HOME_NOTICES[`error:${params.error}`] ?? { tone: 'bad' as const, text: 'ما كمل الطلب. جرّب مرة ثانية أو اسألني.' };
+  return null;
+}
+
+/**
+ * The same redirects as noticeFrom, for /home without a plan. There is no
+ * chat or approval there, so the only confirmations that can come back are the
+ * undo's (and its errors); anything else the URL carries is ignored.
+ */
+export function lockedNoticeFrom(params: Record<string, string | undefined> | null | undefined) {
+  if (!params) return null;
+  if (params.reverted) return HOME_NOTICES.reverted;
+  if (params.error) return noticeFrom({ error: params.error });
   return null;
 }
