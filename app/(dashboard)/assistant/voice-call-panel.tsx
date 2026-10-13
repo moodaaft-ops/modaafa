@@ -1,8 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
-import Link from 'next/link';
-import { Keyboard, LoaderCircle, Mic, MicOff, PhoneOff, Square } from 'lucide-react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useReducer, useRef, useState } from 'react';
+import { LoaderCircle, Mic, MicOff, RotateCcw, X } from 'lucide-react';
 import { microphoneAccessErrorMessage } from '@/lib/ai/voice-input';
 import {
   looksLikeVoiceApproval,
@@ -17,8 +16,7 @@ import {
 import { runCallStart } from '@/lib/ai/voice-call-start';
 import { PcmCapture } from '@/lib/ai/voice-pcm';
 import { BARGE_VAD, createVad, LISTEN_VAD } from '@/lib/ai/voice-vad';
-import { Alert } from '@/lib/ui/alert';
-import { buttonClasses } from '@/lib/ui/button';
+import { ASSISTANT } from '@/lib/assistant/persona';
 import { cn } from '@/lib/utils';
 
 /** What the chat route returned for a spoken question. `speech` is absent when it granted none. */
@@ -30,30 +28,36 @@ export type VoiceTurnResult = {
   fatal?: 'account_changed' | 'session_expired' | 'session_ended';
 } | null;
 
+/** Lets the composer's voice button open the mic inside its own tap (iOS needs the gesture). */
+export type VoiceCallHandle = { start: () => void };
+
 const TICK_MS = 50;
 /** Silence this long (no speech yet) restarts the recorder so a quiet room never builds a big file. */
 const RECORDER_RECYCLE_MS = 6000;
 
 /**
- * Hands-free voice call over the existing assistant chat.
+ * Hands-free voice call over the existing assistant chat, drawn the way
+ * ChatGPT does it inside a conversation: the composer turns into one rounded
+ * voice bar (mute, a live level, «إنهاء») and every turn still lands in the
+ * thread as text, so cards and approval buttons stay where they are.
  *
- * One tap on «ابدأ المكالمة» opens the microphone for the length of the call.
+ * One tap on the composer's voice button (it calls `start` through the ref
+ * inside that tap) opens the microphone for the length of the call.
  * The turn ends by itself when the person stops talking, the assistant answers
  * aloud, and talking over the assistant cuts it off. The mic is never opened
  * without that tap, it is visibly open the whole time, and «إنهاء» (or the
  * idle limit) closes it. The answer comes from `onUtterance`, the same code
  * path the text composer uses, so every server check of the text path applies.
  */
-export function VoiceCallPanel({
-  customerId,
-  onUtterance,
-  onClose,
-}: {
-  /** The ad account this call is scoped to. If it changes, the call ends. */
-  customerId: string | null;
-  onUtterance: (text: string, voiceTicket: string) => Promise<VoiceTurnResult>;
-  onClose: () => void;
-}) {
+export const VoiceCallPanel = forwardRef<
+  VoiceCallHandle,
+  {
+    /** The ad account this call is scoped to. If it changes, the call ends. */
+    customerId: string | null;
+    onUtterance: (text: string, voiceTicket: string) => Promise<VoiceTurnResult>;
+    onClose: () => void;
+  }
+>(function VoiceCallPanel({ customerId, onUtterance, onClose }, ref) {
   const [state, dispatch] = useReducer(
     (current: VoiceCallState, event: VoiceCallEvent) => nextVoiceCallState(current, event),
     'idle' as VoiceCallState
@@ -61,7 +65,6 @@ export function VoiceCallPanel({
   const [started, setStarted] = useState(false);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState('');
-  const [heard, setHeard] = useState('');
   const [approvalNotice, setApprovalNotice] = useState(false);
   const [draftPending, setDraftPending] = useState(false);
   const [userSpeaking, setUserSpeaking] = useState(false);
@@ -100,6 +103,8 @@ export function VoiceCallPanel({
   const onUtteranceRef = useRef(onUtterance);
   onUtteranceRef.current = onUtterance;
   const customerRef = useRef(customerId);
+  /** The level bars read the mic through a CSS variable, so the 50ms tick never re-renders. */
+  const waveRef = useRef<HTMLSpanElement | null>(null);
 
   const clearIdleTimer = () => {
     if (idleTimerRef.current) window.clearTimeout(idleTimerRef.current);
@@ -353,7 +358,6 @@ export function VoiceCallPanel({
         return;
       }
       if (turn !== turnRef.current) return;
-      setHeard(transcript);
       // A spoken "yes" is only ever a message to the assistant. It never
       // reaches the approval path, and the person is told where the real
       // confirm button lives.
@@ -433,12 +437,16 @@ export function VoiceCallPanel({
     let sum = 0;
     for (let i = 0; i < buffer.length; i++) sum += buffer[i] * buffer[i];
     const rms = Math.sqrt(sum / buffer.length);
+    waveRef.current?.style.setProperty('--level', Math.min(1, rms * 14).toFixed(3));
     const now = performance.now();
     const current = stateRef.current;
 
     if (current === 'listening') {
       const event = listenVadRef.current.push(rms, now);
-      if (event === 'speech_start') setUserSpeaking(true);
+      if (event === 'speech_start') {
+        setUserSpeaking(true);
+        setError('');
+      }
       else if (event === 'speech_end' || event === 'too_long') finishTurn();
       else if (event === 'speech_cancel') {
         setUserSpeaking(false);
@@ -586,137 +594,147 @@ export function VoiceCallPanel({
     void startCall();
   }
 
+  // The composer's voice button calls this inside its own tap.
+  const startRef = useRef(startCall);
+  startRef.current = startCall;
+  useImperativeHandle(ref, () => ({ start: () => void startRef.current() }), []);
+
   const thinking = state === 'thinking';
   const speaking = state === 'speaking';
   const listening = state === 'listening';
-  const live = started && streamRef.current !== null && !muted;
+  const failed = !started && !starting && (state === 'text_fallback' || Boolean(error));
 
-  const label = !started
-    ? state === 'text_fallback'
-      ? 'الصوت متوقف، الرد مكتوب في المحادثة'
-      : 'اضغط «ابدأ المكالمة» وتكلم بشكل طبيعي'
-    : muted
-      ? 'الميكروفون مكتوم'
-      : thinking
-        ? 'أحلل سؤالك...'
-        : speaking
-          ? 'أتكلم الحين. تكلم فوقي وأوقف'
-          : userSpeaking
-            ? 'أسمعك...'
-            : listening
-              ? 'تكلم، أنا أسمعك'
-              : 'لحظة...';
+  const label = starting
+    ? 'لحظة…'
+    : !started
+      ? failed
+        ? 'الصوت وقف. الرد مكتوب فوق'
+        : 'اضغط وتكلم'
+      : muted
+        ? 'الميكروفون مكتوم'
+        : thinking
+          ? `${ASSISTANT.name} يفكر…`
+          : speaking
+            ? 'يتكلم. اضغط هنا عشان توقفه'
+            : userSpeaking
+              ? 'أسمعك…'
+              : listening
+                ? 'تكلم، أنا أسمعك'
+                : 'لحظة…';
+
+  // The middle of the bar doubles as the one action that fits the moment.
+  const statusAction = speaking ? bargeIn : listening && userSpeaking ? finishTurn : null;
+  const waveMode: WaveMode = !started || muted ? 'idle' : speaking ? 'speaking' : thinking ? 'thinking' : 'listening';
 
   return (
-    <div className="border-t border-border bg-card p-4" role="region" aria-label="مكالمة صوتية مع المساعد">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 text-[13px] font-semibold">
-            مكالمة صوتية
-            {live && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-danger/10 px-2 py-0.5 text-[11px] font-medium text-danger">
-                <span className="h-1.5 w-1.5 rounded-full bg-danger" aria-hidden />
-                الميكروفون مفتوح
-              </span>
-            )}
-          </div>
-          <div className="text-[12px] text-muted-foreground" aria-live="polite">
-            {label}
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={endCall}
-          className={buttonClasses({ variant: 'danger', size: 'md' })}
-          aria-label="إنهاء المكالمة"
-        >
-          <PhoneOff className="h-4 w-4" />
-          إنهاء المكالمة
-        </button>
-      </div>
-
+    <div role="region" aria-label={`مكالمة صوتية مع ${ASSISTANT.name}`} className="motion-safe:animate-fade-in-fast">
       {provider === 'mock' && (
-        <div className="mt-3">
-          <Alert tone="warning">
-            وضع تجريبي: هذا محاكي مو صوت حقيقي. أي كلام تقوله يُفهم كسؤال ثابت، والرد نغمتان قصيرتان. الغرض تجربة سلاسة المكالمة فقط.
-          </Alert>
-        </div>
+        <p className="mb-2 rounded-[14px] bg-warning-soft px-3 py-2 text-[12.5px] leading-6 text-warning">
+          وضع تجريبي: هذا محاكي مو صوت حقيقي. أي كلام تقوله يُفهم كسؤال ثابت، والرد نغمتان قصيرتان. الغرض تجربة سلاسة المكالمة فقط.
+        </p>
       )}
-
-      {heard && started && (
-        <p className="mt-3 rounded-lg border border-border bg-background-elevated px-3 py-2 text-[12.5px] leading-6 text-foreground-subtle">
-          سمعتك: {heard}
+      {error && <p className="mb-2 rounded-[14px] bg-danger-soft px-3 py-2 text-[12.5px] leading-6 text-danger">{error}</p>}
+      {approvalNotice && (
+        <p className="mb-2 rounded-[14px] bg-muted px-3 py-2 text-[12.5px] leading-6 text-foreground">
+          {draftPending ? 'جهزت لك اقتراح وما نُفذ شي. ' : ''}
+          {VOICE_APPROVAL_NOTICE}
         </p>
       )}
 
-      {error && (
-        <div className="mt-3">
-          <Alert tone="danger">{error}</Alert>
-        </div>
-      )}
+      <div className="flex items-center gap-2 rounded-[26px] border border-border bg-card p-2 shadow-[0_8px_28px_-14px_rgba(14,20,38,0.35)]">
+        <button
+          type="button"
+          onClick={toggleMute}
+          disabled={!started}
+          aria-pressed={muted}
+          aria-label={muted ? 'ألغِ الكتم' : 'اكتم الميكروفون'}
+          className={cn(
+            'inline-flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full transition-colors disabled:opacity-40',
+            muted ? 'bg-danger-soft text-danger' : 'bg-muted text-foreground hover:bg-foreground/[0.1]'
+          )}
+        >
+          {muted ? <MicOff className="h-[18px] w-[18px]" /> : <Mic className="h-[18px] w-[18px]" />}
+        </button>
 
-      {approvalNotice && (
-        <div className="mt-3">
-          <Alert tone="warning">
-            {draftPending ? 'جهزت مسودة وما نُفذ شي. ' : ''}
-            {VOICE_APPROVAL_NOTICE}{' '}
-            <Link href="/optimizer" className="font-semibold underline">
-              مركز الموافقات
-            </Link>
-          </Alert>
-        </div>
-      )}
-
-      <div className="mt-4 flex flex-wrap items-center gap-2">
-        {!started ? (
+        {failed ? (
           <button
             type="button"
-            onClick={state === 'text_fallback' ? retryVoice : startCall}
-            disabled={starting}
-            className={cn(buttonClasses({ variant: 'primary', size: 'lg' }), 'disabled:opacity-60')}
+            onClick={retryVoice}
+            className="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-full px-3 text-start text-[14px] font-semibold text-foreground hover:bg-muted"
           >
-            {starting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Mic className="h-4 w-4" />}
-            {starting ? 'لحظة...' : state === 'text_fallback' ? 'جرّب الصوت مرة ثانية' : 'ابدأ المكالمة'}
+            <RotateCcw className="h-4 w-4 flex-shrink-0" />
+            <span className="truncate">جرّب الصوت مرة ثانية</span>
           </button>
         ) : (
-          <>
-            {speaking && (
-              <button type="button" onClick={bargeIn} className={buttonClasses({ variant: 'primary', size: 'md' })}>
-                <Square className="h-3.5 w-3.5 fill-current" />
-                قاطعني
-              </button>
+          <button
+            type="button"
+            onClick={statusAction ?? (!started && !starting ? retryVoice : undefined)}
+            disabled={!statusAction && (started || starting)}
+            aria-live="polite"
+            className="flex min-h-11 min-w-0 flex-1 items-center gap-3 rounded-full px-3 text-start text-[14px] text-foreground enabled:hover:bg-muted disabled:cursor-default"
+          >
+            {starting ? (
+              <LoaderCircle className="h-5 w-5 flex-shrink-0 animate-spin text-muted-foreground" />
+            ) : (
+              <VoiceWave mode={waveMode} spanRef={waveRef} />
             )}
-            {listening && userSpeaking && (
-              <button type="button" onClick={finishTurn} className={buttonClasses({ variant: 'subtle', size: 'md' })}>
-                <Square className="h-3.5 w-3.5 fill-current" />
-                خلصت كلامي
-              </button>
-            )}
-            {thinking && (
-              <span className="inline-flex items-center gap-2 text-[12.5px] text-muted-foreground">
-                <LoaderCircle className="h-4 w-4 animate-spin" /> لحظة...
-              </span>
-            )}
-            <button
-              type="button"
-              onClick={toggleMute}
-              className={buttonClasses({ variant: 'outline', size: 'md' })}
-              aria-pressed={muted}
-            >
-              {muted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-              {muted ? 'ألغِ الكتم' : 'اكتم'}
-            </button>
-          </>
+            <span className="truncate">{label}</span>
+          </button>
         )}
-        <button type="button" onClick={endCall} className={buttonClasses({ variant: 'ghost', size: 'md' })}>
-          <Keyboard className="h-4 w-4" />
-          كمّل كتابة
+
+        <button
+          type="button"
+          onClick={endCall}
+          aria-label="إنهاء المكالمة"
+          className="inline-flex h-11 flex-shrink-0 items-center gap-1.5 rounded-full bg-foreground px-4 text-[14px] font-semibold text-background transition-opacity hover:opacity-90"
+        >
+          <X className="h-4 w-4" />
+          إنهاء
         </button>
       </div>
-      <p className="mt-3 text-[11.5px] leading-5 text-muted-foreground">
-        الميكروفون يفتح بضغطة «ابدأ المكالمة» ويبقى مفتوح طول المكالمة لين تضغط إنهاء أو تسكت دقيقة ونص. تسجيلك يروح من جهازك لسيرفرنا ومنه لمزود الصوت (ElevenLabs) عشان يتحول لنص، والرد كذلك يتحول لصوت عنده. ما نحفظ الصوت عندنا، أما مدة حفظه عند المزود فتتبع شروطه. الرد الكامل يبقى مكتوب في المحادثة.
+      <p className="mt-2 px-2 text-center text-[11.5px] leading-5 text-muted-foreground">
+        الميكروفون مفتوح لين تضغط إنهاء. صوتك يتحول نص عند ElevenLabs وما نحفظه عندنا، والرد يبقى مكتوب في المحادثة.
       </p>
     </div>
+  );
+});
+
+type WaveMode = 'idle' | 'listening' | 'thinking' | 'speaking';
+
+/**
+ * Five rounded bars. Listening follows the mic level (a CSS variable set by the
+ * tick), speaking breathes on its own, thinking blinks the brand's lamp yellow.
+ */
+function VoiceWave({ mode, spanRef }: { mode: WaveMode; spanRef: React.RefObject<HTMLSpanElement> }) {
+  const shape = [0.55, 0.85, 1, 0.85, 0.55];
+  return (
+    <span
+      ref={spanRef}
+      aria-hidden
+      className="flex h-6 w-9 flex-shrink-0 items-center justify-center gap-[3px]"
+      style={{ ['--level' as string]: '0' }}
+    >
+      {shape.map((weight, index) => (
+        <span
+          key={index}
+          className={cn(
+            'w-[4px] origin-center rounded-full transition-[height] duration-75',
+            mode === 'thinking' ? 'bg-signal motion-safe:animate-lamp-blink' : 'bg-foreground',
+            mode === 'speaking' && 'h-6 motion-safe:animate-voice-bar',
+            mode === 'idle' && 'h-[5px] opacity-40'
+          )}
+          style={
+            mode === 'listening'
+              ? { height: `calc(5px + var(--level) * ${Math.round(19 * weight)}px)` }
+              : mode === 'speaking'
+                ? { animationDelay: `${index * 120}ms` }
+                : mode === 'thinking'
+                  ? { height: '5px', animationDelay: `${index * 140}ms` }
+                  : undefined
+          }
+        />
+      ))}
+    </span>
   );
 }
 

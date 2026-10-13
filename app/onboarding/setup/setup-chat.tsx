@@ -631,8 +631,8 @@ export function SetupChat({
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-background" dir="rtl">
       {/* Header: the mark, the question count and one thin progress rule. */}
-      <header className="relative border-b border-border">
-        <div className="mx-auto flex h-14 max-w-[680px] items-center justify-between gap-3 px-4">
+      <header className="relative border-b border-border/60">
+        <div className="mx-auto flex h-14 max-w-[720px] items-center justify-between gap-3 px-4">
           <div className="flex items-center gap-2">
             <LogoMark size={22} alt="" />
             <span className="text-[14px] font-bold">مُضاعِف</span>
@@ -650,7 +650,7 @@ export function SetupChat({
               </span>
             )}
             {(state.edit || adding) && (
-              <Link href="/home" className="font-semibold text-foreground underline underline-offset-4">
+              <Link href="/home" className="inline-flex min-h-9 items-center rounded-full px-3 font-semibold text-foreground hover:bg-muted">
                 رجوع لصفحتك
               </Link>
             )}
@@ -666,37 +666,37 @@ export function SetupChat({
 
       {/* Transcript */}
       <main className="flex-1 overflow-y-auto" aria-live="polite">
-        <div className="mx-auto flex max-w-[680px] flex-col gap-3 px-4 pb-6 pt-6">
+        <div className="mx-auto flex max-w-[720px] flex-col gap-4 px-4 pb-8 pt-8">
           {lines.map((line, index) => {
             const previous = lines[index - 1];
             const showAvatar = line.from === 'assistant' && previous?.from !== 'assistant';
             if (line.from === 'me') {
               return (
                 <div key={line.id} className="flex justify-end motion-safe:animate-bubble-in">
-                  <p className="max-w-[80%] bg-foreground px-4 py-2.5 text-[15px] font-medium leading-7 text-background">
+                  <p className="max-w-[80%] rounded-[22px] bg-muted px-4 py-2.5 text-[15.5px] leading-7 text-foreground">
                     {line.text}
                   </p>
                 </div>
               );
             }
             return (
-              <div key={line.id} className="flex items-start gap-2.5 motion-safe:animate-bubble-in">
-                <div className="w-9 flex-shrink-0">
-                  {showAvatar && <AssistantAvatar size={36} thinking={typing && line.id === lastAssistantId} />}
+              <div key={line.id} className="flex items-start gap-3 motion-safe:animate-bubble-in">
+                {/* Like the home chat: the mark sits beside the reply from sm up; on a phone the reply takes the width. */}
+                <div className="hidden w-7 flex-shrink-0 pt-1 sm:block">
+                  {showAvatar && <AssistantAvatar size={28} thinking={typing && line.id === lastAssistantId} />}
                 </div>
-                <div className="min-w-0 max-w-[88%] flex-1 sm:max-w-[80%]">
-                  {showAvatar && <p className="mb-1 text-[12px] font-semibold text-muted-foreground">{ASSISTANT.name}</p>}
+                <div className="min-w-0 flex-1">
                   <AssistantLine line={line} connectView={connectView} audit={audit.status} />
                 </div>
               </div>
             );
           })}
           {typing && (
-            <div className="flex items-center gap-2.5">
-              <div className="w-9 flex-shrink-0">
-                {lines.at(-1)?.from !== 'assistant' && <AssistantAvatar size={36} thinking />}
+            <div className="flex items-center gap-3">
+              <div className="hidden w-7 flex-shrink-0 sm:block">
+                {lines.at(-1)?.from !== 'assistant' && <AssistantAvatar size={28} thinking />}
               </div>
-              <div className="border border-border bg-card px-4 py-3">
+              <div className="py-2">
                 <TypingSquares />
               </div>
             </div>
@@ -708,11 +708,11 @@ export function SetupChat({
       {/* Answer dock */}
       {dock.kind !== 'none' && !typing && (
         <section
-          className="border-t border-border bg-background motion-safe:animate-bubble-in"
+          className="bg-background motion-safe:animate-bubble-in"
           style={{ paddingBottom: 'max(env(safe-area-inset-bottom), 12px)' }}
           aria-label="جوابك"
         >
-          <div className="mx-auto max-h-[56dvh] max-w-[680px] overflow-y-auto px-4 pt-3">
+          <div className="mx-auto max-h-[56dvh] max-w-[720px] overflow-y-auto px-4 pt-3">
             <DockView
               dock={dock}
               state={state}
@@ -756,12 +756,13 @@ function AssistantLine({
   connectView: ConnectProgressView | null;
   audit: ReturnType<typeof useFirstAudit>['status'];
 }) {
-  const bubble = 'border border-border bg-card px-4 py-3';
+  // Words are plain text like the home chat; only structured things get a soft card.
+  const bubble = 'rounded-[18px] border border-border/80 bg-card p-4';
   switch (line.kind) {
     case 'text':
       return (
         <div>
-          <p className={cn(bubble, 'w-fit max-w-full', line.big ? 'text-[19px] font-semibold leading-9' : 'text-[15.5px] leading-8')}>
+          <p className={cn('text-foreground', line.big ? 'text-[19px] font-semibold leading-9' : 'text-[15.5px] leading-8')}>
             {line.text}
           </p>
           {line.note && <p className="mt-1.5 text-[13px] leading-6 text-muted-foreground">{line.note}</p>}
@@ -775,7 +776,7 @@ function AssistantLine({
             <li key={stage.id} className="flex items-center gap-2.5 text-[14.5px]">
               <span
                 className={cn(
-                  'h-2.5 w-2.5 flex-shrink-0',
+                  'h-2.5 w-2.5 flex-shrink-0 rounded-full',
                   stage.state === 'done' && 'bg-foreground',
                   stage.state === 'active' && 'bg-signal motion-safe:animate-lamp-blink',
                   stage.state === 'pending' && 'border border-border-strong',
@@ -797,9 +798,9 @@ function AssistantLine({
           <p className="text-[15px] font-semibold">
             {audit.kind === 'done' ? 'خلص الفحص' : audit.kind === 'running' ? audit.message : 'الفحص شغال عندي'}
           </p>
-          <div className="mt-3 h-1.5 w-full bg-muted" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent ?? undefined}>
+          <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent ?? undefined}>
             <div
-              className={cn('h-full bg-foreground transition-[width] duration-500', percent === null && 'motion-safe:animate-pulse')}
+              className={cn('h-full rounded-full bg-foreground transition-[width] duration-500', percent === null && 'motion-safe:animate-pulse')}
               style={{ width: percent === null ? '35%' : `${percent}%` }}
             />
           </div>
@@ -841,7 +842,7 @@ function AssistantLine({
             <li key={finding.id} className="flex items-start gap-2.5">
               <span
                 className={cn(
-                  'mt-2 h-2.5 w-2.5 flex-shrink-0',
+                  'mt-2 h-2.5 w-2.5 flex-shrink-0 rounded-full',
                   finding.severity === 'critical' ? 'bg-danger' : finding.severity === 'medium' ? 'bg-signal' : 'bg-muted-foreground'
                 )}
                 aria-hidden
@@ -880,7 +881,7 @@ function ConnectButton({ label = 'اربط حساب إعلانات قوقل' }: 
       href="/api/auth/google-ads/connect"
       onClick={() => setLoading(true)}
       aria-busy={loading}
-      className="flex h-14 w-full items-center justify-center gap-3 bg-primary px-5 text-[16px] font-bold text-primary-foreground transition-colors hover:bg-primary/90"
+      className="flex h-14 w-full items-center justify-center gap-3 rounded-full bg-primary px-5 text-[16px] font-bold text-primary-foreground transition-colors hover:bg-primary/90"
     >
       {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : <GoogleMark />}
       {loading ? 'أفتح لك شاشة قوقل…' : label}
@@ -894,7 +895,7 @@ function WhatsAppTile({ reason, email, label }: { reason: WhatsAppHelpReason; em
       href={whatsappHelpUrl(reason, email)}
       target="_blank"
       rel="noopener noreferrer"
-      className="flex min-h-[56px] w-full items-center gap-3 border border-border bg-card px-4 py-3 text-start text-[15px] font-semibold text-foreground transition-colors hover:border-foreground"
+      className="flex min-h-[56px] w-full items-center gap-3 rounded-[16px] border border-border bg-card px-4 py-3 text-start text-[15px] font-semibold text-foreground transition-colors hover:bg-muted"
     >
       <MessageCircle className="h-5 w-5 text-muted-foreground" />
       {label}
@@ -943,7 +944,7 @@ function DockView({
           <WhatsAppTile reason="no_ads_account" email={state.email} label="افتحه معي على الواتساب، مجاناً" />
           <Link
             href={NO_ACCOUNT_PATH}
-            className="flex min-h-[56px] w-full items-center gap-3 border border-border bg-card px-4 py-3 text-[15px] font-semibold transition-colors hover:border-foreground"
+            className="flex min-h-[56px] w-full items-center gap-3 rounded-[16px] border border-border bg-card px-4 py-3 text-[15px] font-semibold transition-colors hover:bg-muted"
           >
             أفتحه بنفسي بالخطوات
           </Link>
@@ -977,14 +978,14 @@ function DockView({
           <button
             type="button"
             onClick={onAuditRetry}
-            className="flex h-14 w-full items-center justify-center gap-2 bg-primary text-[16px] font-bold text-primary-foreground"
+            className="flex h-14 w-full items-center justify-center gap-2 rounded-full bg-primary text-[16px] font-bold text-primary-foreground"
           >
             <RotateCcw className="h-4 w-4" />
             أعد الفحص
           </button>
           <Link
             href="/home"
-            className="flex h-12 w-full items-center justify-center border border-border bg-card text-[15px] font-semibold"
+            className="flex h-12 w-full items-center justify-center rounded-full border border-border bg-card text-[15px] font-semibold hover:bg-muted"
           >
             أكمل لصفحتي
           </Link>
@@ -998,13 +999,13 @@ function DockView({
             <>
               <Link
                 href="/onboarding/trial"
-                className="flex h-14 w-full items-center justify-center gap-2 bg-primary px-5 text-[16px] font-bold text-primary-foreground"
+                className="flex h-14 w-full items-center justify-center gap-2 rounded-full bg-primary px-5 text-[16px] font-bold text-primary-foreground"
               >
                 {state.trialEligible ? 'نفّذها لي، وأول 14 يوم مجاناً' : 'فعّل الاشتراك عشان أنفذها'}
               </Link>
               <Link
                 href="/home"
-                className="flex h-12 w-full items-center justify-center border border-border bg-card text-[15px] font-semibold"
+                className="flex h-12 w-full items-center justify-center rounded-full border border-border bg-card text-[15px] font-semibold hover:bg-muted"
               >
                 أشوف صفحتي أول
               </Link>
@@ -1012,7 +1013,7 @@ function DockView({
           ) : (
             <Link
               href="/home"
-              className="flex h-14 w-full items-center justify-center gap-2 bg-primary text-[16px] font-bold text-primary-foreground"
+              className="flex h-14 w-full items-center justify-center gap-2 rounded-full bg-primary text-[16px] font-bold text-primary-foreground"
             >
               يلا ندخل صفحتك
               <ArrowRight className="h-4 w-4 rotate-180" />
@@ -1025,7 +1026,7 @@ function DockView({
       return (
         <Link
           href="/home"
-          className="flex h-14 w-full items-center justify-center bg-primary text-[16px] font-bold text-primary-foreground"
+          className="flex h-14 w-full items-center justify-center rounded-full bg-primary text-[16px] font-bold text-primary-foreground"
         >
           رجوع لصفحتك
         </Link>

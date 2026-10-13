@@ -39,6 +39,11 @@ const config: Config = {
           '0%': { opacity: '0', transform: 'translateY(6px)' },
           '100%': { opacity: '1', transform: 'translateY(0)' },
         },
+        // Voice bar while «مُضاعِف» talks: each bar breathes on its own delay.
+        'voice-bar': {
+          '0%, 100%': { transform: 'scaleY(0.35)' },
+          '50%': { transform: 'scaleY(1)' },
+        },
       },
       animation: {
         'loading-bar': 'loading-bar 1.1s ease-in-out infinite',
@@ -50,6 +55,7 @@ const config: Config = {
         'lamp-blink': 'lamp-blink 0.9s ease-in-out infinite',
         'square-step': 'square-step 1.1s ease-in-out infinite',
         'bubble-in': 'bubble-in 0.22s cubic-bezier(0.16,1,0.3,1) both',
+        'voice-bar': 'voice-bar 0.9s ease-in-out infinite',
       },
       boxShadow: {
         // Identity is flat: separation comes from hairline borders. `pop` is a

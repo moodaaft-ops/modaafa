@@ -89,7 +89,7 @@ const ICONS: Record<IconKey, React.ComponentType<{ className?: string }>> = {
 export type AnswerPayload = { answer: Record<string, any> & { choice?: string }; label: string };
 
 const inputClass =
-  'h-14 w-full min-w-0 border border-border-strong bg-card px-4 text-[16px] text-foreground placeholder:text-muted-foreground focus:border-foreground focus:outline-none';
+  'h-14 w-full min-w-0 rounded-full border border-border bg-card px-5 text-[16px] text-foreground placeholder:text-muted-foreground focus:border-border-strong focus:outline-none';
 
 export function AnswerTile({
   label,
@@ -116,8 +116,8 @@ export function AnswerTile({
       onClick={onClick}
       aria-pressed={current || undefined}
       className={cn(
-        'group flex w-full items-center gap-3 border bg-card px-4 text-start font-semibold text-foreground transition-colors duration-100',
-        'hover:border-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
+        'group flex w-full items-center gap-3 rounded-[16px] border bg-card px-4 text-start font-semibold text-foreground transition-colors duration-100',
+        'hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
         'active:bg-foreground active:text-background disabled:opacity-50',
         compact ? 'min-h-[52px] py-2.5 text-[14.5px]' : 'min-h-[56px] py-3 text-[15.5px]',
         current ? 'border-foreground' : 'border-border'
@@ -224,7 +224,7 @@ function TextAnswer({
         <button
           type="submit"
           disabled={busy || !value.trim()}
-          className="h-14 flex-shrink-0 bg-primary px-6 text-[16px] font-bold text-primary-foreground disabled:opacity-40"
+          className="h-14 flex-shrink-0 rounded-full bg-primary px-6 text-[16px] font-bold text-primary-foreground disabled:opacity-40"
         >
           {submitLabel}
         </button>
@@ -490,8 +490,8 @@ function RegionsDock({
               aria-pressed={on}
               onClick={() => toggle(city)}
               className={cn(
-                'min-h-[44px] border px-3.5 text-[14.5px] font-semibold transition-colors',
-                on ? 'border-foreground bg-foreground text-background' : 'border-border bg-card text-foreground hover:border-foreground'
+                'min-h-[44px] rounded-full border px-4 text-[14.5px] font-semibold transition-colors',
+                on ? 'border-foreground bg-foreground text-background' : 'border-border bg-card text-foreground hover:bg-muted'
               )}
             >
               {city}
@@ -511,7 +511,7 @@ function RegionsDock({
         type="button"
         disabled={busy || all.length === 0}
         onClick={() => onAnswer({ answer: { choice: 'cities', cities: all }, label: all.join('، ') })}
-        className="flex h-14 w-full items-center justify-center bg-primary text-[16px] font-bold text-primary-foreground disabled:opacity-40"
+        className="flex h-14 w-full items-center justify-center rounded-full bg-primary text-[16px] font-bold text-primary-foreground disabled:opacity-40"
       >
         {all.length === 0 ? 'اختر مدينة وحدة على الأقل' : `تم، ${all.length === 1 ? 'مدينة وحدة' : `${all.length} مدن`}`}
       </button>
@@ -591,9 +591,9 @@ export function AccountDock({
           type="button"
           disabled={busy}
           onClick={() => onChoose(account)}
-          className="group flex min-h-[64px] w-full items-center gap-3 border border-border bg-card px-4 py-3 text-start transition-colors hover:border-foreground active:bg-foreground active:text-background disabled:opacity-50"
+          className="group flex min-h-[64px] w-full items-center gap-3 rounded-[16px] border border-border bg-card px-4 py-3 text-start transition-colors hover:bg-muted active:bg-foreground active:text-background disabled:opacity-50"
         >
-          <span className={cn('h-2.5 w-2.5 flex-shrink-0', TONE[account.statusTone])} aria-hidden />
+          <span className={cn('h-2.5 w-2.5 flex-shrink-0 rounded-full', TONE[account.statusTone])} aria-hidden />
           <span className="min-w-0 flex-1">
             <span className="block truncate text-[15.5px] font-semibold">{account.name}</span>
             <span className="block text-[12.5px] text-muted-foreground group-active:text-background/80">
