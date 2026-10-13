@@ -57,7 +57,11 @@ export function StartClient({
     [push]
   );
 
-  useEffect(() => endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' }), [items, busy]);
+  // Braces matter: newer Chrome returns a Promise from scrollIntoView, and an
+  // effect that returns it hands React a non-function cleanup, which crashes the page.
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
+  }, [items, busy]);
 
   // Restore this account's own history; the API filters by owner AND account.
   // Switching account starts a fresh session: never carry A's sessionId, items
