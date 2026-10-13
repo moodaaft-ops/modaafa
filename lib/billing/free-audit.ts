@@ -6,6 +6,12 @@ import {
 } from '@/lib/billing/entitlements';
 
 /**
+ * Distinct Google Ads accounts one user may spend free audits on
+ * (db/migrations/20261013_trial_abuse_guards.sql, `consume_free_audit`).
+ */
+export const FREE_AUDIT_ACCOUNTS_PER_USER = 3;
+
+/**
  * Free audits per Google Ads account: the first full audit plus one retry.
  * The allowance belongs to the Google customer id (see
  * db/migrations/20261009_free_audit_quota.sql), so unlinking and relinking the
@@ -15,6 +21,7 @@ export const FREE_AUDITS_PER_ACCOUNT = 2;
 
 export type AuditAccessFailure =
   | 'free_audits_exhausted'
+  | 'free_accounts_exhausted'
   | 'audit_in_progress'
   | 'quota_exceeded'
   | 'subscription_required'
@@ -41,7 +48,13 @@ export type AuditAccess =
 
 export function auditAccessStatus(reason?: string) {
   if (reason === 'account_suspended') return 403;
-  if (reason === 'free_audits_exhausted' || reason === 'subscription_required') return 402;
+  if (
+    reason === 'free_audits_exhausted' ||
+    reason === 'free_accounts_exhausted' ||
+    reason === 'subscription_required'
+  ) {
+    return 402;
+  }
   if (reason === 'audit_in_progress') return 409;
   if (reason === 'quota_exceeded') return 429;
   return 503;
@@ -50,6 +63,9 @@ export function auditAccessStatus(reason?: string) {
 export function auditAccessMessage(reason?: string) {
   if (reason === 'free_audits_exhausted') {
     return 'استخدمت الفحصين المجانيين لهذا الحساب الإعلاني. تقاريرك وتوصياتك السابقة تبقى مفتوحة للقراءة، والاشتراك يلزم فقط لفحص جديد أو لتنفيذ التوصيات.';
+  }
+  if (reason === 'free_accounts_exhausted') {
+    return 'استخدمت الفحص المجاني على 3 حسابات إعلانية. الفحص لحسابات أكثر يحتاج اشتراك.';
   }
   if (reason === 'audit_in_progress') {
     return 'فيه فحص شغّال لهذا الحساب الآن. انتظر يخلص وبعدها تقدر تتابع.';
@@ -171,10 +187,7 @@ export async function reserveAuditAccess({
   }
   const row = Array.isArray(data) ? data[0] : data;
   if (!row?.allowed || !row?.event_id) {
-    return {
-      ok: false,
-      reason: row?.reason === 'audit_in_progress' ? 'audit_in_progress' : 'free_audits_exhausted',
-    };
+    return { ok: false, reason: freeAuditRefusalReason(row?.reason) };
   }
   const used = Number(row.used ?? 1);
   return {
@@ -185,6 +198,13 @@ export async function reserveAuditAccess({
     remaining: Math.max(0, FREE_AUDITS_PER_ACCOUNT - used),
     freeEventId: String(row.event_id),
   };
+}
+
+/** The RPC's refusal reason as an AuditAccessFailure; anything unknown reads as exhausted. */
+function freeAuditRefusalReason(reason: unknown): AuditAccessFailure {
+  if (reason === 'audit_in_progress') return 'audit_in_progress';
+  if (reason === 'free_accounts_exhausted') return 'free_accounts_exhausted';
+  return 'free_audits_exhausted';
 }
 
 export type CompleteResult = 'completed' | 'already_completed' | 'expired' | 'not_found' | 'error' | 'noop';

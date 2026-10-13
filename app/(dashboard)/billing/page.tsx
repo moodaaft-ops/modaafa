@@ -12,6 +12,11 @@ import { StatusBadge } from '@/lib/ui/status-badge';
 import { EmptyState } from '@/lib/ui/empty-state';
 import { buttonClasses } from '@/lib/ui/button';
 import { getBillingCheckoutContext } from '@/lib/billing/checkout-policy';
+import {
+  CARD_TRIAL_USED_MESSAGE,
+  TRIAL_STARTER_LIMITS_NOTE,
+  trialIneligibleNotice,
+} from '@/lib/billing/trial-copy';
 import { hasActiveGoogleAdsAccount } from '@/lib/accounts/selection';
 import { getSubscriptionAccessDetailed } from '@/lib/billing/entitlements';
 import {
@@ -38,6 +43,7 @@ const billingErrors: Record<string, string> = {
   no_live_subscription: 'ما لقينا اشتراكاً قائماً على هذا الحساب حتى نلغيه.',
   cancel_failed: 'تعذر تنفيذ الطلب الآن ولم يتغيّر اشتراكك. أعد المحاولة بعد قليل، ولو تكرر راسلنا.',
   invalid_origin: 'تعذر التحقق من الطلب. حدّث الصفحة وأعد المحاولة.',
+  card_trial_used: CARD_TRIAL_USED_MESSAGE,
 };
 
 const plans = [
@@ -144,6 +150,13 @@ export default async function BillingPage({
   // Mirrors the server gate in /api/billing/checkout: no active Google Ads
   // account means no trial/checkout buttons, just a link to connect one.
   const needsAccount = !hasLiveSubscription && !hasInternalAccess && !hasActiveAccount;
+  // Why a trial is not on offer, for the two reasons that need saying; and the
+  // Starter-limits line wherever one is.
+  const noTrialNotice =
+    !hasLiveSubscription && !hasInternalAccess && !compOnly
+      ? trialIneligibleNotice(checkout.trialIneligibleReason)
+      : null;
+  const trialOffered = trialEligible && !hasLiveSubscription && !hasInternalAccess && !compOnly && !needsAccount;
 
   const buildHref = (nextPeriod: PeriodKey) => {
     const query = new URLSearchParams();
@@ -165,6 +178,7 @@ export default async function BillingPage({
         )}
         {params?.canceled && <Alert tone="warning">تم إلغاء عملية الدفع ولم يتغيّر اشتراكك.</Alert>}
         {params?.cancel === 'resumed' && <Alert tone="success">رجع اشتراكك كما كان، ويتجدد في موعده.</Alert>}
+        {noTrialNotice && <Alert tone="info">{noTrialNotice}</Alert>}
 
         {/* Current plan */}
         <section className="surface-raised relative overflow-hidden p-6">
@@ -201,6 +215,11 @@ export default async function BillingPage({
                     ? `تجديد الاشتراك في ${formatDateAr(access.currentPeriodEnd)}`
                     : 'اختر خطة بالأسفل لتفعيل الفحص والتنفيذ والمساعد الذكي.'}
               </p>
+              {trialOffered && (
+                <p className="mt-1.5 max-w-xl text-[12.5px] leading-6 text-muted-foreground">
+                  {TRIAL_STARTER_LIMITS_NOTE}
+                </p>
+              )}
             </div>
             {hasInternalAccess || compOnly ? (
               <StatusBadge tone="success">لا تحتاج اشتراكاً</StatusBadge>

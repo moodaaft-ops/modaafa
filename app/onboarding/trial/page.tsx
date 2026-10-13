@@ -11,6 +11,11 @@ import {
   TRIAL_DAYS,
 } from '@/lib/billing/checkout-policy';
 import { getPlanPriceAmounts } from '@/lib/billing/stripe';
+import {
+  CARD_TRIAL_USED_MESSAGE,
+  TRIAL_STARTER_LIMITS_NOTE,
+  trialIneligibleNotice,
+} from '@/lib/billing/trial-copy';
 import { Alert } from '@/lib/ui/alert';
 import { buttonClasses } from '@/lib/ui/button';
 import { PendingSubmitButton } from '@/lib/ui/pending-submit-button';
@@ -29,6 +34,7 @@ const errors: Record<string, string> = {
   invalid_plan: 'الخطة غير صالحة. حدّث الصفحة وجرّب مرة ثانية.',
   google_ads_account_required: 'اربط حساب Google Ads نشطاً أولاً.',
   already_subscribed: 'عندك اشتراك قائم، تقدر تكمل مباشرة.',
+  card_trial_used: CARD_TRIAL_USED_MESSAGE,
 };
 
 export default async function TrialPage({
@@ -54,6 +60,7 @@ export default async function TrialPage({
     getPlanPriceAmounts(),
   ]);
   const trialEligible = checkout.trialEligible;
+  const noTrialNotice = trialIneligibleNotice(checkout.trialIneligibleReason);
   const price = prices?.[TRIAL_PLAN]?.monthly ?? null;
   const priceText = price ? formatCurrency(price.amount, price.currency.toUpperCase()) : null;
   const chargeDate = formatDateAr(firstChargeDate(TRIAL_DAYS));
@@ -106,18 +113,22 @@ export default async function TrialPage({
                     )}
                     . تقدر تلغي قبله من صفحة الفوترة.
                   </p>
+                  <p className="text-muted-foreground">{TRIAL_STARTER_LIMITS_NOTE}</p>
                 </>
               ) : (
-                <p>
-                  استخدمت التجربة المجانية قبل. الاشتراك في خطة النمو الشهرية يبدأ اليوم
-                  {priceText ? (
-                    <>
-                      {' '}
-                      بقيمة <span className="numeric font-semibold">{priceText}</span>
-                    </>
-                  ) : null}
-                  .
-                </p>
+                <>
+                  <p>{noTrialNotice ?? 'استخدمت التجربة المجانية قبل.'}</p>
+                  <p>
+                    خطة النمو الشهرية تبدأ اليوم
+                    {priceText ? (
+                      <>
+                        {' '}
+                        بقيمة <span className="numeric font-semibold">{priceText}</span>
+                      </>
+                    ) : null}
+                    .
+                  </p>
+                </>
               )}
             </div>
           </div>

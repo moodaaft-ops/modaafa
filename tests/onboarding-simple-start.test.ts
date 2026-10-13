@@ -75,6 +75,7 @@ test('no card step sits between connecting and the first audit', () => {
 
 test('audit refusal codes map to the screen that handles them', () => {
   assert.equal(classifyAuditStartError(402, 'free_audits_exhausted'), 'exhausted');
+  assert.equal(classifyAuditStartError(402, 'free_accounts_exhausted'), 'accounts_exhausted');
   assert.equal(classifyAuditStartError(409, 'audit_in_progress'), 'running');
   assert.equal(classifyAuditStartError(503, 'usage_storage_unavailable'), 'error');
   assert.equal(classifyAuditStartError(402, 'subscription_required'), 'error');

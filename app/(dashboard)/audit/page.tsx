@@ -581,7 +581,7 @@ function GuidanceStep({ number, text }: { number: string; text: string }) {
 }
 
 function auditErrorMessage(code: string) {
-  if (['free_audits_exhausted', 'audit_in_progress'].includes(code)) {
+  if (['free_audits_exhausted', 'free_accounts_exhausted', 'audit_in_progress'].includes(code)) {
     return auditAccessMessage(code) ?? '';
   }
   if (['subscription_required', 'quota_exceeded', 'usage_storage_unavailable'].includes(code)) {

@@ -47,7 +47,7 @@
 
 ## حصة الفحص (PR57)
 
-الفحص عبر `POST /api/audit/run`. الأكواد من `docs/free-audit-contract.md`: 402 `free_audits_exhausted`، 409 `audit_in_progress`، 429 `quota_exceeded`، 503 `usage_storage_unavailable`. عند النجاح `usage: { source, remaining, resets_at }`. المحادثة تعرض الرسالة المناسبة لكل كود ولا تفترض عدداً ثابتاً.
+الفحص عبر `POST /api/audit/run`. الأكواد من `docs/free-audit-contract.md`: 402 `free_audits_exhausted`، 402 `free_accounts_exhausted`، 409 `audit_in_progress`، 429 `quota_exceeded`، 503 `usage_storage_unavailable`. عند النجاح `usage: { source, remaining, resets_at }`. المحادثة تعرض الرسالة المناسبة لكل كود ولا تفترض عدداً ثابتاً.
 
 ## ما لا يلمسه PR59
 

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { isSubscriptionEntitled } from '../lib/billing/entitlements';
 import {
+  FREE_AUDIT_ACCOUNTS_PER_USER,
   FREE_AUDITS_PER_ACCOUNT,
   auditAccessMessage,
   auditAccessStatus,
@@ -147,6 +148,39 @@ test('exhausted state is a 402 that tells the customer reports stay readable', (
   assert.equal(auditAccessStatus('free_audits_exhausted'), 402);
   assert.equal(auditAccessStatus('audit_in_progress'), 409);
   assert.match(auditAccessMessage('free_audits_exhausted')!, /تبقى مفتوحة للقراءة/);
+});
+
+test('a fourth distinct account is refused with free_accounts_exhausted, as a 402 with its own message', async () => {
+  assert.equal(FREE_AUDIT_ACCOUNTS_PER_USER, 3);
+  const calls: string[] = [];
+  const supabase = {
+    rpc: async (name: string) => {
+      calls.push(name);
+      return { data: [{ allowed: false, reason: 'free_accounts_exhausted', used: 0, event_id: null }], error: null };
+    },
+  };
+  const r = await reserveAuditAccess({ ...base, accountId: 'acc4', customerId: '4444444444', supabase, deps: deps(inactive) });
+  assert.deepEqual(r, { ok: false, reason: 'free_accounts_exhausted' });
+  assert.deepEqual(calls, ['consume_free_audit']);
+  assert.equal(auditAccessStatus('free_accounts_exhausted'), 402);
+  assert.equal(
+    auditAccessMessage('free_accounts_exhausted'),
+    'استخدمت الفحص المجاني على 3 حسابات إعلانية. الفحص لحسابات أكثر يحتاج اشتراك.'
+  );
+  // Same family as the per-account refusal, not the retryable 409/503 ones.
+  assert.notEqual(auditAccessStatus('free_accounts_exhausted'), auditAccessStatus('audit_in_progress'));
+});
+
+test('an unknown refusal reason from the RPC still reads as the per-account exhaustion', async () => {
+  const supabase = { rpc: async () => ({ data: [{ allowed: false, reason: 'something_new', used: 0, event_id: null }], error: null }) };
+  const r = await reserveAuditAccess({ ...base, supabase, deps: deps(inactive) });
+  assert.deepEqual(r, { ok: false, reason: 'free_audits_exhausted' });
+});
+
+test('a subscriber is never refused for the free-account cap', async () => {
+  const supabase = { rpc: async () => assert.fail('subscribers must not touch the free ledger') };
+  const r = await reserveAuditAccess({ ...base, supabase, deps: deps(subscribed) });
+  assert.ok(r.ok && r.source === 'subscription');
 });
 
 // Direct API / cron / webhook: every write path keeps its server-side gate.
