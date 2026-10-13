@@ -307,6 +307,16 @@ async function hasAdsAccountTrial(
   }
 }
 
+/**
+ * Record that this user took their one free trial: the per-user grant and the
+ * durable email ledger (so delete-and-re-register cannot repeat it).
+ *
+ * It deliberately does NOT touch `trial_customer_ledger`. This runs on every
+ * subscription update that still carries `trial_end` (Stripe keeps it after the
+ * trial converts to paid), so claiming the user's accounts here marked accounts
+ * that never had a trial as used. Accounts are claimed only where the trial
+ * actually used one: see lib/billing/trial-account-claim.ts.
+ */
 export async function recordTrialGrant({
   supabase,
   userId,
@@ -349,44 +359,6 @@ export async function recordTrialGrant({
       // thing lost is protection against delete-and-re-register.
       console.error('Failed to record durable trial ledger entry', ledgerError);
     }
-  }
-
-  await recordTrialCustomerIds({ supabase, userId, source, admin: injectedAdmin });
-}
-
-/**
- * Remember which Google Ads accounts this user took a trial on, so another user
- * cannot take a second trial on the same account. First writer wins
- * (ON CONFLICT DO NOTHING). Non-fatal on error, like the email ledger.
- */
-async function recordTrialCustomerIds({
-  supabase,
-  userId,
-  source,
-  admin: injectedAdmin,
-}: {
-  supabase: any;
-  userId: string;
-  source: string;
-  admin?: AdminClientLike;
-}) {
-  try {
-    const customerIds = await loadActiveClientCustomerIds(supabase, userId);
-    if (customerIds.length === 0) return;
-    const admin = injectedAdmin ?? createAdminClient();
-    for (let index = 0; index < customerIds.length; index += CUSTOMER_ID_CHUNK) {
-      const rows = customerIds.slice(index, index + CUSTOMER_ID_CHUNK).map((customerId) => ({
-        customer_id: customerId,
-        first_user_id: userId,
-        source,
-      }));
-      const { error } = await admin
-        .from('trial_customer_ledger')
-        .upsert(rows, { onConflict: 'customer_id', ignoreDuplicates: true });
-      if (error) throw error;
-    }
-  } catch (error) {
-    console.error('Failed to record trial customer-id ledger entries', error);
   }
 }
 

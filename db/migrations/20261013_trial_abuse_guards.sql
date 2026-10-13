@@ -14,7 +14,9 @@
 --   3. trial_email_key(text)  - SQL twin of lib/billing/trial-identity.ts
 --                               (normalised email -> sha256 hex), used by the backfill.
 --   4. Backfill of both the email ledger and the customer ledger from existing
---      trials, earliest trial wins when several users share a customer id.
+--      trials, earliest trial wins when several users share a customer id. The
+--      customer ledger only gets the account each trial actually used (see 4b),
+--      never every account the user ever linked.
 --   5. consume_free_audit: a user may spend free audits on at most 3 DISTINCT
 --      Google customer ids (new reason 'free_accounts_exhausted'). Everything else
 --      in the function is unchanged.
@@ -160,10 +162,34 @@ where public.trial_email_key(u.email) is not null
 order by public.trial_email_key(u.email), ft.first_at, ft.user_id
 on conflict (email_hash) do nothing;
 
--- 4b. Customer ledger: every client (non-manager) Google Ads account those users
---     have linked, whatever its link status today (a revoked or paused link does
---     not undo that the trial ran on it). When several users share a customer id
---     the one whose trial is earliest owns it. Only numeric ids pass the check.
+-- 4b. Customer ledger: only the Google Ads account a trial actually USED.
+--
+--     Claiming every account a trial user ever linked marked accounts that never
+--     had a trial as used, and that blocks other users from trialing on them. So
+--     the backfill is deliberately narrower than "everything they linked":
+--
+--       * Only accounts linked on or before the end of that user's trial, where
+--         the trial end is subscriptions.trial_ends_at when there is one and
+--         the grant time + 14 days otherwise. An account linked after the trial
+--         (typically by a user who already converted to paid) is never claimed.
+--         linked_at holds the FIRST link time: connect_job_link does not change it
+--         when an account is re-linked.
+--       * Of those, only the account the trial used:
+--           - the account the business has selected (businesses.
+--             selected_google_ads_customer_id), when it is among them;
+--           - otherwise, when the user has exactly one such account, that one (a
+--             single-account user never has a selected id, and nothing else could
+--             have been used);
+--           - otherwise the user has several and nothing says which one, so only
+--             the accounts linked DURING the trial window (on or after the first
+--             trial moment) are claimed. Several accounts linked before the trial
+--             with no selection are left unclaimed on purpose: a missed abuser is
+--             cheaper than a legitimate customer blocked from their own account.
+--       * Whatever its link status today (a revoked or paused link does not undo
+--         that the trial ran on it), but never a manager account.
+--
+--     When several users qualify for one customer id the earliest trial owns it.
+--     Only numeric ids pass the check. Idempotent (ON CONFLICT DO NOTHING).
 with trial_events as (
   select g.user_id, g.granted_at as at
   from public.billing_trial_grants g
@@ -176,19 +202,50 @@ with trial_events as (
   from trial_events
   where user_id is not null
   group by user_id
+), trial_window as (
+  select ft.user_id,
+         ft.first_at,
+         coalesce(
+           (select max(s.trial_ends_at)
+              from public.subscriptions s
+             where s.user_id = ft.user_id
+               and s.trial_ends_at is not null),
+           ft.first_at + interval '14 days'
+         ) as window_end
+  from first_trial ft
+), candidates as (
+  select w.user_id,
+         w.first_at,
+         a.customer_id,
+         a.linked_at,
+         (a.customer_id = regexp_replace(coalesce(b.selected_google_ads_customer_id, ''), '[^0-9]', '', 'g')) as is_selected
+  from trial_window w
+  join public.businesses b on b.user_id = w.user_id
+  join public.google_ads_accounts a on a.business_id = b.id
+  where a.is_manager is not true
+    and a.customer_id ~ '^[0-9]{3,20}$'
+    and a.linked_at <= w.window_end
+), per_user as (
+  select user_id,
+         count(distinct customer_id) as account_count,
+         bool_or(is_selected) as any_selected
+  from candidates
+  group by user_id
 )
 insert into public.trial_customer_ledger (customer_id, first_user_id, granted_at, source)
-select distinct on (a.customer_id)
-       a.customer_id,
-       ft.user_id,
-       coalesce(ft.first_at, now()),
+select distinct on (c.customer_id)
+       c.customer_id,
+       c.user_id,
+       coalesce(c.first_at, now()),
        'backfill_20261013'
-from first_trial ft
-join public.businesses b on b.user_id = ft.user_id
-join public.google_ads_accounts a on a.business_id = b.id
-where a.is_manager is not true
-  and a.customer_id ~ '^[0-9]{3,20}$'
-order by a.customer_id, ft.first_at, ft.user_id
+from candidates c
+join per_user p on p.user_id = c.user_id
+where case
+        when p.any_selected then c.is_selected
+        when p.account_count = 1 then true
+        else c.linked_at >= c.first_at
+      end
+order by c.customer_id, c.first_at, c.user_id
 on conflict (customer_id) do nothing;
 
 -- ---------------------------------------------------------------------------

@@ -17,9 +17,10 @@ import { getSubscriptionAccessDetailed } from '@/lib/billing/entitlements';
  * are not touched here (a user with no subscription cannot start a trial on such
  * an account: the checkout policy refuses it).
  *
- * Accounts the trialing user links that nobody has used for a trial yet are
- * recorded in `trial_customer_ledger` for them, so the account cannot be trialed
- * again by a different user once this trial is over. Both writes are
+ * This lock only PARKS accounts that already belong to someone else's trial. It
+ * never claims anything in `trial_customer_ledger`: linking an account is not
+ * using it for a trial. An account is claimed when the trial starts on it or the
+ * optimizer/audit runs on it (lib/billing/trial-account-claim.ts). The write is
  * best-effort: a failure is logged and never blocks the connect flow.
  *
  * `linked` are the rows `connect_job_link` just saved.
@@ -64,19 +65,6 @@ export async function enforceTrialAccountLock({
         userId,
         customerIds: Array.from(ownedByOthers),
       });
-    }
-
-    const mine = customerIds.filter((id) => !ownedByOthers.has(id));
-    if (mine.length > 0) {
-      const { error } = await admin.from('trial_customer_ledger').upsert(
-        mine.map((customerId) => ({
-          customer_id: customerId,
-          first_user_id: userId,
-          source: 'connect_during_trial',
-        })),
-        { onConflict: 'customer_id', ignoreDuplicates: true }
-      );
-      if (error) console.error('Failed to record trial customer ids linked during a trial', error);
     }
 
     return { pausedAccountIds };

@@ -10,6 +10,7 @@ import {
   getOptimizerAllowedAccountIds,
   pickOptimizerBatch,
   selectOptimizerAccountIds,
+  trialClaimsForBatch,
   type OptimizerAllowedAccount,
   type OptimizerCapAccount,
   type OptimizerCapBusiness,
@@ -301,8 +302,8 @@ test('the helper hands the cron the round-robin cursor of every allowed account'
   assert.deepEqual(
     [...result.allowedAccounts].sort((a, b) => a.id.localeCompare(b.id)),
     [
-      { id: 'fresh', last_optimized_at: '2026-10-13T01:00:00.000Z' },
-      { id: 'never', last_optimized_at: null },
+      { id: 'fresh', last_optimized_at: '2026-10-13T01:00:00.000Z', trial_user_id: null },
+      { id: 'never', last_optimized_at: null, trial_user_id: null },
     ]
   );
 });
@@ -511,4 +512,44 @@ test('every plan card on the billing page carries its optimizer line, and the ho
   assert.equal(optimizerAccountsLine(OPTIMIZER_ACCOUNTS_PER_PLAN.starter), 'الخطة اليومية التلقائية لحد 3 حسابات');
   assert.equal(optimizerAccountsLine(OPTIMIZER_ACCOUNTS_PER_PLAN.growth), 'الخطة اليومية التلقائية لحد 10 حسابات');
   assert.equal(optimizerAccountsLine(OPTIMIZER_ACCOUNTS_PER_PLAN.pro), 'الخطة اليومية التلقائية لحد 50 حساب');
+});
+
+test('only the accounts of users on a Stripe trial carry a trial owner, so only they are claimed', async () => {
+  const database = world({
+    subscriptions: [
+      subscriptionRow('trial-user', { status: 'trialing', trial_ends_at: iso(10 * DAY) }),
+      subscriptionRow('paid-user'),
+      subscriptionRow('granted-trial', { status: 'trialing', trial_ends_at: iso(10 * DAY) }),
+    ],
+    overrides: [
+      // An operator grant on top of a trial is "comp", not a trial.
+      { user_id: 'granted-trial', kind: 'plan_grant', plan: 'pro', expires_at: null, created_at: iso(-DAY), revoked_at: null },
+    ],
+    accountsPerUser: 3,
+  });
+  const result = await getOptimizerAllowedAccountIds(database);
+  const ownerOf = (id: string) => result.allowedAccounts.find((account) => account.id === id)?.trial_user_id;
+  assert.equal(result.allowedAccounts.filter((a) => a.trial_user_id === 'trial-user').length, 1, 'the trial cap of 1 applies');
+  assert.equal(ownerOf('trial-user-acc1'), 'trial-user');
+  assert.equal(ownerOf('paid-user-acc1'), null);
+  assert.equal(ownerOf('paid-user-acc3'), null);
+  assert.equal(ownerOf('granted-trial-acc1'), null);
+});
+
+test('trialClaimsForBatch claims only trial users\' accounts, with the customer id as digits', () => {
+  const allowed: OptimizerAllowedAccount[] = [
+    { id: 'a1', last_optimized_at: null, trial_user_id: 'trial-user' },
+    { id: 'a2', last_optimized_at: null, trial_user_id: null },
+    { id: 'a3', last_optimized_at: null },
+    { id: 'a4', last_optimized_at: null, trial_user_id: 'trial-user' },
+  ];
+  const claims = trialClaimsForBatch(allowed, [
+    { id: 'a1', customer_id: '123-456-7890' },
+    { id: 'a2', customer_id: '2222222222' },
+    { id: 'a3', customer_id: '3333333333' },
+    { id: 'a4', customer_id: null },
+    { id: 'unknown', customer_id: '5555555555' },
+  ]);
+  assert.deepEqual(claims, [{ userId: 'trial-user', customerId: '1234567890' }]);
+  assert.deepEqual(trialClaimsForBatch([], [{ id: 'a1', customer_id: '1111111111' }]), []);
 });

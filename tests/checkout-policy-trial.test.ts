@@ -413,57 +413,40 @@ test('recordTrialGrant writes one row when the legacy and normalised keys are th
   assert.equal((ledgerWrite?.rows as unknown[]).length, 1);
 });
 
-test('recordTrialGrant records the active non-manager customer ids, first writer wins', async () => {
+test('recordTrialGrant never writes the customer ledger and never reads the accounts', async () => {
+  // It runs on every subscription update that still carries trial_end, including
+  // after the trial converted to paid. Claiming the user's accounts there marked
+  // accounts that never had a trial as used.
   const world: World = {
     accounts: [{ customer_id: '1112223334' }, { customer_id: '5556667778' }],
   };
   const admin = adminClient(world);
+  const user = userClient(world);
   await recordTrialGrant({
-    supabase: userClient(world),
+    supabase: user,
     admin,
     userId: USER,
     email: 'owner@example.com',
-    source: 'checkout_complete',
-  });
-  const write = admin.calls.find((call) => call.table === 'trial_customer_ledger' && call.op === 'upsert');
-  assert.deepEqual(write?.rows, [
-    { customer_id: '1112223334', first_user_id: USER, source: 'checkout_complete' },
-    { customer_id: '5556667778', first_user_id: USER, source: 'checkout_complete' },
-  ]);
-  assert.deepEqual(write?.options, { onConflict: 'customer_id', ignoreDuplicates: true });
-});
-
-test('recordTrialGrant skips the customer ledger when no account is linked', async () => {
-  const world: World = { accounts: [] };
-  const admin = adminClient(world);
-  await recordTrialGrant({
-    supabase: userClient(world),
-    admin,
-    userId: USER,
-    email: 'owner@example.com',
-    source: 'checkout_complete',
+    source: 'stripe_webhook',
   });
   assert.equal(admin.calls.filter((call) => call.table === 'trial_customer_ledger').length, 0);
-});
-
-test('a customer ledger write failure is logged and does not throw', async () => {
-  const world: World = { accounts: [{ customer_id: '1112223334' }], customerLedgerError: true };
-  const admin = adminClient(world);
-  const { messages } = await quietly(() =>
-    recordTrialGrant({
-      supabase: userClient(world),
-      admin,
-      userId: USER,
-      email: 'owner@example.com',
-      source: 'checkout_complete',
-    })
+  assert.equal(
+    [...admin.calls, ...user.calls].filter(
+      (call) => call.table === 'google_ads_accounts' || call.table === 'businesses'
+    ).length,
+    0
   );
-  assert.equal(messages.length, 1);
-  assert.match(String(messages[0][0]), /trial customer-id ledger/);
+  // What it is for is still recorded: the per-user grant and the email ledger.
+  assert.ok(user.calls.some((call) => call.table === 'billing_trial_grants' && call.op === 'upsert'));
+  assert.ok(admin.calls.some((call) => call.table === 'billing_trial_ledger' && call.op === 'upsert'));
 });
 
-test('an accounts read failure while recording is logged and does not throw', async () => {
-  const world: World = { accountsError: true };
+test('recordTrialGrant is unaffected by a customer ledger that is down or an accounts read that fails', async () => {
+  const world: World = {
+    accounts: [{ customer_id: '1112223334' }],
+    customerLedgerError: true,
+    accountsError: true,
+  };
   const { messages } = await quietly(() =>
     recordTrialGrant({
       supabase: userClient(world),
@@ -473,7 +456,7 @@ test('an accounts read failure while recording is logged and does not throw', as
       source: 'checkout_complete',
     })
   );
-  assert.equal(messages.length, 1);
+  assert.equal(messages.length, 0, 'nothing else is attempted, so nothing fails');
 });
 
 // ---------------------------------------------------------------------------

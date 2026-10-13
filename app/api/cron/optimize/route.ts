@@ -51,11 +51,13 @@ import {
   getOptimizerAllowedAccountIds,
   chunkIds,
   pickOptimizerBatch,
+  trialClaimsForBatch,
   OPTIMIZER_DETAIL_BATCH_SIZE,
   type OptimizerAllowedAccount,
   hasRecentCompletedRun,
   startJobRun,
 } from '@/lib/platform/jobs';
+import { claimTrialAccountsInUse } from '@/lib/billing/trial-account-claim';
 import { sendOpsAlert } from '@/lib/notifications/email';
 import { planOpsAlert } from '@/lib/platform/ops-alerts';
 import { hasValidCronAuthorization } from '@/lib/security/cron-auth';
@@ -196,7 +198,7 @@ async function runOptimizerCron(req: NextRequest) {
     limit: OPTIMIZE_ACCOUNT_LIMIT,
   });
 
-  const detailRows: Array<Record<string, any>> = [];
+  const detailRows: Array<Record<string, any> & { id: string }> = [];
   let accountLookupError: unknown = null;
   for (const idBatch of chunkIds(batchIds, OPTIMIZER_DETAIL_BATCH_SIZE)) {
     const { data, error } = await supabase
@@ -242,6 +244,15 @@ async function runOptimizerCron(req: NextRequest) {
       },
     });
     return NextResponse.json({ processed: 0, cooled_down_accounts: cooledDownAccounts });
+  }
+
+  // A trial that gets an optimizer pass is using the account, which is the moment
+  // it is recorded in trial_customer_ledger (so another user cannot take a second
+  // trial on it). Only accounts of users on a Stripe trial; best effort, it never
+  // fails the run.
+  const trialClaims = trialClaimsForBatch(allowedAccounts, accounts);
+  if (trialClaims.length > 0) {
+    await claimTrialAccountsInUse({ admin: supabase, claims: trialClaims, source: 'optimizer_during_trial' });
   }
 
   // Business context feeds the optimizer the way a real buyer is briefed:

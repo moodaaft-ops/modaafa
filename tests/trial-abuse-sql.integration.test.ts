@@ -30,6 +30,10 @@ const U2 = '10000000-0000-0000-0000-000000000002'; // same inbox as U1, later tr
 const U3 = '10000000-0000-0000-0000-000000000003'; // trial via subscription row, earliest overall
 const U4 = '10000000-0000-0000-0000-000000000004'; // never trialled
 const U5 = '10000000-0000-0000-0000-000000000005'; // trial grant but no email
+const U6 = '10000000-0000-0000-0000-000000000006'; // several accounts, one selected: only the selected one was used
+const U7 = '10000000-0000-0000-0000-000000000007'; // selected account linked AFTER the trial
+const U8 = '10000000-0000-0000-0000-000000000008'; // converted to paid, linked another account afterwards
+const U9 = '10000000-0000-0000-0000-000000000009'; // several accounts all linked before the trial, nothing selected
 const C = '20000000-0000-0000-0000-00000000000c'; // free audit cap user
 const D = '20000000-0000-0000-0000-00000000000d'; // another free audit user
 
@@ -98,10 +102,12 @@ test('setup: stand-ins, real free audit migration, seeded trial history, new mig
       id uuid primary key default gen_random_uuid(), user_id uuid not null, trial_ends_at timestamptz, created_at timestamptz default now());
     create table public.billing_trial_ledger (
       email_hash text primary key, granted_at timestamptz not null default now(), source text);
-    create table public.businesses (id uuid primary key, user_id uuid not null unique);
+    create table public.businesses (
+      id uuid primary key, user_id uuid not null unique, selected_google_ads_customer_id text);
     create table public.google_ads_accounts (
       id uuid primary key default gen_random_uuid(), business_id uuid not null, customer_id text not null,
-      status text not null default 'active', is_manager boolean not null default false);
+      status text not null default 'active', is_manager boolean not null default false,
+      linked_at timestamptz default now());
   `);
   applyFile(new URL('../db/migrations/20261009_free_audit_quota.sql', import.meta.url));
 
@@ -110,34 +116,66 @@ test('setup: stand-ins, real free audit migration, seeded trial history, new mig
       ('${U1}', 'First.User+a@gmail.com'), ('${U2}', 'firstuser@gmail.com'), ('${U3}', 'third@example.com'),
       ('${U4}', 'nontrial@example.com'), ('${U5}', null),
       ('${C}', 'cap@example.com'), ('${D}', 'dee@example.com');
-    insert into public.businesses (id, user_id) values
-      ('${U1}', '${U1}'), ('${U2}', '${U2}'), ('${U3}', '${U3}'), ('${U4}', '${U4}'), ('${U5}', '${U5}'),
-      ('${C}', '${C}'), ('${D}', '${D}');
+    insert into public.businesses (id, user_id, selected_google_ads_customer_id) values
+      ('${U1}', '${U1}', null), ('${U2}', '${U2}', null), ('${U3}', '${U3}', '${SHARED}'), ('${U4}', '${U4}', null),
+      ('${U5}', '${U5}', null),
+      ('${U6}', '${U6}', '6100000002'), ('${U7}', '${U7}', '6200000002'), ('${U8}', '${U8}', null), ('${U9}', '${U9}', null),
+      ('${C}', '${C}', null), ('${D}', '${D}', null);
 
     insert into public.billing_trial_grants (user_id, source, granted_at) values
       ('${U1}', 'checkout_complete', '2026-08-01T10:00:00Z'),
       ('${U2}', 'stripe_webhook',    '2026-09-01T10:00:00Z'),
-      ('${U5}', 'stripe_webhook',    '2026-09-15T10:00:00Z');
+      ('${U5}', 'stripe_webhook',    '2026-09-15T10:00:00Z'),
+      ('${U6}', 'stripe_webhook',    '2026-09-10T10:00:00Z'),
+      ('${U7}', 'stripe_webhook',    '2026-09-10T10:00:00Z'),
+      ('${U9}', 'stripe_webhook',    '2026-09-20T10:00:00Z');
     insert into public.subscriptions (user_id, trial_ends_at, created_at) values
       ('${U3}', '2026-07-15T00:00:00Z', '2026-07-01T00:00:00Z'),
-      ('${U4}', null,                   '2026-06-01T00:00:00Z');
+      ('${U4}', null,                   '2026-06-01T00:00:00Z'),
+      -- U8: the trial ended 2026-08-10 and Stripe kept trial_end after the conversion to paid.
+      ('${U8}', '2026-08-10T00:00:00Z', '2026-08-01T00:00:00Z');
 
     -- A row an earlier flow already wrote must survive untouched.
     insert into public.billing_trial_ledger (email_hash, granted_at, source) values
       ('${TRIAL_EMAIL_FIXTURES.find((f) => f.input === 'owner+promo@example.com')!.key}', '2026-01-01T00:00:00Z', 'checkout_complete'),
       (encode(sha256(convert_to('third@example.com','UTF8')),'hex'), '2026-07-02T00:00:00Z', 'stripe_webhook');
 
-    insert into public.google_ads_accounts (business_id, customer_id, status, is_manager) values
-      ('${U1}', '1111111111', 'active', false),
-      ('${U1}', '${SHARED}', 'active', false),
-      ('${U1}', '7777777777', 'active', true),
-      ('${U1}', 'abc-123', 'active', false),
-      ('${U2}', '${SHARED}', 'active', false),
-      ('${U2}', '2222222222', 'revoked', false),
-      ('${U3}', '${SHARED}', 'active', false),
-      ('${U3}', '3333333333', 'active', false),
-      ('${U4}', '4444444444', 'active', false),
-      ('${U5}', '5000000005', 'active', false);
+    -- linked_at is the FIRST link time. Trial windows: U1 2026-08-01 to 08-15, U2 09-01 to 09-15,
+    -- U3 07-01 to 07-15 (subscription row), U5 09-15 to 09-29, U6 and U7 09-10 to 09-24,
+    -- U8 08-01 to 08-10, U9 09-20 to 10-04.
+    insert into public.google_ads_accounts (business_id, customer_id, status, is_manager, linked_at) values
+      -- U1: no selection and several candidates, so only the accounts linked DURING the window.
+      ('${U1}', '1111111111', 'active', false, '2026-08-03T00:00:00Z'),
+      ('${U1}', '${SHARED}',  'active', false, '2026-08-05T00:00:00Z'),
+      ('${U1}', '1313131313', 'active', false, '2026-07-10T00:00:00Z'), -- before the trial: not claimed
+      ('${U1}', '1212121212', 'active', false, '2026-09-20T00:00:00Z'), -- after the window: not claimed
+      ('${U1}', '7777777777', 'active', true,  '2026-08-02T00:00:00Z'), -- manager
+      ('${U1}', 'abc-123',    'active', false, '2026-08-02T00:00:00Z'), -- not a numeric id
+      ('${U2}', '${SHARED}',  'active', false, '2026-09-02T00:00:00Z'),
+      ('${U2}', '2222222222', 'revoked', false, '2026-09-05T00:00:00Z'),
+      ('${U2}', '2323232323', 'active', false, '2026-08-20T00:00:00Z'), -- before the trial: not claimed
+      -- U3: the selected account (SHARED) is the one the trial used; the other is not claimed.
+      ('${U3}', '${SHARED}',  'active', false, '2026-06-01T00:00:00Z'),
+      ('${U3}', '3333333333', 'active', false, '2026-06-15T00:00:00Z'),
+      ('${U4}', '4444444444', 'active', false, '2026-06-01T00:00:00Z'), -- never trialled
+      -- U5: one account linked before the trial, nothing selected: it is the only one the trial can have used.
+      ('${U5}', '5000000005', 'active', false, '2026-08-01T00:00:00Z'),
+      -- U6: selected 6100000002, linked before 6100000001 and long before 6100000003 (after the window).
+      ('${U6}', '6100000001', 'active', false, '2026-09-11T00:00:00Z'),
+      ('${U6}', '6100000002', 'active', false, '2026-09-01T00:00:00Z'),
+      ('${U6}', '6100000003', 'active', false, '2026-10-05T00:00:00Z'),
+      -- U7: the selected account was linked after the trial ended, so it cannot be the one used.
+      ('${U7}', '6200000001', 'active', false, '2026-09-02T00:00:00Z'),
+      ('${U7}', '6200000002', 'active', false, '2026-10-05T00:00:00Z'),
+      -- U8: paid after the trial and linked another account later.
+      ('${U8}', '6300000001', 'active', false, '2026-08-02T00:00:00Z'),
+      ('${U8}', '6300000002', 'active', false, '2026-09-30T00:00:00Z'),
+      -- U9: three accounts, all linked before the trial, no selection: nothing says which was used.
+      ('${U9}', '6400000001', 'active', false, '2026-08-01T00:00:00Z'),
+      ('${U9}', '6400000002', 'active', false, '2026-08-02T00:00:00Z'),
+      ('${U9}', '6400000003', 'active', false, '2026-08-03T00:00:00Z'),
+      -- a free-audit account without a trial user, no link date at all
+      ('${U4}', '4444444445', 'active', false, null);
 
     insert into public.google_ads_accounts (id, business_id, customer_id) values
       ${CAP_ACCOUNTS.map((customer, index) => `('${capAccountId(index)}', '${C}', '${customer}')`).join(',')},
@@ -221,20 +259,46 @@ test('backfill: email ledger uses the normalised key, earliest user, and never o
   assert.equal(psql(`select count(*) from public.billing_trial_ledger where source = 'backfill_20261013'`), '1');
 });
 
-test('backfill: customer ledger keeps the earliest owner, skips managers, bad ids and non-trial users', { skip }, () => {
+test('backfill: customer ledger claims only the account each trial used, earliest owner wins', { skip }, () => {
   const rows = Object.fromEntries(
     psql(`select customer_id||'='||first_user_id||'@'||to_char(granted_at at time zone 'UTC','YYYY-MM-DD')||'/'||source from public.trial_customer_ledger order by customer_id`)
       .split('\n')
       .map((line) => line.split('=') as [string, string])
   );
   assert.deepEqual(rows, {
+    // U1 has no selection and several accounts: the two linked during the window.
     '1111111111': `${U1}@2026-08-01/backfill_20261013`,
-    '2222222222': `${U2}@2026-09-01/backfill_20261013`, // revoked links still count
-    '3333333333': `${U3}@2026-07-01/backfill_20261013`,
+    // U2 likewise: the revoked link still counts (a revoked link does not undo the trial).
+    '2222222222': `${U2}@2026-09-01/backfill_20261013`,
+    // U5 has a single account linked before the trial.
     '5000000005': `${U5}@2026-09-15/backfill_20261013`,
-    [SHARED]: `${U3}@2026-07-01/backfill_20261013`, // U1, U2 and U3 all linked it; U3's trial is the earliest
+    // U6 selected 6100000002 among three: only it.
+    '6100000002': `${U6}@2026-09-10/backfill_20261013`,
+    // U7's selected account came after the trial, so its only possible account is the other one.
+    '6200000001': `${U7}@2026-09-10/backfill_20261013`,
+    // U8 paid after the trial: the account linked during it, not the one linked since.
+    '6300000001': `${U8}@2026-08-01/backfill_20261013`,
+    // U1, U2 and U3 all qualify for SHARED; U3's trial is the earliest.
+    [SHARED]: `${U3}@2026-07-01/backfill_20261013`,
   });
-  assert.equal(psql(`select count(*) from public.trial_customer_ledger where customer_id in ('7777777777','abc-123','4444444444')`), '0');
+});
+
+test('backfill: accounts the trial did not use are NOT claimed', { skip }, () => {
+  const notClaimed = [
+    '3333333333', // U3 selected SHARED, so this one was not the trial's account
+    '1313131313', // U1: several accounts, linked before the trial, no selection
+    '2323232323', // U2: same
+    '1212121212', // U1: linked after the trial window
+    '4444444444', '4444444445', // U4 never trialled
+    '6100000001', '6100000003', // U6 selected another account; one was linked after the window
+    '6200000002', // U7: the selected one was linked after the trial
+    '6300000002', // U8: linked after the trial, once already paying
+    '6400000001', '6400000002', '6400000003', // U9: cannot tell which, none linked during the window
+    '7777777777', 'abc-123', // manager and non-numeric
+  ];
+  const quoted = notClaimed.map((id) => `'${id}'`).join(',');
+  assert.equal(psql(`select count(*) from public.trial_customer_ledger where customer_id in (${quoted})`), '0');
+  assert.equal(psql(`select count(*) from public.trial_customer_ledger where first_user_id in ('${U4}', '${U9}')`), '0');
 });
 
 test('backfill is idempotent: a third run changes nothing', { skip }, () => {

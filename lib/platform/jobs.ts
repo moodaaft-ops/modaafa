@@ -258,8 +258,17 @@ export type OptimizerCapAccount = {
   last_optimized_at?: string | null;
 };
 
-/** An account the cap lets the optimizer work on, with the cursor the route needs. */
-export type OptimizerAllowedAccount = { id: string; last_optimized_at: string | null };
+/**
+ * An account the cap lets the optimizer work on, with the cursor the route needs.
+ * `trial_user_id` is the owner when that owner is on a Stripe trial (the plan
+ * level is 'trial'): the optimizer pass is the trial using the account, which is
+ * what claims it in trial_customer_ledger. Null for everyone else.
+ */
+export type OptimizerAllowedAccount = {
+  id: string;
+  last_optimized_at: string | null;
+  trial_user_id?: string | null;
+};
 
 const digitsOnly = (value: string | null | undefined) => (value ?? '').replace(/\D/g, '');
 
@@ -315,11 +324,14 @@ export function selectOptimizerAccountIds({
       if (linkedA !== linkedB) return linkedA < linkedB ? -1 : 1;
       return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
     });
-    list
-      .slice(0, cap)
-      .forEach((account) =>
-        allowedAccounts.push({ id: account.id, last_optimized_at: account.last_optimized_at ?? null })
-      );
+    const trialUserId = planByUser.get(userId) === 'trial' ? userId : null;
+    list.slice(0, cap).forEach((account) =>
+      allowedAccounts.push({
+        id: account.id,
+        last_optimized_at: account.last_optimized_at ?? null,
+        trial_user_id: trialUserId,
+      })
+    );
     skippedOverPlanCap += Math.max(0, list.length - cap);
   }
   return {
@@ -374,6 +386,27 @@ export async function getOptimizerAllowedAccountIds(supabase: any) {
   }
 
   return selectOptimizerAccountIds({ planByUser, businesses, accounts });
+}
+
+/**
+ * The ledger claims for one optimizer batch: the accounts of users on a Stripe
+ * trial, with the customer id normalised to digits. Everyone else is left out
+ * (a paying or granted user's accounts are not a trial using them).
+ */
+export function trialClaimsForBatch(
+  allowedAccounts: readonly OptimizerAllowedAccount[],
+  batchAccounts: ReadonlyArray<{ id: string; customer_id?: string | null }>
+): Array<{ userId: string; customerId: string }> {
+  const trialUserByAccountId = new Map(
+    allowedAccounts
+      .filter((account) => account.trial_user_id)
+      .map((account) => [account.id, account.trial_user_id as string])
+  );
+  return batchAccounts.flatMap((account) => {
+    const userId = trialUserByAccountId.get(account.id);
+    const customerId = digitsOnly(account.customer_id);
+    return userId && customerId ? [{ userId, customerId }] : [];
+  });
 }
 
 /** Most ids one `.in('id', ...)` request may carry. Keeps the URL well under any proxy limit. */

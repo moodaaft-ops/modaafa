@@ -126,14 +126,23 @@ test("a trialing user's newly linked account owned by another user's trial is pa
   assert.deepEqual((logs.warn[0][1] as any).customerIds, ['2222222222']);
 });
 
-test('accounts nobody has trialed on are left active and recorded for this user', async () => {
+test('accounts nobody has trialed on are left active and are NOT claimed', async () => {
+  // Linking an account is not using it for a trial: the lock only parks accounts
+  // that already belong to someone else's trial.
   const admin = fakeAdmin({ subscriptions: [trialing()], ledger: { '2222222222': OTHER } });
   await quietly(() => enforceTrialAccountLock({ admin, userId: USER, linked }));
-  assert.equal(admin.ledger.get('1111111111'), USER);
+  assert.equal(admin.ledger.has('1111111111'), false, 'the fresh account is not claimed');
   assert.equal(admin.ledger.get('2222222222'), OTHER, 'the other user keeps their account');
-  assert.deepEqual(admin.ledgerWrites[0], [
-    { customer_id: '1111111111', first_user_id: USER, source: 'connect_during_trial' },
-  ]);
+  assert.deepEqual(admin.ledgerWrites, [], 'nothing is written to the ledger');
+});
+
+test('a trialing user who links only fresh accounts changes nothing at all', async () => {
+  const admin = fakeAdmin({ subscriptions: [trialing()] });
+  const { value } = await quietly(() => enforceTrialAccountLock({ admin, userId: USER, linked }));
+  assert.deepEqual(value.pausedAccountIds, []);
+  assert.deepEqual(admin.accountPatches, []);
+  assert.deepEqual(admin.ledgerWrites, []);
+  assert.equal(admin.ledger.size, 0);
 });
 
 test("the user's own earlier trial account is not paused", async () => {
