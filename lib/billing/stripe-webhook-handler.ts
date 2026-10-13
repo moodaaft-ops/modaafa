@@ -14,6 +14,7 @@ import {
   trialEndingEmail,
 } from '@/lib/notifications/email';
 import { recordTrialGrant } from '@/lib/billing/checkout-policy';
+import { enforceTrialCardUniquenessLive } from '@/lib/billing/trial-card-guard';
 import {
   applySubscriptionEvent,
   subscriptionEventWasApplied,
@@ -36,6 +37,7 @@ const defaultDependencies = {
   subscriptionWelcomeEmail,
   trialEndingEmail,
   recordTrialGrant,
+  enforceTrialCardUniqueness: enforceTrialCardUniquenessLive,
   applySubscriptionEvent,
   subscriptionEventWasApplied,
   recordPaidInvoice,
@@ -115,11 +117,27 @@ export function createStripeWebhookHandler(
           );
           const resolved = dependencies.planFromSubscription(stripeSubscription);
 
+          // One free trial per card. A trial started on a card another user
+          // already trialed with is cancelled in Stripe, written here as
+          // canceled (so it never grants access, not even until the follow-up
+          // customer.subscription.deleted event lands) and gets no welcome
+          // email. The trial still counts as USED for the user, so the
+          // next checkout starts a paid subscription instead of another trial
+          // that would be refused the same way.
+          const cardGuard = await dependencies.enforceTrialCardUniqueness({
+            admin: supabase,
+            userId,
+            subscription: stripeSubscription,
+          });
+          const status = cardGuard.blocked
+            ? 'canceled'
+            : normalizeSubscriptionStatus(stripeSubscription.status);
+
           const writeResult = await dependencies.applySubscriptionEvent(supabase, {
             user_id: userId,
             plan: resolved.plan,
             billing_period: resolved.period,
-            status: normalizeSubscriptionStatus(stripeSubscription.status),
+            status,
             last_event_at: eventCreatedAt,
             stripe_subscription_id: subscriptionId,
             stripe_customer_id:
@@ -130,7 +148,7 @@ export function createStripeWebhookHandler(
             current_period_start: stripeTimestamp(stripeSubscription.current_period_start),
             current_period_end: stripeTimestamp(stripeSubscription.current_period_end),
             canceled_at:
-              normalizeSubscriptionStatus(stripeSubscription.status) === 'canceled'
+              status === 'canceled'
                 ? stripeTimestamp(stripeSubscription.canceled_at) ?? eventCreatedAt
                 : null,
           });
@@ -145,7 +163,7 @@ export function createStripeWebhookHandler(
               source: 'stripe_webhook',
             });
           }
-          if (dependencies.subscriptionEventWasApplied(writeResult)) {
+          if (dependencies.subscriptionEventWasApplied(writeResult) && !cardGuard.blocked) {
             await safeUserEmail(
               dependencies,
               supabase,
@@ -168,11 +186,28 @@ export function createStripeWebhookHandler(
           const userId =
             subscription.metadata?.userId ?? eventSubscription.metadata?.userId;
           const resolved = dependencies.planFromSubscription(subscription);
+
+          // The subscription-created event is the first place a trial exists
+          // with its card attached, and checkout.session.completed can arrive
+          // late or never, so the card guard runs here too (it is idempotent).
+          const cardBlocked =
+            event.type === 'customer.subscription.created' && userId
+              ? (
+                  await dependencies.enforceTrialCardUniqueness({
+                    admin: supabase,
+                    userId,
+                    subscription,
+                  })
+                ).blocked
+              : false;
+          const status = cardBlocked
+            ? 'canceled'
+            : normalizeSubscriptionStatus(subscription.status);
           const row = {
             ...(userId ? { user_id: userId } : {}),
             plan: resolved.plan,
             billing_period: resolved.period,
-            status: normalizeSubscriptionStatus(subscription.status),
+            status,
             stripe_subscription_id: subscription.id,
             stripe_customer_id:
               typeof subscription.customer === 'string'
@@ -183,7 +218,7 @@ export function createStripeWebhookHandler(
             current_period_end: stripeTimestamp(subscription.current_period_end),
             last_event_at: eventCreatedAt,
             canceled_at:
-              normalizeSubscriptionStatus(subscription.status) === 'canceled'
+              status === 'canceled'
                 ? stripeTimestamp(subscription.canceled_at) ?? eventCreatedAt
                 : null,
           };

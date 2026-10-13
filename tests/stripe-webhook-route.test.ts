@@ -150,6 +150,7 @@ function handlerFor(
     }),
     subscriptionEventWasApplied: () => true,
     recordTrialGrant: async () => undefined,
+    enforceTrialCardUniqueness: async () => ({ blocked: false, outcome: 'first_use' as const }),
     completeStripeWebhookEvent: async () => undefined,
     failStripeWebhookEvent: async () => undefined,
     sendOpsAlert: async () => ({ sent: true, id: 'ops-test' }),
@@ -278,4 +279,182 @@ test('the trial-ending email is still sent when the customer has not cancelled',
   assert.equal(response.status, 200);
   assert.equal(sent.length, 1);
   assert.equal(sent[0].to, 'customer@example.com');
+});
+
+// ---------------------------------------------------------------------------
+// One free trial per card
+// ---------------------------------------------------------------------------
+
+function trialingSubscription(overrides: Record<string, unknown> = {}) {
+  return subscription({
+    id: 'sub_card',
+    status: 'trialing',
+    trial_end: CREATED_AT + 14 * 86_400,
+    default_payment_method: 'pm_card',
+    ...overrides,
+  });
+}
+
+function checkoutCompletedEvent(id: string) {
+  return event(
+    'checkout.session.completed',
+    { id: 'cs_card', metadata: { userId: 'user-1' }, subscription: 'sub_card', customer: 'cus_test' },
+    id,
+  );
+}
+
+test('checkout.session.completed passes the live trialing subscription to the card guard', async () => {
+  const guardCalls: Array<{ userId: string; subscriptionId: string }> = [];
+  const applied: Array<Record<string, unknown>> = [];
+  const sent: Array<{ to: string }> = [];
+  const grants: string[] = [];
+  const handler = handlerFor(checkoutCompletedEvent('evt_card_ok'), {
+    createAdminClient: () => trialEndingDatabase() as any,
+    retrieveStripeSubscription: async () => trialingSubscription() as any,
+    enforceTrialCardUniqueness: async ({ userId, subscription: sub }) => {
+      guardCalls.push({ userId, subscriptionId: sub.id });
+      return { blocked: false, outcome: 'first_use' };
+    },
+    applySubscriptionEvent: async (_database, row) => {
+      applied.push(row);
+      return 'inserted';
+    },
+    recordTrialGrant: async ({ userId }) => {
+      grants.push(userId);
+    },
+    sendEmail: (async (message: { to: string }) => {
+      sent.push(message);
+      return { sent: true };
+    }) as any,
+  });
+
+  const response = await handler(request());
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(guardCalls, [{ userId: 'user-1', subscriptionId: 'sub_card' }]);
+  assert.equal(applied[0].status, 'trialing');
+  assert.deepEqual(grants, ['user-1']);
+  assert.equal(sent.length, 1);
+});
+
+test('a duplicate-card trial is written as canceled and gets no welcome email', async () => {
+  const applied: Array<Record<string, unknown>> = [];
+  const sent: Array<{ to: string }> = [];
+  const grants: string[] = [];
+  const handler = handlerFor(checkoutCompletedEvent('evt_card_dupe'), {
+    createAdminClient: () => trialEndingDatabase() as any,
+    retrieveStripeSubscription: async () => trialingSubscription() as any,
+    enforceTrialCardUniqueness: async () => ({ blocked: true, outcome: 'duplicate_card' }),
+    applySubscriptionEvent: async (_database, row) => {
+      applied.push(row);
+      return 'inserted';
+    },
+    recordTrialGrant: async ({ userId }) => {
+      grants.push(userId);
+    },
+    sendEmail: (async (message: { to: string }) => {
+      sent.push(message);
+      return { sent: true };
+    }) as any,
+  });
+
+  const response = await handler(request());
+
+  assert.equal(response.status, 200);
+  assert.equal(applied.length, 1);
+  assert.equal(applied[0].status, 'canceled');
+  assert.equal(applied[0].canceled_at, '2026-08-03T12:00:00.000Z');
+  assert.deepEqual(sent, []);
+  // The trial still counts as used, so the next checkout does not offer another.
+  assert.deepEqual(grants, ['user-1']);
+});
+
+test('customer.subscription.created also runs the card guard and a block writes canceled', async () => {
+  const guardCalls: string[] = [];
+  const applied: Array<Record<string, unknown>> = [];
+  const handler = handlerFor(
+    event('customer.subscription.created', { id: 'sub_card', metadata: { userId: 'user-1' } }, 'evt_created_dupe'),
+    {
+      retrieveStripeSubscription: async () => trialingSubscription() as any,
+      enforceTrialCardUniqueness: async ({ subscription: sub }) => {
+        guardCalls.push(sub.id);
+        return { blocked: true, outcome: 'duplicate_card' };
+      },
+      applySubscriptionEvent: async (_database, row) => {
+        applied.push(row);
+        return 'updated';
+      },
+    },
+  );
+
+  const response = await handler(request());
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(guardCalls, ['sub_card']);
+  assert.equal(applied[0].status, 'canceled');
+});
+
+test('customer.subscription.updated and a missing user never run the card guard', async () => {
+  let calls = 0;
+  const guard = async () => {
+    calls += 1;
+    return { blocked: true, outcome: 'duplicate_card' as const };
+  };
+  const applied: Array<Record<string, unknown>> = [];
+  const apply = async (_database: unknown, row: Record<string, unknown>) => {
+    applied.push(row);
+    return 'updated' as const;
+  };
+
+  await handlerFor(
+    event('customer.subscription.updated', { id: 'sub_card', metadata: { userId: 'user-1' } }, 'evt_updated'),
+    {
+      retrieveStripeSubscription: async () => trialingSubscription() as any,
+      enforceTrialCardUniqueness: guard,
+      applySubscriptionEvent: apply as any,
+    },
+  )(request());
+
+  await handlerFor(
+    event('customer.subscription.created', { id: 'sub_card' }, 'evt_created_no_user'),
+    {
+      retrieveStripeSubscription: async () =>
+        trialingSubscription({ metadata: {} }) as any,
+      enforceTrialCardUniqueness: guard,
+      applySubscriptionEvent: apply as any,
+    },
+  )(request());
+
+  assert.equal(calls, 0);
+  assert.deepEqual(
+    applied.map((row) => row.status),
+    ['trialing', 'trialing'],
+  );
+});
+
+test('a card guard failure returns a retryable 500 instead of leaving a known duplicate trial', async () => {
+  const failures: string[] = [];
+  const handler = handlerFor(checkoutCompletedEvent('evt_card_throw'), {
+    createAdminClient: () => trialEndingDatabase() as any,
+    retrieveStripeSubscription: async () => trialingSubscription() as any,
+    enforceTrialCardUniqueness: async () => {
+      throw new Error('stripe cancel failed');
+    },
+    applySubscriptionEvent: async () => {
+      throw new Error('must not be written before the guard settles');
+    },
+    failStripeWebhookEvent: async (_database, _id, message) => {
+      failures.push(message);
+    },
+  });
+
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const response = await handler(request());
+    assert.equal(response.status, 500);
+  } finally {
+    console.error = originalError;
+  }
+  assert.deepEqual(failures, ['stripe cancel failed']);
 });

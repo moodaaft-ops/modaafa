@@ -171,6 +171,27 @@ export async function cancelStripeSubscription(subscriptionId: string) {
 }
 
 /**
+ * Immediate cancellation for abuse and dispute handling: no proration and no
+ * final invoice. Both are Stripe's defaults, spelled out so a future default
+ * change cannot turn a fraud cancellation into a surprise charge or credit.
+ */
+export async function cancelStripeSubscriptionImmediately(subscriptionId: string) {
+  return getStripe().subscriptions.cancel(subscriptionId, { invoice_now: false, prorate: false });
+}
+
+/**
+ * The Stripe calls the trial card guard needs (lib/billing/trial-card-guard.ts),
+ * bound to the real client. The guard itself takes these as injected
+ * dependencies so it can be tested without Stripe.
+ */
+export const trialCardStripe = {
+  retrievePaymentMethod: (id: string) => getStripe().paymentMethods.retrieve(id),
+  retrieveCustomer: (id: string) => getStripe().customers.retrieve(id),
+  retrieveSubscription: (id: string) => getStripe().subscriptions.retrieve(id),
+  cancelSubscription: (id: string) => cancelStripeSubscriptionImmediately(id),
+};
+
+/**
  * Schedules (or undoes) a cancellation at the end of the current period.
  * During a trial the "period" is the trial itself, so a scheduled cancel ends
  * the subscription on the trial end date without ever charging the card.
