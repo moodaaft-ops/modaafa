@@ -70,6 +70,15 @@ test('the account guide can be framed from one YouTube host and nothing else', (
   assert.equal(directive(policy, 'object-src'), "object-src 'none'");
 });
 
+test('the install worker and the manifest are allowed from our own origin only', () => {
+  const policy = buildContentSecurityPolicy('n');
+  // Workers would otherwise fall back to script-src and its 'strict-dynamic',
+  // so the rule for them is written out rather than left to each browser.
+  assert.equal(directive(policy, 'worker-src'), "worker-src 'self'");
+  assert.equal(directive(policy, 'manifest-src'), "manifest-src 'self'");
+  assert.ok(!directive(policy, 'script-src')?.includes('blob:'), 'workers from blob: stay refused');
+});
+
 test('style-src keeps unsafe-inline deliberately', () => {
   // Next and the font loader emit inline <style> blocks that cannot take a
   // nonce. This asserts the decision so a future tightening is a conscious

@@ -7,6 +7,7 @@ import { isModaafaOperator } from '@/lib/platform/operators';
 import { isChatFirstEnabled } from '@/lib/chat-first/flag';
 import { readAccessOverrides } from '@/lib/billing/access-overrides';
 import { SuspendedBanner } from './suspended-banner';
+import { InstallPrompt } from './install-prompt';
 import { SimpleChrome } from './simple-chrome';
 import { isSimpleExperience } from '@/lib/setup/mode';
 import { listRecentChats } from '@/lib/chat-first/sessions';
@@ -57,6 +58,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         recentChats={recentChats}
       >
         {overrides.suspended && <SuspendedBanner />}
+        <InstallPrompt />
         {children}
       </SimpleChrome>
     );
@@ -74,6 +76,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       chatFirst={isChatFirstEnabled(process.env, user.email)}
     >
       {overrides.suspended && <SuspendedBanner />}
+      <InstallPrompt />
       {children}
     </DashboardChrome>
   );

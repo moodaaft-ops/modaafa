@@ -44,6 +44,16 @@ export function buildContentSecurityPolicy(nonce: string): string {
     "img-src 'self' data: blob: https://lh3.googleusercontent.com https://modaafa.com https://analytics.tiktok.com",
     "font-src 'self' data:",
     "media-src 'self' blob:",
+    // Written out on purpose for the install worker (/sw.js, see public/sw.js).
+    // A worker is checked against worker-src, which otherwise falls back to
+    // script-src, where 'strict-dynamic' makes some browsers ignore 'self'.
+    // Chromium 141 accepted the registration even without this line (tested,
+    // 14 Oct 2026); naming it means the rule for workers does not depend on how
+    // a given browser version applies that fallback, and that nothing but our
+    // own origin can ever run as a worker. manifest-src would fall back to
+    // default-src 'self' anyway; it is spelled out so the intent is visible.
+    "worker-src 'self'",
+    "manifest-src 'self'",
     'frame-src https://www.youtube-nocookie.com',
     "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://analytics.tiktok.com https://analytics-ipv6.tiktokw.us",
     'upgrade-insecure-requests',

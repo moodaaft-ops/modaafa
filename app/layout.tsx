@@ -99,6 +99,21 @@ const themeScript = `
 })();
 `;
 
+// Chrome and Edge raise beforeinstallprompt once, soon after load, and a late
+// listener misses it. This keeps the event until the install card (a client
+// component deep in the dashboard) has hydrated and asks for it. Calling
+// preventDefault stops the browser's own mini-bar on Android so the card is
+// the only offer; the address-bar install icon on desktop is unaffected.
+const installCaptureScript = `
+(function(){
+  window.addEventListener('beforeinstallprompt', function(e){
+    e.preventDefault();
+    window.__modaafaInstallEvent = e;
+    window.dispatchEvent(new Event('modaafa:install-ready'));
+  });
+})();
+`;
+
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   // Reading the nonce here is also what opts the whole tree out of static
   // rendering. That is the accepted cost of a nonce CSP: a prerendered page is
@@ -111,6 +126,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     <html lang="ar" dir="rtl" className={`${arabic.variable} ${display.variable} ${mono.variable} w-full max-w-full overflow-x-hidden`} suppressHydrationWarning>
       <body className="w-full max-w-full overflow-x-hidden bg-background font-sans text-foreground antialiased">
         <script nonce={nonce} dangerouslySetInnerHTML={{ __html: themeScript }} />
+        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: installCaptureScript }} />
         {children}
       </body>
     </html>
