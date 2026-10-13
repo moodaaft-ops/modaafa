@@ -40,6 +40,8 @@ import {
 import { loadCampaignsForDateRange } from '@/lib/analytics/campaign-performance';
 import { DateRangePicker } from '@/lib/ui/date-range-picker';
 import { buildDailyPlan, type DailyPlanTask } from '@/lib/guidance/daily-plan';
+import { isSimpleExperience } from '@/lib/setup/mode';
+import { homeTargetFrom } from '@/lib/setup/routes';
 import {
   actionHistoryLabel,
   actionHistoryState,
@@ -99,6 +101,8 @@ export default async function DashboardPage({
   const params = await searchParams;
   const { supabase, user } = await getRequestAuthContext();
   if (!user) redirect('/login');
+  // The simple experience replaces this screen with «مُضاعِف» on /home.
+  if (isSimpleExperience(process.env, user.email)) redirect(homeTargetFrom(params as Record<string, string | undefined>));
   const {
     business: workspaceBusiness,
     accounts,

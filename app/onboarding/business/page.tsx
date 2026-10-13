@@ -4,6 +4,8 @@ import { getRequestAuthContext } from '@/lib/supabase/server';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { OnboardingProgress } from '../onboarding-progress';
 import { BusinessForm } from './business-form';
+import { isSimpleExperience } from '@/lib/setup/mode';
+import { simpleOnboardingTarget } from '@/lib/setup/routes';
 
 const errors: Record<string, string> = {
   invalid_origin: 'تعذر التحقق من مصدر الطلب. أعد المحاولة من داخل المنصة.',
@@ -39,6 +41,10 @@ export default async function BusinessOnboardingPage({
   // that way is not onboarding at all and must be able to leave without
   // submitting the form.
   const canLeave = (accounts?.length ?? 0) > 0;
+  // The simple experience asks the same things in the setup chat, one tap each.
+  if (isSimpleExperience(process.env, user.email)) {
+    redirect(simpleOnboardingTarget('business', {}, { hasAccounts: canLeave }));
+  }
 
   return (
     <main className="px-4 py-8 sm:px-6">

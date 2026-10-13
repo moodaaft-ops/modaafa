@@ -9,6 +9,8 @@ import { buttonClasses } from '@/lib/ui/button';
 import { accountsCountLabel } from '@/lib/onboarding/account-choice';
 import { NO_ACCOUNT_PATH } from '@/lib/onboarding/ads-guide';
 import { OnboardingProgress } from '../onboarding-progress';
+import { isSimpleExperience } from '@/lib/setup/mode';
+import { simpleOnboardingTarget } from '@/lib/setup/routes';
 import { ConnectGoogleAdsButton } from './connect-google-ads-button';
 import {
   SUPPORT_WHATSAPP_DISPLAY,
@@ -54,6 +56,9 @@ export default async function ConnectGoogleAdsPage({
   const { accounts, revokedAccounts } = await getAccountWorkspace(user.id);
   const hasAccounts = (accounts?.length ?? 0) > 0;
   const hasRevokedAccounts = revokedAccounts.length > 0;
+  if (isSimpleExperience(process.env, user.email)) {
+    redirect(simpleOnboardingTarget('connect', { error: params?.error }, { hasAccounts: hasAccounts || hasRevokedAccounts }));
+  }
   const googleVerified = process.env.GOOGLE_OAUTH_APP_VERIFIED === 'true';
   // `no_client_accounts` is not an error the user can fix by retrying the same
   // thing, so it gets its own recovery block instead of a red bar above an
