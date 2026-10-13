@@ -60,5 +60,7 @@ export function usd(amount: number, digits = 2) {
     format = new Intl.NumberFormat('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits, useGrouping: false });
     usdFormats.set(digits, format);
   }
-  return `$${format.format(amount)}`;
+  const text = format.format(Math.abs(amount));
+  // Sign before the currency symbol ("-$0.012"), and no sign on a value that rounds to zero.
+  return amount < 0 && Number(text) !== 0 ? `-$${text}` : `$${text}`;
 }

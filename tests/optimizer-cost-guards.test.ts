@@ -5,7 +5,11 @@ import {
   sanitizeSnapshotForPrompt,
   type OptimizerSnapshot,
 } from '../lib/ai/optimizer-agent';
-import { isSnapshotIdle, optimizerCooldownCutoffIso } from '../lib/ai/optimizer-cost-guards';
+import {
+  isSnapshotIdle,
+  optimizerCooldownCutoffIso,
+  optimizerCursorStampIso,
+} from '../lib/ai/optimizer-cost-guards';
 
 const NOW = Date.parse('2026-10-13T10:00:00.000Z');
 
@@ -70,9 +74,38 @@ function idleSnapshot(): OptimizerSnapshot {
   });
 }
 
-test('cooldown cutoff is the given number of hours before now', () => {
-  assert.equal(optimizerCooldownCutoffIso(NOW, 12), '2026-10-12T22:00:00.000Z');
-  assert.equal(optimizerCooldownCutoffIso(NOW, 1), '2026-10-13T09:00:00.000Z');
+test('cooldown cutoff is the cooldown before now, less a grace for the stamp-after-run delay', () => {
+  // 12 hours minus the 30 minute grace.
+  assert.equal(optimizerCooldownCutoffIso(NOW, 12), '2026-10-12T22:30:00.000Z');
+  // A short cooldown gets a tenth of itself as grace: 60 minutes minus 6.
+  assert.equal(optimizerCooldownCutoffIso(NOW, 1), '2026-10-13T09:06:00.000Z');
+});
+
+test('two scheduler slots exactly one cooldown apart still meet each other', () => {
+  // Slot A starts 12h before slot B and its account is stamped 4 minutes after it started.
+  const slotA = NOW - 12 * 3_600_000;
+  const stampedAt = new Date(slotA + 4 * 60_000).toISOString();
+  const cutoff = optimizerCooldownCutoffIso(NOW, 12)!;
+  // The account is eligible again in slot B: its stamp is older than the cutoff.
+  assert.ok(stampedAt < cutoff, `${stampedAt} should be before ${cutoff}`);
+});
+
+test('a finished pass rests the account for the whole cooldown', () => {
+  assert.equal(optimizerCursorStampIso(NOW, 12, false), new Date(NOW).toISOString());
+});
+
+test('a failed pass is stamped so the account comes back about an hour later, not after 12', () => {
+  const stamp = optimizerCursorStampIso(NOW, 12, true);
+  const eligibleAgainAt = Date.parse(stamp) + 12 * 3_600_000;
+  assert.equal(eligibleAgainAt - NOW, 3_600_000);
+  // Still behind accounts that were never touched, so a failing account does not hog the queue.
+  assert.ok(Date.parse(stamp) < NOW);
+});
+
+test('a failed pass with a cooldown no longer than the retry delay is stamped as now', () => {
+  assert.equal(optimizerCursorStampIso(NOW, 1, true), new Date(NOW).toISOString());
+  assert.equal(optimizerCursorStampIso(NOW, 0, true), new Date(NOW).toISOString());
+  assert.equal(optimizerCursorStampIso(NOW, Number.NaN, true), new Date(NOW).toISOString());
 });
 
 test('cooldown is off for zero, negative or invalid hours', () => {
@@ -134,6 +167,30 @@ test('a bid target that carried spend keeps the account out of the shortcut', ()
   assert.equal(isSnapshotIdle(dormant), true);
 });
 
+test('a metric that is present but unreadable never makes an account look idle', () => {
+  const unreadable = campaignRow(1, { metrics: { cost_micros: 'not a number', clicks: 0, conversions: 0 } });
+  assert.equal(isSnapshotIdle(snapshotWith({ campaigns: [unreadable], wasted_search_terms: [] })), false);
+  // A metric that is simply absent still counts as zero.
+  const missing = campaignRow(2, { metrics: {} });
+  assert.equal(isSnapshotIdle(snapshotWith({ campaigns: [missing], wasted_search_terms: [] })), true);
+});
+
+test('utilization keeps four decimals so the 90 percent rule cannot flip on rounding', () => {
+  const near = snapshotWith({
+    budget_utilization: [
+      { campaign: { resource_name: 'customers/123/campaigns/1' }, spend_7d: 10, utilization: 0.89996 },
+    ] as any,
+  });
+  const parsed = JSON.parse(sanitizeSnapshotForPrompt(near));
+  assert.equal(parsed.budget_utilization[0].utilization, 0.9);
+  const under = snapshotWith({
+    budget_utilization: [
+      { campaign: { resource_name: 'customers/123/campaigns/1' }, spend_7d: 10, utilization: 0.8996 },
+    ] as any,
+  });
+  assert.equal(JSON.parse(sanitizeSnapshotForPrompt(under)).budget_utilization[0].utilization, 0.8996);
+});
+
 test('a malformed snapshot is never treated as idle', () => {
   const broken = { ...idleSnapshot(), campaigns: undefined } as unknown as OptimizerSnapshot;
   assert.equal(isSnapshotIdle(broken), false);
@@ -165,7 +222,8 @@ test('budget utilization keeps a join key, the name and the numbers, and drops t
     assert.ok(campaignResources.has(row.campaign_resource), row.campaign_resource);
     assert.match(row.campaign_name, /^حملة رقم/);
     assert.equal(row.spend_7d, 120.12);
-    assert.equal(row.utilization, 0.343);
+    assert.equal(row.utilization, 0.3429);
+    assert.match(row.budget_resource, /campaignBudgets/);
     assert.equal('campaign' in row, false);
     assert.equal('campaign_budget' in row, false);
   }

@@ -74,6 +74,21 @@ test('a young ledger averages over the days it covers and hides the previous wee
   assert.equal(report.firstRowDay, '2026-10-11');
 });
 
+test('the daily average counts finished days only and ignores the day in progress', () => {
+  // Seven finished days at 2 dollars and a small morning today.
+  const rows = [row(0, 0.1), ...Array.from({ length: 7 }, (_, i) => row(i + 1, 2))];
+  const report = buildCostReport(rows, [], OPTIONS);
+  assert.equal(report.avgDailyDays, 7);
+  assert.equal(report.last7.avgDailyUsd, 2);
+  assert.equal(report.next30DaysUsd, 60);
+});
+
+test('with no finished day in the ledger the average falls back to the partial day and says so', () => {
+  const report = buildCostReport([row(0, 0.5)], [], OPTIONS);
+  assert.equal(report.avgDailyDays, 0);
+  assert.equal(report.last7.avgDailyUsd, 0.5);
+});
+
 test('an empty ledger gives zeros and no first day', () => {
   const report = buildCostReport([], [], OPTIONS);
   assert.equal(report.last30.costUsd, 0);
@@ -204,7 +219,7 @@ test('monthly ceiling follows the cooldown and is absent without one', () => {
 });
 
 test('credit: estimated balance, runway and the paid credit left when the promo expires', () => {
-  // 1.24 spent since the reading (start of 13 Oct Riyadh), 2 a day on average.
+  // 1.24 spent since the reading (start of 13 Oct Riyadh), 2.1 a day over six finished days.
   const rows = [row(0, 1.24), ...Array.from({ length: 6 }, (_, i) => row(i + 1, 2.1))];
   const report = buildCostReport(rows, [], { ...OPTIONS, credit: CREDIT });
   const credit = report.credit!;
@@ -212,10 +227,20 @@ test('credit: estimated balance, runway and the paid credit left when the promo 
   assert.equal(credit.estimatedBalanceUsd, 200);
   assert.equal(credit.promoUsd, 195.56);
   assert.equal(credit.daysToPromoExpiry, 25);
-  assert.equal(credit.dailyAvgUsd, 1.98);
-  assert.equal(credit.runwayDays, Math.floor(200 / report.last7.avgDailyUsd));
+  assert.equal(credit.promoExpired, false);
+  // Today's partial 1.24 stays out of the daily average.
+  assert.equal(credit.dailyAvgUsd, 2.1);
   assert.equal(credit.paidAtExpiryUsd, 5.68);
-  assert.equal(credit.paidRunwayDays, Math.floor(5.68 / report.last7.avgDailyUsd));
+  assert.equal(credit.paidRunwayDays, Math.floor(5.68 / 2.1));
+  // 200 / 2.1 would say 95 days, but 195 dollars of it vanish in 25 days: 25 + 2.
+  assert.equal(credit.runwayDays, 25 + Math.floor(5.68 / 2.1));
+});
+
+test('credit: the runway is not stretched across the promo expiry', () => {
+  const rows = Array.from({ length: 7 }, (_, i) => row(i + 1, 1));
+  const credit = buildCostReport(rows, [], { ...OPTIONS, credit: CREDIT }).credit!;
+  // Plain division would give 201 days; the real answer is 25 days of promo plus 5 paid.
+  assert.equal(credit.runwayDays, 25 + 5);
 });
 
 test('credit: when the whole balance runs out before the expiry, no paid credit is left', () => {
@@ -231,6 +256,31 @@ test('credit: no spend means no runway number instead of a division by zero', ()
   assert.equal(credit.runwayDays, null);
   assert.equal(credit.paidRunwayDays, null);
   assert.equal(credit.estimatedBalanceUsd, 201.24);
+});
+
+test('credit: after the promo expired it comes off the estimate', () => {
+  const expired: AnthropicCreditReading = { ...CREDIT, readAt: '2026-09-20T00:00:00+03:00', promoExpiresOn: '2026-10-01' };
+  const credit = buildCostReport([], [], { ...OPTIONS, credit: expired }).credit!;
+  assert.equal(credit.promoExpired, true);
+  assert.equal(credit.daysToPromoExpiry, null);
+  assert.equal(credit.estimatedBalanceUsd, 5.68);
+  const alerts = buildCostReport([], [], { ...OPTIONS, credit: expired }).alerts;
+  assert.ok(alerts.some((a) => a.code === 'promo_expired'));
+  assert.equal(alerts.some((a) => a.code === 'promo_expiring'), false);
+});
+
+test('credit: after the promo expired, runway counts only the paid part', () => {
+  const expired: AnthropicCreditReading = { ...CREDIT, readAt: '2026-09-20T00:00:00+03:00', promoExpiresOn: '2026-10-01' };
+  const rows = Array.from({ length: 7 }, (_, i) => row(i + 1, 1));
+  const credit = buildCostReport(rows, [], { ...OPTIONS, credit: expired }).credit!;
+  assert.equal(credit.runwayDays, 5);
+});
+
+test('credit: a reading taken after the expiry already excludes the promo', () => {
+  const past: AnthropicCreditReading = { ...CREDIT, balanceUsd: 40, purchasedUsd: 40, promoExpiresOn: '2026-10-01' };
+  const credit = buildCostReport([], [], { ...OPTIONS, credit: past }).credit!;
+  assert.equal(credit.promoExpired, false);
+  assert.equal(credit.estimatedBalanceUsd, 40);
 });
 
 test('credit: a promo date in the past is treated as gone', () => {

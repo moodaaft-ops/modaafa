@@ -64,6 +64,7 @@ function countAr(n: number, forms: { one: string; two: string; few: string; many
   return `${formatNumberAr(value)} ${label}`;
 }
 const daysAr = (n: number) => countAr(n, { one: 'يوم', two: 'يومين', few: 'أيام', many: 'يوم' });
+const timesAr = (n: number) => countAr(n, { one: 'مرة', two: 'مرتين', few: 'مرات', many: 'مرة' });
 const callsAr = (n: number) => countAr(n, { one: 'نداء', two: 'نداءان', few: 'نداءات', many: 'نداء' });
 
 const sarText = (valueUsd: number) => `${formatNumberAr(Math.round(valueUsd * SAR_PER_USD))} ريال تقريباً`;
@@ -83,6 +84,8 @@ function alertText(alert: CostAlert): string {
       return `الرصيد التقديري ${usd(Number(v.balanceUsd))} ويكفي ${daysAr(Number(v.days))} فقط بالصرف الحالي. اشحن قبل ما يقف المحسّن`;
     case 'runway_low':
       return `الرصيد التقديري ${usd(Number(v.balanceUsd))} ويكفي ${daysAr(Number(v.days))} بالصرف الحالي`;
+    case 'promo_expired':
+      return `الرصيد الترويجي (قرابة ${usd(Number(v.promoUsd))}) انتهى وانطرح من التقدير. المتبقي من المدفوع قرابة ${usd(Number(v.balanceUsd))}. قارنه بالكونسول وحدّث القراءة`;
     case 'promo_expiring': {
       const runway = Number(v.paidRunwayDays);
       const tail = runway >= 0 ? ` ويكفي ${daysAr(runway)}` : '';
@@ -113,7 +116,7 @@ function headline(report: CostReport): { tone: 'danger' | 'warning' | 'ok'; text
     return { tone: 'warning', text: 'ما فيه أي سجل تكلفة بعد. السجل يبدأ يتعبى مع أول نداء للنموذج بعد تشغيل ميقريشن llm_usage' };
   }
   const open = report.alerts.filter((alert) => alert.tone === 'warning').length;
-  const base = `الصرف هادي: ${usd(report.todaySpend.costUsd)} اليوم، وتوقع الشهر ${usd(report.monthProjectionUsd)}`;
+  const base = `صرف اليوم ${usd(report.todaySpend.costUsd)}، وتوقع الشهر ${usd(report.monthProjectionUsd)}`;
   return open > 0
     ? { tone: 'warning', text: `${base}. وفيه ${open === 1 ? 'تنبيه واحد' : `${formatNumberAr(open)} تنبيهات`} تحت يستاهل نظرتك` }
     : { tone: 'ok', text: base };
@@ -175,9 +178,11 @@ export default async function OperationsCostsPage() {
             label="المتوسط اليومي"
             value={<Usd value={report.last7.avgDailyUsd} />}
             hint={
-              report.observedDays7 < 7
-                ? `السجل يغطي ${daysAr(report.observedDays7)} فقط، فالمتوسط تقريبي`
-                : 'آخر 7 أيام'
+              report.avgDailyDays === 0
+                ? 'لا يوم كامل في السجل بعد، فهذا رقم اليوم الجزئي'
+                : report.avgDailyDays < 7
+                  ? `من ${daysAr(report.avgDailyDays)} كاملة فقط، فالمتوسط تقريبي`
+                  : 'آخر 7 أيام كاملة بدون اليوم'
             }
           />
           <Strip
@@ -192,7 +197,9 @@ export default async function OperationsCostsPage() {
               credit
                 ? credit.runwayDays === null
                   ? 'ما فيه صرف كافي لحساب المدة'
-                  : `يكفي ${daysAr(credit.runwayDays)} بالصرف الحالي`
+                  : credit.daysToPromoExpiry !== null
+                    ? `يكفي ${daysAr(credit.runwayDays)} بالصرف الحالي، والترويجي ينتهي بعد ${daysAr(credit.daysToPromoExpiry)}`
+                    : `يكفي ${daysAr(credit.runwayDays)} بالصرف الحالي`
                 : 'أضف قراءة الرصيد في cost-config'
             }
           />
@@ -352,7 +359,7 @@ export default async function OperationsCostsPage() {
           <SectionHead
             id="optimizer-title"
             title="المحسّن"
-            note="هو الجزء الأكبر من الفاتورة، لأنه يقرأ كل حساب نشط ويسأل النموذج عنه."
+            note="أكبر بند في الفاتورة. كل جولة تنادي النموذج مرة لكل حساب مستحق للمراجعة."
           />
           <dl className="mt-4 grid gap-px border border-border bg-border sm:grid-cols-2 lg:grid-cols-4">
             <Cell
@@ -392,7 +399,7 @@ export default async function OperationsCostsPage() {
               </p>
             ) : (
               <p className="mt-1 text-muted-foreground">
-                في آخر 7 أيام تخطينا {formatNumberAr(report.optimizer.cooledDown7)} حساب بسبب الراحة و{formatNumberAr(report.optimizer.skippedIdle7)} حساب خامل بلا إنفاق.
+                في آخر 7 أيام مرّت الجولات {timesAr(report.optimizer.cooledDown7)} على حساب في راحته، و{timesAr(report.optimizer.skippedIdle7)} على حساب خامل بلا إنفاق، وما كلّفتنا أي منها نداء.
                 {report.optimizer.avoidedUsd7 !== null && (
                   <>
                     {' '}بسعر النداء المتوسط هذا يعادل قرابة <Usd value={report.optimizer.avoidedUsd7} /> (تقدير، مو رقم مقاس).
@@ -407,7 +414,7 @@ export default async function OperationsCostsPage() {
           <SectionHead
             id="cache-title"
             title="الكاش"
-            note="الكاش يخلي النموذج يقرأ التعليمات الثابتة بخمس السعر. آخر 7 أيام."
+            note="التعليمات الثابتة اللي تنقرأ من الكاش تكلّف خمسة بالمئة من سعر الإدخال العادي. آخر 7 أيام."
           />
           {report.cache.readTokens + report.cache.writeTokens === 0 ? (
             <p className="mt-4 border border-border px-4 py-5 text-sm leading-6 text-muted-foreground">

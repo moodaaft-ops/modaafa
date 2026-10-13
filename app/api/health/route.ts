@@ -183,7 +183,7 @@ async function checkDatabase() {
         jobExpectations.map(({ jobName }) =>
           supabase
             .from('job_runs')
-            .select('job_name, status, started_at, finished_at, processed, error_count')
+            .select('job_name, status, started_at, finished_at, processed, error_count, details')
             .eq('job_name', jobName)
             .order('started_at', { ascending: false })
             .limit(1)

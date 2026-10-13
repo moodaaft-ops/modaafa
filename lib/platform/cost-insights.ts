@@ -41,6 +41,7 @@ export type CostAlertCode =
   | 'runway_critical'
   | 'runway_low'
   | 'promo_expiring'
+  | 'promo_expired'
   | 'reading_stale'
   | 'auto_reload_off';
 
@@ -68,7 +69,10 @@ export type CreditReport = {
   promoUsd: number;
   promoExpiresOn: string | null;
   daysToPromoExpiry: number | null;
+  /** The promotional part has already expired and was taken off the estimate. */
+  promoExpired: boolean;
   dailyAvgUsd: number;
+  /** Days until the money runs out, counting the promotional part only until it expires. */
   runwayDays: number | null;
   /** Paid credit still expected on the day the promotional part expires. */
   paidAtExpiryUsd: number | null;
@@ -83,6 +87,11 @@ export type CostReport = {
   firstRowDay: string | null;
   /** How many of the last 7 days the ledger actually covers (1 to 7). */
   observedDays7: number;
+  /**
+   * How many finished days stand behind the daily average. Zero means the ledger
+   * has no finished day yet and the average falls back to today's partial figure.
+   */
+  avgDailyDays: number;
   todaySpend: SpendWindow;
   yesterday: SpendWindow;
   last7: SpendWindow & { avgDailyUsd: number };
@@ -217,26 +226,38 @@ export function buildCreditReport(
     }
   }
   spentSince = round2(spentSince);
-  const estimated = Math.max(0, round2(credit.balanceUsd - spentSince));
+  let estimated = Math.max(0, round2(credit.balanceUsd - spentSince));
   const promoUsd = Math.max(0, round2(credit.balanceUsd - credit.purchasedUsd));
 
   const todayKey = riyadhDayKey(now);
   let daysToPromoExpiry: number | null = null;
+  let promoExpired = false;
   if (credit.promoExpiresOn) {
     const diff = dayDiff(todayKey, credit.promoExpiresOn);
     daysToPromoExpiry = diff >= 0 ? diff : null;
+    // The promotional part is gone once its day has passed, unless the reading
+    // was itself taken after that day (then the console balance already excludes it).
+    const readAfterExpiry = Number.isFinite(readAtMs) && riyadhDayKey(readAtMs) > credit.promoExpiresOn;
+    promoExpired = diff < 0 && !readAfterExpiry;
   }
-
-  const runwayDays = dailyAvgUsd > 0 ? Math.floor(estimated / dailyAvgUsd) : null;
+  // After expiry, assume the promotional part was spent first (that is the part
+  // that disappears), so only the purchased part can remain.
+  if (promoExpired) estimated = Math.min(estimated, Math.max(0, round2(credit.purchasedUsd)));
 
   let paidAtExpiryUsd: number | null = null;
   let paidRunwayDays: number | null = null;
+  let runwayDays: number | null = dailyAvgUsd > 0 ? Math.floor(estimated / dailyAvgUsd) : null;
   if (daysToPromoExpiry !== null) {
     // Assumes the promotional part is spent before the purchased part, so the
     // paid credit survives the expiry unless the whole balance runs out first.
     const balanceAtExpiry = Math.max(0, estimated - dailyAvgUsd * daysToPromoExpiry);
     paidAtExpiryUsd = round2(Math.min(credit.purchasedUsd, balanceAtExpiry));
     paidRunwayDays = dailyAvgUsd > 0 ? Math.floor(paidAtExpiryUsd / dailyAvgUsd) : null;
+    // The balance includes promotional money that vanishes on the expiry day,
+    // so the real runway is the days until then plus what the paid part covers.
+    if (dailyAvgUsd > 0 && runwayDays !== null) {
+      runwayDays = Math.min(runwayDays, daysToPromoExpiry + (paidRunwayDays ?? 0));
+    }
   }
 
   return {
@@ -249,6 +270,7 @@ export function buildCreditReport(
     promoUsd,
     promoExpiresOn: credit.promoExpiresOn,
     daysToPromoExpiry,
+    promoExpired,
     dailyAvgUsd: round2(dailyAvgUsd),
     runwayDays,
     paidAtExpiryUsd,
@@ -361,7 +383,14 @@ export function buildCostReport(
   // the days it actually covers rather than by 7.
   const sinceFirst = firstRowDay === null ? 0 : dayDiff(firstRowDay, today) + 1;
   const observedDays7 = Math.max(1, Math.min(7, sinceFirst));
-  const avgDaily7 = last7.costUsd / observedDays7;
+  // Averages and projections use whole days only: today is still in progress, so
+  // counting it with a full day's divisor would make every morning look cheap.
+  // With no finished day in the ledger yet, fall back to the partial figure.
+  const completeDays7 = days30.slice(-8, -1);
+  const completeObserved = firstRowDay === null ? 0 : Math.max(0, Math.min(7, dayDiff(firstRowDay, today)));
+  let completeCost7 = 0;
+  for (const day of completeDays7) completeCost7 += byDay.get(day)?.costUsd ?? 0;
+  const avgDaily7 = completeObserved > 0 ? completeCost7 / completeObserved : last7.costUsd / observedDays7;
   const prev7Complete = firstRowDay !== null && dayDiff(firstRowDay, today) >= 13;
 
   const dayOfMonth = dayOfRiyadhMonth(now);
@@ -478,7 +507,13 @@ export function buildCostReport(
     } else if (credit.runwayDays !== null && credit.runwayDays < warning) {
       alerts.push({ code: 'runway_low', tone: 'warning', values: { days: credit.runwayDays, balanceUsd: credit.estimatedBalanceUsd } });
     }
-    if (credit.daysToPromoExpiry !== null && credit.daysToPromoExpiry <= 30 && credit.promoUsd > 0) {
+    if (credit.promoExpired && credit.promoUsd > 0) {
+      alerts.push({
+        code: 'promo_expired',
+        tone: 'info',
+        values: { promoUsd: credit.promoUsd, balanceUsd: credit.estimatedBalanceUsd },
+      });
+    } else if (credit.daysToPromoExpiry !== null && credit.daysToPromoExpiry <= 30 && credit.promoUsd > 0) {
       alerts.push({
         code: 'promo_expiring',
         tone: credit.daysToPromoExpiry <= 14 ? 'warning' : 'info',
@@ -506,6 +541,7 @@ export function buildCostReport(
     today,
     firstRowDay,
     observedDays7,
+    avgDailyDays: completeObserved,
     todaySpend: { costUsd: round6(todaySpend.costUsd), calls: todaySpend.calls },
     yesterday: { costUsd: round6(yesterdaySpend.costUsd), calls: yesterdaySpend.calls },
     last7: { costUsd: round6(last7.costUsd), calls: last7.calls, avgDailyUsd: round6(avgDaily7) },

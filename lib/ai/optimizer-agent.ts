@@ -281,20 +281,24 @@ function isWellFormedAction(action: any): action is OptimizerAction {
  * { campaign, campaign_budget, spend_7d, utilization } where the first two are
  * the very objects already sent in `campaigns`, so repeating them only cost
  * tokens. The row keeps the campaign's resource name as the join key and its
- * name for the Arabic reason text; the budget resource and amount stay in the
- * matching `campaigns` row, which is where the prompt tells the model to copy
- * them from. Server-side grounding still runs on the full snapshot.
+ * name for the Arabic reason text, and the budget resource; the budget amount
+ * stays in the matching `campaigns` row, which is where the prompt tells the
+ * model to copy it from. Server-side grounding still runs on the full snapshot.
  */
 function promptBudgetUtilization(rows: any[] | undefined) {
   if (!Array.isArray(rows)) return rows;
   return rows.map((row) => {
     const campaign = row?.campaign ?? {};
+    const budget = row?.campaign_budget ?? row?.campaignBudget ?? {};
     return {
       campaign_resource: campaign.resource_name ?? campaign.resourceName ?? null,
       campaign_name: campaign.name ?? null,
+      // The exact string adjust_budget must copy, so no join is needed to find it.
+      budget_resource: budget.resource_name ?? budget.resourceName ?? null,
       spend_7d: typeof row?.spend_7d === 'number' ? Math.round(row.spend_7d * 100) / 100 : row?.spend_7d,
+      // Four decimals: the prompt's 90% rule must not flip on rounding (0.8996 stays 0.8996).
       utilization:
-        typeof row?.utilization === 'number' ? Math.round(row.utilization * 1000) / 1000 : row?.utilization,
+        typeof row?.utilization === 'number' ? Math.round(row.utilization * 10000) / 10000 : row?.utilization,
     };
   });
 }

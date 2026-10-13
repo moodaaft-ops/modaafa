@@ -55,7 +55,7 @@ import {
   OPTIMIZE_ACCOUNT_COOLDOWN_HOURS,
   OPTIMIZE_ACCOUNT_LIMIT,
 } from '@/lib/platform/job-capacity';
-import { isSnapshotIdle, optimizerCooldownCutoffIso } from '@/lib/ai/optimizer-cost-guards';
+import { isSnapshotIdle, optimizerCooldownCutoffIso, optimizerCursorStampIso } from '@/lib/ai/optimizer-cost-guards';
 
 /**
  * Cron endpoint - runs hourly via Vercel Cron.
@@ -138,9 +138,13 @@ async function runOptimizerCron(req: NextRequest) {
   // Cost guard: an account that was optimized less than OPTIMIZE_ACCOUNT_COOLDOWN_HOURS
   // ago is left out. Its 7 and 30 day windows have barely moved, so another
   // pass would pay for the same answer. `last_optimized_at` is the same cursor
-  // the round-robin uses, and it advances on failure too, so a failing account
-  // also rests instead of being retried every slot.
-  const cooldownCutoff = optimizerCooldownCutoffIso(Date.now(), OPTIMIZE_ACCOUNT_COOLDOWN_HOURS);
+  // the round-robin uses. A pass that fails stamps it back-dated (see
+  // optimizerCursorStampIso) so an outage does not lock accounts out for hours.
+  // ?force=1 is an operator asking for a run now, so it ignores the cooldown too.
+  const cooldownCutoff =
+    req.nextUrl.searchParams.get('force') === '1'
+      ? null
+      : optimizerCooldownCutoffIso(Date.now(), OPTIMIZE_ACCOUNT_COOLDOWN_HOURS);
   let accountQuery = supabase
     .from('google_ads_accounts')
     .select('id, customer_id, customer_name, manager_id, currency_code, refresh_token_encrypted, business_id')
@@ -183,6 +187,9 @@ async function runOptimizerCron(req: NextRequest) {
         note: cooledDownAccounts > 0 ? 'All active accounts are inside the optimizer cooldown' : 'No active accounts found',
         cooldown_hours: OPTIMIZE_ACCOUNT_COOLDOWN_HOURS,
         cooled_down_accounts: cooledDownAccounts,
+        // Counted as a guard run on the cost page: these are the runs that save the most.
+        model_calls: 0,
+        skipped_idle: 0,
       },
     });
     return NextResponse.json({ processed: 0, cooled_down_accounts: cooledDownAccounts });
@@ -273,6 +280,7 @@ async function runOptimizerCron(req: NextRequest) {
       return;
     }
 
+    let failed = false;
     try {
       const refreshToken = decrypt(account.refresh_token_encrypted);
       const customer = getCustomer(account.customer_id, refreshToken, account.manager_id ?? undefined);
@@ -345,7 +353,7 @@ async function runOptimizerCron(req: NextRequest) {
           decision: 'no_action',
           ...(idle
             ? {
-                reasonAr: 'الحساب بلا إنفاق ولا مؤشرات تستدعي تعديلًا هذا الأسبوع، فلم نستدع النموذج',
+                reasonAr: 'لا يوجد إنفاق ولا بيانات تستدعي تعديلاً على هذا الحساب حالياً',
                 metadata: { skipped_model_call: true, reason: 'idle_snapshot' },
               }
             : {}),
@@ -672,6 +680,7 @@ async function runOptimizerCron(req: NextRequest) {
 
       results.processed++;
     } catch (err) {
+      failed = true;
       // Self-heal the stored flag the moment Google (or our own pre-flight)
       // says this is a manager account, mirroring the sync cron. Without this
       // the same account failed every optimize run forever.
@@ -695,7 +704,7 @@ async function runOptimizerCron(req: NextRequest) {
     } finally {
       const { error: cursorError } = await supabase
         .from('google_ads_accounts')
-        .update({ last_optimized_at: new Date().toISOString() })
+        .update({ last_optimized_at: optimizerCursorStampIso(Date.now(), OPTIMIZE_ACCOUNT_COOLDOWN_HOURS, failed) })
         .eq('id', account.id);
       if (cursorError) {
         results.errors.push(`${account.customer_id}:queue_cursor:${cursorError.message}`);

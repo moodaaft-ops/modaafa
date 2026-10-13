@@ -39,6 +39,39 @@ test('a fresh low-error partial job can pass but a high-error partial job cannot
   );
 });
 
+test('optimizer accounts resting in their cooldown are not counted as failures', () => {
+  const now = Date.parse('2026-08-12T12:00:00Z');
+  const options = { jobName: 'optimize', maxAgeHours: 4, now };
+  const base = { job_name: 'optimize', status: 'partial', started_at: '2026-08-12T11:00:00Z' };
+
+  // One bad account out of two attempted trips the 10% rule.
+  assert.equal(evaluateOperationalJob({ ...base, processed: 1, error_count: 1 }, options).ok, false);
+  // The same run with 28 accounts resting is one failure out of thirty.
+  assert.equal(
+    evaluateOperationalJob(
+      { ...base, processed: 1, error_count: 1, details: { cooled_down_accounts: 28 } },
+      options
+    ).ok,
+    true
+  );
+  // Resting accounts never hide a run where most attempted accounts failed.
+  assert.equal(
+    evaluateOperationalJob(
+      { ...base, processed: 1, error_count: 9, details: { cooled_down_accounts: 2 } },
+      options
+    ).ok,
+    false
+  );
+  // Junk in details is ignored rather than crashing the health check.
+  assert.equal(
+    evaluateOperationalJob(
+      { ...base, processed: 9, error_count: 1, details: { cooled_down_accounts: 'x' } },
+      options
+    ).ok,
+    true
+  );
+});
+
 test('failed, stale, or missing operational jobs fail health', () => {
   const now = Date.parse('2026-08-12T12:00:00Z');
   const options = { jobName: 'optimize', maxAgeHours: 4, now };

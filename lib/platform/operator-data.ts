@@ -179,7 +179,7 @@ export async function loadOperatorDataset(now = Date.now()): Promise<OperatorDat
       'job_runs',
       (q) =>
         q
-          .select('id, job_name, status, started_at, finished_at, duration_ms, processed, error_count, error_message')
+          .select('id, job_name, status, started_at, finished_at, duration_ms, processed, error_count, error_message, details')
           .gte('started_at', weekAgo)
           .order('started_at', { ascending: false }),
       unavailable,
