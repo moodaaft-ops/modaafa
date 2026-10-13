@@ -25,7 +25,7 @@ const config: Config = {
         shimmer: {
           '100%': { transform: 'translateX(-100%)' },
         },
-        // «زياد»'s lamp: the yellow square of the symbol blinks while he thinks.
+        // the assistant's lamp: the yellow square of the symbol blinks while he thinks.
         'lamp-blink': {
           '0%, 100%': { opacity: '1' },
           '50%': { opacity: '0.2' },

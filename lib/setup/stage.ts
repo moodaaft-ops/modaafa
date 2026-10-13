@@ -8,7 +8,7 @@ import type { SetupKey } from './questions';
  * - connect: nothing linked yet (or the last link failed).
  * - connecting: Google said yes and the background job is reading accounts.
  * - choose: several accounts and none picked.
- * - questions: «زياد» still has questions.
+ * - questions: «مُضاعِف» still has questions.
  * - finishing: questions done, the first audit has no result yet.
  * - done: the home screen takes over.
  */

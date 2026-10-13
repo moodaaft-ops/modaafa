@@ -20,13 +20,12 @@ import { useFirstAudit } from './use-first-audit';
 import { AccountDock, AnswerTile, QuestionDock, type AnswerPayload } from './docks';
 
 type Line =
-  | { id: string; from: 'ziyad'; kind: 'text'; text: string; big?: boolean; note?: string }
+  | { id: string; from: 'assistant'; kind: 'text'; text: string; big?: boolean; note?: string }
   | { id: string; from: 'me'; kind: 'text'; text: string }
-  | { id: string; from: 'ziyad'; kind: 'connecting' }
-  | { id: string; from: 'ziyad'; kind: 'audit' }
-  | { id: string; from: 'ziyad'; kind: 'google_note' }
-  | { id: string; from: 'ziyad'; kind: 'score'; score: number | null; waste: number | null; currency: string }
-  | { id: string; from: 'ziyad'; kind: 'findings'; findings: SetupFinding[]; currency: string };
+  | { id: string; from: 'assistant'; kind: 'connecting' }
+  | { id: string; from: 'assistant'; kind: 'audit' }
+  | { id: string; from: 'assistant'; kind: 'score'; score: number | null; waste: number | null; currency: string }
+  | { id: string; from: 'assistant'; kind: 'findings'; findings: SetupFinding[]; currency: string };
 
 type Dock =
   | { kind: 'none' }
@@ -159,7 +158,7 @@ export function SetupChat({
 
   const push = useCallback((line: Line) => setLines((cur) => [...cur, line]), []);
 
-  /** «زياد» types, then the line appears. Longer lines take a little longer, never long. */
+  /** «مُضاعِف» types, then the line appears. Longer lines take a little longer, never long. */
   const say = useCallback(
     async (text: string, opts: { big?: boolean; note?: string } = {}) => {
       if (!alive.current) return;
@@ -167,7 +166,7 @@ export function SetupChat({
       await sleep(reduced.current ? 120 : Math.min(1100, 380 + text.length * 9));
       if (!alive.current) return;
       setTyping(false);
-      push({ id: nid(), from: 'ziyad', kind: 'text', text, ...opts });
+      push({ id: nid(), from: 'assistant', kind: 'text', text, ...opts });
       await sleep(reduced.current ? 40 : 160);
     },
     [push]
@@ -212,7 +211,7 @@ export function SetupChat({
       await say(`خلصت الفحص. صحة حسابك ${s.audit.healthScore ?? '؟'} من 100.`);
       push({
         id: nid(),
-        from: 'ziyad',
+        from: 'assistant',
         kind: 'score',
         score: s.audit.healthScore,
         waste: s.audit.estimatedMonthlyWaste,
@@ -226,7 +225,7 @@ export function SetupChat({
       }
       if (s.findings.length > 0) {
         await say(`لقيت ${recommendationsCountLabel(s.findingsTotal)}، وهذي أهمها:`);
-        push({ id: nid(), from: 'ziyad', kind: 'findings', findings: s.findings, currency });
+        push({ id: nid(), from: 'assistant', kind: 'findings', findings: s.findings, currency });
       } else {
         await say('وما لقيت شي يحتاج قرارك الحين.');
       }
@@ -266,7 +265,7 @@ export function SetupChat({
       return;
     }
     await say('خلصنا الأسئلة. أعطني لحظة أخلّص فحص حسابك.');
-    push({ id: nid(), from: 'ziyad', kind: 'audit' });
+    push({ id: nid(), from: 'assistant', kind: 'audit' });
     waitingForAuditRef.current = true;
     if (kind === 'idle' || kind === 'error') void auditRef.current.retry();
   }, [push, reload, say, showResults]);
@@ -528,14 +527,13 @@ export function SetupChat({
             : 'نضيف حساب ثاني؟ اضغط الزر، واختر في شاشة قوقل البريد اللي عليه الحساب.',
           { big: true }
         );
-        if (!s.googleVerified) push({ id: nid(), from: 'ziyad', kind: 'google_note' });
         setDock({ kind: 'connect' });
         return;
       }
       if (s.stage === 'connecting') {
         setPhase('connecting');
         await say('وصلتني موافقة قوقل. أسحب حساباتك الحين.');
-        push({ id: nid(), from: 'ziyad', kind: 'connecting' });
+        push({ id: nid(), from: 'assistant', kind: 'connecting' });
         await pollConnect();
         return;
       }
@@ -553,7 +551,6 @@ export function SetupChat({
           await say('كل يوم أقرأ حساب إعلانات قوقل حقك وأقول لك وين تروح فلوسك، وأي تعديل أجهزه لك وأنت تعتمده بضغطة.');
           await say('نبدأ بربط الحساب. قوقل بيسألك توافق، وبعدها ترجع لي هنا.');
         }
-        if (!s.googleVerified) push({ id: nid(), from: 'ziyad', kind: 'google_note' });
         setDock({ kind: 'connect' });
         return;
       }
@@ -629,7 +626,7 @@ export function SetupChat({
         : `${ASSISTANT.name} يفحص حسابك`
       : null;
 
-  const lastZiyadId = [...lines].reverse().find((line) => line.from === 'ziyad')?.id;
+  const lastAssistantId = [...lines].reverse().find((line) => line.from === 'assistant')?.id;
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-background" dir="rtl">
@@ -672,7 +669,7 @@ export function SetupChat({
         <div className="mx-auto flex max-w-[680px] flex-col gap-3 px-4 pb-6 pt-6">
           {lines.map((line, index) => {
             const previous = lines[index - 1];
-            const showAvatar = line.from === 'ziyad' && previous?.from !== 'ziyad';
+            const showAvatar = line.from === 'assistant' && previous?.from !== 'assistant';
             if (line.from === 'me') {
               return (
                 <div key={line.id} className="flex justify-end motion-safe:animate-bubble-in">
@@ -685,11 +682,11 @@ export function SetupChat({
             return (
               <div key={line.id} className="flex items-start gap-2.5 motion-safe:animate-bubble-in">
                 <div className="w-9 flex-shrink-0">
-                  {showAvatar && <AssistantAvatar size={36} thinking={typing && line.id === lastZiyadId} />}
+                  {showAvatar && <AssistantAvatar size={36} thinking={typing && line.id === lastAssistantId} />}
                 </div>
                 <div className="min-w-0 max-w-[88%] flex-1 sm:max-w-[80%]">
                   {showAvatar && <p className="mb-1 text-[12px] font-semibold text-muted-foreground">{ASSISTANT.name}</p>}
-                  <ZiyadLine line={line} connectView={connectView} audit={audit.status} />
+                  <AssistantLine line={line} connectView={connectView} audit={audit.status} />
                 </div>
               </div>
             );
@@ -697,7 +694,7 @@ export function SetupChat({
           {typing && (
             <div className="flex items-center gap-2.5">
               <div className="w-9 flex-shrink-0">
-                {lines.at(-1)?.from !== 'ziyad' && <AssistantAvatar size={36} thinking />}
+                {lines.at(-1)?.from !== 'assistant' && <AssistantAvatar size={36} thinking />}
               </div>
               <div className="border border-border bg-card px-4 py-3">
                 <TypingSquares />
@@ -739,7 +736,7 @@ export function SetupChat({
                 setDock({ kind: 'none' });
                 me('أعد الفحص');
                 waitingForAuditRef.current = true;
-                push({ id: nid(), from: 'ziyad', kind: 'audit' });
+                push({ id: nid(), from: 'assistant', kind: 'audit' });
                 audit.retry();
               }}
             />
@@ -750,7 +747,7 @@ export function SetupChat({
   );
 }
 
-function ZiyadLine({
+function AssistantLine({
   line,
   connectView,
   audit,
@@ -810,26 +807,6 @@ function ZiyadLine({
         </div>
       );
     }
-    case 'google_note':
-      return (
-        <div className={cn(bubble, 'text-[14.5px] leading-7')}>
-          <p className="font-semibold">قبل ما تضغط</p>
-          <p className="mt-1 text-muted-foreground">
-            قوقل بيطلع لك إن التطبيق غير موثّق، لأن توثيقنا عندهم للحين. هذا متوقع، وتكمل بضغطتين:
-          </p>
-          <div className="mt-3 border border-border bg-background px-3 py-2.5 text-[13px]" dir="ltr">
-            <p className="font-semibold text-foreground">Google hasn’t verified this app</p>
-            <p className="mt-1.5 flex items-center gap-2">
-              <span className="flex h-4 w-4 items-center justify-center bg-signal text-[10px] font-bold text-signal-foreground">1</span>
-              <span className="underline">Advanced</span>
-            </p>
-            <p className="mt-1 flex items-center gap-2">
-              <span className="flex h-4 w-4 items-center justify-center bg-signal text-[10px] font-bold text-signal-foreground">2</span>
-              <span className="underline">Go to modaafa (unsafe)</span>
-            </p>
-          </div>
-        </div>
-      );
     case 'score': {
       const word = healthWord(line.score);
       const score = line.score ?? 0;

@@ -3,10 +3,10 @@
 import { MessageCircle } from 'lucide-react';
 import { ASSISTANT } from '@/lib/assistant/persona';
 import { cn } from '@/lib/utils';
-import { ASK_ZIYAD_EVENT, type AskZiyadDetail } from '../start/start-client';
+import { ASK_ASSISTANT_EVENT, type AskAssistantDetail } from '../start/start-client';
 
-/** A button anywhere on /home that puts a question to «زياد» in the chat. */
-export function AskZiyad({
+/** A button anywhere on /home that puts a question to «مُضاعِف» in the chat. */
+export function AskAssistant({
   text,
   label,
   recommendationId,
@@ -24,7 +24,7 @@ export function AskZiyad({
       type="button"
       onClick={() =>
         window.dispatchEvent(
-          new CustomEvent<AskZiyadDetail>(ASK_ZIYAD_EVENT, { detail: { text, label, recommendationId } })
+          new CustomEvent<AskAssistantDetail>(ASK_ASSISTANT_EVENT, { detail: { text, label, recommendationId } })
         )
       }
       className={cn(

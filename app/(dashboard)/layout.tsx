@@ -36,7 +36,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // business for them.
   if (!business) redirect('/onboarding');
 
-  // The simple experience: one header, a short menu, and «زياد» on /home.
+  // The simple experience: one header, a short menu, and «مُضاعِف» on /home.
   if (isSimpleExperience(process.env, user.email)) {
     return (
       <SimpleChrome

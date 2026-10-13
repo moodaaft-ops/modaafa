@@ -38,11 +38,11 @@ const uid = () => `m${Date.now()}-${counter++}`;
 const ReturnPathContext = createContext('/start');
 
 /**
- * Other parts of the home screen ask «زياد» something by dispatching this
- * event (a decision card's «اسأل زياد عنها»). The chat sends it as if typed.
+ * Other parts of the home screen ask «مُضاعِف» something by dispatching this
+ * event (a decision card's «اسأل مُضاعِف عنها»). The chat sends it as if typed.
  */
-export const ASK_ZIYAD_EVENT = 'ziyad:ask';
-export type AskZiyadDetail = { text: string; label?: string; recommendationId?: string };
+export const ASK_ASSISTANT_EVENT = 'assistant:ask';
+export type AskAssistantDetail = { text: string; label?: string; recommendationId?: string };
 
 export function StartClient({
   customerId,
@@ -62,7 +62,7 @@ export function StartClient({
   variant?: 'page' | 'embedded';
   /** Shown as a close button in the header when the chat is a sheet. */
   onClose?: () => void;
-  /** Called when another part of the screen asked «زياد» something. */
+  /** Called when another part of the screen asked «مُضاعِف» something. */
   onAsked?: () => void;
 }) {
   const [voiceOpen, setVoiceOpen] = useState(false);
@@ -311,7 +311,7 @@ export function StartClient({
 
   useEffect(() => {
     const onAsk = (event: Event) => {
-      const detail = (event as CustomEvent<AskZiyadDetail>).detail;
+      const detail = (event as CustomEvent<AskAssistantDetail>).detail;
       if (!detail?.text) return;
       onAskedRef.current?.();
       if (detail.recommendationId) {
@@ -323,8 +323,8 @@ export function StartClient({
         void sendRef.current({ message: detail.text }, detail.label ?? detail.text);
       }
     };
-    window.addEventListener(ASK_ZIYAD_EVENT, onAsk);
-    return () => window.removeEventListener(ASK_ZIYAD_EVENT, onAsk);
+    window.addEventListener(ASK_ASSISTANT_EVENT, onAsk);
+    return () => window.removeEventListener(ASK_ASSISTANT_EVENT, onAsk);
   }, []);
 
   const lastAssistant = [...items].reverse().find((i) => i.role === 'assistant')?.id;

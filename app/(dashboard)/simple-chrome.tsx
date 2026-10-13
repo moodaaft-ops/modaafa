@@ -19,7 +19,7 @@ type Item = { href: string; label: string; icon: React.ComponentType<{ className
 
 /**
  * The simple shell: one header and a short menu. Everything a customer does
- * every day lives on /home with «زياد»; the menu only holds the four places
+ * every day lives on /home with «مُضاعِف»; the menu only holds the four places
  * someone goes on purpose. The nine-item sidebar, the bottom tab bar and the
  * spotlight tour are not rendered here at all.
  */

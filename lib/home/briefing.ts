@@ -1,5 +1,5 @@
 /**
- * The words and numbers at the top of /home: «زياد»'s one-paragraph read of
+ * The words and numbers at the top of /home: the assistant's one-paragraph read of
  * the account. Built only from stored rows (the synced campaign cache and the
  * open decisions), never from a model, so it is instant, free and cannot
  * invent a number.

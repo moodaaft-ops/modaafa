@@ -1,7 +1,7 @@
 import { isChatFirstEnabled } from '@/lib/chat-first/flag';
 
 /**
- * The simple experience: chat-style setup with «زياد», one home screen, and a
+ * The simple experience: chat-style setup with «مُضاعِف», one home screen, and a
  * four-item menu instead of the nine-item sidebar.
  *
  * It rides on the existing CHAT_FIRST_ENTRY switch on purpose, because it is

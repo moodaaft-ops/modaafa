@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 
 /**
- * The simple experience end to end: the setup chat with «زياد» and the home
+ * The simple experience end to end: the setup chat with «مُضاعِف» and the home
  * screen, on a fake backend with synthetic data.
  *
  *   node tests/e2e/support/mock-supabase-simple.mjs &
@@ -49,12 +49,12 @@ async function pick(page: Page, label: string | RegExp) {
   await button.click();
 }
 
-test('a new customer meets «زياد» and one connect button', async ({ page, baseURL }) => {
+test('a new customer meets «مُضاعِف» and one connect button', async ({ page, baseURL }) => {
   await scenario('connect');
   await signIn(page, baseURL);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/onboarding');
-  await expect(page.getByText('أنا زياد', { exact: false })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText('أنا مُضاعِف', { exact: false })).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole('link', { name: 'اربط حساب إعلانات قوقل' })).toBeVisible({ timeout: 15_000 });
   await noSidewaysOverflow(page);
   await pick(page, 'ما عندي حساب إعلانات');
@@ -95,7 +95,7 @@ test('home leads with the day in words, today\'s decisions and the chat', async 
   // «اعتمد» asks once more before anything reaches the live account.
   await pick(page, 'اعتمد');
   await expect(page.getByRole('button', { name: 'إيه، نفّذ' })).toBeVisible();
-  await expect(page.getByPlaceholder('اكتب لـزياد…')).toBeVisible();
+  await expect(page.getByPlaceholder('اكتب لـمُضاعِف…')).toBeVisible();
 });
 
 test('on a phone the chat waits behind one bar and opens full screen', async ({ page, baseURL }) => {
@@ -104,7 +104,7 @@ test('on a phone the chat waits behind one bar and opens full screen', async ({ 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/home');
   await noSidewaysOverflow(page);
-  await pick(page, /اكتب لـزياد أو اسأله/);
+  await pick(page, /اكتب لـمُضاعِف أو اسأله/);
   await expect(page.getByRole('button', { name: 'سكّر المحادثة' })).toBeVisible();
   await pick(page, 'سكّر المحادثة');
   await pick(page, 'القائمة');

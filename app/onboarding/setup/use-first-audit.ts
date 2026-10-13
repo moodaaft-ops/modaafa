@@ -36,7 +36,7 @@ function writeGuard(key: string, value: number | null) {
 }
 
 /**
- * The first audit, run in the background while «زياد» asks his questions.
+ * The first audit, run in the background while «مُضاعِف» asks his questions.
  * Same endpoint, progress stream and refresh guard as the old first-audit
  * screen, so a refresh never starts (and bills) a second audit.
  */

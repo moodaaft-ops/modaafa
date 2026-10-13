@@ -24,7 +24,7 @@ export default async function AssistantPage({
   // chat-first flag on, that entry belongs to /start; flag off, nothing changes.
   const { supabase, user } = await getRequestAuthContext();
   if (!user) redirect('/login');
-  // The simple experience has «زياد» on /home; only a campaign brief still opens the builder here.
+  // The simple experience has «مُضاعِف» on /home; only a campaign brief still opens the builder here.
   if (isSimpleExperience(process.env, user.email) && !params?.brief) redirect('/home');
   if (isChatFirstEnabled(process.env, user.email) && params?.from === 'onboarding' && !params?.brief) redirect('/start');
   const [{ accounts, selectedAccount, selectedCustomerId }, subscription] = await Promise.all([

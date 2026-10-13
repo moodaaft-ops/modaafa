@@ -44,7 +44,6 @@ export type SetupState = {
   edit: boolean;
   firstName: string | null;
   email: string | null;
-  googleVerified: boolean;
   connect: {
     phase: ConnectPhase;
     stages: Array<{ id: string; label: string; state: 'done' | 'active' | 'pending' | 'failed' }>;
@@ -216,7 +215,6 @@ export async function loadSetupState(supabase: any, user: User, opts: { edit?: b
     namePrefill,
     firstName: firstNameFrom(user.user_metadata ?? null),
     email: user.email ?? null,
-    googleVerified: process.env.GOOGLE_OAUTH_APP_VERIFIED === 'true',
     connect:
       job || connectView.phase !== 'none'
         ? {

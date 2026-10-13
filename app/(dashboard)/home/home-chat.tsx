@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils';
 import { StartClient } from '../start/start-client';
 
 /**
- * «زياد» on the home screen. One chat instance for both layouts so the
+ * «مُضاعِف» on the home screen. One chat instance for both layouts so the
  * conversation never forks: on wide screens it is the panel beside the
  * briefing; on a phone it waits behind a bar at the bottom and opens full
  * screen when tapped (or when a card asks him something).

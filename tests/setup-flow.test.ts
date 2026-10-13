@@ -30,7 +30,7 @@ function ok(key: string, raw: unknown): SetupAnswer {
 }
 
 test('the assistant has one name everywhere', () => {
-  assert.equal(ASSISTANT.name, 'زياد');
+  assert.equal(ASSISTANT.name, 'مُضاعِف');
 });
 
 test('the simple experience follows CHAT_FIRST_ENTRY exactly', () => {

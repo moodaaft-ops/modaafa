@@ -2,7 +2,7 @@ import { cn } from '@/lib/utils';
 import { ASSISTANT } from '@/lib/assistant/persona';
 
 /**
- * «زياد»'s face is the brand symbol itself: the small square touching its
+ * the assistant's face is the brand symbol itself: the small square touching its
  * double, with the yellow lamp in the corner. The lamp blinks while he is
  * thinking or typing, and that is the only motion he has.
  *
@@ -48,7 +48,7 @@ export function AssistantAvatar({
   );
 }
 
-/** «زياد يكتب…»: three small squares stepping, read aloud as text. */
+/** «مُضاعِف يكتب…»: three small squares stepping, read aloud as text. */
 export function TypingSquares({ className }: { className?: string }) {
   return (
     <span className={cn('inline-flex items-center gap-1', className)} role="status" aria-label={`${ASSISTANT.name} يكتب`}>

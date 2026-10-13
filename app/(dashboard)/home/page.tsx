@@ -25,7 +25,7 @@ import {
 } from '@/lib/home/briefing';
 import { cn, formatCurrency, timeAgoAr } from '@/lib/utils';
 import { operationLabelAr } from '@/lib/ai/operation-labels';
-import { AskZiyad } from './ask-ziyad';
+import { AskAssistant } from './ask-assistant';
 import { ApproveInline } from './approve-inline';
 import { HomeChat } from './home-chat';
 
@@ -137,7 +137,7 @@ export default async function HomePage({
             </p>
           )}
 
-          {/* «زياد»'s read of the account: the one thing this screen leads with. */}
+          {/* the assistant's read of the account: the one thing this screen leads with. */}
           <section className="bg-foreground px-5 py-6 text-background sm:px-7 sm:py-7">
             <div className="flex items-center gap-2.5">
               <AssistantAvatar size={34} className="border-background/25 bg-background text-foreground" />
@@ -249,10 +249,10 @@ export default async function HomePage({
               ) : (
                 <p className="mt-1 text-[14px]">ما انفحص الحساب للحين.</p>
               )}
-              <AskZiyad text="افحص حسابي" label="افحص حسابي من جديد" className="mt-1 -ms-1">
+              <AskAssistant text="افحص حسابي" label="افحص حسابي من جديد" className="mt-1 -ms-1">
                 <RotateCcw className="h-4 w-4" />
                 افحصه من جديد
-              </AskZiyad>
+              </AskAssistant>
             </div>
             <div className="border border-border bg-card px-4 py-4">
               <p className="text-[13px] text-muted-foreground">آخر شي تغيّر في حسابك</p>
@@ -336,7 +336,7 @@ function DecisionCard({
             مو الحين
           </DecisionForm>
         )}
-        <AskZiyad
+        <AskAssistant
           text={decision.executable ? `اشرح لي: ${decision.title}` : `كيف أسوي هذا: ${decision.title}`}
           label={decision.executable ? 'اشرح لي هذا القرار' : 'كيف أسويه؟'}
           recommendationId={decision.id}

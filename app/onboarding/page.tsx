@@ -18,7 +18,7 @@ export default async function OnboardingPage({
 
   if (!user) redirect('/login?next=/onboarding');
 
-  // The simple experience: the whole setup is one conversation with «زياد».
+  // The simple experience: the whole setup is one conversation with «مُضاعِف».
   if (isSimpleExperience(process.env, user.email)) {
     const params = await searchParams;
     let edit = params?.edit === '1';

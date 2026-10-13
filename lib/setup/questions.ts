@@ -1,5 +1,5 @@
 /**
- * The setup conversation with «زياد»: which questions, in what order, what
+ * The setup conversation with «مُضاعِف»: which questions, in what order, what
  * each answer is allowed to be, and what it writes.
  *
  * Pure on purpose: the API route and the screen import the same rules, so the
@@ -458,7 +458,7 @@ export function answerLabel(answer: SetupAnswer): string {
 }
 
 /**
- * A short line «زياد» says back after some answers, so the chat answers you
+ * A short line «مُضاعِف» says back after some answers, so the chat answers you
  * instead of only asking. Most answers get none on purpose.
  */
 export function reactionTo(answer: SetupAnswer): string | null {
