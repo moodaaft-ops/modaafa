@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { ArrowUp, AudioLines, RotateCcw, Square } from 'lucide-react';
@@ -9,6 +10,7 @@ import { AssistantAvatar, TypingSquares } from '@/lib/ui/assistant-avatar';
 import { cn, formatCurrency } from '@/lib/utils';
 import { VoiceCallPanel, type VoiceCallHandle, type VoiceTurnResult } from '../assistant/voice-call-panel';
 import type { ChatAction, ChatCard, ChatQuickAction, ChatTurn } from '@/lib/chat-first/contracts';
+import { chatAccessLoss } from '@/lib/chat-first/access-loss';
 
 type Item =
   | { id: string; role: 'user'; text: string }
@@ -88,6 +90,7 @@ function StartClientBody({
   /** Currency of the selected Google Ads account (amounts in old saved cards use it). */
   currency?: string | null;
 }) {
+  const router = useRouter();
   const [voiceOpen, setVoiceOpen] = useState(false);
   const voiceRef = useRef<VoiceCallHandle>(null);
   const [memoryOpen, setMemoryOpen] = useState(false);
@@ -222,6 +225,19 @@ function StartClientBody({
       if (voiceTicket && res.status === 401 && data.error === 'session_ended') {
         assistant('انتهت المكالمة. ابدأ مكالمة جديدة لو تبي تكمل صوتياً.');
         return { reply: '', hasDraft: false, fatal: 'session_ended' };
+      }
+      // The plan stopped (or the account was suspended) while this screen was
+      // open. Say so, with the way forward, and never offer a retry that cannot
+      // work. The refresh re-reads the page, so /home shows its real paywall.
+      const lost = chatAccessLoss(res.status, data);
+      if (lost) {
+        assistant(
+          lost.message,
+          [],
+          lost.cta ? [{ label: lost.cta.label, action: { type: 'subscribe', href: lost.cta.href } }] : []
+        );
+        router.refresh();
+        return voiceTicket ? { reply: '', hasDraft: false, fatal: 'session_ended' } : null;
       }
       if (!res.ok) {
         const msg =
