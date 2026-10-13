@@ -37,6 +37,8 @@ export type ConnectJobDetails = {
   error?: string;
   accounts_found?: number;
   linkable?: number;
+  /** Accounts left paused because another user's trial already used them. */
+  paused_for_trial?: number;
   /** customer_id → spend over the last 30 days, in the account currency. */
   spend?: Record<string, number | null>;
   next?: string;
@@ -126,6 +128,7 @@ export function connectErrorRecoveryHref(error: string | null) {
 
 export const CONNECT_ERROR_MESSAGES: Record<string, string> = {
   timeout: 'Google تأخر في الرد أكثر من المعتاد ووقفنا التجهيز. اضغط تجديد الربط وغالباً يكمل من المرة الثانية',
+  trial_account_used: 'هذا الحساب الإعلاني أخذ تجربته المجانية قبل، فما نقدر نفعّله خلال التجربة. اشترك ثم أعد الربط وبيشتغل.',
   db_error: 'وصلنا لحساباتك لكن ما قدرنا نحفظها عندنا. جرّب تجديد الربط بعد دقيقة',
   connect_failed: 'ما قدرنا نكمل التجهيز مع Google. جرّب تجديد الربط بعد دقيقة',
 };
