@@ -6,7 +6,7 @@ import { flushSync } from 'react-dom';
 import { ArrowUp, AudioLines, RotateCcw, Square } from 'lucide-react';
 import { ASSISTANT } from '@/lib/assistant/persona';
 import { AssistantAvatar, TypingSquares } from '@/lib/ui/assistant-avatar';
-import { cn } from '@/lib/utils';
+import { cn, formatCurrency } from '@/lib/utils';
 import { VoiceCallPanel, type VoiceCallHandle, type VoiceTurnResult } from '../assistant/voice-call-panel';
 import type { ChatAction, ChatCard, ChatQuickAction, ChatTurn } from '@/lib/chat-first/contracts';
 
@@ -38,6 +38,9 @@ const uid = () => `m${Date.now()}-${counter++}`;
 /** Where the approve, dismiss and undo forms send the customer back to. */
 const ReturnPathContext = createContext('/start');
 
+/** The selected account's currency, for cards saved before they carried their own. */
+const AccountCurrencyContext = createContext<string | null>(null);
+
 /**
  * Other parts of the home screen ask «مُضاعِف» something by dispatching this
  * event (a decision card's «اسأل مُضاعِف عنها»). The chat sends it as if typed.
@@ -45,7 +48,15 @@ const ReturnPathContext = createContext('/start');
 export const ASK_ASSISTANT_EVENT = 'assistant:ask';
 export type AskAssistantDetail = { text: string; label?: string; recommendationId?: string };
 
-export function StartClient({
+export function StartClient(props: React.ComponentProps<typeof StartClientBody>) {
+  return (
+    <AccountCurrencyContext.Provider value={props.currency ?? null}>
+      <StartClientBody {...props} />
+    </AccountCurrencyContext.Provider>
+  );
+}
+
+function StartClientBody({
   customerId,
   notice,
   voiceEnabled = false,
@@ -74,6 +85,8 @@ export function StartClient({
   introActions?: ChatQuickAction[];
   /** Called once when the first message of a new conversation is saved. */
   onSessionStarted?: (sessionId: string) => void;
+  /** Currency of the selected Google Ads account (amounts in old saved cards use it). */
+  currency?: string | null;
 }) {
   const [voiceOpen, setVoiceOpen] = useState(false);
   const voiceRef = useRef<VoiceCallHandle>(null);
@@ -633,6 +646,7 @@ function RecommendationForm({
 }
 
 function CardView({ card }: { card: ChatCard }) {
+  const accountCurrency = useContext(AccountCurrencyContext);
   const box = 'w-full rounded-[18px] border border-border/80 bg-card p-4 text-[14px] leading-7';
   switch (card.kind) {
     case 'audit_result':
@@ -645,7 +659,12 @@ function CardView({ card }: { card: ChatCard }) {
           </p>
           <p>{card.findingsCount} ملاحظة</p>
           {card.estimatedMonthlyWaste != null && (
-            <p>هدر شهري تقديري: {Math.round(card.estimatedMonthlyWaste).toLocaleString('en-US')} دولار</p>
+            <p>
+              هدر شهري تقديري:{' '}
+              <span className="numeric">
+                {formatCurrency(Math.round(card.estimatedMonthlyWaste), card.currency ?? accountCurrency)}
+              </span>
+            </p>
           )}
         </div>
       );

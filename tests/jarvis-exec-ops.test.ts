@@ -615,6 +615,7 @@ test('the new operations carry Arabic labels without em or en dashes', () => {
     accountLinked: true,
     accountName: null,
     customerId: CID,
+    currency: 'SAR',
     latestAudit: null,
     recommendations: [],
     subscriptionActive: true,

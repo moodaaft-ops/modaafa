@@ -17,6 +17,7 @@ const state: ChatState = {
   accountLinked: true,
   accountName: 'متجر تجريبي',
   customerId: '0000000000',
+  currency: 'SAR',
   latestAudit: { id: 'demo', healthScore: 62, findingsCount: 7, estimatedMonthlyWaste: 340, ranAt: '2026-10-08T10:00:00Z' },
   recommendations: [
     { id: 'demo-1', title: 'أوقف كلمة تصرف ولا تبيع', description: 'الكلمة صرفت 90 دولار ولا جابت تحويل', severity: 'critical', status: 'pending', executable: true },

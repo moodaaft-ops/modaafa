@@ -292,6 +292,7 @@ export default async function HomePage({
         restoreSessionId={openChat}
         intro={openChat ? null : intro}
         introActions={openChat ? undefined : introActions}
+        currency={currency}
       />
     </div>
   );

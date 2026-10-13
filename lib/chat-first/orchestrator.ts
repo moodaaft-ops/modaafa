@@ -8,6 +8,7 @@ import type {
 } from './contracts';
 import type { Understanding } from './understand';
 import { operationLabelAr } from '@/lib/ai/operation-labels';
+import { formatCurrency } from '@/lib/utils';
 
 const AR_DIGITS = /[٠-٩]/g;
 function normalize(text: string) {
@@ -44,9 +45,16 @@ export function classify(message: string): ChatIntent {
   return 'ambiguous';
 }
 
-function money(value: number | null) {
+/** The amount in the selected account's own currency, through the app's one formatter (never a hard-coded dollar). */
+export function money(value: number | null, currency?: string | null) {
   if (value == null) return null;
-  return `${Math.round(value).toLocaleString('en-US')} دولار`;
+  return formatCurrency(Math.round(value), currency ?? 'SAR');
+}
+
+/** Closes a sentence once: «ر.س.» already ends in a full stop, and «..» reads like a typo. */
+function endSentence(text: string) {
+  const bare = text.replace(/[\u200e\u200f]+$/, '');
+  return /[.؟!]$/.test(bare) ? bare : `${bare}.`;
 }
 
 function auditCard(state: ChatState): ChatCard | null {
@@ -57,6 +65,7 @@ function auditCard(state: ChatState): ChatCard | null {
     healthScore: a.healthScore,
     findingsCount: a.findingsCount,
     estimatedMonthlyWaste: a.estimatedMonthlyWaste,
+    currency: state.currency,
     ranAt: a.ranAt,
   };
 }
@@ -190,11 +199,11 @@ export function planTurn(message: string, state: ChatState, understood?: Underst
 
   if (intent === 'show_result') {
     const a = state.latestAudit;
-    const waste = money(a.estimatedMonthlyWaste);
+    const waste = money(a.estimatedMonthlyWaste, state.currency);
     const lines = [
       a.healthScore != null ? `صحة الحساب ${a.healthScore} من 100.` : 'ما طلعت درجة صحة لهذا الفحص.',
       `لقينا ${a.findingsCount} ملاحظة.`,
-      waste ? `التقدير ان الهدر الشهري قرابة ${waste}.` : 'ما قدرنا نقدّر الهدر بدقة من البيانات المتوفرة.',
+      waste ? endSentence(`التقدير ان الهدر الشهري قرابة ${waste}`) : 'ما قدرنا نقدّر الهدر بدقة من البيانات المتوفرة.',
     ];
     return {
       intent,

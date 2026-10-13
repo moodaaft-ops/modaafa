@@ -50,7 +50,12 @@ export default async function StartPage({
         }
       />
       <div className="p-3 sm:p-6 lg:p-8">
-        <StartClient customerId={selectedCustomerId} notice={notice} voiceEnabled={readVoiceConfig().enabled} />
+        <StartClient
+          customerId={selectedCustomerId}
+          notice={notice}
+          voiceEnabled={readVoiceConfig().enabled}
+          currency={selectedAccount?.currency_code ?? null}
+        />
       </div>
     </>
   );

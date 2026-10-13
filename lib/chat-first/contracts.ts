@@ -28,6 +28,8 @@ export type ChatState = {
   accountLinked: boolean;
   accountName: string | null;
   customerId: string | null;
+  /** ISO code of the selected Google Ads account's currency (SAR when unknown). Every amount the chat words uses it. */
+  currency: string;
   latestAudit: ChatAuditSummary | null;
   recommendations: ChatRecommendation[];
   subscriptionActive: boolean;
@@ -61,6 +63,8 @@ export type ChatCard =
       healthScore: number | null;
       findingsCount: number;
       estimatedMonthlyWaste: number | null;
+      /** Currency of `estimatedMonthlyWaste`. Absent on cards saved before it existed: the thread's account currency applies. */
+      currency?: string;
       ranAt: string;
     }
   | {
