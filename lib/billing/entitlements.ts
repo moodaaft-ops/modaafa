@@ -75,6 +75,31 @@ export const PLAN_LIMITS: Record<BillingPlan, Record<MeteredFeature, FeatureLimi
 const PLAN_RANK: Record<BillingPlan, number> = { starter: 1, growth: 2, pro: 3 };
 
 /**
+ * The plan whose LIMITS apply to this access.
+ *
+ * A trial runs on Starter limits whatever plan was picked at checkout: the
+ * trial is free, so it must not carry Growth or Pro quotas (assistant turns,
+ * audits, LLM budget, optimizer accounts) that cost real money to serve. The
+ * full limits start with the first payment, when Stripe moves the subscription
+ * from `trialing` to `active`.
+ *
+ * Only access that comes from a Stripe subscription in `trialing` is capped.
+ * An operator free-plan grant ('comp') and operator internal access
+ * ('internal') are decisions someone made on purpose and keep their plan; the
+ * 'comp' status is what tells them apart, because applyAccessOverrides replaces
+ * the status when a grant wins over the trial.
+ *
+ * Use this, not `access.plan`, for every per-plan limit lookup. `access.plan`
+ * is still the right value to DISPLAY (the plan the customer chose).
+ */
+export function effectiveLimitPlan(
+  subscription: Pick<SubscriptionAccess, 'plan' | 'status'>
+): BillingPlan | null {
+  if (!subscription.plan) return null;
+  return subscription.status === 'trialing' ? 'starter' : subscription.plan;
+}
+
+/**
  * `userId` is REQUIRED. It used to be optional, which meant three dashboard
  * pages called this with RLS as the only thing scoping the query. That works,
  * but it leaves no second line of defence: swapping in the admin client, or
@@ -279,7 +304,10 @@ export async function consumeFeatureUsage({
     return { ok: false, reason: 'subscription_required', plan: subscription.plan };
   }
 
-  const featureLimit = PLAN_LIMITS[subscription.plan][feature];
+  // Limits follow the EFFECTIVE plan (a trial runs on Starter limits); the plan
+  // reported back stays the one the customer chose.
+  const limitPlan = effectiveLimitPlan(subscription) ?? subscription.plan;
+  const featureLimit = PLAN_LIMITS[limitPlan][feature];
   const { start, end } = usageWindow(featureLimit.period);
   const { data, error } = await supabase.rpc('consume_feature_usage', {
     p_user_id: userId,

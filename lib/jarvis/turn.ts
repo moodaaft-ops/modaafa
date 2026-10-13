@@ -2,7 +2,7 @@ import { after } from 'next/server';
 import { createMessageForAgent } from '@/lib/ai/client';
 import { probeWriteAccess, type WriteAccess } from '@/lib/ai/execution-preflight';
 import { llmBudgetState, type LlmBudgetState } from '@/lib/ai/usage';
-import { getSubscriptionAccess } from '@/lib/billing/entitlements';
+import { effectiveLimitPlan, getSubscriptionAccess } from '@/lib/billing/entitlements';
 import type { ChatState } from '@/lib/chat-first/contracts';
 import { decrypt } from '@/lib/crypto';
 import { getCustomer } from '@/lib/google-ads/client';
@@ -98,7 +98,8 @@ export async function answerWithJarvis(args: {
   const subscription = await getSubscriptionAccess(supabase, user.id, user.email);
   const budget = await llmBudgetState({
     userId: user.id,
-    plan: subscription.plan,
+    // The LLM budget is a share of the plan price, so a trial gets Starter's.
+    plan: effectiveLimitPlan(subscription),
     subscriptionActive: subscription.active,
     isOperator,
     now,
