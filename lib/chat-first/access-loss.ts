@@ -22,7 +22,7 @@ export type ChatAccessLoss = {
 export const ACCESS_LOSS_BILLING_HREF = '/billing';
 
 export const ACCESS_LOSS_COPY = {
-  subscriptionRequired: 'انتهت تجربتك. فعّل اشتراكك عشان تكمل المحادثة.',
+  subscriptionRequired: 'اشتراكك واقف. فعّله أو حدّث بطاقتك عشان تكمل المحادثة.',
   subscriptionCta: 'فعّل اشتراكك',
   /** Same text as ACCOUNT_SUSPENDED_MESSAGE (pinned by a test); the route's own message wins when it sends one. */
   suspended: 'حسابك موقوف مؤقتاً، ولن تُنفذ أي عملية عليه حتى يُعاد تفعيله. تواصل معنا على واتساب 0541004029.',

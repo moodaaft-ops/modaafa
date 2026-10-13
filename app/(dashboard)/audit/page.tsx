@@ -175,7 +175,7 @@ export default async function AuditPage({
             ? 'ما قدرنا نقرأ عدد فحوصاتك المجانية الآن. تقدر تشغّل الفحص، ونتحقق من حصتك عند التشغيل.'
             : freeView === 'in_progress'
               ? `فيه فحص شغّال لهذا الحساب الآن. باقي لك ${freeAudit!.remaining} من ${freeAudit!.limit} بعد ما يخلص.`
-              : `الفحص مجاني لهذا الحساب: باقي لك ${freeAudit!.remaining} من ${freeAudit!.limit}. الاشتراك يلزم فقط عند تنفيذ التوصيات أو تفعيل التحسين الآلي.`}
+              : `الفحص مجاني لهذا الحساب: باقي لك ${freeAudit!.remaining} من ${freeAudit!.limit}. والقرارات كلها تنفتح مع تجربتك.`}
       </Alert>
     ) : null;
 

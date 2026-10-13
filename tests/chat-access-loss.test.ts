@@ -13,7 +13,7 @@ test('a 402 subscription_required says the plan stopped and points to the subscr
   const lost = chatAccessLoss(402, { error: 'subscription_required' });
   assert.ok(lost);
   assert.equal(lost.code, 'subscription_required');
-  assert.equal(lost.message, 'انتهت تجربتك. فعّل اشتراكك عشان تكمل المحادثة.');
+  assert.equal(lost.message, 'اشتراكك واقف. فعّله أو حدّث بطاقتك عشان تكمل المحادثة.');
   assert.deepEqual(lost.cta, { label: 'فعّل اشتراكك', href: '/billing' });
   assert.equal(ACCESS_LOSS_BILLING_HREF, '/billing');
 });

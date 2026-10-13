@@ -717,7 +717,7 @@ test('when the chat route answers 402 the thread says the plan stopped, with the
   await page.goto('/home');
   await page.getByPlaceholder('اكتب لـمُضاعِف…').fill('وش وضع حسابي');
   await page.getByRole('button', { name: 'إرسال' }).click();
-  await expect(page.getByText('انتهت تجربتك. فعّل اشتراكك عشان تكمل المحادثة.')).toBeVisible();
+  await expect(page.getByText('اشتراكك واقف. فعّله أو حدّث بطاقتك عشان تكمل المحادثة.')).toBeVisible();
   await expect(page.getByRole('link', { name: 'فعّل اشتراكك' })).toHaveAttribute('href', '/billing');
   await expect(page.getByText('صار خلل عندنا')).toHaveCount(0);
   await expect(page.getByRole('button', { name: /أعد المحاولة/ })).toHaveCount(0);
