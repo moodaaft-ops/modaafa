@@ -3,6 +3,13 @@ import { createServerClient as createSSRClient } from '@supabase/ssr/dist/module
 import type { CookieOptions } from '@supabase/ssr/dist/module/types';
 import { SUPABASE_COOKIE_OPTIONS } from '@/lib/supabase/cookie-options';
 import { buildContentSecurityPolicy, generateNonce, NONCE_HEADER } from '@/lib/security/csp';
+import {
+  ATTRIBUTION_COOKIE,
+  ATTRIBUTION_COOKIE_MAX_AGE,
+  extractAttribution,
+  hasMarketingSignal,
+  serializeAttribution,
+} from '@/lib/registration/attribution';
 
 /**
  * Refreshes the user's Supabase session on every request, gates the
@@ -10,7 +17,7 @@ import { buildContentSecurityPolicy, generateNonce, NONCE_HEADER } from '@/lib/s
  * nonce-based Content-Security-Policy.
  */
 export async function middleware(req: NextRequest) {
-  const protectedPaths = ['/dashboard', '/assistant', '/start', '/audit', '/campaigns', '/optimizer', '/reports', '/billing', '/settings', '/onboarding', '/autopilot', '/operations'];
+  const protectedPaths = ['/dashboard', '/assistant', '/start', '/audit', '/campaigns', '/optimizer', '/reports', '/billing', '/settings', '/onboarding', '/autopilot', '/operations', '/welcome'];
   const isProtected = protectedPaths.some((p) => req.nextUrl.pathname.startsWith(p));
   const isLogin = req.nextUrl.pathname === '/login';
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -18,6 +25,27 @@ export async function middleware(req: NextRequest) {
 
   const nonce = generateNonce();
   const csp = buildContentSecurityPolicy(nonce);
+
+  // Remember where a campaign visitor came from (utm_*, ttclid, gclid). It is
+  // written on whatever response leaves this middleware, redirects included,
+  // so a visitor bounced to /login keeps it. A request without campaign
+  // parameters never touches the cookie. See lib/registration/attribution.ts.
+  const incomingAttribution =
+    req.method === 'GET' ? extractAttribution(req.nextUrl.searchParams, req.nextUrl.pathname) : {};
+  const rememberAttribution = <T extends NextResponse>(res: T): T => {
+    if (hasMarketingSignal(incomingAttribution)) {
+      res.cookies.set({
+        name: ATTRIBUTION_COOKIE,
+        value: serializeAttribution(incomingAttribution),
+        maxAge: ATTRIBUTION_COOKIE_MAX_AGE,
+        path: '/',
+        sameSite: 'lax',
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+      });
+    }
+    return res;
+  };
 
   /**
    * Builds the outgoing response with the nonce attached.
@@ -39,7 +67,7 @@ export async function middleware(req: NextRequest) {
     requestHeaders.set('Content-Security-Policy', csp);
     const res = NextResponse.next({ request: { headers: requestHeaders } });
     res.headers.set('Content-Security-Policy', csp);
-    return res;
+    return rememberAttribution(res);
   };
 
   // A redirect carries no document of ours, but the header costs nothing and
@@ -47,7 +75,7 @@ export async function middleware(req: NextRequest) {
   const redirectWithNonce = (url: URL) => {
     const res = NextResponse.redirect(url);
     res.headers.set('Content-Security-Policy', csp);
-    return res;
+    return rememberAttribution(res);
   };
 
   if (!isProtected && !isLogin) return nextWithNonce();
