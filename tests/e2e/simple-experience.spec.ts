@@ -7,6 +7,7 @@ import { expect, test, type Page } from '@playwright/test';
  *   node tests/e2e/support/mock-supabase-simple.mjs &
  *   NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321 NEXT_PUBLIC_SUPABASE_ANON_KEY=anon pnpm build
  *   CHAT_FIRST_ENTRY=true SUPABASE_SERVICE_ROLE_KEY=service \
+ *     VOICE_ASSISTANT_ENABLED=true VOICE_PROVIDER=mock VOICE_TICKET_SECRET=local-test-secret-0123456789abcdefghijklmnop \
  *     NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321 NEXT_PUBLIC_SUPABASE_ANON_KEY=anon pnpm start &
  *   MODAAFA_E2E_SIMPLE=1 PLAYWRIGHT_BASE_URL=http://localhost:3000 pnpm exec playwright test simple-experience --workers=1
  *
@@ -128,4 +129,44 @@ test('a quiet account gets one next step instead of a page of zeros', async ({ p
   await expect(page.getByText('ما شفت صرف في حسابك', { exact: false })).toBeVisible();
   await expect(page.getByRole('button', { name: 'افحص حسابي' })).toBeVisible();
   await expect(page.getByText('الصرف، 7 أيام')).toHaveCount(0);
+});
+
+test('voice opens as one bar in place of the composer, and «إنهاء» brings the composer back', async ({ page, baseURL }) => {
+  await scenario('home');
+  await signIn(page, baseURL);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/home');
+  const composer = page.getByPlaceholder('اكتب لـمُضاعِف…');
+  await expect(composer).toBeVisible();
+  // One tap: no «ابدأ المكالمة» step, the bar replaces the composer straight away.
+  await page.getByRole('button', { name: 'مكالمة صوتية' }).click();
+  const bar = page.getByRole('region', { name: 'مكالمة صوتية مع مُضاعِف' });
+  await expect(bar).toBeVisible();
+  await expect(composer).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'ابدأ المكالمة' })).toHaveCount(0);
+  await noSidewaysOverflow(page);
+  await bar.getByRole('button', { name: 'إنهاء المكالمة' }).click();
+  await expect(bar).toHaveCount(0);
+  await expect(composer).toBeVisible();
+});
+
+test('the account row opens one menu above it to switch accounts, add one, or sign out', async ({ page, baseURL }) => {
+  await scenario('multi');
+  await signIn(page, baseURL);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/home');
+  const trigger = page.getByRole('button', { name: /بدّل بين 4 حسابات/ });
+  await trigger.click();
+  const menu = page.getByRole('menu', { name: 'حساباتك' });
+  await expect(menu).toBeVisible();
+  await expect(menu.getByRole('menuitemradio')).toHaveCount(4);
+  await expect(menu.getByRole('menuitemradio', { name: /متجر الريم للعطور/ })).toHaveAttribute('aria-checked', 'true');
+  await expect(menu.getByRole('menuitem', { name: 'أضف حساب إعلاني' })).toBeVisible();
+  await expect(menu.getByRole('menuitem', { name: 'تسجيل الخروج' })).toBeVisible();
+  // It opens upward, fully on screen, not cut off below the fold.
+  const box = await menu.boundingBox();
+  expect(box && box.y >= 0 && box.y + box.height <= 900).toBeTruthy();
+  await page.keyboard.press('Escape');
+  await expect(menu).toHaveCount(0);
+  await scenario('home');
 });

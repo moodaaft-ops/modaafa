@@ -103,6 +103,16 @@ const SCENARIOS = {
       { id: '98989898-9898-4898-8898-989898989802', session_id: '99999999-9999-4999-8999-999999999901', role: 'assistant', content: 'أكبر هدر عندك آخر 30 يوم عبارة «عطور رخيصة»: صرفت عليها 412 ريال وما جابت ولا طلب. لو اعتمدت إيقافها من الرئيسية توفّر تقريباً نفس المبلغ كل شهر.', tool_results: null, seq: 2, created_at: hoursAgo(20) },
     ],
   }),
+  // Same store, plus more ad accounts under the same login, for the account menu.
+  multi: () => ({
+    ...SCENARIOS.home(),
+    google_ads_accounts: [
+      account,
+      { ...account, id: '33333333-3333-4333-8333-333333333334', customer_id: '4779964593', customer_name: 'مركز الشفاء الطبي' },
+      { ...account, id: '33333333-3333-4333-8333-333333333335', customer_id: '8418400543', customer_name: 'حياة أجمل للتجميل' },
+      { ...account, id: '33333333-3333-4333-8333-333333333336', customer_id: '5550001122', customer_name: 'مطعم البيت الشامي' },
+    ],
+  }),
   quiet: () => ({
     ...SCENARIOS.home(),
     audits: [], recommendations: [], ai_actions: [], chat_sessions: [], chat_messages: [],

@@ -2,11 +2,12 @@
 
 import Link from 'next/link';
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { ArrowUp, AudioLines, RotateCcw, Square } from 'lucide-react';
 import { ASSISTANT } from '@/lib/assistant/persona';
 import { AssistantAvatar, TypingSquares } from '@/lib/ui/assistant-avatar';
 import { cn } from '@/lib/utils';
-import { VoiceCallPanel, type VoiceTurnResult } from '../assistant/voice-call-panel';
+import { VoiceCallPanel, type VoiceCallHandle, type VoiceTurnResult } from '../assistant/voice-call-panel';
 import type { ChatAction, ChatCard, ChatQuickAction, ChatTurn } from '@/lib/chat-first/contracts';
 
 type Item =
@@ -75,6 +76,7 @@ export function StartClient({
   onSessionStarted?: (sessionId: string) => void;
 }) {
   const [voiceOpen, setVoiceOpen] = useState(false);
+  const voiceRef = useRef<VoiceCallHandle>(null);
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [items, setItems] = useState<Item[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -354,6 +356,16 @@ export function StartClient({
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   }
 
+  /**
+   * One tap opens the call: the bar is mounted synchronously so the mic, the
+   * audio context and the silent unlock all happen inside this same tap, which
+   * iOS Safari requires before it lets the reply play.
+   */
+  function openVoice() {
+    if (!voiceOpen) flushSync(() => setVoiceOpen(true));
+    voiceRef.current?.start();
+  }
+
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     // Enter sends, Shift+Enter adds a line; never mid-composition (Arabic IMEs).
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -462,20 +474,19 @@ export function StartClient({
       </div>
 
       <div className="mx-auto w-full max-w-[768px] flex-shrink-0 px-3 pb-3 sm:px-6 sm:pb-5">
-        {voiceEnabled && voiceOpen && (
-          <div className="mb-2 overflow-hidden rounded-[20px] border border-border bg-card">
-            <VoiceCallPanel
-              customerId={customerId}
-              onUtterance={(spoken, ticket) => sendRef.current({ message: spoken }, spoken, ticket)}
-              onClose={() => setVoiceOpen(false)}
-            />
-          </div>
-        )}
         {memoryOpen && (
           <div className="mb-2 overflow-hidden rounded-[20px] border border-border bg-card">
             <MemoryPanel onClose={() => setMemoryOpen(false)} />
           </div>
         )}
+        {voiceEnabled && voiceOpen ? (
+          <VoiceCallPanel
+            ref={voiceRef}
+            customerId={customerId}
+            onUtterance={(spoken, ticket) => sendRef.current({ message: spoken }, spoken, ticket)}
+            onClose={() => setVoiceOpen(false)}
+          />
+        ) : (
         <form
           onSubmit={submit}
           className="flex items-end gap-1.5 rounded-[26px] border border-border bg-card p-2 ps-4 shadow-[0_8px_28px_-14px_rgba(14,20,38,0.35)] transition-colors focus-within:border-border-strong"
@@ -494,10 +505,9 @@ export function StartClient({
           {voiceEnabled && (
             <button
               type="button"
-              onClick={() => setVoiceOpen((open) => !open)}
+              onClick={openVoice}
               aria-label="مكالمة صوتية"
-              aria-pressed={voiceOpen}
-              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-foreground hover:bg-muted aria-pressed:bg-muted"
+              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-foreground hover:bg-muted"
             >
               <AudioLines className="h-[18px] w-[18px]" />
             </button>
@@ -511,12 +521,15 @@ export function StartClient({
             <ArrowUp className="h-5 w-5" />
           </button>
         </form>
-        <p className="mt-2 px-2 text-center text-[11.5px] leading-5 text-muted-foreground">
-          ما يتغيّر شي في حسابك إلا باعتمادك.{' '}
-          <button type="button" onClick={() => setMemoryOpen((open) => !open)} className="underline underline-offset-4 hover:text-foreground">
-            وش يعرف {ASSISTANT.name} عن نشاطك
-          </button>
-        </p>
+        )}
+        {!voiceOpen && (
+          <p className="mt-2 px-2 text-center text-[11.5px] leading-5 text-muted-foreground">
+            ما يتغيّر شي في حسابك إلا باعتمادك.{' '}
+            <button type="button" onClick={() => setMemoryOpen((open) => !open)} className="underline underline-offset-4 hover:text-foreground">
+              وش يعرف {ASSISTANT.name} عن نشاطك
+            </button>
+          </p>
+        )}
       </div>
     </div>
     </ReturnPathContext.Provider>

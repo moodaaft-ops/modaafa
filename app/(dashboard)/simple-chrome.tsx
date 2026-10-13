@@ -6,9 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   Activity,
   BarChart3,
-  ChevronDown,
   CreditCard,
-  LogOut,
   Megaphone,
   Menu,
   MessageCircle,
@@ -20,11 +18,10 @@ import type { AdsAccountSummary } from '@/lib/accounts/selection';
 import type { RecentChat } from '@/lib/chat-first/sessions';
 import { LogoMark } from '@/lib/ui/logo';
 import { RouteProgress } from '@/lib/ui/route-progress';
-import { ThemeToggle } from '@/lib/ui/theme-toggle';
 import { trapTabKey } from '@/lib/ui/focus-trap';
 import { SUPPORT_WHATSAPP_NUMBER } from '@/lib/support/contact';
 import { cn } from '@/lib/utils';
-import { AccountSwitcher } from './account-switcher';
+import { AccountMenu } from './account-menu';
 
 type Item = { href: string; label: string; icon: React.ComponentType<{ className?: string }> };
 
@@ -109,13 +106,10 @@ export function SimpleChrome({
 
   const sidebar = (onClose?: () => void) => (
     <Sidebar
-      brandName={brandName}
       userEmail={userEmail}
       accounts={accounts}
       revokedAccounts={revokedAccounts}
-      pausedAccounts={pausedAccounts}
       selectedCustomerId={selectedCustomerId}
-      accountLabel={accountLabel}
       items={isOperator ? [...ITEMS, { href: '/operations', label: 'مركز التشغيل', icon: Activity }] : ITEMS}
       pathname={pathname}
       activeChat={activeChat}
@@ -195,13 +189,10 @@ function NewChatButton({ iconOnly = false }: { iconOnly?: boolean }) {
 }
 
 function Sidebar({
-  brandName,
   userEmail,
   accounts,
   revokedAccounts,
-  pausedAccounts,
   selectedCustomerId,
-  accountLabel,
   items,
   pathname,
   activeChat,
@@ -209,13 +200,10 @@ function Sidebar({
   onClose,
   closeRef,
 }: {
-  brandName: string;
   userEmail: string;
   accounts: AdsAccountSummary[];
   revokedAccounts: AdsAccountSummary[];
-  pausedAccounts: AdsAccountSummary[];
   selectedCustomerId: string | null;
-  accountLabel: string | null;
   items: Item[];
   pathname: string;
   activeChat: string | null;
@@ -224,7 +212,6 @@ function Sidebar({
   closeRef?: React.RefObject<HTMLButtonElement>;
 }) {
   const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
-  const initial = (brandName || userEmail || 'م').trim().charAt(0);
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex h-14 flex-shrink-0 items-center justify-between gap-2 px-2">
@@ -286,28 +273,6 @@ function Sidebar({
       </div>
 
       <div className="flex-shrink-0 space-y-1 border-t border-border/60 p-2">
-        <details className="group">
-          <summary className={cn(ROW, ROW_IDLE, 'cursor-pointer list-none [&::-webkit-details-marker]:hidden')}>
-            <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-foreground text-[12px] font-bold text-background">
-              {initial}
-            </span>
-            <span className="min-w-0 flex-1 leading-tight">
-              <span className="block truncate text-[13.5px] font-semibold">{accountLabel ?? 'الحساب الإعلاني'}</span>
-              <span className="block truncate text-[11.5px] text-muted-foreground" dir="ltr">
-                {userEmail}
-              </span>
-            </span>
-            <ChevronDown className="h-4 w-4 flex-shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
-          </summary>
-          <div className="-mx-2 pb-2">
-            <AccountSwitcher
-              accounts={accounts}
-              revokedAccounts={revokedAccounts}
-              pausedAccounts={pausedAccounts}
-              selectedCustomerId={selectedCustomerId}
-            />
-          </div>
-        </details>
         <a
           href={`https://wa.me/${SUPPORT_WHATSAPP_NUMBER}`}
           target="_blank"
@@ -317,15 +282,12 @@ function Sidebar({
           <MessageCircle className="h-[18px] w-[18px] text-muted-foreground" />
           كلّم فريقنا على الواتساب
         </a>
-        <div className="flex items-center gap-1">
-          <form action="/api/auth/signout" method="post" className="min-w-0 flex-1">
-            <button type="submit" className={cn(ROW, ROW_IDLE, 'text-muted-foreground')}>
-              <LogOut className="h-[18px] w-[18px]" />
-              تسجيل الخروج
-            </button>
-          </form>
-          <ThemeToggle className="h-10 w-10 flex-shrink-0 rounded-full" />
-        </div>
+        <AccountMenu
+          userEmail={userEmail}
+          accounts={accounts}
+          revokedAccounts={revokedAccounts}
+          selectedCustomerId={selectedCustomerId}
+        />
       </div>
     </div>
   );

@@ -141,7 +141,7 @@ export function looksLikeVoiceApproval(transcript: string): boolean {
 }
 
 export const VOICE_APPROVAL_NOTICE =
-  'التنفيذ ما يصير بالصوت. افتح مركز الموافقات، راجع المعاينة، واضغط زر الموافقة بنفسك.';
+  'التنفيذ ما يصير بالصوت. راجع الاقتراح في المحادثة واضغط زر الاعتماد بنفسك.';
 
 export type TtsRequestCheck = { ok: true; text: string } | { ok: false; status: number; error: string };
 
