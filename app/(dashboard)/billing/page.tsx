@@ -14,6 +14,7 @@ import { buttonClasses } from '@/lib/ui/button';
 import { getBillingCheckoutContext } from '@/lib/billing/checkout-policy';
 import {
   CARD_TRIAL_USED_MESSAGE,
+  TRIAL_CHECK_FAILED_MESSAGE,
   TRIAL_STARTER_LIMITS_NOTE,
   trialIneligibleNotice,
 } from '@/lib/billing/trial-copy';
@@ -44,6 +45,7 @@ const billingErrors: Record<string, string> = {
   cancel_failed: 'تعذر تنفيذ الطلب الآن ولم يتغيّر اشتراكك. أعد المحاولة بعد قليل، ولو تكرر راسلنا.',
   invalid_origin: 'تعذر التحقق من الطلب. حدّث الصفحة وأعد المحاولة.',
   card_trial_used: CARD_TRIAL_USED_MESSAGE,
+  trial_check_failed: TRIAL_CHECK_FAILED_MESSAGE,
 };
 
 const plans = [
@@ -120,6 +122,9 @@ export default async function BillingPage({
   assertSupabaseRead(invoicesResult.error, 'load billing invoices');
   const invoices = invoicesResult.data ?? [];
   const trialEligible = checkout.trialEligible;
+  // The eligibility check could not run: say so and offer a retry, never a
+  // paid start (the checkout routes refuse it too).
+  const checkFailed = checkout.trialIneligibleReason === 'check_failed';
   // Everything Stripe-related renders from the billing truth. A free plan an
   // operator granted (status 'comp' on the effective access) is shown as a note
   // and, only when there is no live Stripe subscription, as the current plan:
@@ -240,7 +245,7 @@ export default async function BillingPage({
                 <input type="hidden" name="plan" value="growth" />
                 <input type="hidden" name="period" value={period} />
                 <PendingSubmitButton pendingLabel="جاري فتح الدفع..." className={buttonClasses({ variant: 'secondary' })}>
-                  {trialEligible ? 'ابدأ تجربة خطة النمو' : 'اشترك في خطة النمو'}
+                  {checkFailed ? 'حاول من جديد' : trialEligible ? 'ابدأ تجربة خطة النمو' : 'اشترك في خطة النمو'}
                 </PendingSubmitButton>
               </form>
             ) : null}
@@ -489,7 +494,7 @@ export default async function BillingPage({
                           block: true,
                         })}
                       >
-                        {trialEligible ? 'ابدأ تجربة 14 يوم' : 'اشترك الآن'}
+                        {checkFailed ? 'حاول من جديد' : trialEligible ? 'ابدأ تجربة 14 يوم' : 'اشترك الآن'}
                       </PendingSubmitButton>
                     </form>
                   )}
@@ -498,9 +503,11 @@ export default async function BillingPage({
                       ? 'صلاحية داخلية للاختبار؛ لن تُنشأ فاتورة أو جلسة دفع.'
                       : hasLiveSubscription && !isCurrent
                       ? 'تغيير الخطة يتم داخل بوابة Stripe ويُحتسب الفرق تلقائياً.'
-                      : trialEligible
-                        ? 'لن يتم الخصم خلال فترة التجربة. البطاقة والفواتير تُدار بأمان عبر Stripe.'
-                        : 'تبدأ الفوترة عند التأكيد. البطاقة والفواتير تُدار بأمان عبر Stripe.'}
+                      : checkFailed
+                        ? 'لم نتأكد من أهليتك للتجربة بعد. البطاقة والفواتير تُدار بأمان عبر Stripe.'
+                        : trialEligible
+                          ? 'لن يتم الخصم خلال فترة التجربة. البطاقة والفواتير تُدار بأمان عبر Stripe.'
+                          : 'تبدأ الفوترة عند التأكيد. البطاقة والفواتير تُدار بأمان عبر Stripe.'}
                   </p>
                 </div>
               </section>

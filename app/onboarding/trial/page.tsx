@@ -13,6 +13,7 @@ import {
 import { getPlanPriceAmounts } from '@/lib/billing/stripe';
 import {
   CARD_TRIAL_USED_MESSAGE,
+  TRIAL_CHECK_FAILED_MESSAGE,
   TRIAL_STARTER_LIMITS_NOTE,
   trialIneligibleNotice,
 } from '@/lib/billing/trial-copy';
@@ -35,6 +36,7 @@ const errors: Record<string, string> = {
   google_ads_account_required: 'اربط حساب Google Ads نشطاً أولاً.',
   already_subscribed: 'عندك اشتراك قائم، تقدر تكمل مباشرة.',
   card_trial_used: CARD_TRIAL_USED_MESSAGE,
+  trial_check_failed: TRIAL_CHECK_FAILED_MESSAGE,
 };
 
 export default async function TrialPage({
@@ -60,6 +62,9 @@ export default async function TrialPage({
     getPlanPriceAmounts(),
   ]);
   const trialEligible = checkout.trialEligible;
+  // The eligibility check could not run: say so and offer a retry, never a
+  // paid start (the checkout route refuses it too).
+  const checkFailed = checkout.trialIneligibleReason === 'check_failed';
   const noTrialNotice = trialIneligibleNotice(checkout.trialIneligibleReason);
   const price = prices?.[TRIAL_PLAN]?.monthly ?? null;
   const priceText = price ? formatCurrency(price.amount, price.currency.toUpperCase()) : null;
@@ -70,7 +75,7 @@ export default async function TrialPage({
       <div className="mx-auto max-w-4xl">
         <div className="mb-6">
           <h2 className="text-[26px] font-bold leading-tight sm:text-3xl">
-            {trialEligible ? `ابدأ تجربتك ${daysLabel(TRIAL_DAYS)}` : 'فعّل اشتراكك'}
+            {trialEligible ? `ابدأ تجربتك ${daysLabel(TRIAL_DAYS)}` : checkFailed ? 'تابع تفعيل اشتراكك' : 'فعّل اشتراكك'}
           </h2>
           <p className="mt-2 max-w-2xl text-sm leading-7 text-muted-foreground">
             الفحص وقراءة التوصيات مفتوحة لك بدون اشتراك. الاشتراك يفعّل تنفيذ التوصيات على{' '}
@@ -115,6 +120,8 @@ export default async function TrialPage({
                   </p>
                   <p className="text-muted-foreground">{TRIAL_STARTER_LIMITS_NOTE}</p>
                 </>
+              ) : checkFailed ? (
+                <p>{noTrialNotice}</p>
               ) : (
                 <>
                   <p>{noTrialNotice ?? 'استخدمت التجربة المجانية قبل.'}</p>
@@ -145,7 +152,7 @@ export default async function TrialPage({
                 pendingLabel="جاري فتح الدفع..."
                 className={buttonClasses({ variant: 'primary', size: 'lg' })}
               >
-                {trialEligible ? 'ابدأ التجربة' : 'اشترك الآن'}
+                {checkFailed ? 'حاول من جديد' : trialEligible ? 'ابدأ التجربة' : 'اشترك الآن'}
                 <ArrowLeft className="h-4 w-4" />
               </PendingSubmitButton>
             </form>

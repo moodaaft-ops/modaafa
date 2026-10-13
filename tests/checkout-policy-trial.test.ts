@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  checkoutTrialDecision,
   findTrialCustomerIdsOwnedByOthers,
   isMissingRelationError,
   getBillingCheckoutContext,
@@ -237,10 +238,10 @@ test('a ledger row written under the legacy exact-address key still blocks', asy
   assert.equal(result.trialIneligibleReason, 'already_used');
 });
 
-test('an email ledger error fails closed', async () => {
+test('an email ledger error fails closed as check_failed, not as a used trial', async () => {
   const { value } = await quietly(() => context({ emailLedgerError: true }));
   assert.equal(value.result.trialEligible, false);
-  assert.equal(value.result.trialIneligibleReason, 'already_used');
+  assert.equal(value.result.trialIneligibleReason, 'check_failed');
 });
 
 test('a linked account that already had a trial under another user is ads_account_used', async () => {
@@ -302,18 +303,18 @@ test('no linked account means no ads lookup and no lock', async () => {
   assert.equal(admin.calls.filter((call) => call.table === 'trial_customer_ledger').length, 0);
 });
 
-test('a customer ledger error fails closed', async () => {
+test('a customer ledger error fails closed as check_failed', async () => {
   const { value } = await quietly(() =>
     context({ accounts: [{ customer_id: '1112223334' }], customerLedgerError: true })
   );
   assert.equal(value.result.trialEligible, false);
-  assert.equal(value.result.trialIneligibleReason, 'ads_account_used');
+  assert.equal(value.result.trialIneligibleReason, 'check_failed');
 });
 
-test('an accounts read error fails closed', async () => {
+test('an accounts read error fails closed as check_failed', async () => {
   const { value } = await quietly(() => context({ accountsError: true }));
   assert.equal(value.result.trialEligible, false);
-  assert.equal(value.result.trialIneligibleReason, 'ads_account_used');
+  assert.equal(value.result.trialIneligibleReason, 'check_failed');
 });
 
 test('a disposable inbox is not offered the trial', async () => {
@@ -541,7 +542,7 @@ test('every other customer ledger error still fails closed', async () => {
       context({ accounts: [{ customer_id: '1112223334' }], customerLedgerError: error })
     );
     assert.equal(value.result.trialEligible, false, error.message);
-    assert.equal(value.result.trialIneligibleReason, 'ads_account_used', error.message);
+    assert.equal(value.result.trialIneligibleReason, 'check_failed', error.message);
     assert.ok(!messages.some((m) => /DEPLOY ORDER/.test(String(m[0]))), error.message);
   }
 });
@@ -549,17 +550,17 @@ test('every other customer ledger error still fails closed', async () => {
 test('a missing table in any OTHER read still fails closed', async () => {
   const missing = { code: '42P01', message: 'relation "public.something" does not exist' };
   const businesses = await quietly(() => context({ businessesError: missing }));
-  assert.equal(businesses.value.result.trialIneligibleReason, 'ads_account_used');
+  assert.equal(businesses.value.result.trialIneligibleReason, 'check_failed');
 
   const accounts = await quietly(() => context({ accountsError: missing }));
-  assert.equal(accounts.value.result.trialIneligibleReason, 'ads_account_used');
+  assert.equal(accounts.value.result.trialIneligibleReason, 'check_failed');
 
   // The email ledger is billing_trial_ledger, a table that already exists in
   // production: it is not a deploy-order case, so a missing table there is a
   // real outage and stays closed.
   const email = await quietly(() => context({ emailLedgerError: { ...missing, message: 'relation "public.billing_trial_ledger" does not exist' } }));
   assert.equal(email.value.result.trialEligible, false);
-  assert.equal(email.value.result.trialIneligibleReason, 'already_used');
+  assert.equal(email.value.result.trialIneligibleReason, 'check_failed');
 });
 
 test('the email ledger lookup still reads billing_trial_ledger, not the new tables', async () => {
@@ -584,4 +585,67 @@ test('isMissingRelationError recognises table errors only', () => {
   assert.equal(isMissingRelationError(new Error('boom')), false);
   assert.equal(isMissingRelationError(null), false);
   assert.equal(isMissingRelationError('42P01'), false);
+});
+
+// ---------------------------------------------------------------------------
+// check_failed: a lookup that could not run is not "you already had a trial"
+// ---------------------------------------------------------------------------
+
+test('a definite reason beats a failed lookup, and a failed lookup beats a trial', async () => {
+  // email lookup fails, but the ads account is known to be used
+  const adsUsed = await quietly(() =>
+    context({ emailLedgerError: true, accounts: [{ customer_id: '1112223334' }], customerLedger: { '1112223334': OTHER } })
+  );
+  assert.equal(adsUsed.value.result.trialIneligibleReason, 'ads_account_used');
+
+  // ads lookup fails, but the email ledger says used
+  const emailUsed = await quietly(() =>
+    context({
+      emailLedger: [legacyTrialEmailKey('owner@example.com')],
+      accounts: [{ customer_id: '1112223334' }],
+      customerLedgerError: true,
+    })
+  );
+  assert.equal(emailUsed.value.result.trialIneligibleReason, 'already_used');
+
+  // a disposable inbox is refused for a known reason even if a lookup failed
+  const disposable = await quietly(() => context({ emailLedgerError: true }, 'x@mailinator.com'));
+  assert.equal(disposable.value.result.trialIneligibleReason, 'disposable_email');
+
+  // the user own rows settle it without any ledger read at all
+  const own = await quietly(() => context({ grant: true, emailLedgerError: true, customerLedgerError: true }));
+  assert.equal(own.value.result.trialIneligibleReason, 'already_used');
+  assert.equal(own.messages.length, 0);
+
+  // both lookups fine: eligible
+  assert.equal((await context({})).result.trialEligible, true);
+});
+
+test('check_failed never offers a trial (fail closed)', async () => {
+  const { value } = await quietly(() => context({ emailLedgerError: true }));
+  assert.equal(value.result.trialEligible, false);
+  assert.equal(value.result.trialIneligibleReason, 'check_failed');
+});
+
+test('a failed lookup is logged once per lookup and names check_failed', async () => {
+  const { messages } = await quietly(() => context({ emailLedgerError: true }));
+  assert.equal(messages.length, 1);
+  assert.match(String(messages[0][0]), /check_failed/);
+});
+
+test('checkoutTrialDecision: only an eligible user gets trial days, check_failed blocks, the rest pay', () => {
+  assert.deepEqual(checkoutTrialDecision({ trialEligible: true, trialIneligibleReason: null }), {
+    action: 'proceed',
+    trialDays: 14,
+  });
+  for (const reason of ['already_used', 'ads_account_used', 'disposable_email'] as const) {
+    assert.deepEqual(checkoutTrialDecision({ trialEligible: false, trialIneligibleReason: reason }), {
+      action: 'proceed',
+      trialDays: 0,
+    });
+  }
+  assert.deepEqual(checkoutTrialDecision({ trialEligible: false, trialIneligibleReason: 'check_failed' }), {
+    action: 'blocked',
+    error: 'trial_check_failed',
+  });
 });

@@ -14,7 +14,17 @@ import {
  *    trial under a different user.
  *  - disposable_email: a well-known throwaway inbox provider.
  */
-export type TrialIneligibleReason = 'already_used' | 'ads_account_used' | 'disposable_email';
+/**
+ * Why a trial is not offered. `check_failed` is different in kind from the others:
+ * nothing is known to be wrong, a ledger lookup just could not be completed. The
+ * semantics stay fail-closed (no trial), but callers must NOT turn it into a paid
+ * checkout: see `checkoutTrialDecision`.
+ */
+export type TrialIneligibleReason =
+  | 'already_used'
+  | 'ads_account_used'
+  | 'disposable_email'
+  | 'check_failed';
 
 export type BillingCheckoutContext = {
   activeSubscriptionId: string | null;
@@ -110,19 +120,24 @@ export async function getBillingCheckoutContext(
 
   const usedByUser = Boolean(grantResult.data) || Boolean(priorTrialResult.data);
 
-  // The two durable ledgers are independent lookups. Both fail CLOSED, and both
-  // are skipped when the user's own rows already settle the answer.
-  const [emailLedgerUsed, adsAccountUsed] = usedByUser
-    ? [true, false]
+  // The two durable ledgers are independent lookups. Both fail CLOSED (an
+  // unanswered lookup never grants a trial), and both are skipped when the user's
+  // own rows already settle the answer. 'error' is kept apart from 'used' so a
+  // storage hiccup is reported as `check_failed`, not as "you already had a trial".
+  const [emailLedger, adsAccount] = usedByUser
+    ? (['used', 'not_used'] as const)
     : await Promise.all([
-        email ? hasLedgerTrialGrant(email, options.admin) : false,
+        email ? hasLedgerTrialGrant(email, options.admin) : ('not_used' as const),
         hasAdsAccountTrial(supabase, userId, options.admin),
       ]);
 
+  // Definite reasons first (they are true whatever the failed lookup would have
+  // said), then the failed check.
   let trialIneligibleReason: TrialIneligibleReason | null = null;
-  if (usedByUser || emailLedgerUsed) trialIneligibleReason = 'already_used';
-  else if (adsAccountUsed) trialIneligibleReason = 'ads_account_used';
+  if (usedByUser || emailLedger === 'used') trialIneligibleReason = 'already_used';
+  else if (adsAccount === 'used') trialIneligibleReason = 'ads_account_used';
   else if (isDisposableEmailDomain(email)) trialIneligibleReason = 'disposable_email';
+  else if (emailLedger === 'error' || adsAccount === 'error') trialIneligibleReason = 'check_failed';
 
   return {
     activeSubscriptionId: liveResult.data?.stripe_subscription_id ?? null,
@@ -132,7 +147,25 @@ export async function getBillingCheckoutContext(
   };
 }
 
-async function hasLedgerTrialGrant(email: string, injectedAdmin?: AdminClientLike) {
+/**
+ * What a checkout entry point does with the policy. A trial is offered only when
+ * the user is eligible. `check_failed` BLOCKS: creating a session anyway would
+ * silently turn a first-time trial into an immediate charge, which is the worst
+ * way to fail. Every other ineligible reason is a known fact about the user and
+ * starts a paid subscription as before.
+ */
+export function checkoutTrialDecision(
+  context: Pick<BillingCheckoutContext, 'trialEligible' | 'trialIneligibleReason'>
+): { action: 'proceed'; trialDays: number } | { action: 'blocked'; error: 'trial_check_failed' } {
+  if (context.trialIneligibleReason === 'check_failed') {
+    return { action: 'blocked', error: 'trial_check_failed' };
+  }
+  return { action: 'proceed', trialDays: context.trialEligible ? TRIAL_DAYS : 0 };
+}
+
+type LedgerLookup = 'used' | 'not_used' | 'error';
+
+async function hasLedgerTrialGrant(email: string, injectedAdmin?: AdminClientLike): Promise<LedgerLookup> {
   try {
     const admin = injectedAdmin ?? createAdminClient();
     // Every key the address is known under: the exact-address hash older rows
@@ -145,12 +178,14 @@ async function hasLedgerTrialGrant(email: string, injectedAdmin?: AdminClientLik
       .limit(1);
 
     if (error) throw error;
-    return Boolean(data && data.length > 0);
+    return data && data.length > 0 ? 'used' : 'not_used';
   } catch (error) {
     // Fail CLOSED on a storage problem: the cost of wrongly denying a trial is
-    // a support message; the cost of wrongly granting one is unbounded.
-    console.error('Trial ledger lookup failed; treating the trial as already used', error);
-    return true;
+    // a support message; the cost of wrongly granting one is unbounded. It is
+    // reported as `check_failed`, not as a used trial, so the customer is told to
+    // retry instead of being quietly moved to a paid start.
+    console.error('Trial ledger lookup failed; no trial is offered (check_failed)', error);
+    return 'error';
   }
 }
 
@@ -248,10 +283,10 @@ async function hasAdsAccountTrial(
   supabase: any,
   userId: string,
   injectedAdmin?: AdminClientLike
-) {
+): Promise<LedgerLookup> {
   try {
     const customerIds = await loadActiveClientCustomerIds(supabase, userId);
-    if (customerIds.length === 0) return false;
+    if (customerIds.length === 0) return 'not_used';
     const admin = injectedAdmin ?? createAdminClient();
     let owned: string[];
     try {
@@ -263,12 +298,12 @@ async function hasAdsAccountTrial(
           'Run db/migrations/20261013_trial_abuse_guards.sql. Treating the trial as available.',
         error
       );
-      return false;
+      return 'not_used';
     }
-    return owned.length > 0;
+    return owned.length > 0 ? 'used' : 'not_used';
   } catch (error) {
-    console.error('Trial ads-account lookup failed; treating the trial as already used', error);
-    return true;
+    console.error('Trial ads-account lookup failed; no trial is offered (check_failed)', error);
+    return 'error';
   }
 }
 
