@@ -420,6 +420,25 @@ CREATE TABLE IF NOT EXISTS billing_trial_ledger (
   source TEXT
 );
 
+-- The same one-trial rule, keyed on what the abuser cannot change as easily as
+-- an email address: the Google Ads customer id and the card fingerprint
+-- (db/migrations/20261013_trial_abuse_guards.sql). No foreign keys, so they
+-- survive user deletion. Service role only: RLS enabled with no policy, and the
+-- service role can append and read but never rewrite them.
+CREATE TABLE IF NOT EXISTS trial_customer_ledger (
+  customer_id TEXT PRIMARY KEY CHECK (customer_id ~ '^[0-9]{3,20}$'),
+  first_user_id UUID NOT NULL,
+  granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  source TEXT
+);
+
+CREATE TABLE IF NOT EXISTS trial_card_ledger (
+  fingerprint TEXT PRIMARY KEY,
+  first_user_id UUID NOT NULL,
+  stripe_subscription_id TEXT,
+  granted_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS invoices (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   subscription_id UUID REFERENCES subscriptions(id) ON DELETE SET NULL,
@@ -744,6 +763,8 @@ CREATE POLICY billing_trial_grants_owner_select ON billing_trial_grants
   FOR SELECT USING (user_id = (SELECT auth.uid()));
 
 ALTER TABLE billing_trial_ledger ENABLE ROW LEVEL SECURITY;
+ALTER TABLE trial_customer_ledger ENABLE ROW LEVEL SECURITY;
+ALTER TABLE trial_card_ledger ENABLE ROW LEVEL SECURITY;
 
 -- =====================================================
 -- WRITE PRIVILEGES
@@ -756,6 +777,10 @@ REVOKE INSERT, UPDATE, DELETE ON subscriptions FROM anon, authenticated;
 REVOKE INSERT, UPDATE, DELETE ON invoices FROM anon, authenticated;
 REVOKE INSERT, UPDATE, DELETE ON billing_trial_grants FROM anon, authenticated;
 REVOKE ALL ON TABLE billing_trial_ledger FROM anon, authenticated;
+REVOKE ALL ON TABLE trial_customer_ledger FROM PUBLIC, anon, authenticated, service_role;
+GRANT SELECT, INSERT ON TABLE trial_customer_ledger TO service_role;
+REVOKE ALL ON TABLE trial_card_ledger FROM PUBLIC, anon, authenticated, service_role;
+GRANT SELECT, INSERT ON TABLE trial_card_ledger TO service_role;
 REVOKE ALL ON TABLE llm_usage FROM PUBLIC, anon, authenticated, service_role;
 GRANT SELECT, INSERT ON TABLE llm_usage TO service_role;
 REVOKE ALL ON TABLE jarvis_playbook_chunks FROM PUBLIC, anon, authenticated, service_role;
