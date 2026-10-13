@@ -214,6 +214,11 @@ export function subscriptionAccessFromRows(
  * over everything (including a paid plan: billing is untouched, but nothing
  * runs). A free plan applies when there is no live paid plan, or when it is a
  * higher plan than the paid one.
+ *
+ * "The paid one" is what the subscription actually delivers, which is its
+ * effectiveLimitPlan: a trial delivers Starter's limits whatever plan it picked.
+ * Comparing the picked plan instead would let a trial on Pro hide a Growth grant
+ * and drop the user to Starter.
  */
 export function applyAccessOverrides(
   access: SubscriptionAccess,
@@ -231,7 +236,7 @@ export function applyAccessOverrides(
   }
   const grant = overrides.grant;
   if (grant) {
-    const paidRank = access.active && access.plan ? PLAN_RANK[access.plan] : 0;
+    const paidRank = access.active && access.plan ? PLAN_RANK[effectiveLimitPlan(access) ?? access.plan] : 0;
     if (PLAN_RANK[grant.plan] > paidRank) {
       return {
         active: true,

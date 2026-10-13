@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { budgetCapsFor } from '../lib/ai/usage';
 import {
   PLAN_LIMITS,
+  applyAccessOverrides,
   consumeFeatureUsage,
   effectiveLimitPlan,
   featureAccessMessage,
@@ -168,6 +169,52 @@ test('an operator free-plan grant keeps its plan limits, even on top of a trial'
   const { result, rpc } = await limitFor(database);
   assert.equal(rpc.p_limit, PLAN_LIMITS.pro.assistant.limit);
   assert.equal(result.ok && result.plan, 'pro');
+});
+
+// A grant above Starter must win during a trial. The old rule compared the plan the
+// trial picked (Pro) with the grant (Growth) and let the trial hide the grant, which
+// dropped the user to Starter limits even though an operator had given them Growth.
+test('a Growth grant beats a trial that picked Pro: the user gets Growth limits, not Starter', async () => {
+  const database = entitlementDatabase({
+    subscriptions: [subscriptionRow({ plan: 'pro', status: 'trialing', trial_ends_at: FUTURE })],
+    overrides: [{ kind: 'plan_grant', plan: 'growth', expires_at: null, created_at: PAST, revoked_at: null }],
+  });
+  const { result, rpc } = await limitFor(database);
+  assert.equal(rpc.p_limit, PLAN_LIMITS.growth.assistant.limit);
+  assert.equal(result.ok && result.plan, 'growth');
+});
+
+test('any grant above Starter wins over a trial of any plan; a Starter grant changes nothing', () => {
+  const trial = (plan: 'starter' | 'growth' | 'pro') => ({
+    active: true,
+    plan,
+    status: 'trialing',
+    trialEndsAt: FUTURE,
+    currentPeriodEnd: FUTURE,
+  });
+  const grant = (plan: 'starter' | 'growth' | 'pro') => ({
+    suspended: false,
+    suspendedAt: null,
+    grant: { plan, expiresAt: null, grantedAt: null },
+  });
+  for (const picked of ['starter', 'growth', 'pro'] as const) {
+    for (const granted of ['growth', 'pro'] as const) {
+      const out = applyAccessOverrides(trial(picked), grant(granted));
+      assert.equal(out.status, 'comp', `trial ${picked} + grant ${granted}`);
+      assert.equal(effectiveLimitPlan(out), granted, `trial ${picked} + grant ${granted}`);
+    }
+    const same = applyAccessOverrides(trial(picked), grant('starter'));
+    assert.equal(same.status, 'trialing', `trial ${picked} + grant starter`);
+    assert.equal(effectiveLimitPlan(same), 'starter');
+  }
+});
+
+test('a paying (not trialing) customer is still compared by the plan they pay for', () => {
+  const paying = { active: true, plan: 'pro' as const, status: 'active', trialEndsAt: null, currentPeriodEnd: FUTURE };
+  const growthGrant = { suspended: false, suspendedAt: null, grant: { plan: 'growth' as const, expiresAt: null, grantedAt: null } };
+  const out = applyAccessOverrides(paying, growthGrant);
+  assert.equal(out.status, 'active');
+  assert.equal(effectiveLimitPlan(out), 'pro');
 });
 
 test('a trial gets the Starter LLM budget, not the budget of the plan it picked', () => {
