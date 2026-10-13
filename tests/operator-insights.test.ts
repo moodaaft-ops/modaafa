@@ -219,6 +219,19 @@ test('engine health: a sync with no success for 6 hours is failing and leads the
   assert.match(top.text, /تحديث بيانات الحسابات/);
 });
 
+test('engine health: optimizer accounts resting in their cooldown do not read as errors', () => {
+  const data = sample();
+  data.jobs = [
+    { job_name: 'sync-google-ads', status: 'success', started_at: iso(-0.1), processed: 20 },
+    { job_name: 'optimize', status: 'partial', started_at: iso(-0.1), processed: 1, error_count: 1, details: { cooled_down_accounts: 28 } },
+  ];
+  assert.equal(computeEngineHealth(data, NOW).jobs.find((job) => job.key === 'optimize')!.state, 'ok');
+
+  // The same run without the resting accounts is one failure in two: a warning.
+  data.jobs[1] = { job_name: 'optimize', status: 'partial', started_at: iso(-0.1), processed: 1, error_count: 1 };
+  assert.equal(computeEngineHealth(data, NOW).jobs.find((job) => job.key === 'optimize')!.state, 'warning');
+});
+
 test('stuck executions count when older than 30 minutes', () => {
   const data = sample();
   data.recommendations = [

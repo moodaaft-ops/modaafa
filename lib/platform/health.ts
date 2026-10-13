@@ -4,6 +4,7 @@ export type JobRunHealthRow = {
   started_at?: string | null;
   processed?: number | null;
   error_count?: number | null;
+  details?: Record<string, unknown> | null;
 };
 
 export function extractEmailDomain(value?: string | null) {
@@ -38,7 +39,11 @@ export function evaluateOperationalJob(
     : null;
   const processed = Math.max(0, Number(latest?.processed ?? 0));
   const errors = Math.max(0, Number(latest?.error_count ?? 0));
-  const attempted = processed + errors;
+  // Accounts resting in the optimizer cooldown were not attempted this run but
+  // were not failing either. Without them a run that only had a couple of
+  // eligible accounts turns one bad account into a huge error ratio.
+  const resting = Math.max(0, Number(latest?.details?.cooled_down_accounts ?? 0)) || 0;
+  const attempted = processed + errors + resting;
   const errorRatio = attempted > 0 ? errors / attempted : 0;
   const status = latest?.status ?? 'missing';
   const statusOk = status === 'success' || status === 'partial';

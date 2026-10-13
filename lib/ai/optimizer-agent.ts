@@ -1,4 +1,4 @@
-import { createMessageForAgent, hasAIBackend } from './client';
+import { cachedSystemBlock, createMessageForAgent, hasAIBackend } from './client';
 import type { Customer } from 'google-ads-api';
 import { createAdminClient } from '../supabase/server';
 
@@ -185,6 +185,15 @@ export interface OptimizerAction {
   };
 }
 
+/**
+ * The rules are identical for every account in a run, so the first call writes
+ * them to the prompt cache and the following ones read them at 5% of the input
+ * price (Sonnet 5.5 caches from 512 tokens; this block is roughly 2k).
+ */
+export function optimizerSystemBlocks() {
+  return cachedSystemBlock(SYSTEM_PROMPT);
+}
+
 export async function decideOptimizations(
   snapshot: OptimizerSnapshot,
   /** Account owner, so the hourly optimizer's cost is attributed to them. */
@@ -194,7 +203,7 @@ export async function decideOptimizations(
 
   const response = await createMessageForAgent('optimizer', {
     max_tokens: 4000,
-    system: SYSTEM_PROMPT,
+    system: optimizerSystemBlocks(),
     messages: [
       {
         role: 'user',
@@ -268,13 +277,46 @@ function isWellFormedAction(action: any): action is OptimizerAction {
 }
 
 /**
- * Serialize the snapshot for the prompt, neutralising instruction-shaped
- * sequences in every third-party-controlled string.
+ * What the model reads for `budget_utilization`. The cron builds each row as
+ * { campaign, campaign_budget, spend_7d, utilization } where the first two are
+ * the very objects already sent in `campaigns`, so repeating them only cost
+ * tokens. The row keeps the campaign's resource name as the join key and its
+ * name for the Arabic reason text, and the budget resource; the budget amount
+ * stays in the matching `campaigns` row, which is where the prompt tells the
+ * model to copy it from. Server-side grounding still runs on the full snapshot.
  */
-function sanitizeSnapshotForPrompt(snapshot: OptimizerSnapshot) {
-  return JSON.stringify(snapshot, (_key, value) =>
+function promptBudgetUtilization(rows: any[] | undefined) {
+  if (!Array.isArray(rows)) return rows;
+  return rows.map((row) => {
+    const campaign = row?.campaign ?? {};
+    const budget = row?.campaign_budget ?? row?.campaignBudget ?? {};
+    return {
+      campaign_resource: campaign.resource_name ?? campaign.resourceName ?? null,
+      campaign_name: campaign.name ?? null,
+      // The exact string adjust_budget must copy, so no join is needed to find it.
+      budget_resource: budget.resource_name ?? budget.resourceName ?? null,
+      spend_7d: typeof row?.spend_7d === 'number' ? Math.round(row.spend_7d * 100) / 100 : row?.spend_7d,
+      // Four decimals: the prompt's 90% rule must not flip on rounding (0.8996 stays 0.8996).
+      utilization:
+        typeof row?.utilization === 'number' ? Math.round(row.utilization * 10000) / 10000 : row?.utilization,
+    };
+  });
+}
+
+/**
+ * Serialize the snapshot for the prompt, neutralising instruction-shaped
+ * sequences in every third-party-controlled string. Compact on purpose: the
+ * old two-space indent added whitespace tokens to every nested row, and the
+ * model reads minified JSON just as well.
+ */
+export function sanitizeSnapshotForPrompt(snapshot: OptimizerSnapshot) {
+  const forPrompt = {
+    ...snapshot,
+    budget_utilization: promptBudgetUtilization(snapshot.budget_utilization),
+  };
+  return JSON.stringify(forPrompt, (_key, value) =>
     typeof value === 'string' ? sanitizePromptText(value) : value
-  , 2);
+  );
 }
 
 export function sanitizePromptText(value: string, maxLength = 300) {

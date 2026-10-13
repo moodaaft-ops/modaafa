@@ -798,6 +798,11 @@ export type EngineHealth = {
   accounts: { active: number; googleDisabled: number; revoked: number; staleSync: number };
 };
 
+function restingAccounts(details: unknown) {
+  const value = Number((details as { cooled_down_accounts?: unknown } | null | undefined)?.cooled_down_accounts ?? 0);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
 export function computeEngineHealth(data: OperatorDataset, now = Date.now()): EngineHealth {
   const dayAgo = now - DAY_MS;
   const weekAgo = now - 7 * DAY_MS;
@@ -813,6 +818,10 @@ export function computeEngineHealth(data: OperatorDataset, now = Date.now()): En
     const lastFailure = runs.find((job) => job.status === 'failed' || (job.error_count ?? 0) > 0);
     const processed = recent.reduce((sum, job) => sum + Number(job.processed ?? 0), 0);
     const errors = recent.reduce((sum, job) => sum + Number(job.error_count ?? 0), 0);
+    // Optimizer accounts resting in their cooldown were not attempted, but they were
+    // not failing either: counting them keeps one bad account in a short run from
+    // reading as "errors on more than 10% of accounts".
+    const resting = recent.reduce((sum, job) => sum + restingAccounts(job.details), 0);
 
     let state: JobFamilyHealth['state'] = 'ok';
     let stateNote = 'شغال طبيعي';
@@ -825,7 +834,7 @@ export function computeEngineHealth(data: OperatorDataset, now = Date.now()): En
       stateNote = lastSuccess
         ? `آخر نجاح قبل ${Math.round(successAge)} ساعة، والمفروض كل ${family.maxAgeHours} ساعات`
         : 'ولا تشغيل نجح خلال 7 أيام';
-    } else if (failed.length > 0 || (processed + errors > 0 && errors / (processed + errors) > 0.1)) {
+    } else if (failed.length > 0 || (processed + errors > 0 && errors / (processed + errors + resting) > 0.1)) {
       state = 'warning';
       stateNote = failed.length > 0 ? `${failed.length} تشغيل فشل خلال 24 ساعة` : 'أخطاء على أكثر من 10% من الحسابات';
     }

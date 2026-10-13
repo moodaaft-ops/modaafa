@@ -95,6 +95,21 @@ export function getModelName(tier: ModelTier = 'sonnet'): string {
   }[tier];
 }
 
+/**
+ * A system prompt as one block marked for the 5 minute prompt cache. Only use
+ * it for text that is identical across calls AND likely to be re-sent within
+ * five minutes (a batch of accounts, a tool loop, a chat with follow-ups): a
+ * cache write costs 1.25x the normal input price, a read 0.05x on Sonnet 5.5.
+ * The SDK's TextBlockParam type predates cache_control but the API accepts it,
+ * the same cast lib/jarvis/brain.ts uses. When the text is shorter than the
+ * model's minimum (512 tokens on the 5.5 family) the API quietly skips the cache.
+ */
+export function cachedSystemBlock(text: string) {
+  return [
+    { type: 'text', text, cache_control: { type: 'ephemeral' } },
+  ] as unknown as Anthropic.TextBlockParam[];
+}
+
 export function getModelForAgent(agent: AgentRole): string {
   return getModelName(tierForAgent(agent));
 }
