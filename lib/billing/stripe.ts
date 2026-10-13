@@ -276,6 +276,14 @@ export async function retrieveStripeSubscription(subscriptionId: string) {
   return getStripe().subscriptions.retrieve(subscriptionId);
 }
 
+export async function retrieveStripeCharge(chargeId: string) {
+  return getStripe().charges.retrieve(chargeId);
+}
+
+export async function retrieveStripeInvoice(invoiceId: string) {
+  return getStripe().invoices.retrieve(invoiceId);
+}
+
 export async function retrieveCheckoutSession(sessionId: string) {
   return getStripe().checkout.sessions.retrieve(sessionId, {
     expand: ['subscription'],
@@ -299,6 +307,9 @@ const REQUIRED_WEBHOOK_EVENTS = [
   // The single highest-value billing notification: three days before a
   // trialing user's first real charge.
   'customer.subscription.trial_will_end',
+  // A disputed payment cancels the subscription at once (stripe-webhook-handler.ts).
+  // If the endpoint does not send this event, disputes go unhandled silently.
+  'charge.dispute.created',
 ] as const;
 
 /**

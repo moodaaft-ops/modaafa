@@ -2,8 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import type Stripe from 'stripe';
 import { createAdminClient } from '@/lib/supabase/server';
 import {
+  cancelStripeSubscriptionImmediately,
   constructWebhookEvent,
   planFromSubscription,
+  retrieveStripeCharge,
+  retrieveStripeInvoice,
   retrieveStripeSubscription,
 } from '@/lib/billing/stripe';
 import {
@@ -31,6 +34,9 @@ const defaultDependencies = {
   constructWebhookEvent,
   planFromSubscription,
   retrieveStripeSubscription,
+  retrieveStripeCharge,
+  retrieveStripeInvoice,
+  cancelStripeSubscriptionImmediately,
   paymentFailedEmail,
   sendEmail,
   sendOpsAlert,
@@ -269,6 +275,59 @@ export function createStripeWebhookHandler(
           break;
         }
 
+        // Disputes. NOTE: the Stripe webhook endpoint must have
+        // `charge.dispute.created` enabled (it is in REQUIRED_WEBHOOK_EVENTS in
+        // lib/billing/stripe.ts, so /api/health reports it missing). A customer who
+        // disputes a charge keeps using the product while the dispute runs unless
+        // the subscription ends, and the dispute fee is lost either way.
+        case 'charge.dispute.created': {
+          const dispute = event.data.object as any;
+          const disputeId = stripeObjectId(dispute?.id);
+          const chargeId = stripeObjectId(dispute?.charge);
+          const subscriptionId = await resolveDisputedSubscriptionId(
+            dependencies,
+            supabase,
+            dispute,
+          );
+
+          if (!subscriptionId) {
+            await safeOpsAlert(dependencies, {
+              subject: 'نزاع على دفعة بلا اشتراك معروف',
+              message:
+                'وصل نزاع على دفعة في Stripe ولم نصل إلى اشتراك مرتبط به. لم يُلغَ شيء ويحتاج مراجعة يدوية.',
+              details: { event_id: event.id, dispute_id: disputeId, charge_id: chargeId },
+            });
+            break;
+          }
+
+          // Idempotent: a subscription that already ended is not cancelled again
+          // (Stripe would reject it), but the local row and the alert still go out.
+          let target = await dependencies.retrieveStripeSubscription(subscriptionId);
+          let outcome: 'cancelled' | 'already_ended' = 'already_ended';
+          if (!SUBSCRIPTION_ENDED_STATUSES.has(target.status)) {
+            target = await dependencies.cancelStripeSubscriptionImmediately(subscriptionId);
+            outcome = 'cancelled';
+          }
+          await dependencies.applySubscriptionEvent(
+            supabase,
+            subscriptionSnapshotRow(dependencies, target, eventCreatedAt),
+          );
+          await safeOpsAlert(dependencies, {
+            subject: 'نزاع على دفعة وأُلغي الاشتراك',
+            message:
+              'وصل نزاع على دفعة في Stripe وأُلغي الاشتراك المرتبط به فوراً. راجع النزاع في لوحة Stripe وجهّز الأدلة قبل الموعد.',
+            // Ids only: no names, emails or amounts.
+            details: {
+              event_id: event.id,
+              dispute_id: disputeId,
+              charge_id: chargeId,
+              subscription_id: subscriptionId,
+              outcome,
+            },
+          });
+          break;
+        }
+
         case 'invoice.payment_succeeded': {
           const invoice = event.data.object as any;
           const subscriptionId = invoiceSubscriptionId(invoice);
@@ -366,6 +425,65 @@ async function safeUserEmail(
     if (profile?.email) await dependencies.sendEmail({ to: profile.email, ...email });
   } catch (error) {
     console.error('Failed to send Stripe lifecycle email', { userId, error });
+  }
+}
+
+const SUBSCRIPTION_ENDED_STATUSES = new Set(['canceled', 'incomplete_expired']);
+const LIVE_SUBSCRIPTION_STATUSES = ['trialing', 'active', 'past_due', 'paused'];
+
+/**
+ * The subscription a disputed charge belongs to: dispute.charge -> charge.invoice
+ * -> the invoice's subscription (`invoiceSubscriptionId` handles both API
+ * shapes). A charge with no invoice falls back to the customer's live
+ * subscription in our own table. Lookup failures throw so Stripe retries the
+ * event; returning null only means "nothing to cancel could be found".
+ */
+async function resolveDisputedSubscriptionId(
+  dependencies: StripeWebhookDependencies,
+  supabase: ReturnType<typeof createAdminClient>,
+  dispute: any,
+) {
+  const chargeId = stripeObjectId(dispute?.charge);
+  if (!chargeId) return null;
+  const charge =
+    dispute.charge && typeof dispute.charge === 'object'
+      ? dispute.charge
+      : await dependencies.retrieveStripeCharge(chargeId);
+
+  const invoiceId = stripeObjectId(charge?.invoice);
+  if (invoiceId) {
+    const invoice =
+      charge.invoice && typeof charge.invoice === 'object'
+        ? charge.invoice
+        : await dependencies.retrieveStripeInvoice(invoiceId);
+    const fromInvoice = invoiceSubscriptionId(invoice);
+    if (fromInvoice) return fromInvoice;
+  }
+
+  const customerId = stripeObjectId(charge?.customer);
+  if (!customerId) return null;
+  const { data, error } = await supabase
+    .from('subscriptions')
+    .select('stripe_subscription_id')
+    .eq('stripe_customer_id', customerId)
+    .in('status', LIVE_SUBSCRIPTION_STATUSES)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  throwOnSupabaseError('find disputed customer subscription', error);
+  return (data?.stripe_subscription_id as string | undefined) ?? null;
+}
+
+async function safeOpsAlert(
+  dependencies: StripeWebhookDependencies,
+  payload: Parameters<StripeWebhookDependencies['sendOpsAlert']>[0],
+) {
+  try {
+    await dependencies.sendOpsAlert(payload);
+  } catch (error) {
+    // The cancellation is what matters; a lost alert must not fail the event
+    // and re-run the whole handler.
+    console.error('Failed to send Stripe dispute alert', error);
   }
 }
 
