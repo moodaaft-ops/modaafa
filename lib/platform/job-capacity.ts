@@ -31,6 +31,19 @@ export const OPTIMIZE_ACCOUNT_LIMIT = boundedInteger(
   100
 );
 
+/**
+ * Hours an account rests after an optimizer pass before it is picked again.
+ * The scheduler may offer up to 24 slots a day, but an account's 7 and 30 day
+ * windows barely move between two slots, so every extra pass is paid model
+ * time with the same answer. 0 switches the cooldown off.
+ */
+export const OPTIMIZE_ACCOUNT_COOLDOWN_HOURS = boundedInteger(
+  process.env.CRON_OPTIMIZE_COOLDOWN_HOURS,
+  12,
+  0,
+  72
+);
+
 /** Concurrent AI/Google Ads chains, kept conservative for the 300s budget. */
 export const OPTIMIZE_ACCOUNT_CONCURRENCY = boundedInteger(
   process.env.CRON_OPTIMIZE_CONCURRENCY,

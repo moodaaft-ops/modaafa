@@ -1,5 +1,5 @@
 import type Anthropic from '@anthropic-ai/sdk';
-import { createMessageForAgent, hasAIBackend } from './client';
+import { cachedSystemBlock, createMessageForAgent, hasAIBackend } from './client';
 import type { Customer } from 'google-ads-api';
 
 /**
@@ -179,7 +179,9 @@ export async function buildCampaign(
       try {
         response = await createMessageForAgent('builder', {
           max_tokens: 4096,
-          system: SYSTEM_PROMPT,
+          // Re-sent unchanged on every tool round (up to 10 within seconds),
+          // so rounds after the first read tools + rules from the cache.
+          system: cachedSystemBlock(SYSTEM_PROMPT),
           tools: TOOLS as any,
           messages,
         }, {

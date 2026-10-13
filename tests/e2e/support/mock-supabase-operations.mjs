@@ -82,6 +82,47 @@ for (let h = 0; h < 30; h += 1) {
   jobs.push({ id: `j-sync-${h}`, job_name: 'sync-google-ads', status: h === 3 ? 'failed' : 'success', started_at: iso(-h / 6), processed: 24, error_count: h === 3 ? 24 : 0, error_message: h === 3 ? 'Google Ads API: QUOTA_ERROR RESOURCE_TEMPORARILY_EXHAUSTED' : null });
   jobs.push({ id: `j-opt-${h}`, job_name: 'optimize', status: 'success', started_at: iso(-h / 4), processed: 22, error_count: h % 7 === 0 ? 1 : 0 });
 }
+// Cost-guard counters on the recent optimizer runs, the way the cron now records them.
+for (const job of jobs) {
+  if (job.job_name !== 'optimize') continue;
+  const h = Number(job.id.replace('j-opt-', ''));
+  if (h < 8) job.details = { model_calls: 16 - (h % 3), skipped_idle: 3 + (h % 2), cooled_down_accounts: h % 2 ? 14 : 9, cooldown_hours: 12, batch_limit: 60 };
+}
+
+// Synthetic LLM ledger for /operations/costs: 14 days, deterministic. MOCK_LLM=0 serves the
+// table as missing (like production before the migration), MOCK_LLM=empty serves it with no rows.
+const llmUsage = [];
+let seed = 7;
+const rand = () => ((seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296);
+for (let day = 0; day < 14; day += 1) {
+  const runs = day % 5 === 0 ? 4 : 2;
+  for (let run = 0; run < runs; run += 1) {
+    for (let call = 0; call < 14 + Math.floor(rand() * 6); call += 1) {
+      const cached = day < 2 && call > 0;
+      llmUsage.push({
+        id: `l-${day}-${run}-${call}`,
+        created_at: iso(-day - (run * 0.21 + call * 0.002)),
+        user_id: id(8 + ((call + run) % 18)),
+        feature: 'optimizer',
+        model: 'claude-sonnet-5-5',
+        input_tokens: cached ? 5200 : 7400,
+        output_tokens: 380 + Math.floor(rand() * 300),
+        cache_read_tokens: cached ? 1900 : 0,
+        cache_write_tokens: !cached && day < 2 && call === 0 ? 1900 : 0,
+        cost_usd: cached ? 0.0148 + rand() * 0.004 : 0.0203 + rand() * 0.006,
+        priced: true,
+      });
+    }
+  }
+  for (let k = 0; k < 1 + (day % 3); k += 1) {
+    llmUsage.push({ id: `a-${day}-${k}`, created_at: iso(-day - 0.4 - k * 0.1), user_id: id(10 + k), feature: 'audit', model: 'claude-opus-5-5', input_tokens: 21000, output_tokens: 1700, cache_read_tokens: 0, cache_write_tokens: 0, cost_usd: 0.118 + rand() * 0.04, priced: true });
+  }
+  for (let k = 0; k < 3 + Math.floor(rand() * 5); k += 1) {
+    llmUsage.push({ id: `s-${day}-${k}`, created_at: iso(-day - 0.15 - k * 0.03), user_id: id(9 + (k % 4)), feature: k % 3 ? 'assistant' : 'jarvis', model: 'claude-sonnet-5-5', input_tokens: 6200, output_tokens: 720, cache_read_tokens: 0, cache_write_tokens: 0, cost_usd: 0.019 + rand() * 0.012, priced: true });
+  }
+  if (day % 4 === 1) llmUsage.push({ id: `b-${day}`, created_at: iso(-day - 0.3), user_id: id(12), feature: 'campaign_builder', model: 'claude-sonnet-5-5', input_tokens: 14000, output_tokens: 3100, cache_read_tokens: 0, cache_write_tokens: 0, cost_usd: 0.071, priced: true });
+}
+
 jobs.push({ id: 'j-connect', job_name: `google_ads_connect:${id(40)}`, status: 'success', started_at: iso(-1), processed: 1, error_count: 0 });
 
 const tables = {
@@ -95,6 +136,7 @@ const tables = {
   recommendations,
   ai_actions: [{ id: 'x1', account_id: id(7, 'a'), action_type: 'add_negative_keyword', description_ar: 'أضاف 12 كلمة سلبية لحملة البحث', created_at: iso(-3), rollback_status: null }],
   job_runs: jobs,
+  llm_usage: process.env.MOCK_LLM === '0' ? null : process.env.MOCK_LLM === 'empty' ? [] : llmUsage,
   processed_webhook_events: [{ event_id: 'evt_1', event_type: 'invoice.payment_failed', status: 'failed', attempts: 3, last_attempt_at: iso(-0.5), error_message: 'timeout' }],
   account_access_overrides: overrides,
   operator_audit_log: process.env.MOCK_OVERRIDES === '0' ? null : [
