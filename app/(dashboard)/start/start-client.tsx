@@ -200,7 +200,8 @@ export function StartClient({
       // PR #57 contract (docs/free-audit-contract.md): the code, not the
       // status alone, decides the wording.
       if (res.status === 402) {
-        const exhausted = data.error === 'free_audits_exhausted';
+        const exhausted =
+          data.error === 'free_audits_exhausted' || data.error === 'free_accounts_exhausted';
         assistant(
           data.message ||
             (exhausted

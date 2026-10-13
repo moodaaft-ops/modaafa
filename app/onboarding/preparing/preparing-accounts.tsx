@@ -8,6 +8,7 @@ import { buttonClasses } from '@/lib/ui/button';
 import { cn } from '@/lib/utils';
 import {
   CONNECT_ERROR_MESSAGES,
+  connectErrorRetryHelps,
   CONNECT_STAGES,
   connectErrorRecoveryHref,
   connectPollDelayMs,
@@ -127,9 +128,15 @@ export function PreparingAccounts() {
             {CONNECT_ERROR_MESSAGES[view.error ?? ''] ?? CONNECT_ERROR_MESSAGES.connect_failed}
           </p>
           <div className="mt-4 flex flex-wrap gap-3">
-            <a href="/api/auth/google-ads/connect" className={buttonClasses({ variant: 'primary' })}>
-              تجديد الربط
-            </a>
+            {connectErrorRetryHelps(view.error) ? (
+              <a href="/api/auth/google-ads/connect" className={buttonClasses({ variant: 'primary' })}>
+                تجديد الربط
+              </a>
+            ) : (
+              <Link href="/billing" className={buttonClasses({ variant: 'primary' })}>
+                صفحة الاشتراك
+              </Link>
+            )}
             {(view.linkedAccounts ?? 0) > 0 && (
               <Link href="/onboarding/choose" className={buttonClasses({ variant: 'outline' })}>
                 أكمل بالحسابات التي وصلت

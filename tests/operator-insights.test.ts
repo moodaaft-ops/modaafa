@@ -183,6 +183,20 @@ test('a higher free plan over a Stripe trial shows as comp, and the trial still 
   assert.equal(computeRevenue(profiles, NOW).upcoming.find((day) => day.date === riyadhDay(iso(1)))!.count, 1);
 });
 
+test('a free Growth plan over a Growth TRIAL shows as comp: the trial only delivers Starter limits', () => {
+  const data = sample();
+  data.overrides = [{ user_id: 'u6', kind: 'plan_grant', plan: 'growth', expires_at: null, revoked_at: null, created_at: iso(-1) }];
+  const u6 = buildCustomerProfiles(data, NOW).find((p) => p.id === 'u6')!;
+  assert.equal(u6.access, 'comp');
+  assert.equal(u6.stripeStatus, 'trialing');
+});
+
+test('a free Starter plan over a Growth trial changes nothing', () => {
+  const data = sample();
+  data.overrides = [{ user_id: 'u6', kind: 'plan_grant', plan: 'starter', expires_at: null, revoked_at: null, created_at: iso(-1) }];
+  assert.equal(buildCustomerProfiles(data, NOW).find((p) => p.id === 'u6')!.access, 'trialing');
+});
+
 test('a lower free plan does not hide a paid plan', () => {
   const data = sample();
   data.overrides = [{ user_id: 'u7', kind: 'plan_grant', plan: 'starter', expires_at: null, revoked_at: null, created_at: iso(-1) }];

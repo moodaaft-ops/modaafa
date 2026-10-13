@@ -171,6 +171,27 @@ export async function cancelStripeSubscription(subscriptionId: string) {
 }
 
 /**
+ * Immediate cancellation for abuse and dispute handling: no proration and no
+ * final invoice. Both are Stripe's defaults, spelled out so a future default
+ * change cannot turn a fraud cancellation into a surprise charge or credit.
+ */
+export async function cancelStripeSubscriptionImmediately(subscriptionId: string) {
+  return getStripe().subscriptions.cancel(subscriptionId, { invoice_now: false, prorate: false });
+}
+
+/**
+ * The Stripe calls the trial card guard needs (lib/billing/trial-card-guard.ts),
+ * bound to the real client. The guard itself takes these as injected
+ * dependencies so it can be tested without Stripe.
+ */
+export const trialCardStripe = {
+  retrievePaymentMethod: (id: string) => getStripe().paymentMethods.retrieve(id),
+  retrieveCustomer: (id: string) => getStripe().customers.retrieve(id),
+  retrieveSubscription: (id: string) => getStripe().subscriptions.retrieve(id),
+  cancelSubscription: (id: string) => cancelStripeSubscriptionImmediately(id),
+};
+
+/**
  * Schedules (or undoes) a cancellation at the end of the current period.
  * During a trial the "period" is the trial itself, so a scheduled cancel ends
  * the subscription on the trial end date without ever charging the card.
@@ -255,6 +276,14 @@ export async function retrieveStripeSubscription(subscriptionId: string) {
   return getStripe().subscriptions.retrieve(subscriptionId);
 }
 
+export async function retrieveStripeCharge(chargeId: string) {
+  return getStripe().charges.retrieve(chargeId);
+}
+
+export async function retrieveStripeInvoice(invoiceId: string) {
+  return getStripe().invoices.retrieve(invoiceId);
+}
+
 export async function retrieveCheckoutSession(sessionId: string) {
   return getStripe().checkout.sessions.retrieve(sessionId, {
     expand: ['subscription'],
@@ -268,7 +297,7 @@ export function constructWebhookEvent(payload: string | Buffer, signature: strin
   return getStripe().webhooks.constructEvent(payload, signature, webhookSecret.trim());
 }
 
-const REQUIRED_WEBHOOK_EVENTS = [
+export const REQUIRED_WEBHOOK_EVENTS = [
   'checkout.session.completed',
   'customer.subscription.created',
   'customer.subscription.updated',
@@ -279,6 +308,27 @@ const REQUIRED_WEBHOOK_EVENTS = [
   // trialing user's first real charge.
   'customer.subscription.trial_will_end',
 ] as const;
+
+/**
+ * Events the app handles but does not need to be launch-ready. A missing one is
+ * REPORTED (`webhook.missing_recommended_events`) and never fails readiness:
+ * adding an event here must not flip /api/health to launch_ready false on a
+ * deploy that happens before someone ticks the box in the Stripe dashboard.
+ *
+ * `charge.dispute.created` cancels the subscription of a customer who disputes a
+ * payment (stripe-webhook-handler.ts). If the endpoint does not send it,
+ * disputes go unhandled silently, so enable it in the Stripe dashboard.
+ */
+export const RECOMMENDED_WEBHOOK_EVENTS = ['charge.dispute.created'] as const;
+
+/** The events in `wanted` that an endpoint with `enabledEvents` does not send. `*` sends everything. */
+export function missingWebhookEvents<T extends string>(
+  wanted: readonly T[],
+  enabledEvents: Iterable<string>
+): T[] {
+  const enabled = new Set(enabledEvents);
+  return wanted.filter((event) => !enabled.has('*') && !enabled.has(event));
+}
 
 /**
  * Resolve (or create) the one Stripe Customer for a user.
@@ -456,10 +506,12 @@ export async function checkStripeConfiguration() {
     const endpoint = webhookEndpoints.data.find(
       (candidate) => candidate.url === expectedWebhookUrl && candidate.status === 'enabled',
     );
-    const enabledEvents = new Set(endpoint?.enabled_events ?? []);
-    const missingEvents = REQUIRED_WEBHOOK_EVENTS.filter(
-      (event) => !enabledEvents.has('*') && !enabledEvents.has(event),
-    );
+    const enabledEvents = endpoint?.enabled_events ?? [];
+    const missingEvents = missingWebhookEvents(REQUIRED_WEBHOOK_EVENTS, enabledEvents);
+    // Reported only; never part of `ok` or `webhookOk`.
+    const missingRecommendedEvents = endpoint
+      ? missingWebhookEvents(RECOMMENDED_WEBHOOK_EVENTS, enabledEvents)
+      : [];
     const missingPriceSlots = configuredPrices
       .filter(({ priceId }) => !isConfiguredEnv(priceId))
       .map(({ plan, period }) => `${plan}/${period}`);
@@ -496,6 +548,7 @@ export async function checkStripeConfiguration() {
         url: expectedWebhookUrl,
         status: endpoint?.status ?? 'missing',
         missing_events: missingEvents,
+        missing_recommended_events: missingRecommendedEvents,
       },
     };
   } catch (error) {

@@ -16,6 +16,9 @@ import {
 } from '@/lib/billing/subscription-events';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 import { sendOpsAlert } from '@/lib/notifications/email';
+import { enforceTrialCardUniquenessLive } from '@/lib/billing/trial-card-guard';
+import { enforceTrialStartAccountLockLive } from '@/lib/billing/trial-start-account-lock';
+import { runTrialStartGuards } from '@/lib/billing/trial-start-guards';
 
 export const runtime = 'nodejs';
 
@@ -85,11 +88,34 @@ export async function GET(req: NextRequest) {
     // current_period_start as the event time keeps this fallback a floor: a
     // real webhook (event.created) always sorts newer and wins.
     const periodStart = stripeTimestamp(subscription.current_period_start);
+    const fromOnboarding =
+      req.nextUrl.searchParams.get('return_to') === ONBOARDING_CHECKOUT_RETURN;
+
+    // One free trial per card. If another user already trialed with this card the
+    // guard has just cancelled the subscription in Stripe; record it as canceled
+    // (it must never show as a live trial) and send the user to the explanation
+    // instead of the success page. The trial is still recorded as USED for this
+    // user: the message says "subscribe directly", and that is only true if the
+    // next checkout no longer offers a trial (which would be refused again).
+    //
+    // The Google Ads accounts get the same treatment: link a burned account
+    // between opening Checkout and paying and the trial would otherwise start on
+    // it. The lock parks accounts owned by another user's trial and, when none is
+    // left, cancels the subscription. The card guard goes first.
+    const trialGuards = await runTrialStartGuards({
+      admin,
+      userId: user.id,
+      subscription,
+      enforceCard: enforceTrialCardUniquenessLive,
+      enforceAccountLock: enforceTrialStartAccountLockLive,
+    });
+    const status = trialGuards.blocked ? 'canceled' : normalizeStatus(subscription.status);
+
     await applySubscriptionEvent(admin, {
       user_id: user.id,
       plan,
       billing_period: period,
-      status: normalizeStatus(subscription.status),
+      status,
       stripe_subscription_id: subscription.id,
       stripe_customer_id:
         typeof subscription.customer === 'string'
@@ -99,6 +125,9 @@ export async function GET(req: NextRequest) {
       current_period_start: periodStart,
       current_period_end: stripeTimestamp(subscription.current_period_end),
       last_event_at: periodStart ?? new Date(0).toISOString(),
+      ...(trialGuards.blocked
+        ? { canceled_at: stripeTimestamp(subscription.canceled_at) ?? new Date().toISOString() }
+        : {}),
     });
     if (subscription.trial_end) {
       await recordTrialGrant({
@@ -108,11 +137,14 @@ export async function GET(req: NextRequest) {
         source: 'checkout_complete',
       });
     }
+    if (trialGuards.error) {
+      // 'card_trial_used' or 'ads_account_trial_used'.
+      return billingError(req, trialGuards.error, undefined, fromOnboarding ? '/onboarding/trial' : '/billing');
+    }
 
-    const successPath =
-      req.nextUrl.searchParams.get('return_to') === ONBOARDING_CHECKOUT_RETURN
-        ? ONBOARDING_CHECKOUT_SUCCESS_PATH
-        : '/dashboard?subscribed=1';
+    const successPath = fromOnboarding
+      ? ONBOARDING_CHECKOUT_SUCCESS_PATH
+      : '/dashboard?subscribed=1';
     return NextResponse.redirect(new URL(successPath, req.url));
   } catch (error) {
     if (error instanceof LiveSubscriptionConflictError) {
@@ -136,9 +168,14 @@ export async function GET(req: NextRequest) {
   }
 }
 
-function billingError(req: NextRequest, error: string, headers?: Record<string, string>) {
+function billingError(
+  req: NextRequest,
+  error: string,
+  headers?: Record<string, string>,
+  base: '/billing' | '/onboarding/trial' = '/billing',
+) {
   return NextResponse.redirect(
-    new URL(`/billing?error=${encodeURIComponent(error)}`, req.url),
+    new URL(`${base}?error=${encodeURIComponent(error)}`, req.url),
     { status: 303, headers },
   );
 }

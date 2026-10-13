@@ -150,11 +150,22 @@ function handlerFor(
     }),
     subscriptionEventWasApplied: () => true,
     recordTrialGrant: async () => undefined,
+    enforceTrialCardUniqueness: async () => ({ blocked: false, outcome: 'first_use' as const }),
+    enforceTrialStartAccountLock: async () => accountLockResult(false),
     completeStripeWebhookEvent: async () => undefined,
     failStripeWebhookEvent: async () => undefined,
     sendOpsAlert: async () => ({ sent: true, id: 'ops-test' }),
     ...overrides,
   } as Partial<StripeWebhookDependencies>);
+}
+
+function accountLockResult(blocked: boolean) {
+  return {
+    blocked,
+    outcome: (blocked ? 'blocked' : 'claimed') as 'blocked' | 'claimed',
+    pausedAccountIds: [] as string[],
+    claimedCustomerId: null as string | null,
+  };
 }
 
 function request() {
@@ -278,4 +289,710 @@ test('the trial-ending email is still sent when the customer has not cancelled',
   assert.equal(response.status, 200);
   assert.equal(sent.length, 1);
   assert.equal(sent[0].to, 'customer@example.com');
+});
+
+// ---------------------------------------------------------------------------
+// One free trial per card
+// ---------------------------------------------------------------------------
+
+function trialingSubscription(overrides: Record<string, unknown> = {}) {
+  return subscription({
+    id: 'sub_card',
+    status: 'trialing',
+    trial_end: CREATED_AT + 14 * 86_400,
+    default_payment_method: 'pm_card',
+    ...overrides,
+  });
+}
+
+function checkoutCompletedEvent(id: string) {
+  return event(
+    'checkout.session.completed',
+    { id: 'cs_card', metadata: { userId: 'user-1' }, subscription: 'sub_card', customer: 'cus_test' },
+    id,
+  );
+}
+
+test('checkout.session.completed passes the live trialing subscription to the card guard', async () => {
+  const guardCalls: Array<{ userId: string; subscriptionId: string }> = [];
+  const applied: Array<Record<string, unknown>> = [];
+  const sent: Array<{ to: string }> = [];
+  const grants: string[] = [];
+  const handler = handlerFor(checkoutCompletedEvent('evt_card_ok'), {
+    createAdminClient: () => trialEndingDatabase() as any,
+    retrieveStripeSubscription: async () => trialingSubscription() as any,
+    enforceTrialCardUniqueness: async ({ userId, subscription: sub }) => {
+      guardCalls.push({ userId, subscriptionId: sub.id });
+      return { blocked: false, outcome: 'first_use' };
+    },
+    applySubscriptionEvent: async (_database, row) => {
+      applied.push(row);
+      return 'inserted';
+    },
+    recordTrialGrant: async ({ userId }) => {
+      grants.push(userId);
+    },
+    sendEmail: (async (message: { to: string }) => {
+      sent.push(message);
+      return { sent: true };
+    }) as any,
+  });
+
+  const response = await handler(request());
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(guardCalls, [{ userId: 'user-1', subscriptionId: 'sub_card' }]);
+  assert.equal(applied[0].status, 'trialing');
+  assert.deepEqual(grants, ['user-1']);
+  assert.equal(sent.length, 1);
+});
+
+test('a duplicate-card trial is written as canceled and gets no welcome email', async () => {
+  const applied: Array<Record<string, unknown>> = [];
+  const sent: Array<{ to: string }> = [];
+  const grants: string[] = [];
+  const handler = handlerFor(checkoutCompletedEvent('evt_card_dupe'), {
+    createAdminClient: () => trialEndingDatabase() as any,
+    retrieveStripeSubscription: async () => trialingSubscription() as any,
+    enforceTrialCardUniqueness: async () => ({ blocked: true, outcome: 'duplicate_card' }),
+    applySubscriptionEvent: async (_database, row) => {
+      applied.push(row);
+      return 'inserted';
+    },
+    recordTrialGrant: async ({ userId }) => {
+      grants.push(userId);
+    },
+    sendEmail: (async (message: { to: string }) => {
+      sent.push(message);
+      return { sent: true };
+    }) as any,
+  });
+
+  const response = await handler(request());
+
+  assert.equal(response.status, 200);
+  assert.equal(applied.length, 1);
+  assert.equal(applied[0].status, 'canceled');
+  assert.equal(applied[0].canceled_at, '2026-08-03T12:00:00.000Z');
+  assert.deepEqual(sent, []);
+  // The trial still counts as used, so the next checkout does not offer another.
+  assert.deepEqual(grants, ['user-1']);
+});
+
+test('customer.subscription.created also runs the card guard and a block writes canceled', async () => {
+  const guardCalls: string[] = [];
+  const applied: Array<Record<string, unknown>> = [];
+  const handler = handlerFor(
+    event('customer.subscription.created', { id: 'sub_card', metadata: { userId: 'user-1' } }, 'evt_created_dupe'),
+    {
+      retrieveStripeSubscription: async () => trialingSubscription() as any,
+      enforceTrialCardUniqueness: async ({ subscription: sub }) => {
+        guardCalls.push(sub.id);
+        return { blocked: true, outcome: 'duplicate_card' };
+      },
+      applySubscriptionEvent: async (_database, row) => {
+        applied.push(row);
+        return 'updated';
+      },
+    },
+  );
+
+  const response = await handler(request());
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(guardCalls, ['sub_card']);
+  assert.equal(applied[0].status, 'canceled');
+});
+
+test('customer.subscription.updated and a missing user never run the card guard', async () => {
+  let calls = 0;
+  const guard = async () => {
+    calls += 1;
+    return { blocked: true, outcome: 'duplicate_card' as const };
+  };
+  const applied: Array<Record<string, unknown>> = [];
+  const apply = async (_database: unknown, row: Record<string, unknown>) => {
+    applied.push(row);
+    return 'updated' as const;
+  };
+
+  await handlerFor(
+    event('customer.subscription.updated', { id: 'sub_card', metadata: { userId: 'user-1' } }, 'evt_updated'),
+    {
+      retrieveStripeSubscription: async () => trialingSubscription() as any,
+      enforceTrialCardUniqueness: guard,
+      applySubscriptionEvent: apply as any,
+    },
+  )(request());
+
+  await handlerFor(
+    event('customer.subscription.created', { id: 'sub_card' }, 'evt_created_no_user'),
+    {
+      retrieveStripeSubscription: async () =>
+        trialingSubscription({ metadata: {} }) as any,
+      enforceTrialCardUniqueness: guard,
+      applySubscriptionEvent: apply as any,
+    },
+  )(request());
+
+  assert.equal(calls, 0);
+  assert.deepEqual(
+    applied.map((row) => row.status),
+    ['trialing', 'trialing'],
+  );
+});
+
+test('a card guard failure returns a retryable 500 instead of leaving a known duplicate trial', async () => {
+  const failures: string[] = [];
+  const handler = handlerFor(checkoutCompletedEvent('evt_card_throw'), {
+    createAdminClient: () => trialEndingDatabase() as any,
+    retrieveStripeSubscription: async () => trialingSubscription() as any,
+    enforceTrialCardUniqueness: async () => {
+      throw new Error('stripe cancel failed');
+    },
+    applySubscriptionEvent: async () => {
+      throw new Error('must not be written before the guard settles');
+    },
+    failStripeWebhookEvent: async (_database, _id, message) => {
+      failures.push(message);
+    },
+  });
+
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const response = await handler(request());
+    assert.equal(response.status, 500);
+  } finally {
+    console.error = originalError;
+  }
+  assert.deepEqual(failures, ['stripe cancel failed']);
+});
+
+// ---------------------------------------------------------------------------
+// Disputes
+// ---------------------------------------------------------------------------
+
+type OpsAlert = { subject: string; message: string; details?: unknown };
+
+function disputeHarness(
+  disputeObject: Record<string, unknown>,
+  overrides: Partial<StripeWebhookDependencies> & {
+    /** stripe_subscription_id values that have a row in our subscriptions table. */
+    localSubscriptions?: string[];
+  } = {},
+) {
+  const calls = {
+    charges: [] as string[],
+    invoices: [] as string[],
+    stripeSubscriptions: [] as string[],
+    cancelled: [] as string[],
+    applied: [] as Array<Record<string, unknown>>,
+    alerts: [] as OpsAlert[],
+    localLookups: [] as string[],
+  };
+  const { localSubscriptions = ['sub_disputed'], ...dependencyOverrides } = overrides;
+  const database = {
+    from(table: string) {
+      assert.equal(table, 'subscriptions');
+      let subscriptionId: string | null = null;
+      const chain: any = {
+        select: () => chain,
+        eq: (column: string, value: string) => {
+          // The only lookup allowed is by stripe_subscription_id: no customer guess.
+          assert.equal(column, 'stripe_subscription_id');
+          subscriptionId = value;
+          calls.localLookups.push(value);
+          return chain;
+        },
+        maybeSingle: async () => ({
+          data: subscriptionId && localSubscriptions.includes(subscriptionId) ? { id: 'row-1' } : null,
+          error: null,
+        }),
+      };
+      return chain;
+    },
+  };
+  const handler = handlerFor(event('charge.dispute.created', disputeObject, 'evt_dispute'), {
+    createAdminClient: () => database as any,
+    retrieveStripeCharge: (async (id: string) => {
+      calls.charges.push(id);
+      return { id, invoice: 'in_1', customer: 'cus_test' };
+    }) as any,
+    retrieveStripeInvoice: (async (id: string) => {
+      calls.invoices.push(id);
+      return { id, subscription: 'sub_disputed' };
+    }) as any,
+    retrieveStripeSubscription: (async (id: string) => {
+      calls.stripeSubscriptions.push(id);
+      return subscription({ id: 'sub_disputed', status: 'active' });
+    }) as any,
+    cancelStripeSubscriptionImmediately: (async (id: string) => {
+      calls.cancelled.push(id);
+      return subscription({ id, status: 'canceled', canceled_at: CREATED_AT + 5 });
+    }) as any,
+    applySubscriptionEvent: async (_database, row) => {
+      calls.applied.push(row);
+      return 'updated';
+    },
+    sendOpsAlert: async (alert) => {
+      calls.alerts.push(alert);
+      return { sent: true, id: 'ops-test' };
+    },
+    ...dependencyOverrides,
+  });
+  return { handler, calls };
+}
+
+test('a dispute cancels the subscription behind the charge immediately and alerts ops with ids only', async () => {
+  const { handler, calls } = disputeHarness({ id: 'dp_1', charge: 'ch_1', reason: 'fraudulent', amount: 9900 });
+
+  const response = await handler(request());
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(calls.charges, ['ch_1']);
+  assert.deepEqual(calls.invoices, ['in_1']);
+  assert.deepEqual(calls.cancelled, ['sub_disputed']);
+  assert.equal(calls.applied.length, 1);
+  assert.equal(calls.applied[0].status, 'canceled');
+  assert.equal(calls.applied[0].stripe_subscription_id, 'sub_disputed');
+  assert.equal(calls.alerts.length, 1);
+  assert.deepEqual(calls.alerts[0].details, {
+    event_id: 'evt_dispute',
+    dispute_id: 'dp_1',
+    charge_id: 'ch_1',
+    subscription_id: 'sub_disputed',
+    outcome: 'cancelled',
+  });
+  // Ids only: nothing about the customer or the amount leaks into the alert.
+  const serialized = JSON.stringify(calls.alerts[0]);
+  assert.doesNotMatch(serialized, /@|9900|fraudulent/);
+});
+
+test('a dispute on a basil-shaped invoice resolves the subscription from parent.subscription_details', async () => {
+  const { handler, calls } = disputeHarness(
+    { id: 'dp_basil', charge: 'ch_basil' },
+    {
+      retrieveStripeInvoice: (async (id: string) => ({
+        id,
+        parent: { subscription_details: { subscription: 'sub_basil' } },
+      })) as any,
+      retrieveStripeSubscription: async () =>
+        subscription({ id: 'sub_basil', status: 'active' }) as any,
+    },
+  );
+
+  const response = await handler(request());
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(calls.cancelled, ['sub_basil']);
+});
+
+test('an expanded charge and invoice on the dispute need no extra Stripe reads', async () => {
+  const { handler, calls } = disputeHarness({
+    id: 'dp_expanded',
+    charge: { id: 'ch_exp', invoice: { id: 'in_exp', subscription: 'sub_disputed' }, customer: 'cus_test' },
+  });
+
+  const response = await handler(request());
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(calls.charges, []);
+  assert.deepEqual(calls.invoices, []);
+  assert.deepEqual(calls.cancelled, ['sub_disputed']);
+});
+
+test('a charge with no invoice is NOT matched to the customer subscription: alert only', async () => {
+  const { handler, calls } = disputeHarness(
+    { id: 'dp_noinv', charge: 'ch_noinv' },
+    {
+      retrieveStripeCharge: (async (id: string) => ({ id, invoice: null, customer: 'cus_known' })) as any,
+      localSubscriptions: ['sub_local'],
+    },
+  );
+
+  const response = await handler(request());
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(calls.invoices, []);
+  assert.deepEqual(calls.localLookups, [], 'no customer lookup in our table');
+  assert.deepEqual(calls.cancelled, []);
+  assert.deepEqual(calls.applied, []);
+  assert.equal(calls.alerts.length, 1);
+  assert.equal(calls.alerts[0].subject, 'نزاع على دفعة بلا اشتراك معروف');
+});
+
+test('an invoice with no subscription is alert only, with no fallback cancel', async () => {
+  const { handler, calls } = disputeHarness(
+    { id: 'dp_nosub', charge: 'ch_1' },
+    {
+      retrieveStripeInvoice: (async (id: string) => ({ id, subscription: null, parent: null })) as any,
+      localSubscriptions: ['sub_disputed'],
+    },
+  );
+
+  const response = await handler(request());
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(calls.cancelled, []);
+  assert.deepEqual(calls.stripeSubscriptions, []);
+  assert.deepEqual(calls.applied, []);
+  assert.equal(calls.alerts.length, 1);
+  assert.deepEqual(calls.alerts[0].details, { event_id: 'evt_dispute', dispute_id: 'dp_nosub', charge_id: 'ch_1' });
+});
+
+test('a subscription with no row in our table and no userId on it is alert only', async () => {
+  const { handler, calls } = disputeHarness(
+    { id: 'dp_foreign', charge: 'ch_1' },
+    {
+      localSubscriptions: [],
+      retrieveStripeSubscription: async () =>
+        subscription({ id: 'sub_disputed', status: 'active', metadata: {} }) as any,
+    },
+  );
+
+  const response = await handler(request());
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(calls.cancelled, []);
+  assert.deepEqual(calls.applied, []);
+  assert.equal(calls.alerts.length, 1);
+  assert.equal(calls.alerts[0].subject, 'نزاع على اشتراك غير معروف عندنا');
+  assert.deepEqual(calls.alerts[0].details, {
+    event_id: 'evt_dispute',
+    dispute_id: 'dp_foreign',
+    charge_id: 'ch_1',
+    subscription_id: 'sub_disputed',
+  });
+});
+
+test('a subscription with a row in our table is cancelled even without userId metadata', async () => {
+  const { handler, calls } = disputeHarness(
+    { id: 'dp_row', charge: 'ch_1' },
+    {
+      localSubscriptions: ['sub_disputed'],
+      retrieveStripeSubscription: async () =>
+        subscription({ id: 'sub_disputed', status: 'active', metadata: {} }) as any,
+    },
+  );
+
+  const response = await handler(request());
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(calls.cancelled, ['sub_disputed']);
+});
+
+test('a subscription not in our table yet but carrying our userId is cancelled', async () => {
+  const { handler, calls } = disputeHarness(
+    { id: 'dp_meta', charge: 'ch_1' },
+    { localSubscriptions: [] },
+  );
+
+  const response = await handler(request());
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(calls.cancelled, ['sub_disputed']);
+});
+
+for (const status of ['warning_needs_response', 'warning_under_review', 'warning_closed']) {
+  test(`a ${status} inquiry only alerts ops: nothing is read from Stripe or cancelled`, async () => {
+    const { handler, calls } = disputeHarness({ id: 'dp_inquiry', charge: 'ch_1', status });
+
+    const response = await handler(request());
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(calls.charges, []);
+    assert.deepEqual(calls.invoices, []);
+    assert.deepEqual(calls.stripeSubscriptions, []);
+    assert.deepEqual(calls.cancelled, []);
+    assert.deepEqual(calls.applied, []);
+    assert.equal(calls.alerts.length, 1);
+    assert.equal(calls.alerts[0].subject, 'استفسار من البنك على دفعة');
+    assert.deepEqual(calls.alerts[0].details, {
+      event_id: 'evt_dispute',
+      dispute_id: 'dp_inquiry',
+      charge_id: 'ch_1',
+      status,
+    });
+  });
+}
+
+for (const status of ['needs_response', 'under_review', 'lost']) {
+  test(`a real dispute with status ${status} still cancels`, async () => {
+    const { handler, calls } = disputeHarness({ id: 'dp_real', charge: 'ch_1', status });
+
+    const response = await handler(request());
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(calls.cancelled, ['sub_disputed']);
+  });
+}
+
+test('a dispute with no resolvable subscription cancels nothing and tells ops', async () => {
+  const { handler, calls } = disputeHarness(
+    { id: 'dp_orphan', charge: 'ch_orphan' },
+    {
+      retrieveStripeCharge: (async (id: string) => ({ id, invoice: null, customer: 'cus_unknown' })) as any,
+    },
+  );
+
+  const response = await handler(request());
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(calls.cancelled, []);
+  assert.deepEqual(calls.applied, []);
+  assert.equal(calls.alerts.length, 1);
+  assert.deepEqual(calls.alerts[0].details, {
+    event_id: 'evt_dispute',
+    dispute_id: 'dp_orphan',
+    charge_id: 'ch_orphan',
+  });
+});
+
+test('a repeated dispute on an already cancelled subscription does not cancel twice', async () => {
+  const { handler, calls } = disputeHarness(
+    { id: 'dp_repeat', charge: 'ch_1' },
+    {
+      retrieveStripeSubscription: async () =>
+        subscription({ id: 'sub_disputed', status: 'canceled', canceled_at: CREATED_AT - 60 }) as any,
+    },
+  );
+
+  const response = await handler(request());
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(calls.cancelled, []);
+  assert.equal(calls.applied[0].status, 'canceled');
+  assert.equal((calls.alerts[0].details as any).outcome, 'already_ended');
+});
+
+test('a failed cancellation is a retryable 500, not a silent success', async () => {
+  const failures: string[] = [];
+  const { handler } = disputeHarness(
+    { id: 'dp_fail', charge: 'ch_1' },
+    {
+      cancelStripeSubscriptionImmediately: (async () => {
+        throw new Error('stripe unavailable');
+      }) as any,
+      failStripeWebhookEvent: async (_database, _id, message) => {
+        failures.push(message);
+      },
+    },
+  );
+
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const response = await handler(request());
+    assert.equal(response.status, 500);
+  } finally {
+    console.error = originalError;
+  }
+  assert.deepEqual(failures, ['stripe unavailable']);
+});
+
+test('a lost ops alert does not fail the dispute event after the subscription was cancelled', async () => {
+  const completed: string[] = [];
+  const { handler, calls } = disputeHarness(
+    { id: 'dp_alert', charge: 'ch_1' },
+    {
+      sendOpsAlert: async () => {
+        throw new Error('resend down');
+      },
+      completeStripeWebhookEvent: async (_database, id) => {
+        completed.push(id);
+      },
+    },
+  );
+
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const response = await handler(request());
+    assert.equal(response.status, 200);
+  } finally {
+    console.error = originalError;
+  }
+  assert.deepEqual(calls.cancelled, ['sub_disputed']);
+  assert.deepEqual(completed, ['evt_dispute']);
+});
+
+
+// ---------------------------------------------------------------------------
+// The Google Ads account lock at trial start
+// ---------------------------------------------------------------------------
+
+test('checkout.session.completed runs the account lock on the live trialing subscription after the card guard', async () => {
+  const order: string[] = [];
+  const lockCalls: Array<{ userId: string; subscriptionId: string }> = [];
+  const handler = handlerFor(checkoutCompletedEvent('evt_lock_ok'), {
+    createAdminClient: () => trialEndingDatabase() as any,
+    retrieveStripeSubscription: async () => trialingSubscription() as any,
+    enforceTrialCardUniqueness: async () => {
+      order.push('card');
+      return { blocked: false, outcome: 'first_use' };
+    },
+    enforceTrialStartAccountLock: async ({ userId, subscription: sub }) => {
+      order.push('accounts');
+      lockCalls.push({ userId, subscriptionId: sub.id });
+      return accountLockResult(false);
+    },
+    applySubscriptionEvent: async (_database, row) => {
+      order.push(`write:${row.status}`);
+      return 'inserted';
+    },
+    sendEmail: (async () => ({ sent: true })) as any,
+  });
+
+  assert.equal((await handler(request())).status, 200);
+  assert.deepEqual(order, ['card', 'accounts', 'write:trialing']);
+  assert.deepEqual(lockCalls, [{ userId: 'user-1', subscriptionId: 'sub_card' }]);
+});
+
+test('an account-locked trial is written as canceled, gets no welcome email and still counts as used', async () => {
+  const applied: Array<Record<string, unknown>> = [];
+  const sent: Array<{ to: string }> = [];
+  const grants: string[] = [];
+  const handler = handlerFor(checkoutCompletedEvent('evt_lock_block'), {
+    createAdminClient: () => trialEndingDatabase() as any,
+    retrieveStripeSubscription: async () => trialingSubscription() as any,
+    enforceTrialStartAccountLock: async () => accountLockResult(true),
+    applySubscriptionEvent: async (_database, row) => {
+      applied.push(row);
+      return 'inserted';
+    },
+    recordTrialGrant: async ({ userId }) => {
+      grants.push(userId);
+    },
+    sendEmail: (async (message: { to: string }) => {
+      sent.push(message);
+      return { sent: true };
+    }) as any,
+  });
+
+  assert.equal((await handler(request())).status, 200);
+  assert.equal(applied.length, 1);
+  assert.equal(applied[0].status, 'canceled');
+  assert.equal(applied[0].canceled_at, '2026-08-03T12:00:00.000Z');
+  assert.deepEqual(sent, []);
+  assert.deepEqual(grants, ['user-1']);
+});
+
+test('when the card guard already cancelled the trial the account lock does not run', async () => {
+  let lockCalls = 0;
+  const applied: Array<Record<string, unknown>> = [];
+  const handler = handlerFor(checkoutCompletedEvent('evt_card_first'), {
+    createAdminClient: () => trialEndingDatabase() as any,
+    retrieveStripeSubscription: async () => trialingSubscription() as any,
+    enforceTrialCardUniqueness: async () => ({ blocked: true, outcome: 'duplicate_card' }),
+    enforceTrialStartAccountLock: async () => {
+      lockCalls += 1;
+      return accountLockResult(true);
+    },
+    applySubscriptionEvent: async (_database, row) => {
+      applied.push(row);
+      return 'inserted';
+    },
+  });
+  assert.equal((await handler(request())).status, 200);
+  assert.equal(lockCalls, 0);
+  assert.equal(applied[0].status, 'canceled');
+});
+
+test('customer.subscription.created runs the account lock and a block writes canceled', async () => {
+  const lockCalls: string[] = [];
+  const applied: Array<Record<string, unknown>> = [];
+  const handler = handlerFor(
+    event('customer.subscription.created', { id: 'sub_card', metadata: { userId: 'user-1' } }, 'evt_created_lock'),
+    {
+      retrieveStripeSubscription: async () => trialingSubscription() as any,
+      enforceTrialStartAccountLock: async ({ subscription: sub }) => {
+        lockCalls.push(sub.id);
+        return accountLockResult(true);
+      },
+      applySubscriptionEvent: async (_database, row) => {
+        applied.push(row);
+        return 'updated';
+      },
+    },
+  );
+  assert.equal((await handler(request())).status, 200);
+  assert.deepEqual(lockCalls, ['sub_card']);
+  assert.equal(applied[0].status, 'canceled');
+});
+
+test('customer.subscription.updated and a missing user never run the account lock', async () => {
+  let calls = 0;
+  const lock = async () => {
+    calls += 1;
+    return accountLockResult(true);
+  };
+  const applied: Array<Record<string, unknown>> = [];
+  const apply = async (_database: unknown, row: Record<string, unknown>) => {
+    applied.push(row);
+    return 'updated' as const;
+  };
+  await handlerFor(
+    event('customer.subscription.updated', { id: 'sub_card', metadata: { userId: 'user-1' } }, 'evt_updated_lock'),
+    {
+      retrieveStripeSubscription: async () => trialingSubscription() as any,
+      enforceTrialStartAccountLock: lock,
+      applySubscriptionEvent: apply as any,
+    },
+  )(request());
+  await handlerFor(
+    event('customer.subscription.created', { id: 'sub_card' }, 'evt_created_no_user_lock'),
+    {
+      retrieveStripeSubscription: async () => trialingSubscription({ metadata: {} }) as any,
+      enforceTrialStartAccountLock: lock,
+      applySubscriptionEvent: apply as any,
+    },
+  )(request());
+  assert.equal(calls, 0);
+  assert.deepEqual(applied.map((row) => row.status), ['trialing', 'trialing']);
+});
+
+test('replaying the pair of trial-start events reaches the same canceled result both times', async () => {
+  const applied: Array<Record<string, unknown>> = [];
+  const overrides = {
+    createAdminClient: () => trialEndingDatabase() as any,
+    retrieveStripeSubscription: async () => trialingSubscription() as any,
+    enforceTrialStartAccountLock: async () => accountLockResult(true),
+    applySubscriptionEvent: async (_database: unknown, row: Record<string, unknown>) => {
+      applied.push(row);
+      return 'updated' as const;
+    },
+  };
+  await handlerFor(checkoutCompletedEvent('evt_pair_1'), overrides as any)(request());
+  await handlerFor(
+    event('customer.subscription.created', { id: 'sub_card', metadata: { userId: 'user-1' } }, 'evt_pair_2'),
+    overrides as any,
+  )(request());
+  await handlerFor(checkoutCompletedEvent('evt_pair_3'), overrides as any)(request());
+  assert.deepEqual(applied.map((row) => row.status), ['canceled', 'canceled', 'canceled']);
+});
+
+test('an account lock failure (for example a failed cancel) is a retryable 500 and nothing is written first', async () => {
+  const failures: string[] = [];
+  const handler = handlerFor(checkoutCompletedEvent('evt_lock_throw'), {
+    createAdminClient: () => trialEndingDatabase() as any,
+    retrieveStripeSubscription: async () => trialingSubscription() as any,
+    enforceTrialStartAccountLock: async () => {
+      throw new Error('stripe cancel failed');
+    },
+    applySubscriptionEvent: async () => {
+      throw new Error('must not be written before the guard settles');
+    },
+    failStripeWebhookEvent: async (_database, _id, message) => {
+      failures.push(message);
+    },
+  });
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    assert.equal((await handler(request())).status, 500);
+  } finally {
+    console.error = originalError;
+  }
+  assert.deepEqual(failures, ['stripe cancel failed']);
 });

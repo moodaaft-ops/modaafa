@@ -75,6 +75,31 @@ export const PLAN_LIMITS: Record<BillingPlan, Record<MeteredFeature, FeatureLimi
 const PLAN_RANK: Record<BillingPlan, number> = { starter: 1, growth: 2, pro: 3 };
 
 /**
+ * The plan whose LIMITS apply to this access.
+ *
+ * A trial runs on Starter limits whatever plan was picked at checkout: the
+ * trial is free, so it must not carry Growth or Pro quotas (assistant turns,
+ * audits, LLM budget, optimizer accounts) that cost real money to serve. The
+ * full limits start with the first payment, when Stripe moves the subscription
+ * from `trialing` to `active`.
+ *
+ * Only access that comes from a Stripe subscription in `trialing` is capped.
+ * An operator free-plan grant ('comp') and operator internal access
+ * ('internal') are decisions someone made on purpose and keep their plan; the
+ * 'comp' status is what tells them apart, because applyAccessOverrides replaces
+ * the status when a grant wins over the trial.
+ *
+ * Use this, not `access.plan`, for every per-plan limit lookup. `access.plan`
+ * is still the right value to DISPLAY (the plan the customer chose).
+ */
+export function effectiveLimitPlan(
+  subscription: Pick<SubscriptionAccess, 'plan' | 'status'>
+): BillingPlan | null {
+  if (!subscription.plan) return null;
+  return subscription.status === 'trialing' ? 'starter' : subscription.plan;
+}
+
+/**
  * `userId` is REQUIRED. It used to be optional, which meant three dashboard
  * pages called this with RLS as the only thing scoping the query. That works,
  * but it leaves no second line of defence: swapping in the admin client, or
@@ -147,27 +172,41 @@ export async function getSubscriptionAccessDetailed(
   ]);
   if (error) console.error('Failed to read subscription access', error);
 
-  const subscriptions = (rows ?? []) as Array<Record<string, any>>;
-  const live = subscriptions.filter((row) => isSubscriptionEntitled(row));
+  const fromStripe = subscriptionAccessFromRows((rows ?? []) as Array<Record<string, any>>);
+
+  return { access: applyAccessOverrides(fromStripe, overrides), billing: fromStripe, overrides };
+}
+
+/**
+ * The access one user's subscription rows grant, before operator overrides.
+ *
+ * Picks the most privileged ENTITLED row (highest plan, then latest period end),
+ * falling back to the newest row so a lapsed customer still reports their last
+ * plan and status. Shared by the per-request check above and the background jobs
+ * (lib/platform/jobs.ts), so a job and a page cannot disagree about a plan.
+ */
+export function subscriptionAccessFromRows(
+  rows: Array<Record<string, any>>,
+  now = Date.now()
+): SubscriptionAccess {
+  const live = rows.filter((row) => isSubscriptionEntitled(row, now));
   const subscription =
     live.sort((a, b) => {
       const rank = (PLAN_RANK[b.plan as BillingPlan] ?? 0) - (PLAN_RANK[a.plan as BillingPlan] ?? 0);
       if (rank !== 0) return rank;
       return new Date(b.current_period_end ?? 0).getTime() - new Date(a.current_period_end ?? 0).getTime();
-    })[0] ?? subscriptions[0];
+    })[0] ?? rows[0];
 
   const plan = subscription && isBillingPlan(subscription.plan) ? subscription.plan : null;
-  const fromStripe: SubscriptionAccess = subscription
+  return subscription
     ? {
-        active: Boolean(plan && isSubscriptionEntitled(subscription)),
+        active: Boolean(plan && isSubscriptionEntitled(subscription, now)),
         plan,
         status: subscription.status ?? null,
         trialEndsAt: subscription.trial_ends_at ?? null,
         currentPeriodEnd: subscription.current_period_end ?? null,
       }
     : { active: false, plan: null, status: null, trialEndsAt: null, currentPeriodEnd: null };
-
-  return { access: applyAccessOverrides(fromStripe, overrides), billing: fromStripe, overrides };
 }
 
 /**
@@ -175,6 +214,11 @@ export async function getSubscriptionAccessDetailed(
  * over everything (including a paid plan: billing is untouched, but nothing
  * runs). A free plan applies when there is no live paid plan, or when it is a
  * higher plan than the paid one.
+ *
+ * "The paid one" is what the subscription actually delivers, which is its
+ * effectiveLimitPlan: a trial delivers Starter's limits whatever plan it picked.
+ * Comparing the picked plan instead would let a trial on Pro hide a Growth grant
+ * and drop the user to Starter.
  */
 export function applyAccessOverrides(
   access: SubscriptionAccess,
@@ -192,7 +236,7 @@ export function applyAccessOverrides(
   }
   const grant = overrides.grant;
   if (grant) {
-    const paidRank = access.active && access.plan ? PLAN_RANK[access.plan] : 0;
+    const paidRank = access.active && access.plan ? PLAN_RANK[effectiveLimitPlan(access) ?? access.plan] : 0;
     if (PLAN_RANK[grant.plan] > paidRank) {
       return {
         active: true,
@@ -279,7 +323,10 @@ export async function consumeFeatureUsage({
     return { ok: false, reason: 'subscription_required', plan: subscription.plan };
   }
 
-  const featureLimit = PLAN_LIMITS[subscription.plan][feature];
+  // Limits follow the EFFECTIVE plan (a trial runs on Starter limits); the plan
+  // reported back stays the one the customer chose.
+  const limitPlan = effectiveLimitPlan(subscription) ?? subscription.plan;
+  const featureLimit = PLAN_LIMITS[limitPlan][feature];
   const { start, end } = usageWindow(featureLimit.period);
   const { data, error } = await supabase.rpc('consume_feature_usage', {
     p_user_id: userId,

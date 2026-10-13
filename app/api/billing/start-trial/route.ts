@@ -4,9 +4,9 @@ import { createServerClient } from '@/lib/supabase/server';
 import { createCheckoutSession, ensureStripeCustomer } from '@/lib/billing/stripe';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 import {
+  checkoutTrialDecision,
   getBillingCheckoutContext,
   ONBOARDING_CHECKOUT_RETURN,
-  TRIAL_DAYS,
 } from '@/lib/billing/checkout-policy';
 import { requireAppUrl } from '@/lib/platform/env';
 import { isSameOriginRequest } from '@/lib/security/origin';
@@ -67,6 +67,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.redirect(new URL(`${errorBase}?error=google_ads_account_required`, req.url), 303);
     }
 
+    // The eligibility check could not run. Do not fall through to a paid session:
+    // that would turn a first-time trial into an immediate charge.
+    const trialDecision = checkoutTrialDecision(billing);
+    if (trialDecision.action === 'blocked') {
+      return NextResponse.redirect(new URL(`${errorBase}?error=${trialDecision.error}`, req.url), 303);
+    }
+
     const baseUrl = requireAppUrl(req.nextUrl.origin);
     // Explicit customer id, never customer_email — see the note in
     // lib/billing/stripe.ts: customer_email mints a new Customer per session.
@@ -84,7 +91,7 @@ export async function POST(req: NextRequest) {
         ? `${baseUrl}/api/billing/checkout/complete?session_id={CHECKOUT_SESSION_ID}&return_to=${ONBOARDING_CHECKOUT_RETURN}`
         : `${baseUrl}/api/billing/checkout/complete?session_id={CHECKOUT_SESSION_ID}`,
       cancelUrl: fromOnboarding ? `${baseUrl}/onboarding/trial?canceled=1` : `${baseUrl}/billing?canceled=1`,
-      trialDays: billing.trialEligible ? TRIAL_DAYS : 0,
+      trialDays: trialDecision.trialDays,
       customerId,
       idempotencyKey: checkoutIdempotencyKey(user.id, plan, period),
     });

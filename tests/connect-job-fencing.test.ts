@@ -123,6 +123,8 @@ function deps(over: Partial<ConnectJobDeps> & { accounts?: any[] } = {}): Connec
     discover: (async () => over.accounts ?? [ACCOUNT]) as any,
     syncCache: (async () => ({ loginCustomerId: null })) as any,
     readSpend: async () => ({}),
+    // The trial lock has its own tests; the fencing harness has no billing tables.
+    trialAccountLock: async () => ({ pausedAccountIds: [] }),
     ...over,
   };
 }
@@ -321,4 +323,80 @@ test('a trusted consent time still wins over an untrusted earlier job', async ()
   const next = await launch(db, 'SECOND', deps(), '2026-10-09T01:00:00.000Z');
   await next.done;
   assert.equal(tokenOf(db), 'enc-SECOND');
+});
+
+// ---------------------------------------------------------------------------
+// Link-after-trial gap: accounts parked by the trial lock never become choices
+// ---------------------------------------------------------------------------
+
+const OTHER_ACCOUNT = { ...ACCOUNT, customer_id: '5555555555', customer_name: 'حساب آخر' };
+
+test('an account parked by the trial lock is not auto-selected or synced; the job still succeeds', async () => {
+  const db = makeDb();
+  const synced: string[] = [];
+  const seenByLock: string[] = [];
+  const { job, done } = await launch(
+    db,
+    'LOCK',
+    deps({
+      accounts: [ACCOUNT, OTHER_ACCOUNT],
+      syncCache: (async (input: any) => {
+        synced.push(input.customerId);
+        return { loginCustomerId: null };
+      }) as any,
+      trialAccountLock: async ({ linked }) => {
+        seenByLock.push(...linked.map((account) => account.customer_id));
+        return {
+          pausedAccountIds: linked.filter((account) => account.customer_id === '1234567890').map((a) => a.id),
+        };
+      },
+    })
+  );
+  await done;
+
+  assert.deepEqual(seenByLock.sort(), ['1234567890', '5555555555']);
+  // The one remaining account is not a choice, so it is selected and synced.
+  assert.equal(db.business.selected_google_ads_customer_id, '5555555555');
+  assert.deepEqual(synced, ['5555555555']);
+  const row = db.jobs.get(job.id);
+  assert.equal(row.status, 'success');
+  assert.equal(row.details.paused_for_trial, 1);
+  assert.equal(row.details.linkable, 1);
+});
+
+test('when every linked account is parked the job fails with a trial_account_used error and selects nothing', async () => {
+  const db = makeDb();
+  const synced: string[] = [];
+  const { job, done } = await launch(
+    db,
+    'ALLLOCKED',
+    deps({
+      syncCache: (async (input: any) => {
+        synced.push(input.customerId);
+        return { loginCustomerId: null };
+      }) as any,
+      trialAccountLock: async ({ linked }) => ({ pausedAccountIds: linked.map((account) => account.id) }),
+    })
+  );
+  await done;
+
+  const row = db.jobs.get(job.id);
+  assert.equal(row.status, 'failed');
+  assert.equal(row.details.error, 'trial_account_used');
+  assert.equal(db.business.selected_google_ads_customer_id, null);
+  assert.deepEqual(synced, []);
+});
+
+test('with no parked accounts the connect flow is unchanged', async () => {
+  const db = makeDb();
+  const { job, done } = await launch(
+    db,
+    'NOLOCK',
+    deps({ trialAccountLock: async () => ({ pausedAccountIds: [] }) })
+  );
+  await done;
+  const row = db.jobs.get(job.id);
+  assert.equal(row.status, 'success');
+  assert.equal(row.details.paused_for_trial, undefined);
+  assert.equal(db.business.selected_google_ads_customer_id, '1234567890');
 });

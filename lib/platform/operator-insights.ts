@@ -300,8 +300,10 @@ export function buildCustomerProfiles(data: OperatorDataset, now = Date.now()): 
         ? (sub.status as 'active' | 'past_due' | 'trialing')
         : null;
     // Same rule as entitlements.applyAccessOverrides: a free plan shows when it
-    // is higher than whatever Stripe currently grants.
-    const liveRank = stripeStatus ? PLAN_RANK[sub?.plan as keyof typeof PLAN_RANK] ?? 0 : 0;
+    // is higher than whatever Stripe currently delivers, and a trial delivers
+    // Starter's limits whatever plan it picked (effectiveLimitPlan).
+    const livePlan = stripeStatus === 'trialing' ? 'starter' : sub?.plan;
+    const liveRank = stripeStatus ? PLAN_RANK[livePlan as keyof typeof PLAN_RANK] ?? 0 : 0;
     const grantWins = Boolean(overrides.grant && PLAN_RANK[overrides.grant.plan] > liveRank);
 
     let access: AccessState = 'none';

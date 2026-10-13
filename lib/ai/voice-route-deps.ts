@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server';
 import { createServerClient } from '@/lib/supabase/server';
-import { getSubscriptionAccess, PLAN_LIMITS } from '@/lib/billing/entitlements';
+import { effectiveLimitPlan, getSubscriptionAccess, PLAN_LIMITS } from '@/lib/billing/entitlements';
 import { checkRateLimit, peekRateLimitWindow } from '@/lib/security/rate-limit';
 import { SELECTED_ADS_ACCOUNT_COOKIE } from '@/lib/accounts/selection';
 import { loadChatState } from '@/lib/chat-first/state';
@@ -37,7 +37,9 @@ export async function buildVoiceDeps(req: NextRequest): Promise<VoiceDeps & { su
         // Suspended by an operator: no paid turns and no free allowance either.
         tier = null;
       } else if (subscription.active && subscription.plan) {
-        planAssistantDailyLimit = PLAN_LIMITS[subscription.plan].assistant.limit;
+        // A trial runs on Starter limits (see effectiveLimitPlan).
+        planAssistantDailyLimit =
+          PLAN_LIMITS[effectiveLimitPlan(subscription) ?? subscription.plan].assistant.limit;
         tier = 'paid';
       } else if (config.freeDailyTurns > 0) {
         // Not locked before the person has seen value (task 05 contract): a

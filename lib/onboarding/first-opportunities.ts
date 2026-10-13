@@ -63,8 +63,14 @@ export function isFirstAuditGuardActive(startedAt: number | null, now = Date.now
  * to what the first-audit screen does about them. Anything else is a plain
  * error with a retry button.
  */
-export function classifyAuditStartError(status: number, code?: string | null): 'exhausted' | 'running' | 'error' {
+export function classifyAuditStartError(
+  status: number,
+  code?: string | null
+): 'exhausted' | 'accounts_exhausted' | 'running' | 'error' {
   if (status === 402 && code === 'free_audits_exhausted') return 'exhausted';
+  // Three accounts already had their free audits: a different account will not
+  // help, only a subscription does.
+  if (status === 402 && code === 'free_accounts_exhausted') return 'accounts_exhausted';
   if (status === 409 && code === 'audit_in_progress') return 'running';
   return 'error';
 }

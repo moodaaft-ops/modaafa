@@ -8,6 +8,7 @@ import { syncCampaignCacheWithLoginFallback } from '@/lib/google-ads/sync';
 import { mapLimit } from '@/lib/platform/concurrency';
 import { buildGoogleAdsLinkRows } from '@/lib/google-ads/link-account-rows';
 import { isNotAdsUserError } from '@/lib/google-ads/connect-errors';
+import { enforceTrialAccountLock } from '@/lib/billing/trial-account-lock';
 import {
   connectJobName,
   nextStepAfterConnect,
@@ -25,6 +26,8 @@ type Discovered = Awaited<ReturnType<typeof discoverAccessibleCustomers>>;
 export type ConnectJobDeps = {
   discover?: typeof discoverAccessibleCustomers;
   syncCache?: typeof syncCampaignCacheWithLoginFallback;
+  /** Test seam; production uses the real trial account lock. */
+  trialAccountLock?: typeof enforceTrialAccountLock;
   readSpend?: (
     refreshToken: string,
     accounts: Array<{ customer_id: string; manager_id: string | null }>
@@ -133,6 +136,7 @@ export async function runConnectJob(params: {
   const discover = params.deps?.discover ?? discoverAccessibleCustomers;
   const syncCache = params.deps?.syncCache ?? syncCampaignCacheWithLoginFallback;
   const readSpend = params.deps?.readSpend ?? readThirtyDaySpend;
+  const trialAccountLock = params.deps?.trialAccountLock ?? enforceTrialAccountLock;
   let stage: ConnectStageId = 'discover';
   const details: ConnectJobDetails = { stage, consent_at: job.consentAt ?? null };
 
@@ -193,12 +197,25 @@ export async function runConnectJob(params: {
       return;
     }
 
-    const saved = (linkResult.rows ?? []) as Array<{
+    const linked = (linkResult.rows ?? []) as Array<{
       id: string;
       customer_id: string;
       manager_id: string | null;
       currency_code: string | null;
     }>;
+
+    // Link-after-trial gap: an account another user already trialed on is parked
+    // right after the link restored it to 'active', before anything syncs it or
+    // offers it as a choice. Only applies while this user is on a trial.
+    const { pausedAccountIds } = await trialAccountLock({ admin, userId, linked });
+    const saved = linked.filter((account) => !pausedAccountIds.includes(account.id));
+    if (pausedAccountIds.length > 0) {
+      details.paused_for_trial = pausedAccountIds.length;
+      if (saved.length === 0) {
+        await finish(admin, job, 'failed', { ...details, error: 'trial_account_used' });
+        return;
+      }
+    }
     details.linkable = saved.length || linkableAccounts.length;
 
     stage = 'sync';

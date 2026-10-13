@@ -98,7 +98,10 @@ export async function answerWithJarvis(args: {
   const subscription = await getSubscriptionAccess(supabase, user.id, user.email);
   const budget = await llmBudgetState({
     userId: user.id,
+    // The LLM budget is a share of the plan price; llmBudgetState prices a
+    // trial as Starter (effectiveLimitPlan) from the status.
     plan: subscription.plan,
+    status: subscription.status,
     subscriptionActive: subscription.active,
     isOperator,
     now,

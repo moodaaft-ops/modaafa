@@ -12,6 +12,14 @@ import { StatusBadge } from '@/lib/ui/status-badge';
 import { EmptyState } from '@/lib/ui/empty-state';
 import { buttonClasses } from '@/lib/ui/button';
 import { getBillingCheckoutContext } from '@/lib/billing/checkout-policy';
+import {
+  ADS_ACCOUNT_TRIAL_USED_MESSAGE,
+  CARD_TRIAL_USED_MESSAGE,
+  TRIAL_CHECK_FAILED_MESSAGE,
+  TRIAL_STARTER_LIMITS_NOTE,
+  trialIneligibleNotice,
+} from '@/lib/billing/trial-copy';
+import { OPTIMIZER_ACCOUNTS_PER_PLAN, optimizerAccountsLine } from '@/lib/billing/optimizer-caps';
 import { hasActiveGoogleAdsAccount } from '@/lib/accounts/selection';
 import { getSubscriptionAccessDetailed } from '@/lib/billing/entitlements';
 import {
@@ -38,6 +46,9 @@ const billingErrors: Record<string, string> = {
   no_live_subscription: 'ما لقينا اشتراكاً قائماً على هذا الحساب حتى نلغيه.',
   cancel_failed: 'تعذر تنفيذ الطلب الآن ولم يتغيّر اشتراكك. أعد المحاولة بعد قليل، ولو تكرر راسلنا.',
   invalid_origin: 'تعذر التحقق من الطلب. حدّث الصفحة وأعد المحاولة.',
+  card_trial_used: CARD_TRIAL_USED_MESSAGE,
+  ads_account_trial_used: ADS_ACCOUNT_TRIAL_USED_MESSAGE,
+  trial_check_failed: TRIAL_CHECK_FAILED_MESSAGE,
 };
 
 const plans = [
@@ -47,7 +58,12 @@ const plans = [
     nameEn: 'Starter',
     monthlyPrice: 500,
     limit: 'للبداية وإدارة العمل اليومي',
-    features: ['20 محادثة ذكية يومياً', 'فحصان أسبوعياً', '5 مزامنات يدوية يومياً'],
+    features: [
+      '20 محادثة ذكية يومياً',
+      'فحصان أسبوعياً',
+      '5 مزامنات يدوية يومياً',
+      optimizerAccountsLine(OPTIMIZER_ACCOUNTS_PER_PLAN.starter),
+    ],
   },
   {
     id: 'growth' as PlanKey,
@@ -55,7 +71,12 @@ const plans = [
     nameEn: 'Growth',
     monthlyPrice: 1200,
     limit: 'للشركات النشطة والمتابعة اليومية',
-    features: ['100 محادثة ذكية يومياً', '7 فحوصات أسبوعياً', '20 تنفيذاً ومزامنة يومياً'],
+    features: [
+      '100 محادثة ذكية يومياً',
+      '7 فحوصات أسبوعياً',
+      '20 تنفيذاً ومزامنة يومياً',
+      optimizerAccountsLine(OPTIMIZER_ACCOUNTS_PER_PLAN.growth),
+    ],
     highlighted: true,
   },
   {
@@ -64,7 +85,12 @@ const plans = [
     nameEn: 'Pro',
     monthlyPrice: 2500,
     limit: 'للوكالات والاستخدام المكثف',
-    features: ['500 محادثة ذكية يومياً', '70 فحصاً أسبوعياً', '100 تنفيذ ومزامنة يومياً'],
+    features: [
+      '500 محادثة ذكية يومياً',
+      '70 فحصاً أسبوعياً',
+      '100 تنفيذ ومزامنة يومياً',
+      optimizerAccountsLine(OPTIMIZER_ACCOUNTS_PER_PLAN.pro),
+    ],
   },
 ];
 
@@ -114,6 +140,9 @@ export default async function BillingPage({
   assertSupabaseRead(invoicesResult.error, 'load billing invoices');
   const invoices = invoicesResult.data ?? [];
   const trialEligible = checkout.trialEligible;
+  // The eligibility check could not run: say so and offer a retry, never a
+  // paid start (the checkout routes refuse it too).
+  const checkFailed = checkout.trialIneligibleReason === 'check_failed';
   // Everything Stripe-related renders from the billing truth. A free plan an
   // operator granted (status 'comp' on the effective access) is shown as a note
   // and, only when there is no live Stripe subscription, as the current plan:
@@ -144,6 +173,13 @@ export default async function BillingPage({
   // Mirrors the server gate in /api/billing/checkout: no active Google Ads
   // account means no trial/checkout buttons, just a link to connect one.
   const needsAccount = !hasLiveSubscription && !hasInternalAccess && !hasActiveAccount;
+  // Why a trial is not on offer, for the two reasons that need saying; and the
+  // Starter-limits line wherever one is.
+  const noTrialNotice =
+    !hasLiveSubscription && !hasInternalAccess && !compOnly
+      ? trialIneligibleNotice(checkout.trialIneligibleReason)
+      : null;
+  const trialOffered = trialEligible && !hasLiveSubscription && !hasInternalAccess && !compOnly && !needsAccount;
 
   const buildHref = (nextPeriod: PeriodKey) => {
     const query = new URLSearchParams();
@@ -165,6 +201,7 @@ export default async function BillingPage({
         )}
         {params?.canceled && <Alert tone="warning">تم إلغاء عملية الدفع ولم يتغيّر اشتراكك.</Alert>}
         {params?.cancel === 'resumed' && <Alert tone="success">رجع اشتراكك كما كان، ويتجدد في موعده.</Alert>}
+        {noTrialNotice && <Alert tone="info">{noTrialNotice}</Alert>}
 
         {/* Current plan */}
         <section className="surface-raised relative overflow-hidden p-6">
@@ -201,6 +238,11 @@ export default async function BillingPage({
                     ? `تجديد الاشتراك في ${formatDateAr(access.currentPeriodEnd)}`
                     : 'اختر خطة بالأسفل لتفعيل الفحص والتنفيذ والمساعد الذكي.'}
               </p>
+              {trialOffered && (
+                <p className="mt-1.5 max-w-xl text-[12.5px] leading-6 text-muted-foreground">
+                  {TRIAL_STARTER_LIMITS_NOTE}
+                </p>
+              )}
             </div>
             {hasInternalAccess || compOnly ? (
               <StatusBadge tone="success">لا تحتاج اشتراكاً</StatusBadge>
@@ -221,7 +263,7 @@ export default async function BillingPage({
                 <input type="hidden" name="plan" value="growth" />
                 <input type="hidden" name="period" value={period} />
                 <PendingSubmitButton pendingLabel="جاري فتح الدفع..." className={buttonClasses({ variant: 'secondary' })}>
-                  {trialEligible ? 'ابدأ تجربة خطة النمو' : 'اشترك في خطة النمو'}
+                  {checkFailed ? 'حاول من جديد' : trialEligible ? 'ابدأ تجربة خطة النمو' : 'اشترك في خطة النمو'}
                 </PendingSubmitButton>
               </form>
             ) : null}
@@ -470,7 +512,7 @@ export default async function BillingPage({
                           block: true,
                         })}
                       >
-                        {trialEligible ? 'ابدأ تجربة 14 يوم' : 'اشترك الآن'}
+                        {checkFailed ? 'حاول من جديد' : trialEligible ? 'ابدأ تجربة 14 يوم' : 'اشترك الآن'}
                       </PendingSubmitButton>
                     </form>
                   )}
@@ -479,9 +521,11 @@ export default async function BillingPage({
                       ? 'صلاحية داخلية للاختبار؛ لن تُنشأ فاتورة أو جلسة دفع.'
                       : hasLiveSubscription && !isCurrent
                       ? 'تغيير الخطة يتم داخل بوابة Stripe ويُحتسب الفرق تلقائياً.'
-                      : trialEligible
-                        ? 'لن يتم الخصم خلال فترة التجربة. البطاقة والفواتير تُدار بأمان عبر Stripe.'
-                        : 'تبدأ الفوترة عند التأكيد. البطاقة والفواتير تُدار بأمان عبر Stripe.'}
+                      : checkFailed
+                        ? 'لم نتأكد من أهليتك للتجربة بعد. البطاقة والفواتير تُدار بأمان عبر Stripe.'
+                        : trialEligible
+                          ? 'لن يتم الخصم خلال فترة التجربة. البطاقة والفواتير تُدار بأمان عبر Stripe.'
+                          : 'تبدأ الفوترة عند التأكيد. البطاقة والفواتير تُدار بأمان عبر Stripe.'}
                   </p>
                 </div>
               </section>

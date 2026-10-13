@@ -22,6 +22,7 @@ import {
   SELECTED_ADS_ACCOUNT_COOKIE,
 } from '@/lib/accounts/selection';
 import { featureAccessMessage } from '@/lib/billing/entitlements';
+import { claimTrialAccountIfTrialing } from '@/lib/billing/trial-account-claim';
 import {
   auditAccessMessage,
   auditAccessStatus,
@@ -114,6 +115,16 @@ export async function POST(req: NextRequest) {
       { status: auditAccessStatus(usage.reason) }
     );
   }
+
+  // An audit run by a user who is on a Stripe trial is the trial using this
+  // account: record it in trial_customer_ledger so another user cannot take a
+  // second trial on it. Best effort, never fails or delays the audit meaningfully.
+  await claimTrialAccountIfTrialing({
+    admin,
+    userId: user.id,
+    customerId: account.customer_id,
+    source: 'audit_during_trial',
+  });
 
   const execute = async (onProgress: AuditProgressReporter = () => undefined) => {
     const outcome = await executeAudit({

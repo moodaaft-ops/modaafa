@@ -15,6 +15,7 @@ type RunState =
   | { kind: 'running'; percent: number; message: string }
   | { kind: 'waiting' }
   | { kind: 'exhausted' }
+  | { kind: 'accounts_exhausted' }
   | { kind: 'error'; message: string };
 
 const WAIT_REFRESH_MS = 10_000;
@@ -69,6 +70,10 @@ export function FirstAuditRunner({ customerId }: { customerId: string }) {
         writeGuard(guardKey, null);
         if (outcome === 'exhausted') {
           setState({ kind: 'exhausted' });
+          return;
+        }
+        if (outcome === 'accounts_exhausted') {
+          setState({ kind: 'accounts_exhausted' });
           return;
         }
         setState({ kind: 'error', message: body.message ?? 'ما قدرنا نبدأ الفحص الحين. جرّب بعد دقيقة.' });
@@ -137,6 +142,25 @@ export function FirstAuditRunner({ customerId }: { customerId: string }) {
     }, WAIT_REFRESH_MS);
     return () => clearInterval(timer);
   }, [state.kind, guardKey, router]);
+
+  if (state.kind === 'accounts_exhausted') {
+    return (
+      <section className="surface-card p-5 sm:p-6">
+        <p className="text-[14px] font-semibold text-foreground">استخدمت الفحص المجاني على 3 حسابات إعلانية</p>
+        <p className="mt-1 text-[13px] leading-7 text-muted-foreground">
+          نتائجك وتوصياتك السابقة تبقى مفتوحة تقرأها متى ما بغيت. الفحص لحسابات أكثر يحتاج اشتراك.
+        </p>
+        <div className="mt-4 flex flex-wrap gap-3">
+          <Link href="/audit" className={buttonClasses({ variant: 'primary' })}>
+            اقرأ نتائجي
+          </Link>
+          <Link href="/onboarding/trial" className={buttonClasses({ variant: 'outline' })}>
+            اشترك للفحص
+          </Link>
+        </div>
+      </section>
+    );
+  }
 
   if (state.kind === 'exhausted') {
     return (

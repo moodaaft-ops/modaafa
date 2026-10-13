@@ -2,8 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import type Stripe from 'stripe';
 import { createAdminClient } from '@/lib/supabase/server';
 import {
+  cancelStripeSubscriptionImmediately,
   constructWebhookEvent,
   planFromSubscription,
+  retrieveStripeCharge,
+  retrieveStripeInvoice,
   retrieveStripeSubscription,
 } from '@/lib/billing/stripe';
 import {
@@ -14,6 +17,9 @@ import {
   trialEndingEmail,
 } from '@/lib/notifications/email';
 import { recordTrialGrant } from '@/lib/billing/checkout-policy';
+import { enforceTrialCardUniquenessLive } from '@/lib/billing/trial-card-guard';
+import { enforceTrialStartAccountLockLive } from '@/lib/billing/trial-start-account-lock';
+import { runTrialStartGuards } from '@/lib/billing/trial-start-guards';
 import {
   applySubscriptionEvent,
   subscriptionEventWasApplied,
@@ -30,12 +36,17 @@ const defaultDependencies = {
   constructWebhookEvent,
   planFromSubscription,
   retrieveStripeSubscription,
+  retrieveStripeCharge,
+  retrieveStripeInvoice,
+  cancelStripeSubscriptionImmediately,
   paymentFailedEmail,
   sendEmail,
   sendOpsAlert,
   subscriptionWelcomeEmail,
   trialEndingEmail,
   recordTrialGrant,
+  enforceTrialCardUniqueness: enforceTrialCardUniquenessLive,
+  enforceTrialStartAccountLock: enforceTrialStartAccountLockLive,
   applySubscriptionEvent,
   subscriptionEventWasApplied,
   recordPaidInvoice,
@@ -115,11 +126,35 @@ export function createStripeWebhookHandler(
           );
           const resolved = dependencies.planFromSubscription(stripeSubscription);
 
+          // One free trial per card. A trial started on a card another user
+          // already trialed with is cancelled in Stripe, written here as
+          // canceled (so it never grants access, not even until the follow-up
+          // customer.subscription.deleted event lands) and gets no welcome
+          // email. The trial still counts as USED for the user, so the
+          // next checkout starts a paid subscription instead of another trial
+          // that would be refused the same way.
+          //
+          // The Google Ads accounts get the same treatment: a trial that starts
+          // while only accounts used for someone else's trial are linked is
+          // cancelled here too (and those accounts parked). The card guard goes
+          // first and the account lock is skipped once it has cancelled.
+          const trialGuards = await runTrialStartGuards({
+            admin: supabase,
+            userId,
+            subscription: stripeSubscription,
+            enforceCard: dependencies.enforceTrialCardUniqueness,
+            enforceAccountLock: dependencies.enforceTrialStartAccountLock,
+          });
+          const trialBlocked = trialGuards.blocked;
+          const status = trialBlocked
+            ? 'canceled'
+            : normalizeSubscriptionStatus(stripeSubscription.status);
+
           const writeResult = await dependencies.applySubscriptionEvent(supabase, {
             user_id: userId,
             plan: resolved.plan,
             billing_period: resolved.period,
-            status: normalizeSubscriptionStatus(stripeSubscription.status),
+            status,
             last_event_at: eventCreatedAt,
             stripe_subscription_id: subscriptionId,
             stripe_customer_id:
@@ -130,7 +165,7 @@ export function createStripeWebhookHandler(
             current_period_start: stripeTimestamp(stripeSubscription.current_period_start),
             current_period_end: stripeTimestamp(stripeSubscription.current_period_end),
             canceled_at:
-              normalizeSubscriptionStatus(stripeSubscription.status) === 'canceled'
+              status === 'canceled'
                 ? stripeTimestamp(stripeSubscription.canceled_at) ?? eventCreatedAt
                 : null,
           });
@@ -145,7 +180,7 @@ export function createStripeWebhookHandler(
               source: 'stripe_webhook',
             });
           }
-          if (dependencies.subscriptionEventWasApplied(writeResult)) {
+          if (dependencies.subscriptionEventWasApplied(writeResult) && !trialBlocked) {
             await safeUserEmail(
               dependencies,
               supabase,
@@ -168,11 +203,34 @@ export function createStripeWebhookHandler(
           const userId =
             subscription.metadata?.userId ?? eventSubscription.metadata?.userId;
           const resolved = dependencies.planFromSubscription(subscription);
+
+          // The subscription-created event is the first place a trial exists
+          // with its card attached, and checkout.session.completed can arrive
+          // late or never, so the card guard runs here too (it is idempotent).
+          //
+          // The Google Ads account lock runs here too, for the same reason: this
+          // event is where the trial first exists, whichever of the two events
+          // arrives first. Both guards are idempotent.
+          const trialBlocked =
+            event.type === 'customer.subscription.created' && userId
+              ? (
+                  await runTrialStartGuards({
+                    admin: supabase,
+                    userId,
+                    subscription,
+                    enforceCard: dependencies.enforceTrialCardUniqueness,
+                    enforceAccountLock: dependencies.enforceTrialStartAccountLock,
+                  })
+                ).blocked
+              : false;
+          const status = trialBlocked
+            ? 'canceled'
+            : normalizeSubscriptionStatus(subscription.status);
           const row = {
             ...(userId ? { user_id: userId } : {}),
             plan: resolved.plan,
             billing_period: resolved.period,
-            status: normalizeSubscriptionStatus(subscription.status),
+            status,
             stripe_subscription_id: subscription.id,
             stripe_customer_id:
               typeof subscription.customer === 'string'
@@ -183,7 +241,7 @@ export function createStripeWebhookHandler(
             current_period_end: stripeTimestamp(subscription.current_period_end),
             last_event_at: eventCreatedAt,
             canceled_at:
-              normalizeSubscriptionStatus(subscription.status) === 'canceled'
+              status === 'canceled'
                 ? stripeTimestamp(subscription.canceled_at) ?? eventCreatedAt
                 : null,
           };
@@ -231,6 +289,90 @@ export function createStripeWebhookHandler(
               );
             }
           }
+          break;
+        }
+
+        // Disputes. NOTE: the Stripe webhook endpoint should have
+        // `charge.dispute.created` enabled. It is in RECOMMENDED_WEBHOOK_EVENTS in
+        // lib/billing/stripe.ts, so /api/health lists it as
+        // `webhook.missing_recommended_events` but stays launch_ready without it
+        // (deliberately NOT in REQUIRED_WEBHOOK_EVENTS). A customer who disputes a
+        // charge keeps using the product while the dispute runs unless the
+        // subscription ends, and the dispute fee is lost either way.
+        case 'charge.dispute.created': {
+          const dispute = event.data.object as any;
+          const disputeId = stripeObjectId(dispute?.id);
+          const chargeId = stripeObjectId(dispute?.charge);
+          const ids = { event_id: event.id, dispute_id: disputeId, charge_id: chargeId };
+
+          // A `warning_*` status is a bank inquiry (an early warning), not a
+          // dispute yet: no money has moved and no fee is charged. Cancelling a
+          // customer over a question is wrong, so ops are told and nothing else
+          // happens. If it turns into a real dispute Stripe sends another
+          // charge.dispute.created for it.
+          if (isDisputeInquiry(dispute?.status)) {
+            await safeOpsAlert(dependencies, {
+              subject: 'استفسار من البنك على دفعة',
+              message:
+                'وصل استفسار مبكر من البنك على دفعة في Stripe وهو ليس نزاعاً بعد. لم يُلغَ أي اشتراك، وراجع الاستفسار في لوحة Stripe.',
+              details: { ...ids, status: String(dispute.status) },
+            });
+            break;
+          }
+
+          const subscriptionId = await resolveDisputedSubscriptionId(dependencies, dispute);
+          if (!subscriptionId) {
+            // No subscription on the invoice (or no invoice): a one-off charge
+            // or something we cannot tie to a plan. There is nothing safe to
+            // cancel, and guessing from the customer could hit the wrong one.
+            await safeOpsAlert(dependencies, {
+              subject: 'نزاع على دفعة بلا اشتراك معروف',
+              message:
+                'وصل نزاع على دفعة في Stripe ولم نصل إلى اشتراك مرتبط به. لم يُلغَ شيء ويحتاج مراجعة يدوية.',
+              details: ids,
+            });
+            break;
+          }
+
+          // Only cancel a subscription that is ours: it has a row in our table,
+          // or Stripe carries our userId on it (a row not written yet). An
+          // account that shares the Stripe account but not this product is
+          // never cancelled from here.
+          let target = await dependencies.retrieveStripeSubscription(subscriptionId);
+          const { data: localRow, error: localError } = await supabase
+            .from('subscriptions')
+            .select('id')
+            .eq('stripe_subscription_id', subscriptionId)
+            .maybeSingle();
+          throwOnSupabaseError('find disputed subscription', localError);
+          if (!localRow && !target.metadata?.userId) {
+            await safeOpsAlert(dependencies, {
+              subject: 'نزاع على اشتراك غير معروف عندنا',
+              message:
+                'وصل نزاع على دفعة تتبع اشتراكاً في Stripe ليس له سجل عندنا ولا يحمل معرّف مستخدم. لم يُلغَ شيء ويحتاج مراجعة يدوية.',
+              details: { ...ids, subscription_id: subscriptionId },
+            });
+            break;
+          }
+
+          // Idempotent: a subscription that already ended is not cancelled again
+          // (Stripe would reject it), but the local row and the alert still go out.
+          let outcome: 'cancelled' | 'already_ended' = 'already_ended';
+          if (!SUBSCRIPTION_ENDED_STATUSES.has(target.status)) {
+            target = await dependencies.cancelStripeSubscriptionImmediately(subscriptionId);
+            outcome = 'cancelled';
+          }
+          await dependencies.applySubscriptionEvent(
+            supabase,
+            subscriptionSnapshotRow(dependencies, target, eventCreatedAt),
+          );
+          await safeOpsAlert(dependencies, {
+            subject: 'نزاع على دفعة وأُلغي الاشتراك',
+            message:
+              'وصل نزاع على دفعة في Stripe وأُلغي الاشتراك المرتبط به فوراً. راجع النزاع في لوحة Stripe وجهّز الأدلة قبل الموعد.',
+            // Ids only: no names, emails or amounts.
+            details: { ...ids, subscription_id: subscriptionId, outcome },
+          });
           break;
         }
 
@@ -331,6 +473,54 @@ async function safeUserEmail(
     if (profile?.email) await dependencies.sendEmail({ to: profile.email, ...email });
   } catch (error) {
     console.error('Failed to send Stripe lifecycle email', { userId, error });
+  }
+}
+
+const SUBSCRIPTION_ENDED_STATUSES = new Set(['canceled', 'incomplete_expired']);
+
+/** Stripe's inquiry statuses (`warning_needs_response`, `warning_under_review`, `warning_closed`). */
+function isDisputeInquiry(status: unknown) {
+  return typeof status === 'string' && status.startsWith('warning_');
+}
+
+/**
+ * The subscription a disputed charge belongs to: dispute.charge -> charge.invoice
+ * -> the invoice's subscription (`invoiceSubscriptionId` handles both API
+ * shapes). Nothing else: a charge with no invoice, or an invoice with no
+ * subscription, resolves to null and the caller only alerts. There is NO guess
+ * from the customer, whose live subscription may be a different product. Lookup
+ * failures throw so Stripe retries the event.
+ */
+async function resolveDisputedSubscriptionId(
+  dependencies: StripeWebhookDependencies,
+  dispute: any,
+) {
+  const chargeId = stripeObjectId(dispute?.charge);
+  if (!chargeId) return null;
+  const charge =
+    dispute.charge && typeof dispute.charge === 'object'
+      ? dispute.charge
+      : await dependencies.retrieveStripeCharge(chargeId);
+
+  const invoiceId = stripeObjectId(charge?.invoice);
+  if (!invoiceId) return null;
+  const invoice =
+    charge.invoice && typeof charge.invoice === 'object'
+      ? charge.invoice
+      : await dependencies.retrieveStripeInvoice(invoiceId);
+  return invoiceSubscriptionId(invoice);
+}
+
+async function safeOpsAlert(
+  dependencies: StripeWebhookDependencies,
+  payload: Parameters<StripeWebhookDependencies['sendOpsAlert']>[0],
+) {
+  try {
+    await dependencies.sendOpsAlert(payload);
+  } catch (error) {
+    // The cancellation is what matters; a lost alert must not fail the event
+    // and re-run the whole handler.
+    console.error('Failed to send Stripe dispute alert', error);
   }
 }
 

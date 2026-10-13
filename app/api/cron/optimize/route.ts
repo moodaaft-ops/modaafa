@@ -45,7 +45,19 @@ import {
   generateWeeklyNarrative,
   type CampaignWeekRow,
 } from '@/lib/ai/report-agent';
-import { finishJobRun, getBillableBusinessIds, hasRecentCompletedRun, startJobRun } from '@/lib/platform/jobs';
+import {
+  finishJobRun,
+  getBillableBusinessIds,
+  getOptimizerAllowedAccountIds,
+  chunkIds,
+  pickOptimizerBatch,
+  trialClaimsForBatch,
+  OPTIMIZER_DETAIL_BATCH_SIZE,
+  type OptimizerAllowedAccount,
+  hasRecentCompletedRun,
+  startJobRun,
+} from '@/lib/platform/jobs';
+import { claimTrialAccountsInUse } from '@/lib/billing/trial-account-claim';
 import { sendOpsAlert } from '@/lib/notifications/email';
 import { planOpsAlert } from '@/lib/platform/ops-alerts';
 import { hasValidCronAuthorization } from '@/lib/security/cron-auth';
@@ -127,6 +139,36 @@ async function runOptimizerCron(req: NextRequest) {
     return NextResponse.json({ processed: 0, skipped: 'no_billable_businesses' });
   }
 
+  // Plan cap: the optimizer works on at most OPTIMIZER_ACCOUNTS_PER_PLAN accounts
+  // per user (a trial 1, Starter 3, Growth 10, Pro 50). Accounts over the cap stay linked and
+  // visible; they are only left out of this automatic, model-spending pass.
+  let allowedAccounts: OptimizerAllowedAccount[];
+  let skippedOverPlanCap: number;
+  try {
+    ({ allowedAccounts, skippedOverPlanCap } = await getOptimizerAllowedAccountIds(supabase));
+  } catch (error) {
+    // Fail closed: running uncapped is exactly the spend this guard prevents.
+    await finishJobRun({ supabase, job, status: 'failed', errors: [error] });
+    await safeOpsAlert('تعذر تحديد حسابات التحسين المسموحة لكل باقة', error);
+    return NextResponse.json({ error: 'optimizer_cap_lookup_failed' }, { status: 500 });
+  }
+  if (allowedAccounts.length === 0) {
+    await finishJobRun({
+      supabase,
+      job,
+      status: 'success',
+      details: {
+        note: 'No active accounts found',
+        cooldown_hours: OPTIMIZE_ACCOUNT_COOLDOWN_HOURS,
+        cooled_down_accounts: 0,
+        skipped_over_plan_cap: skippedOverPlanCap,
+        model_calls: 0,
+        skipped_idle: 0,
+      },
+    });
+    return NextResponse.json({ processed: 0, skipped_over_plan_cap: skippedOverPlanCap });
+  }
+
   // Get active accounts. Live execution is intentionally opt-in.
   //
   // Bounded and round-robin ordered: this used to select EVERY active account
@@ -145,18 +187,32 @@ async function runOptimizerCron(req: NextRequest) {
     req.nextUrl.searchParams.get('force') === '1'
       ? null
       : optimizerCooldownCutoffIso(Date.now(), OPTIMIZE_ACCOUNT_COOLDOWN_HOURS);
-  let accountQuery = supabase
-    .from('google_ads_accounts')
-    .select('id, customer_id, customer_name, manager_id, currency_code, refresh_token_encrypted, business_id')
-    .eq('status', 'active')
-    .not('is_manager', 'is', true)
-    .in('business_id', businessIds);
-  if (cooldownCutoff) {
-    accountQuery = accountQuery.or(`last_optimized_at.is.null,last_optimized_at.lt.${cooldownCutoff}`);
+  // Cooldown, round-robin order, the batch limit and the cooled-down count are
+  // all decided in memory from the cursor the cap helper already read. An
+  // `.in('id', ...)` over every allowed account puts up to 50 uuids per user in
+  // one URL and fails the whole cron once the user base is large; only the
+  // accounts actually chosen are fetched below, in small batches.
+  const { batchIds, cooledDownAccounts } = pickOptimizerBatch({
+    accounts: allowedAccounts,
+    cooldownCutoffIso: cooldownCutoff,
+    limit: OPTIMIZE_ACCOUNT_LIMIT,
+  });
+
+  const detailRows: Array<Record<string, any> & { id: string }> = [];
+  let accountLookupError: unknown = null;
+  for (const idBatch of chunkIds(batchIds, OPTIMIZER_DETAIL_BATCH_SIZE)) {
+    const { data, error } = await supabase
+      .from('google_ads_accounts')
+      .select('id, customer_id, customer_name, manager_id, currency_code, refresh_token_encrypted, business_id')
+      .eq('status', 'active')
+      .not('is_manager', 'is', true)
+      .in('id', idBatch);
+    if (error) {
+      accountLookupError = error;
+      break;
+    }
+    detailRows.push(...(data ?? []));
   }
-  const { data: accounts, error: accountLookupError } = await accountQuery
-    .order('last_optimized_at', { ascending: true, nullsFirst: true })
-    .limit(OPTIMIZE_ACCOUNT_LIMIT);
 
   if (accountLookupError) {
     await finishJobRun({ supabase, job, status: 'failed', errors: [accountLookupError] });
@@ -164,19 +220,13 @@ async function runOptimizerCron(req: NextRequest) {
     return NextResponse.json({ error: 'account_lookup_failed' }, { status: 500 });
   }
 
-  // Informational only (it feeds the cost readings), so a failure here never
-  // blocks the run.
-  let cooledDownAccounts = 0;
-  if (cooldownCutoff) {
-    const { count } = await supabase
-      .from('google_ads_accounts')
-      .select('id', { count: 'exact', head: true })
-      .eq('status', 'active')
-      .not('is_manager', 'is', true)
-      .in('business_id', businessIds)
-      .gte('last_optimized_at', cooldownCutoff);
-    cooledDownAccounts = count ?? 0;
-  }
+  // Batches come back in arbitrary order: restore the oldest-first order the
+  // round-robin picked. An account that went inactive between the cap read and
+  // here simply drops out.
+  const batchPosition = new Map(batchIds.map((id, index) => [id, index]));
+  const accounts = detailRows.sort(
+    (a, b) => (batchPosition.get(a.id) ?? 0) - (batchPosition.get(b.id) ?? 0)
+  );
 
   if (!accounts || accounts.length === 0) {
     await finishJobRun({
@@ -187,12 +237,22 @@ async function runOptimizerCron(req: NextRequest) {
         note: cooledDownAccounts > 0 ? 'All active accounts are inside the optimizer cooldown' : 'No active accounts found',
         cooldown_hours: OPTIMIZE_ACCOUNT_COOLDOWN_HOURS,
         cooled_down_accounts: cooledDownAccounts,
+        skipped_over_plan_cap: skippedOverPlanCap,
         // Counted as a guard run on the cost page: these are the runs that save the most.
         model_calls: 0,
         skipped_idle: 0,
       },
     });
     return NextResponse.json({ processed: 0, cooled_down_accounts: cooledDownAccounts });
+  }
+
+  // A trial that gets an optimizer pass is using the account, which is the moment
+  // it is recorded in trial_customer_ledger (so another user cannot take a second
+  // trial on it). Only accounts of users on a Stripe trial; best effort, it never
+  // fails the run.
+  const trialClaims = trialClaimsForBatch(allowedAccounts, accounts);
+  if (trialClaims.length > 0) {
+    await claimTrialAccountsInUse({ admin: supabase, claims: trialClaims, source: 'optimizer_during_trial' });
   }
 
   // Business context feeds the optimizer the way a real buyer is briefed:
@@ -769,6 +829,9 @@ async function runOptimizerCron(req: NextRequest) {
       // were skipped as idle, and how many rested in the cooldown this run.
       cooldown_hours: OPTIMIZE_ACCOUNT_COOLDOWN_HOURS,
       cooled_down_accounts: cooledDownAccounts,
+      // Active accounts left out because their owner is over the plan cap
+      // (lib/platform/jobs.ts OPTIMIZER_ACCOUNTS_PER_PLAN).
+      skipped_over_plan_cap: skippedOverPlanCap,
       model_calls: results.model_calls,
       skipped_idle: results.skipped_idle,
     },

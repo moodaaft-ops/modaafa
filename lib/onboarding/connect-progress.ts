@@ -37,6 +37,8 @@ export type ConnectJobDetails = {
   error?: string;
   accounts_found?: number;
   linkable?: number;
+  /** Accounts left paused because another user's trial already used them. */
+  paused_for_trial?: number;
   /** customer_id → spend over the last 30 days, in the account currency. */
   spend?: Record<string, number | null>;
   next?: string;
@@ -124,8 +126,17 @@ export function connectErrorRecoveryHref(error: string | null) {
   return null;
 }
 
+/**
+ * Reconnecting cannot fix `trial_account_used`: the accounts are parked for as
+ * long as the trial lasts, so the preparing screen does not offer the retry.
+ */
+export function connectErrorRetryHelps(error: string | null) {
+  return error !== 'trial_account_used';
+}
+
 export const CONNECT_ERROR_MESSAGES: Record<string, string> = {
   timeout: 'Google تأخر في الرد أكثر من المعتاد ووقفنا التجهيز. اضغط تجديد الربط وغالباً يكمل من المرة الثانية',
+  trial_account_used: 'حسابات الإعلانات هذي أخذت تجربتها المجانية قبل، فما نقدر نفعّلها خلال تجربتك. بعد أول دفعة أعد الربط وتشتغل مباشرة.',
   db_error: 'وصلنا لحساباتك لكن ما قدرنا نحفظها عندنا. جرّب تجديد الربط بعد دقيقة',
   connect_failed: 'ما قدرنا نكمل التجهيز مع Google. جرّب تجديد الربط بعد دقيقة',
 };

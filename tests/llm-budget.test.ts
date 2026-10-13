@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
   budgetCapsFor,
@@ -101,7 +102,7 @@ test('month and day windows are UTC calendar boundaries', () => {
 test('llmBudgetState reads month and day spend with the right windows and evaluates them', async () => {
   const calls: Array<{ userId: string; since: string }> = [];
   const state = await llmBudgetState(
-    { userId: 'u1', plan: 'starter', subscriptionActive: true, isOperator: false, now: new Date('2026-10-12T15:30:00Z') },
+    { userId: 'u1', plan: 'starter', status: 'active', subscriptionActive: true, isOperator: false, now: new Date('2026-10-12T15:30:00Z') },
     {
       readSpendSince: async (userId, since) => {
         calls.push({ userId, since: since.toISOString() });
@@ -125,7 +126,7 @@ test('llmBudgetState reads month and day spend with the right windows and evalua
 
 test('operators are always ok and their spend is never read', async () => {
   const state = await llmBudgetState(
-    { userId: 'op', plan: 'pro', subscriptionActive: true, isOperator: true },
+    { userId: 'op', plan: 'pro', status: 'active', subscriptionActive: true, isOperator: true },
     {
       readSpendSince: async () => {
         throw new Error('operators must not be metered');
@@ -143,7 +144,7 @@ test('a failed spend read fails open: level ok with unknown set', async () => {
   console.error = (...args: unknown[]) => void logged.push(args);
   try {
     const state = await llmBudgetState(
-      { userId: 'u2', subscriptionActive: false, isOperator: false },
+      { userId: 'u2', status: null, subscriptionActive: false, isOperator: false },
       {
         readSpendSince: async () => {
           throw new Error('postgres is down');
@@ -157,4 +158,43 @@ test('a failed spend read fails open: level ok with unknown set', async () => {
   } finally {
     console.error = original;
   }
+});
+
+// A trial runs on Starter limits, so its LLM spend budget is Starter's too.
+// llmBudgetState decides this from the status; callers cannot opt out.
+const zeroSpend = { readSpendSince: async () => 0 };
+const budgetFor = (plan: 'starter' | 'growth' | 'pro' | null, status: string | null) =>
+  llmBudgetState({ userId: 'u1', plan, status, subscriptionActive: true, isOperator: false }, zeroSpend);
+
+test('a trialing user gets the Starter budget whatever plan the trial picked', async () => {
+  const starter = budgetCapsFor({ plan: 'starter', subscriptionActive: true });
+  for (const picked of ['starter', 'growth', 'pro'] as const) {
+    assert.deepEqual((await budgetFor(picked, 'trialing')).caps, starter, `trialing ${picked}`);
+  }
+});
+
+test('a paying user keeps the budget of the plan they pay for', async () => {
+  assert.deepEqual((await budgetFor('growth', 'active')).caps, budgetCapsFor({ plan: 'growth', subscriptionActive: true }));
+  assert.deepEqual((await budgetFor('pro', 'past_due')).caps, budgetCapsFor({ plan: 'pro', subscriptionActive: true }));
+  assert.notDeepEqual((await budgetFor('pro', 'active')).caps, (await budgetFor('pro', 'trialing')).caps);
+});
+
+test('an operator free-plan grant and internal access are not capped to Starter', async () => {
+  assert.deepEqual((await budgetFor('pro', 'comp')).caps, budgetCapsFor({ plan: 'pro', subscriptionActive: true }));
+  assert.deepEqual((await budgetFor('pro', 'internal')).caps, budgetCapsFor({ plan: 'pro', subscriptionActive: true }));
+});
+
+test('the Starter month cap trips a trialing Pro user at 50 SAR, where Pro would allow 250', async () => {
+  const evaluate = (plan: 'pro', status: string) =>
+    llmBudgetState(
+      { userId: 'u1', plan, status, subscriptionActive: true, isOperator: false, now: new Date('2026-10-12T15:30:00Z') },
+      { readSpendSince: async (_u, since) => (since.getUTCDate() === 1 ? 14 : 0.1) } // 14 USD this month
+    );
+  assert.equal((await evaluate('pro', 'trialing')).level, 'exhausted');
+  assert.equal((await evaluate('pro', 'active')).level, 'ok');
+});
+
+test('the only caller of llmBudgetState passes the status, never a pre-resolved plan', () => {
+  const src = readFileSync(new URL('../lib/jarvis/turn.ts', import.meta.url), 'utf8');
+  assert.match(src, /plan: subscription\.plan,\s*status: subscription\.status,/);
 });

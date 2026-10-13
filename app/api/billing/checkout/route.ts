@@ -4,7 +4,7 @@ import { createServerClient } from '@/lib/supabase/server';
 import { createCheckoutSession, ensureStripeCustomer } from '@/lib/billing/stripe';
 import { requireAppUrl } from '@/lib/platform/env';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
-import { getBillingCheckoutContext, TRIAL_DAYS } from '@/lib/billing/checkout-policy';
+import { checkoutTrialDecision, getBillingCheckoutContext } from '@/lib/billing/checkout-policy';
 import { isSameOriginRequest } from '@/lib/security/origin';
 import { isModaafaOperator } from '@/lib/platform/operators';
 import { readAccessOverrides } from '@/lib/billing/access-overrides';
@@ -86,6 +86,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'google_ads_account_required' }, { status: 409 });
     }
 
+    // The eligibility check could not run. Do not fall through to a paid session:
+    // that would turn a first-time trial into an immediate charge.
+    const trialDecision = checkoutTrialDecision(billing);
+    if (trialDecision.action === 'blocked') {
+      if (isForm) {
+        return NextResponse.redirect(new URL(`/billing?error=${trialDecision.error}`, req.url), 303);
+      }
+      return NextResponse.json({ error: trialDecision.error }, { status: 503 });
+    }
+
     // Resolve the Stripe Customer BEFORE creating the session so the session
     // always carries an explicit id. Falling back to `customer_email` made
     // Stripe mint a new Customer per completed session, which is how two
@@ -103,7 +113,7 @@ export async function POST(req: NextRequest) {
       period,
       successUrl: `${baseUrl}/api/billing/checkout/complete?session_id={CHECKOUT_SESSION_ID}`,
       cancelUrl: `${baseUrl}/billing?canceled=1`,
-      trialDays: billing.trialEligible ? TRIAL_DAYS : 0,
+      trialDays: trialDecision.trialDays,
       customerId,
       idempotencyKey: checkoutIdempotencyKey(user.id, plan, period),
     });
