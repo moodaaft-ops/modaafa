@@ -468,32 +468,35 @@ type OpsAlert = { subject: string; message: string; details?: unknown };
 function disputeHarness(
   disputeObject: Record<string, unknown>,
   overrides: Partial<StripeWebhookDependencies> & {
-    localSubscriptions?: Array<{ stripe_customer_id: string; stripe_subscription_id: string }>;
+    /** stripe_subscription_id values that have a row in our subscriptions table. */
+    localSubscriptions?: string[];
   } = {},
 ) {
   const calls = {
     charges: [] as string[],
     invoices: [] as string[],
+    stripeSubscriptions: [] as string[],
     cancelled: [] as string[],
     applied: [] as Array<Record<string, unknown>>,
     alerts: [] as OpsAlert[],
+    localLookups: [] as string[],
   };
-  const { localSubscriptions = [], ...dependencyOverrides } = overrides;
+  const { localSubscriptions = ['sub_disputed'], ...dependencyOverrides } = overrides;
   const database = {
     from(table: string) {
       assert.equal(table, 'subscriptions');
-      let customerId: string | null = null;
+      let subscriptionId: string | null = null;
       const chain: any = {
         select: () => chain,
-        eq: (_column: string, value: string) => {
-          customerId = value;
+        eq: (column: string, value: string) => {
+          // The only lookup allowed is by stripe_subscription_id: no customer guess.
+          assert.equal(column, 'stripe_subscription_id');
+          subscriptionId = value;
+          calls.localLookups.push(value);
           return chain;
         },
-        in: () => chain,
-        order: () => chain,
-        limit: () => chain,
         maybeSingle: async () => ({
-          data: localSubscriptions.find((row) => row.stripe_customer_id === customerId) ?? null,
+          data: subscriptionId && localSubscriptions.includes(subscriptionId) ? { id: 'row-1' } : null,
           error: null,
         }),
       };
@@ -510,8 +513,10 @@ function disputeHarness(
       calls.invoices.push(id);
       return { id, subscription: 'sub_disputed' };
     }) as any,
-    retrieveStripeSubscription: async () =>
-      subscription({ id: 'sub_disputed', status: 'active' }) as any,
+    retrieveStripeSubscription: (async (id: string) => {
+      calls.stripeSubscriptions.push(id);
+      return subscription({ id: 'sub_disputed', status: 'active' });
+    }) as any,
     cancelStripeSubscriptionImmediately: (async (id: string) => {
       calls.cancelled.push(id);
       return subscription({ id, status: 'canceled', canceled_at: CREATED_AT + 5 });
@@ -587,14 +592,12 @@ test('an expanded charge and invoice on the dispute need no extra Stripe reads',
   assert.deepEqual(calls.cancelled, ['sub_disputed']);
 });
 
-test('a charge with no invoice falls back to the customer live subscription in our table', async () => {
+test('a charge with no invoice is NOT matched to the customer subscription: alert only', async () => {
   const { handler, calls } = disputeHarness(
     { id: 'dp_noinv', charge: 'ch_noinv' },
     {
       retrieveStripeCharge: (async (id: string) => ({ id, invoice: null, customer: 'cus_known' })) as any,
-      localSubscriptions: [{ stripe_customer_id: 'cus_known', stripe_subscription_id: 'sub_local' }],
-      retrieveStripeSubscription: async () =>
-        subscription({ id: 'sub_local', status: 'trialing' }) as any,
+      localSubscriptions: ['sub_local'],
     },
   );
 
@@ -602,8 +605,118 @@ test('a charge with no invoice falls back to the customer live subscription in o
 
   assert.equal(response.status, 200);
   assert.deepEqual(calls.invoices, []);
-  assert.deepEqual(calls.cancelled, ['sub_local']);
+  assert.deepEqual(calls.localLookups, [], 'no customer lookup in our table');
+  assert.deepEqual(calls.cancelled, []);
+  assert.deepEqual(calls.applied, []);
+  assert.equal(calls.alerts.length, 1);
+  assert.equal(calls.alerts[0].subject, 'نزاع على دفعة بلا اشتراك معروف');
 });
+
+test('an invoice with no subscription is alert only, with no fallback cancel', async () => {
+  const { handler, calls } = disputeHarness(
+    { id: 'dp_nosub', charge: 'ch_1' },
+    {
+      retrieveStripeInvoice: (async (id: string) => ({ id, subscription: null, parent: null })) as any,
+      localSubscriptions: ['sub_disputed'],
+    },
+  );
+
+  const response = await handler(request());
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(calls.cancelled, []);
+  assert.deepEqual(calls.stripeSubscriptions, []);
+  assert.deepEqual(calls.applied, []);
+  assert.equal(calls.alerts.length, 1);
+  assert.deepEqual(calls.alerts[0].details, { event_id: 'evt_dispute', dispute_id: 'dp_nosub', charge_id: 'ch_1' });
+});
+
+test('a subscription with no row in our table and no userId on it is alert only', async () => {
+  const { handler, calls } = disputeHarness(
+    { id: 'dp_foreign', charge: 'ch_1' },
+    {
+      localSubscriptions: [],
+      retrieveStripeSubscription: async () =>
+        subscription({ id: 'sub_disputed', status: 'active', metadata: {} }) as any,
+    },
+  );
+
+  const response = await handler(request());
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(calls.cancelled, []);
+  assert.deepEqual(calls.applied, []);
+  assert.equal(calls.alerts.length, 1);
+  assert.equal(calls.alerts[0].subject, 'نزاع على اشتراك غير معروف عندنا');
+  assert.deepEqual(calls.alerts[0].details, {
+    event_id: 'evt_dispute',
+    dispute_id: 'dp_foreign',
+    charge_id: 'ch_1',
+    subscription_id: 'sub_disputed',
+  });
+});
+
+test('a subscription with a row in our table is cancelled even without userId metadata', async () => {
+  const { handler, calls } = disputeHarness(
+    { id: 'dp_row', charge: 'ch_1' },
+    {
+      localSubscriptions: ['sub_disputed'],
+      retrieveStripeSubscription: async () =>
+        subscription({ id: 'sub_disputed', status: 'active', metadata: {} }) as any,
+    },
+  );
+
+  const response = await handler(request());
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(calls.cancelled, ['sub_disputed']);
+});
+
+test('a subscription not in our table yet but carrying our userId is cancelled', async () => {
+  const { handler, calls } = disputeHarness(
+    { id: 'dp_meta', charge: 'ch_1' },
+    { localSubscriptions: [] },
+  );
+
+  const response = await handler(request());
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(calls.cancelled, ['sub_disputed']);
+});
+
+for (const status of ['warning_needs_response', 'warning_under_review', 'warning_closed']) {
+  test(`a ${status} inquiry only alerts ops: nothing is read from Stripe or cancelled`, async () => {
+    const { handler, calls } = disputeHarness({ id: 'dp_inquiry', charge: 'ch_1', status });
+
+    const response = await handler(request());
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(calls.charges, []);
+    assert.deepEqual(calls.invoices, []);
+    assert.deepEqual(calls.stripeSubscriptions, []);
+    assert.deepEqual(calls.cancelled, []);
+    assert.deepEqual(calls.applied, []);
+    assert.equal(calls.alerts.length, 1);
+    assert.equal(calls.alerts[0].subject, 'استفسار من البنك على دفعة');
+    assert.deepEqual(calls.alerts[0].details, {
+      event_id: 'evt_dispute',
+      dispute_id: 'dp_inquiry',
+      charge_id: 'ch_1',
+      status,
+    });
+  });
+}
+
+for (const status of ['needs_response', 'under_review', 'lost']) {
+  test(`a real dispute with status ${status} still cancels`, async () => {
+    const { handler, calls } = disputeHarness({ id: 'dp_real', charge: 'ch_1', status });
+
+    const response = await handler(request());
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(calls.cancelled, ['sub_disputed']);
+  });
+}
 
 test('a dispute with no resolvable subscription cancels nothing and tells ops', async () => {
   const { handler, calls } = disputeHarness(

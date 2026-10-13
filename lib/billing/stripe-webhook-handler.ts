@@ -286,25 +286,60 @@ export function createStripeWebhookHandler(
           const dispute = event.data.object as any;
           const disputeId = stripeObjectId(dispute?.id);
           const chargeId = stripeObjectId(dispute?.charge);
-          const subscriptionId = await resolveDisputedSubscriptionId(
-            dependencies,
-            supabase,
-            dispute,
-          );
+          const ids = { event_id: event.id, dispute_id: disputeId, charge_id: chargeId };
 
+          // A `warning_*` status is a bank inquiry (an early warning), not a
+          // dispute yet: no money has moved and no fee is charged. Cancelling a
+          // customer over a question is wrong, so ops are told and nothing else
+          // happens. If it turns into a real dispute Stripe sends another
+          // charge.dispute.created for it.
+          if (isDisputeInquiry(dispute?.status)) {
+            await safeOpsAlert(dependencies, {
+              subject: 'استفسار من البنك على دفعة',
+              message:
+                'وصل استفسار مبكر من البنك على دفعة في Stripe وهو ليس نزاعاً بعد. لم يُلغَ أي اشتراك، وراجع الاستفسار في لوحة Stripe.',
+              details: { ...ids, status: String(dispute.status) },
+            });
+            break;
+          }
+
+          const subscriptionId = await resolveDisputedSubscriptionId(dependencies, dispute);
           if (!subscriptionId) {
+            // No subscription on the invoice (or no invoice): a one-off charge
+            // or something we cannot tie to a plan. There is nothing safe to
+            // cancel, and guessing from the customer could hit the wrong one.
             await safeOpsAlert(dependencies, {
               subject: 'نزاع على دفعة بلا اشتراك معروف',
               message:
                 'وصل نزاع على دفعة في Stripe ولم نصل إلى اشتراك مرتبط به. لم يُلغَ شيء ويحتاج مراجعة يدوية.',
-              details: { event_id: event.id, dispute_id: disputeId, charge_id: chargeId },
+              details: ids,
+            });
+            break;
+          }
+
+          // Only cancel a subscription that is ours: it has a row in our table,
+          // or Stripe carries our userId on it (a row not written yet). An
+          // account that shares the Stripe account but not this product is
+          // never cancelled from here.
+          let target = await dependencies.retrieveStripeSubscription(subscriptionId);
+          const { data: localRow, error: localError } = await supabase
+            .from('subscriptions')
+            .select('id')
+            .eq('stripe_subscription_id', subscriptionId)
+            .maybeSingle();
+          throwOnSupabaseError('find disputed subscription', localError);
+          if (!localRow && !target.metadata?.userId) {
+            await safeOpsAlert(dependencies, {
+              subject: 'نزاع على اشتراك غير معروف عندنا',
+              message:
+                'وصل نزاع على دفعة تتبع اشتراكاً في Stripe ليس له سجل عندنا ولا يحمل معرّف مستخدم. لم يُلغَ شيء ويحتاج مراجعة يدوية.',
+              details: { ...ids, subscription_id: subscriptionId },
             });
             break;
           }
 
           // Idempotent: a subscription that already ended is not cancelled again
           // (Stripe would reject it), but the local row and the alert still go out.
-          let target = await dependencies.retrieveStripeSubscription(subscriptionId);
           let outcome: 'cancelled' | 'already_ended' = 'already_ended';
           if (!SUBSCRIPTION_ENDED_STATUSES.has(target.status)) {
             target = await dependencies.cancelStripeSubscriptionImmediately(subscriptionId);
@@ -319,13 +354,7 @@ export function createStripeWebhookHandler(
             message:
               'وصل نزاع على دفعة في Stripe وأُلغي الاشتراك المرتبط به فوراً. راجع النزاع في لوحة Stripe وجهّز الأدلة قبل الموعد.',
             // Ids only: no names, emails or amounts.
-            details: {
-              event_id: event.id,
-              dispute_id: disputeId,
-              charge_id: chargeId,
-              subscription_id: subscriptionId,
-              outcome,
-            },
+            details: { ...ids, subscription_id: subscriptionId, outcome },
           });
           break;
         }
@@ -431,18 +460,22 @@ async function safeUserEmail(
 }
 
 const SUBSCRIPTION_ENDED_STATUSES = new Set(['canceled', 'incomplete_expired']);
-const LIVE_SUBSCRIPTION_STATUSES = ['trialing', 'active', 'past_due', 'paused'];
+
+/** Stripe's inquiry statuses (`warning_needs_response`, `warning_under_review`, `warning_closed`). */
+function isDisputeInquiry(status: unknown) {
+  return typeof status === 'string' && status.startsWith('warning_');
+}
 
 /**
  * The subscription a disputed charge belongs to: dispute.charge -> charge.invoice
  * -> the invoice's subscription (`invoiceSubscriptionId` handles both API
- * shapes). A charge with no invoice falls back to the customer's live
- * subscription in our own table. Lookup failures throw so Stripe retries the
- * event; returning null only means "nothing to cancel could be found".
+ * shapes). Nothing else: a charge with no invoice, or an invoice with no
+ * subscription, resolves to null and the caller only alerts. There is NO guess
+ * from the customer, whose live subscription may be a different product. Lookup
+ * failures throw so Stripe retries the event.
  */
 async function resolveDisputedSubscriptionId(
   dependencies: StripeWebhookDependencies,
-  supabase: ReturnType<typeof createAdminClient>,
   dispute: any,
 ) {
   const chargeId = stripeObjectId(dispute?.charge);
@@ -453,27 +486,12 @@ async function resolveDisputedSubscriptionId(
       : await dependencies.retrieveStripeCharge(chargeId);
 
   const invoiceId = stripeObjectId(charge?.invoice);
-  if (invoiceId) {
-    const invoice =
-      charge.invoice && typeof charge.invoice === 'object'
-        ? charge.invoice
-        : await dependencies.retrieveStripeInvoice(invoiceId);
-    const fromInvoice = invoiceSubscriptionId(invoice);
-    if (fromInvoice) return fromInvoice;
-  }
-
-  const customerId = stripeObjectId(charge?.customer);
-  if (!customerId) return null;
-  const { data, error } = await supabase
-    .from('subscriptions')
-    .select('stripe_subscription_id')
-    .eq('stripe_customer_id', customerId)
-    .in('status', LIVE_SUBSCRIPTION_STATUSES)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  throwOnSupabaseError('find disputed customer subscription', error);
-  return (data?.stripe_subscription_id as string | undefined) ?? null;
+  if (!invoiceId) return null;
+  const invoice =
+    charge.invoice && typeof charge.invoice === 'object'
+      ? charge.invoice
+      : await dependencies.retrieveStripeInvoice(invoiceId);
+  return invoiceSubscriptionId(invoice);
 }
 
 async function safeOpsAlert(
