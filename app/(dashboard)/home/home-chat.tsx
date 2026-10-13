@@ -35,7 +35,7 @@ export function HomeChat({ customerId, voiceEnabled }: { customerId: string | nu
       <aside
         aria-label={`المحادثة مع ${ASSISTANT.name}`}
         className={cn(
-          'lg:sticky lg:top-0 lg:flex lg:h-full lg:border-s lg:border-border',
+          'lg:sticky lg:top-0 lg:col-start-1 lg:row-start-1 lg:flex lg:h-full lg:border-e lg:border-border',
           open ? 'fixed inset-0 z-50 flex bg-background' : 'hidden'
         )}
       >
