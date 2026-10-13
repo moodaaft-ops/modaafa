@@ -100,6 +100,17 @@ export function SimpleChrome({
           <LogoMark size={24} alt="" />
           <span className="text-[15px] font-bold">مُضاعِف</span>
         </Link>
+        <button
+          ref={buttonRef}
+          type="button"
+          onClick={() => setOpen(true)}
+          aria-expanded={open}
+          aria-controls="simple-menu"
+          aria-label="القائمة"
+          className="flex h-10 w-10 flex-shrink-0 items-center justify-center border border-border bg-card text-foreground"
+        >
+          <Menu className="h-4 w-4" />
+        </button>
         {accountLabel && (
           <button
             type="button"
@@ -126,17 +137,6 @@ export function SimpleChrome({
             </Link>
           ))}
         </nav>
-        <button
-          ref={buttonRef}
-          type="button"
-          onClick={() => setOpen(true)}
-          aria-expanded={open}
-          aria-controls="simple-menu"
-          aria-label="القائمة"
-          className="flex h-10 w-10 flex-shrink-0 items-center justify-center border border-border bg-card text-foreground"
-        >
-          <Menu className="h-4 w-4" />
-        </button>
       </header>
 
       <main className="min-h-0 flex-1 overflow-y-auto scrollbar-thin">{children}</main>
@@ -149,9 +149,9 @@ export function SimpleChrome({
         aria-modal="true"
         aria-label="القائمة"
         className={cn(
-          'fixed inset-y-0 end-0 z-50 flex w-[min(340px,88vw)] flex-col border-s border-border bg-background transition-transform duration-200 ease-out',
-          // Opens from the same side as the menu button (the end side).
-          open ? 'translate-x-0' : 'invisible rtl:-translate-x-full ltr:translate-x-full'
+          'fixed inset-y-0 start-0 z-50 flex w-[min(340px,88vw)] flex-col border-e border-border bg-background transition-transform duration-200 ease-out',
+          // Opens from the start (right) side, where its button sits next to the logo.
+          open ? 'translate-x-0' : 'invisible rtl:translate-x-full ltr:-translate-x-full'
         )}
       >
         <div className="flex h-14 items-center justify-between gap-2 border-b border-border px-4">
