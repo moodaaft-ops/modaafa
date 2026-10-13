@@ -2,6 +2,8 @@ import { redirect } from 'next/navigation';
 import { getRequestAuthContext } from '@/lib/supabase/server';
 import { OnboardingProgress } from '../onboarding-progress';
 import { PreparingAccounts } from './preparing-accounts';
+import { isSimpleExperience } from '@/lib/setup/mode';
+import { simpleOnboardingTarget } from '@/lib/setup/routes';
 
 export const metadata = {
   title: 'نجهز حساباتك',
@@ -10,6 +12,7 @@ export const metadata = {
 export default async function PreparingPage() {
   const { user } = await getRequestAuthContext();
   if (!user) redirect('/login?next=/onboarding/preparing');
+  if (isSimpleExperience(process.env, user.email)) redirect(simpleOnboardingTarget('preparing'));
 
   return (
     <main className="px-4 py-8 sm:px-6">

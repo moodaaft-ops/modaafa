@@ -5,6 +5,8 @@ import { connectJobName, type ConnectJobDetails } from '@/lib/onboarding/connect
 import { accountsCountLabel, sortAccountsBySpend } from '@/lib/onboarding/account-choice';
 import { OnboardingProgress } from '../onboarding-progress';
 import { ChooseAccountForm } from './choose-account-form';
+import { isSimpleExperience } from '@/lib/setup/mode';
+import { simpleOnboardingTarget } from '@/lib/setup/routes';
 
 export const metadata = {
   title: 'اختر الحساب',
@@ -13,6 +15,7 @@ export const metadata = {
 export default async function ChooseAccountPage() {
   const { user } = await getRequestAuthContext();
   if (!user) redirect('/login?next=/onboarding/choose');
+  if (isSimpleExperience(process.env, user.email)) redirect(simpleOnboardingTarget('choose'));
 
   const { accounts, business } = await getAccountWorkspace(user.id);
   if (!business) redirect('/onboarding/business');

@@ -7,6 +7,8 @@ import { isChatFirstEnabled } from '@/lib/chat-first/flag';
 import { PageHeader } from '@/lib/ui/page-header';
 import { readVoiceConfig } from '@/lib/ai/voice-session';
 import { StartClient } from './start-client';
+import { isSimpleExperience } from '@/lib/setup/mode';
+import { homeTargetFrom } from '@/lib/setup/routes';
 
 export const metadata = { title: 'ابدأ بمحادثة' };
 
@@ -19,6 +21,8 @@ export default async function StartPage({
   const { user } = await getRequestAuthContext();
   if (!user) redirect('/login');
   if (!isChatFirstEnabled(process.env, user.email)) notFound();
+  // The chat now lives beside the day's decisions on /home.
+  if (isSimpleExperience(process.env, user.email)) redirect(homeTargetFrom(params as Record<string, string | undefined>));
   const { selectedAccount, selectedCustomerId } = await getAccountWorkspace(user.id);
 
   const notice = params?.executed

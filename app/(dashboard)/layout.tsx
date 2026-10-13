@@ -6,6 +6,8 @@ import { isModaafaOperator } from '@/lib/platform/operators';
 import { isChatFirstEnabled } from '@/lib/chat-first/flag';
 import { readAccessOverrides } from '@/lib/billing/access-overrides';
 import { SuspendedBanner } from './suspended-banner';
+import { SimpleChrome } from './simple-chrome';
+import { isSimpleExperience } from '@/lib/setup/mode';
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { supabase, user } = await getRequestAuthContext();
@@ -33,6 +35,24 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // with. The Google Ads callback then quietly fabricated a placeholder
   // business for them.
   if (!business) redirect('/onboarding');
+
+  // The simple experience: one header, a short menu, and «زياد» on /home.
+  if (isSimpleExperience(process.env, user.email)) {
+    return (
+      <SimpleChrome
+        brandName={business?.name ?? user.email ?? 'مساحة العمل'}
+        userEmail={user.email ?? ''}
+        accounts={accounts}
+        revokedAccounts={revokedAccounts}
+        pausedAccounts={pausedAccounts}
+        selectedCustomerId={selectedCustomerId}
+        isOperator={isModaafaOperator(user.email)}
+      >
+        {overrides.suspended && <SuspendedBanner />}
+        {children}
+      </SimpleChrome>
+    );
+  }
 
   return (
     <DashboardChrome

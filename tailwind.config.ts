@@ -25,6 +25,20 @@ const config: Config = {
         shimmer: {
           '100%': { transform: 'translateX(-100%)' },
         },
+        // «زياد»'s lamp: the yellow square of the symbol blinks while he thinks.
+        'lamp-blink': {
+          '0%, 100%': { opacity: '1' },
+          '50%': { opacity: '0.2' },
+        },
+        // Three small squares instead of typing dots.
+        'square-step': {
+          '0%, 70%, 100%': { opacity: '0.25', transform: 'translateY(0)' },
+          '35%': { opacity: '1', transform: 'translateY(-2px)' },
+        },
+        'bubble-in': {
+          '0%': { opacity: '0', transform: 'translateY(6px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
       },
       animation: {
         'loading-bar': 'loading-bar 1.1s ease-in-out infinite',
@@ -33,6 +47,9 @@ const config: Config = {
         'fade-up': 'fade-up 0.5s cubic-bezier(0.16,1,0.3,1) both',
         'typing-dot': 'typing-dot 1.2s ease-in-out infinite',
         shimmer: 'shimmer 1.6s ease-in-out infinite',
+        'lamp-blink': 'lamp-blink 0.9s ease-in-out infinite',
+        'square-step': 'square-step 1.1s ease-in-out infinite',
+        'bubble-in': 'bubble-in 0.22s cubic-bezier(0.16,1,0.3,1) both',
       },
       boxShadow: {
         // Identity is flat: separation comes from hairline borders. `pop` is a

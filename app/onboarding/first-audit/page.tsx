@@ -18,6 +18,8 @@ import {
 import { TikTokPixel } from '@/lib/analytics/tiktok-pixel';
 import { CHAT_HANDOFF_PATH } from '@/lib/onboarding/chat-handoff';
 import { FirstAuditRunner } from './first-audit-runner';
+import { isSimpleExperience } from '@/lib/setup/mode';
+import { simpleOnboardingTarget } from '@/lib/setup/routes';
 
 export const metadata = {
   title: 'أول فرص في حسابك',
@@ -37,6 +39,9 @@ export default async function FirstAuditPage({
   const params = await searchParams;
   const { supabase, user } = await getRequestAuthContext();
   if (!user) redirect('/login?next=/onboarding/first-audit');
+  if (isSimpleExperience(process.env, user.email)) {
+    redirect(simpleOnboardingTarget('first-audit', { subscribed: params?.subscribed }));
+  }
 
   const { accounts, business, selectedAccount } = await getAccountWorkspace(user.id);
   if (!business) redirect('/onboarding/business');

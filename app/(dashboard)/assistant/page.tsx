@@ -8,6 +8,7 @@ import { AssistantClient } from './assistant-client';
 import { getSubscriptionAccess } from '@/lib/billing/entitlements';
 import { SubscriptionGate } from '@/lib/ui/subscription-gate';
 import { isChatFirstEnabled } from '@/lib/chat-first/flag';
+import { isSimpleExperience } from '@/lib/setup/mode';
 
 export const metadata = {
   title: 'المساعد الذكي',
@@ -23,6 +24,8 @@ export default async function AssistantPage({
   // chat-first flag on, that entry belongs to /start; flag off, nothing changes.
   const { supabase, user } = await getRequestAuthContext();
   if (!user) redirect('/login');
+  // The simple experience has «زياد» on /home; only a campaign brief still opens the builder here.
+  if (isSimpleExperience(process.env, user.email) && !params?.brief) redirect('/home');
   if (isChatFirstEnabled(process.env, user.email) && params?.from === 'onboarding' && !params?.brief) redirect('/start');
   const [{ accounts, selectedAccount, selectedCustomerId }, subscription] = await Promise.all([
     getAccountWorkspace(user.id),

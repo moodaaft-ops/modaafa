@@ -1,8 +1,11 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { AudioLines, Loader2, RotateCcw, Send, Square } from 'lucide-react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { AudioLines, RotateCcw, Send, Square, X } from 'lucide-react';
+import { ASSISTANT } from '@/lib/assistant/persona';
+import { AssistantAvatar, TypingSquares } from '@/lib/ui/assistant-avatar';
+import { cn } from '@/lib/utils';
 import { VoiceCallPanel, type VoiceTurnResult } from '../assistant/voice-call-panel';
 import type { ChatAction, ChatCard, ChatQuickAction, ChatTurn } from '@/lib/chat-first/contracts';
 
@@ -31,14 +34,36 @@ const NOTICE: Record<string, string> = {
 let counter = 0;
 const uid = () => `m${Date.now()}-${counter++}`;
 
+/** Where the approve, dismiss and undo forms send the customer back to. */
+const ReturnPathContext = createContext('/start');
+
+/**
+ * Other parts of the home screen ask «زياد» something by dispatching this
+ * event (a decision card's «اسأل زياد عنها»). The chat sends it as if typed.
+ */
+export const ASK_ZIYAD_EVENT = 'ziyad:ask';
+export type AskZiyadDetail = { text: string; label?: string; recommendationId?: string };
+
 export function StartClient({
   customerId,
   notice,
   voiceEnabled = false,
+  returnPath = '/start',
+  variant = 'page',
+  onClose,
+  onAsked,
 }: {
   customerId: string | null;
   notice: string | null;
   voiceEnabled?: boolean;
+  /** The page the approval forms return to. */
+  returnPath?: string;
+  /** 'embedded' fills its container (the home screen's chat panel or sheet). */
+  variant?: 'page' | 'embedded';
+  /** Shown as a close button in the header when the chat is a sheet. */
+  onClose?: () => void;
+  /** Called when another part of the screen asked «زياد» something. */
+  onAsked?: () => void;
 }) {
   const [voiceOpen, setVoiceOpen] = useState(false);
   const [memoryOpen, setMemoryOpen] = useState(false);
@@ -99,12 +124,12 @@ export function StartClient({
         setItems([
           ...restored,
           ...(restored.length === 0
-            ? [{ id: uid(), role: 'assistant' as const, text: 'هلا فيك. أنا أساعدك في إعلاناتك بدون ما تحتاج تفهم مصطلحاتها. وش تبي؟', cards: [], actions: quickStart() }]
+            ? [{ id: uid(), role: 'assistant' as const, text: `هلا، أنا ${ASSISTANT.name}. اسألني عن إعلاناتك بكلامك العادي، وأقرأ حسابك وأجاوبك.`, cards: [], actions: quickStart() }]
             : []),
           ...(n ? [{ id: uid(), role: 'assistant' as const, text: n, cards: [], actions: [] }] : []),
         ]);
       } catch {
-        setItems([{ id: uid(), role: 'assistant', text: 'هلا فيك. وش تبي؟', cards: [], actions: quickStart() }]);
+        setItems([{ id: uid(), role: 'assistant', text: `هلا، أنا ${ASSISTANT.name}. وش تبي نشوف؟`, cards: [], actions: quickStart() }]);
       }
     })();
     return () => {
@@ -281,41 +306,92 @@ export function StartClient({
   // The voice panel outlives re-renders; it always calls the newest `send`.
   const sendRef = useRef(send);
   sendRef.current = send;
+  const onAskedRef = useRef(onAsked);
+  onAskedRef.current = onAsked;
+
+  useEffect(() => {
+    const onAsk = (event: Event) => {
+      const detail = (event as CustomEvent<AskZiyadDetail>).detail;
+      if (!detail?.text) return;
+      onAskedRef.current?.();
+      if (detail.recommendationId) {
+        void sendRef.current(
+          { action: { type: 'show_recommendation', recommendationId: detail.recommendationId } },
+          detail.label ?? detail.text
+        );
+      } else {
+        void sendRef.current({ message: detail.text }, detail.label ?? detail.text);
+      }
+    };
+    window.addEventListener(ASK_ZIYAD_EVENT, onAsk);
+    return () => window.removeEventListener(ASK_ZIYAD_EVENT, onAsk);
+  }, []);
 
   const lastAssistant = [...items].reverse().find((i) => i.role === 'assistant')?.id;
 
   return (
-    <div className="mx-auto flex h-[calc(100dvh-9rem)] max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-background-elevated">
+    <ReturnPathContext.Provider value={returnPath}>
+    <div
+      className={cn(
+        'flex flex-col overflow-hidden bg-background-elevated',
+        variant === 'page' ? 'mx-auto h-[calc(100dvh-9rem)] max-w-2xl border border-border' : 'h-full w-full'
+      )}
+    >
+      {variant === 'embedded' && (
+        <div className="flex h-14 flex-shrink-0 items-center gap-2.5 border-b border-border bg-background px-4">
+          <AssistantAvatar size={32} thinking={!!busy} />
+          <div className="min-w-0 flex-1 leading-tight">
+            <p className="text-[14.5px] font-bold">{ASSISTANT.name}</p>
+            <p className="truncate text-[12px] text-muted-foreground">{busy ? 'يقرأ حسابك…' : ASSISTANT.tagline}</p>
+          </div>
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="سكّر المحادثة"
+              className="flex h-10 w-10 items-center justify-center border border-border text-foreground"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+      )}
       <div className="flex-1 space-y-3 overflow-y-auto p-3 sm:p-4" aria-live="polite">
-        {items.map((i) =>
+        {items.map((i, index) =>
           i.role === 'user' ? (
-            <div key={i.id} className="flex justify-start">
-              <p className="max-w-[85%] rounded-2xl rounded-ss-sm bg-primary/10 px-3.5 py-2 text-[14px] leading-7 text-foreground">
-                {i.text}
-              </p>
+            <div key={i.id} className="flex justify-end">
+              <p className="max-w-[85%] bg-foreground px-3.5 py-2 text-[14.5px] leading-7 text-background">{i.text}</p>
             </div>
           ) : (
-            <div key={i.id} className="flex flex-col items-end gap-2">
-              <p className="max-w-[92%] whitespace-pre-line rounded-2xl rounded-se-sm bg-card px-3.5 py-2 text-[14px] leading-7 text-foreground shadow-sm">
-                {i.text}
-              </p>
-              {i.cards.map((c, idx) => (
-                <CardView key={idx} card={c} />
-              ))}
-              {i.id === lastAssistant && i.actions.length > 0 && (
-                <div className="flex max-w-full flex-wrap justify-end gap-2">
-                  {i.actions.map((q, idx) => (
-                    <ActionButton key={idx} q={q} disabled={!!busy} onAction={onAction} recId={recIdOf(q.action)} />
-                  ))}
-                </div>
-              )}
+            <div key={i.id} className="flex items-start gap-2">
+              <div className="w-8 flex-shrink-0">
+                {items[index - 1]?.role !== 'assistant' && <AssistantAvatar size={32} />}
+              </div>
+              <div className="flex min-w-0 flex-1 flex-col items-start gap-2">
+                <p className="max-w-[94%] whitespace-pre-line border border-border bg-card px-3.5 py-2 text-[14.5px] leading-7 text-foreground">
+                  {i.text}
+                </p>
+                {i.cards.map((c, idx) => (
+                  <CardView key={idx} card={c} />
+                ))}
+                {i.id === lastAssistant && i.actions.length > 0 && (
+                  <div className="flex max-w-full flex-wrap gap-2">
+                    {i.actions.map((q, idx) => (
+                      <ActionButton key={idx} q={q} disabled={!!busy} onAction={onAction} recId={recIdOf(q.action)} />
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )
         )}
         {busy && (
-          <div className="flex items-center justify-end gap-2 text-[13px] text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            {busy === 'audit' ? 'أفحص حسابك، ياخذ دقائق قليلة…' : 'ثواني…'}
+          <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
+            <div className="w-8 flex-shrink-0">
+              <AssistantAvatar size={32} thinking />
+            </div>
+            <TypingSquares />
+            {busy === 'audit' ? 'أفحص حسابك، ياخذ دقائق قليلة…' : `${ASSISTANT.name} يقرأ…`}
             <button
               type="button"
               onClick={() => abortRef.current?.abort()}
@@ -326,7 +402,7 @@ export function StartClient({
           </div>
         )}
         {failed && !busy && (
-          <div className="flex justify-end">
+          <div className="flex justify-start ps-10">
             <button
               type="button"
               onClick={() => failed()}
@@ -344,9 +420,9 @@ export function StartClient({
           value={text}
           onChange={(e) => setText(e.target.value)}
           maxLength={1000}
-          placeholder="اكتب سؤالك بكلامك…"
+          placeholder={`اكتب لـ${ASSISTANT.name}…`}
           aria-label="رسالتك"
-          className="h-11 min-w-0 flex-1 rounded-xl border border-border bg-background px-3 text-[14px]"
+          className="h-11 min-w-0 flex-1 border border-border bg-background px-3 text-[14px]"
         />
         {voiceEnabled && (
           <button
@@ -354,7 +430,7 @@ export function StartClient({
             onClick={() => setVoiceOpen((open) => !open)}
             aria-label="مكالمة صوتية"
             aria-pressed={voiceOpen}
-            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-border text-foreground"
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center border border-border text-foreground"
           >
             <AudioLines className="h-4 w-4" />
           </button>
@@ -363,7 +439,7 @@ export function StartClient({
           type="submit"
           disabled={!text.trim() || !!busy}
           aria-label="إرسال"
-          className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground disabled:opacity-40"
+          className="inline-flex h-11 w-11 shrink-0 items-center justify-center bg-primary text-primary-foreground disabled:opacity-40"
         >
           <Send className="h-4 w-4 rtl:-scale-x-100" />
         </button>
@@ -378,22 +454,25 @@ export function StartClient({
       {memoryOpen && <MemoryPanel onClose={() => setMemoryOpen(false)} />}
       <div className="flex items-center justify-center gap-4 border-t border-border px-3 py-2 text-center text-xs text-muted-foreground">
         <button type="button" onClick={() => setMemoryOpen((open) => !open)} className="underline underline-offset-4">
-          وش أعرف عن نشاطك
+          وش يعرف {ASSISTANT.name} عن نشاطك
         </button>
-        <Link href="/dashboard" className="underline underline-offset-4">
-          تبي التفاصيل؟ افتح اللوحة الكاملة
-        </Link>
+        {variant === 'page' && (
+          <Link href="/dashboard" className="underline underline-offset-4">
+            تبي التفاصيل؟ افتح اللوحة الكاملة
+          </Link>
+        )}
       </div>
     </div>
+    </ReturnPathContext.Provider>
   );
 }
 
 function quickStart(): ChatQuickAction[] {
   return [
     { label: 'وش خطة اليوم؟', action: { type: 'say', text: 'وش أهم شي أسويه اليوم في إعلاناتي؟' } },
+    { label: 'وين تروح فلوسي؟', action: { type: 'say', text: 'وين تروح فلوسي في الإعلانات؟' } },
+    { label: 'ليش الطلبات قليلة؟', action: { type: 'say', text: 'ليش الطلبات قليلة؟' } },
     { label: 'وش وضع حسابي؟', action: { type: 'say', text: 'وش وضع حسابي' } },
-    { label: 'افحص حسابي', action: { type: 'say', text: 'افحص حسابي' } },
-    { label: 'وش أحسن خطوة؟', action: { type: 'say', text: 'وش التوصيات' } },
   ];
 }
 
@@ -415,7 +494,7 @@ function ActionButton({
   recId: string | null;
 }) {
   const cls =
-    'rounded-xl border border-primary/30 bg-primary/[0.07] px-3.5 py-2 text-[13px] font-medium text-foreground disabled:opacity-50';
+    'border border-primary/30 bg-primary/[0.07] px-3.5 py-2 text-[13px] font-medium text-foreground disabled:opacity-50';
   const a = q.action;
   if (a.type === 'connect_account' || a.type === 'subscribe' || a.type === 'open_dashboard') {
     return (
@@ -452,11 +531,12 @@ function RecommendationForm({
   className: string;
   disabled?: boolean;
 }) {
+  const returnPath = useContext(ReturnPathContext);
   return (
     <form method="post" action="/api/recommendations/action">
       <input type="hidden" name="recommendation_id" value={recId} />
       <input type="hidden" name="intent" value={intent} />
-      <input type="hidden" name="next" value="/start" />
+      <input type="hidden" name="next" value={returnPath} />
       <button type="submit" disabled={disabled} className={className}>
         {label}
       </button>
@@ -465,7 +545,7 @@ function RecommendationForm({
 }
 
 function CardView({ card }: { card: ChatCard }) {
-  const box = 'w-full max-w-[92%] rounded-xl border border-border bg-card p-3 text-[13px] leading-7';
+  const box = 'w-full max-w-[92%] border border-border bg-card p-3 text-[13px] leading-7';
   switch (card.kind) {
     case 'audit_result':
       return (
@@ -541,11 +621,12 @@ function CardView({ card }: { card: ChatCard }) {
 const OPEN_STATUSES = new Set(['pending', 'approved']);
 
 function ProposalCard({ card }: { card: Extract<ChatCard, { kind: 'proposal' }> }) {
+  const returnPath = useContext(ReturnPathContext);
   const live = !card.status || OPEN_STATUSES.has(card.status);
   const btn =
-    'rounded-xl border px-3.5 py-2 text-[13px] font-medium disabled:opacity-50';
+    'border px-3.5 py-2 text-[13px] font-medium disabled:opacity-50';
   return (
-    <div id={`card-${card.recommendationId}`} className="w-full max-w-[92%] rounded-xl border border-primary/40 bg-card p-3 text-[13px] leading-7">
+    <div id={`card-${card.recommendationId}`} className="w-full max-w-[92%] border border-primary/40 bg-card p-3 text-[13px] leading-7">
       <p className="text-[11px] text-muted-foreground">
         {card.size === 'small' ? 'تعديل صغير' : 'يحتاج اعتمادك'}
         {card.status === 'applied' ? ' · انطبق' : card.status === 'dismissed' ? ' · انشال' : card.status === 'failed' ? ' · ما انطبق' : ''}
@@ -580,7 +661,7 @@ function ProposalCard({ card }: { card: Extract<ChatCard, { kind: 'proposal' }> 
       {card.status === 'applied' && card.undoActionId && (
         <form method="post" action="/api/actions/rollback" className="mt-2">
           <input type="hidden" name="action_id" value={card.undoActionId} />
-          <input type="hidden" name="next" value="/start" />
+          <input type="hidden" name="next" value={returnPath} />
           <button type="submit" className={`${btn} border-border`}>
             تراجع عن التغيير
           </button>
@@ -624,7 +705,7 @@ function MemoryCard({ card }: { card: Extract<ChatCard, { kind: 'memory_saved' }
     }
   }
   return (
-    <div className="w-full max-w-[92%] rounded-xl border border-border bg-card p-3 text-[13px] leading-7">
+    <div className="w-full max-w-[92%] border border-border bg-card p-3 text-[13px] leading-7">
       <p className="text-[11px] text-muted-foreground">حفظت عن نشاطك</p>
       <p className={state === 'deleted' ? 'line-through text-muted-foreground' : ''}>{card.fact}</p>
       {card.quote && <p className="text-[12px] text-muted-foreground">من كلامك: «{card.quote}»</p>}
@@ -657,10 +738,10 @@ function ConsentCard({ card }: { card: Extract<ChatCard, { kind: 'consent' }> })
       setAnswer('failed');
     }
   }
-  const btn = 'rounded-xl border px-3.5 py-2 text-[13px] font-medium disabled:opacity-50';
+  const btn = 'border px-3.5 py-2 text-[13px] font-medium disabled:opacity-50';
   if (answer === 'auto_small' || answer === 'always_ask') {
     return (
-      <div className="w-full max-w-[92%] rounded-xl border border-border bg-card p-3 text-[13px] leading-7">
+      <div className="w-full max-w-[92%] border border-border bg-card p-3 text-[13px] leading-7">
         {answer === 'auto_small'
           ? 'تمام. أول ما يفتح التنفيذ التلقائي في المنصة أشغّله لك على التعديلات الصغيرة بس، وللحين أجهز وأنت تعتمد.'
           : 'تمام، بستأذنك في كل تعديل.'}
@@ -668,7 +749,7 @@ function ConsentCard({ card }: { card: Extract<ChatCard, { kind: 'consent' }> })
     );
   }
   return (
-    <div className="w-full max-w-[92%] rounded-xl border border-primary/40 bg-card p-3 text-[13px] leading-7">
+    <div className="w-full max-w-[92%] border border-primary/40 bg-card p-3 text-[13px] leading-7">
       <p className="font-semibold">سؤال واحد قبل نكمل</p>
       <p>
         التعديلات الصغيرة، مثل إني أمنع إعلانك يطلع لعبارة بحث واضح إنها مو لك وصرفت بدون فايدة، تبيني أسويها لحالي
@@ -724,7 +805,7 @@ function MemoryPanel({ onClose }: { onClose: () => void }) {
   return (
     <div className="max-h-64 overflow-y-auto border-t border-border bg-card px-3 py-2 text-[13px] leading-7">
       <div className="mb-1 flex items-center justify-between">
-        <p className="font-semibold">وش أعرف عن نشاطك</p>
+        <p className="font-semibold">وش يعرف {ASSISTANT.name} عن نشاطك</p>
         <button type="button" onClick={onClose} className="text-xs text-muted-foreground underline">
           سكّر
         </button>
