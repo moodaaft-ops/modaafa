@@ -218,9 +218,31 @@ export async function findTrialCustomerIdsOwnedByOthers(
 }
 
 /**
+ * True when a read failed because the table (or view) is not there: Postgres
+ * 42P01 (undefined_table), PostgREST PGRST205 (table not in the schema cache,
+ * which is also what a freshly created table looks like until the cache
+ * reloads), or the same text without a code. Column and function errors do not
+ * match, and neither does anything else.
+ */
+export function isMissingRelationError(error: unknown) {
+  if (!error || typeof error !== 'object') return false;
+  const { code, message } = error as { code?: unknown; message?: unknown };
+  if (code === '42P01' || code === 'PGRST205') return true;
+  return (
+    typeof message === 'string' &&
+    /could not find the table|relation "[^"]*" does not exist/i.test(message)
+  );
+}
+
+/**
  * Ads-account lock: true when any Google Ads account the user has linked already
  * had a free trial under another user. Fail CLOSED on any lookup problem, for the
- * same reason as the email ledger.
+ * same reason as the email ledger, with ONE exception: the trial_customer_ledger
+ * table not existing. That only happens when this code is deployed before
+ * db/migrations/20261013_trial_abuse_guards.sql has run, and blocking every trial
+ * for everyone until then is worse than running without the new lock for a while.
+ * It is treated as "not used" and logged loudly. A missing table in any OTHER read
+ * (businesses, google_ads_accounts, billing_trial_ledger) still fails closed.
  */
 async function hasAdsAccountTrial(
   supabase: any,
@@ -231,7 +253,18 @@ async function hasAdsAccountTrial(
     const customerIds = await loadActiveClientCustomerIds(supabase, userId);
     if (customerIds.length === 0) return false;
     const admin = injectedAdmin ?? createAdminClient();
-    const owned = await findTrialCustomerIdsOwnedByOthers(admin, userId, customerIds);
+    let owned: string[];
+    try {
+      owned = await findTrialCustomerIdsOwnedByOthers(admin, userId, customerIds);
+    } catch (error) {
+      if (!isMissingRelationError(error)) throw error;
+      console.error(
+        'DEPLOY ORDER: trial_customer_ledger does not exist, so the ads-account trial lock is OFF. ' +
+          'Run db/migrations/20261013_trial_abuse_guards.sql. Treating the trial as available.',
+        error
+      );
+      return false;
+    }
     return owned.length > 0;
   } catch (error) {
     console.error('Trial ads-account lookup failed; treating the trial as already used', error);

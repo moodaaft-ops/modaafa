@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   findTrialCustomerIdsOwnedByOthers,
+  isMissingRelationError,
   getBillingCheckoutContext,
   loadActiveClientCustomerIds,
   recordTrialGrant,
@@ -83,14 +84,20 @@ type World = {
   priorTrial?: boolean;
   /** email_hash values already in billing_trial_ledger */
   emailLedger?: string[];
-  emailLedgerError?: boolean;
+  emailLedgerError?: boolean | { code?: string; message: string };
   businesses?: string[];
   accounts?: Array<{ customer_id: string; status?: string; is_manager?: boolean | null }>;
-  accountsError?: boolean;
+  accountsError?: boolean | { code?: string; message: string };
   /** customer_id -> first_user_id in trial_customer_ledger */
   customerLedger?: Record<string, string>;
-  customerLedgerError?: boolean;
+  customerLedgerError?: boolean | { code?: string; message: string };
+  /** An error to return for the businesses read instead of rows. */
+  businessesError?: { code?: string; message: string };
 };
+
+/** `true` is a plain failure; an object is returned as the PostgREST error. */
+const errorFor = (flag: boolean | { code?: string; message: string } | undefined, fallback: string) =>
+  typeof flag === 'object' ? flag : { message: fallback };
 
 /** The user-scoped client: subscriptions, grants, businesses and accounts. */
 function userClient(world: World) {
@@ -103,12 +110,13 @@ function userClient(world: World) {
       case 'billing_trial_grants':
         return { data: world.grant ? { user_id: USER } : null, error: NO_ERROR };
       case 'businesses':
+        if (world.businessesError) return { data: null, error: world.businessesError };
         return {
           data: (world.businesses ?? ['b1']).map((id) => ({ id })),
           error: NO_ERROR,
         };
       case 'google_ads_accounts':
-        if (world.accountsError) return { data: null, error: { message: 'boom' } };
+        if (world.accountsError) return { data: null, error: errorFor(world.accountsError, 'boom') };
         return {
           data: (world.accounts ?? []).map((account) => ({
             status: 'active',
@@ -128,7 +136,7 @@ function adminClient(world: World) {
   return fakeClient((query) => {
     if (query.table === 'billing_trial_ledger') {
       if (query.op === 'upsert') return { data: null, error: NO_ERROR };
-      if (world.emailLedgerError) return { data: null, error: { message: 'ledger down' } };
+      if (world.emailLedgerError) return { data: null, error: errorFor(world.emailLedgerError, 'ledger down') };
       const keys = query.filters.find(([op, column]) => op === 'in' && column === 'email_hash')?.[2] as string[];
       return {
         data: (world.emailLedger ?? []).filter((hash) => keys.includes(hash)).map((email_hash) => ({ email_hash })),
@@ -141,7 +149,7 @@ function adminClient(world: World) {
           ? { data: null, error: { message: 'insert failed' } }
           : { data: null, error: NO_ERROR };
       }
-      if (world.customerLedgerError) return { data: null, error: { message: 'ledger down' } };
+      if (world.customerLedgerError) return { data: null, error: errorFor(world.customerLedgerError, 'ledger down') };
       const ids = query.filters.find(([op, column]) => op === 'in' && column === 'customer_id')?.[2] as string[];
       return {
         data: Object.entries(world.customerLedger ?? {})
@@ -465,4 +473,115 @@ test('an accounts read failure while recording is logged and does not throw', as
     })
   );
   assert.equal(messages.length, 1);
+});
+
+// ---------------------------------------------------------------------------
+// Deploy order: this code can reach production before the migration has run.
+// Only the NEW table's absence is tolerated; everything else keeps failing closed.
+// ---------------------------------------------------------------------------
+
+const MISSING_TABLE_ERRORS: Array<[string, { code?: string; message: string }]> = [
+  ['Postgres 42P01', { code: '42P01', message: 'relation "public.trial_customer_ledger" does not exist' }],
+  [
+    'PostgREST PGRST205',
+    { code: 'PGRST205', message: "Could not find the table 'public.trial_customer_ledger' in the schema cache" },
+  ],
+  [
+    'the PostgREST text without a code',
+    { message: "Could not find the table 'public.trial_customer_ledger' in the schema cache" },
+  ],
+];
+
+for (const [label, error] of MISSING_TABLE_ERRORS) {
+  test(`trial_customer_ledger missing (${label}): the trial stays available and the log is loud`, async () => {
+    const { value, messages } = await quietly(() =>
+      context({ accounts: [{ customer_id: '1112223334' }], customerLedgerError: error })
+    );
+    assert.equal(value.result.trialEligible, true);
+    assert.equal(value.result.trialIneligibleReason, null);
+    assert.equal(messages.length, 1, 'exactly one loud log');
+    const text = String(messages[0][0]);
+    assert.match(text, /DEPLOY ORDER/);
+    assert.match(text, /trial_customer_ledger/);
+    assert.match(text, /20261013_trial_abuse_guards\.sql/);
+    assert.equal(messages[0][1], error, 'the original error is logged too');
+  });
+}
+
+test('the tolerance does not hide the other reasons', async () => {
+  const missing = MISSING_TABLE_ERRORS[0][1];
+  const disposable = await quietly(() =>
+    context({ accounts: [{ customer_id: '1112223334' }], customerLedgerError: missing }, 'x@mailinator.com')
+  );
+  assert.equal(disposable.value.result.trialIneligibleReason, 'disposable_email');
+
+  const usedBefore = await quietly(() =>
+    context({ grant: true, accounts: [{ customer_id: '1112223334' }], customerLedgerError: missing })
+  );
+  assert.equal(usedBefore.value.result.trialIneligibleReason, 'already_used');
+
+  const emailUsed = await context(
+    { emailLedger: [legacyTrialEmailKey('owner@example.com')], accounts: [] },
+    'owner@example.com'
+  );
+  assert.equal(emailUsed.result.trialIneligibleReason, 'already_used');
+});
+
+test('every other customer ledger error still fails closed', async () => {
+  const others: Array<{ code?: string; message: string }> = [
+    { message: 'ledger down' },
+    { code: '42501', message: 'permission denied for table trial_customer_ledger' },
+    { code: '42703', message: 'column "first_user_id" does not exist' },
+    { code: 'PGRST202', message: 'Could not find the function public.something in the schema cache' },
+    { code: '57014', message: 'canceling statement due to statement timeout' },
+    { code: 'PGRST301', message: 'JWT expired' },
+  ];
+  for (const error of others) {
+    const { value, messages } = await quietly(() =>
+      context({ accounts: [{ customer_id: '1112223334' }], customerLedgerError: error })
+    );
+    assert.equal(value.result.trialEligible, false, error.message);
+    assert.equal(value.result.trialIneligibleReason, 'ads_account_used', error.message);
+    assert.ok(!messages.some((m) => /DEPLOY ORDER/.test(String(m[0]))), error.message);
+  }
+});
+
+test('a missing table in any OTHER read still fails closed', async () => {
+  const missing = { code: '42P01', message: 'relation "public.something" does not exist' };
+  const businesses = await quietly(() => context({ businessesError: missing }));
+  assert.equal(businesses.value.result.trialIneligibleReason, 'ads_account_used');
+
+  const accounts = await quietly(() => context({ accountsError: missing }));
+  assert.equal(accounts.value.result.trialIneligibleReason, 'ads_account_used');
+
+  // The email ledger is billing_trial_ledger, a table that already exists in
+  // production: it is not a deploy-order case, so a missing table there is a
+  // real outage and stays closed.
+  const email = await quietly(() => context({ emailLedgerError: { ...missing, message: 'relation "public.billing_trial_ledger" does not exist' } }));
+  assert.equal(email.value.result.trialEligible, false);
+  assert.equal(email.value.result.trialIneligibleReason, 'already_used');
+});
+
+test('the email ledger lookup still reads billing_trial_ledger, not the new tables', async () => {
+  const { admin } = await context({ accounts: [] });
+  const tables = new Set(admin.calls.map((call) => call.table));
+  assert.deepEqual(Array.from(tables), ['billing_trial_ledger']);
+});
+
+test('findTrialCustomerIdsOwnedByOthers itself still throws on a missing table (callers decide)', async () => {
+  const admin = adminClient({ customerLedgerError: MISSING_TABLE_ERRORS[1][1] });
+  await assert.rejects(() => findTrialCustomerIdsOwnedByOthers(admin, USER, ['1112223334']));
+});
+
+test('isMissingRelationError recognises table errors only', () => {
+  assert.equal(isMissingRelationError({ code: '42P01' }), true);
+  assert.equal(isMissingRelationError({ code: 'PGRST205' }), true);
+  assert.equal(isMissingRelationError({ message: 'relation "public.x" does not exist' }), true);
+  assert.equal(isMissingRelationError({ message: "Could not find the table 'public.x' in the schema cache" }), true);
+  assert.equal(isMissingRelationError({ code: '42703', message: 'column "x" does not exist' }), false);
+  assert.equal(isMissingRelationError({ code: '42883', message: 'function x() does not exist' }), false);
+  assert.equal(isMissingRelationError({ code: 'PGRST202' }), false);
+  assert.equal(isMissingRelationError(new Error('boom')), false);
+  assert.equal(isMissingRelationError(null), false);
+  assert.equal(isMissingRelationError('42P01'), false);
 });

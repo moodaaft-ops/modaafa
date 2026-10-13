@@ -15,7 +15,7 @@ function fakeAdmin(world: {
   subscriptions?: Row[];
   overrides?: Row[];
   ledger?: Record<string, string>;
-  failLedgerRead?: boolean;
+  failLedgerRead?: boolean | { code?: string; message: string };
   failPause?: boolean;
 }) {
   const ledger = new Map(Object.entries(world.ledger ?? {}));
@@ -60,7 +60,12 @@ function fakeAdmin(world: {
               result = { data: null, error: null };
             }
           } else if (table === 'trial_customer_ledger') {
-            if (world.failLedgerRead) result = { data: null, error: { message: 'ledger down' } };
+            if (world.failLedgerRead) {
+              result = {
+                data: null,
+                error: typeof world.failLedgerRead === 'object' ? world.failLedgerRead : { message: 'ledger down' },
+              };
+            }
             else {
               result = {
                 data: (filterIds ?? [])
@@ -177,4 +182,19 @@ test('nothing linked means nothing to check', async () => {
   const admin = fakeAdmin({ subscriptions: [trialing()] });
   const { value } = await quietly(() => enforceTrialAccountLock({ admin, userId: USER, linked: [] }));
   assert.deepEqual(value.pausedAccountIds, []);
+});
+
+// Deploy order: a missing trial_customer_ledger (code shipped before the migration) must
+// leave the connect flow untouched, exactly like any other ledger failure.
+test('a missing trial_customer_ledger table leaves the accounts linked and logs', async () => {
+  for (const failLedgerRead of [
+    { code: '42P01', message: 'relation "public.trial_customer_ledger" does not exist' },
+    { code: 'PGRST205', message: "Could not find the table 'public.trial_customer_ledger' in the schema cache" },
+  ]) {
+    const admin = fakeAdmin({ subscriptions: [trialing()], failLedgerRead });
+    const { value, logs } = await quietly(() => enforceTrialAccountLock({ admin, userId: USER, linked }));
+    assert.deepEqual(value.pausedAccountIds, []);
+    assert.equal(admin.accountPatches.length, 0);
+    assert.equal(logs.error.length, 1);
+  }
 });

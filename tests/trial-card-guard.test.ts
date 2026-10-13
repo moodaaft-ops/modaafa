@@ -14,7 +14,7 @@ const FUTURE = Math.floor(NOW / 1000) + 14 * 24 * 3600;
 const PAST = Math.floor(NOW / 1000) - 3600;
 
 /** An in-memory trial_card_ledger behind the slice of the query builder the guard uses. */
-function fakeAdmin(options: { failInsert?: boolean; failRead?: boolean } = {}) {
+function fakeAdmin(options: { failInsert?: boolean | { code?: string; message: string }; failRead?: boolean } = {}) {
   const rows = new Map<string, { first_user_id: string; stripe_subscription_id: string | null }>();
   return {
     rows,
@@ -26,7 +26,8 @@ function fakeAdmin(options: { failInsert?: boolean; failRead?: boolean } = {}) {
           return {
             select() {
               if (options.failInsert) {
-                return Promise.resolve({ data: null, error: { message: 'insert failed' } });
+                const error = typeof options.failInsert === 'object' ? options.failInsert : { message: 'insert failed' };
+                return Promise.resolve({ data: null, error });
               }
               if (rows.has(row.fingerprint)) return Promise.resolve({ data: [], error: null });
               rows.set(row.fingerprint, {
@@ -333,4 +334,24 @@ test('a cancel that fails while the subscription is still live is surfaced, not 
     )
   );
   assert.equal(value, 'stripe unavailable');
+});
+
+// Deploy order: this code can ship before db/migrations/20261013_trial_abuse_guards.sql.
+// A missing trial_card_ledger must behave like any other ledger failure: the trial is
+// allowed, nothing is cancelled, and the problem is logged.
+test('a missing trial_card_ledger table does not block or cancel the trial', async () => {
+  const missing = [
+    { code: '42P01', message: 'relation "public.trial_card_ledger" does not exist' },
+    { code: 'PGRST205', message: "Could not find the table 'public.trial_card_ledger' in the schema cache" },
+  ];
+  for (const failInsert of missing) {
+    const admin = fakeAdmin({ failInsert });
+    const { stripe, calls } = fakeStripe();
+    const { value, errors } = await quietly(() =>
+      enforceTrialCardUniqueness({ stripe, admin, userId: USER, subscription: trialing(), now: NOW })
+    );
+    assert.deepEqual(value, { blocked: false, outcome: 'lookup_failed' });
+    assert.deepEqual(calls.cancel, []);
+    assert.equal(errors.length, 1);
+  }
 });
