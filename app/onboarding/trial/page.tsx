@@ -12,6 +12,7 @@ import {
 } from '@/lib/billing/checkout-policy';
 import { getPlanPriceAmounts } from '@/lib/billing/stripe';
 import {
+  ADS_ACCOUNT_TRIAL_USED_MESSAGE,
   CARD_TRIAL_USED_MESSAGE,
   TRIAL_CHECK_FAILED_MESSAGE,
   TRIAL_STARTER_LIMITS_NOTE,
@@ -36,6 +37,7 @@ const errors: Record<string, string> = {
   google_ads_account_required: 'اربط حساب Google Ads نشطاً أولاً.',
   already_subscribed: 'عندك اشتراك قائم، تقدر تكمل مباشرة.',
   card_trial_used: CARD_TRIAL_USED_MESSAGE,
+  ads_account_trial_used: ADS_ACCOUNT_TRIAL_USED_MESSAGE,
   trial_check_failed: TRIAL_CHECK_FAILED_MESSAGE,
 };
 

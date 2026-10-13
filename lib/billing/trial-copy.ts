@@ -9,6 +9,14 @@ import type { TrialIneligibleReason } from '@/lib/billing/checkout-policy';
 /** `/billing?error=card_trial_used` and `/onboarding/trial?error=card_trial_used`. */
 export const CARD_TRIAL_USED_MESSAGE = 'هالبطاقة استخدمت التجربة المجانية قبل، تقدر تشترك مباشرة.';
 
+/**
+ * `/billing?error=ads_account_trial_used` and `/onboarding/trial?error=ads_account_trial_used`:
+ * the trial was cancelled at its start because every linked Google Ads account had
+ * already taken its trial under another user. Nothing was charged.
+ */
+export const ADS_ACCOUNT_TRIAL_USED_MESSAGE =
+  'حسابات الإعلانات المربوطة أخذت تجربتها المجانية قبل، فما فعّلنا لك تجربة وما انخصم شي. تقدر تشترك وتربطها مباشرة.';
+
 /** `/billing?error=trial_check_failed`: the eligibility check could not run, so nothing was charged or started. */
 export const TRIAL_CHECK_FAILED_MESSAGE = 'صار خلل مؤقت في التحقق من التجربة، جرّب بعد دقيقة.';
 

@@ -18,6 +18,8 @@ import {
 } from '@/lib/notifications/email';
 import { recordTrialGrant } from '@/lib/billing/checkout-policy';
 import { enforceTrialCardUniquenessLive } from '@/lib/billing/trial-card-guard';
+import { enforceTrialStartAccountLockLive } from '@/lib/billing/trial-start-account-lock';
+import { runTrialStartGuards } from '@/lib/billing/trial-start-guards';
 import {
   applySubscriptionEvent,
   subscriptionEventWasApplied,
@@ -44,6 +46,7 @@ const defaultDependencies = {
   trialEndingEmail,
   recordTrialGrant,
   enforceTrialCardUniqueness: enforceTrialCardUniquenessLive,
+  enforceTrialStartAccountLock: enforceTrialStartAccountLockLive,
   applySubscriptionEvent,
   subscriptionEventWasApplied,
   recordPaidInvoice,
@@ -130,12 +133,20 @@ export function createStripeWebhookHandler(
           // email. The trial still counts as USED for the user, so the
           // next checkout starts a paid subscription instead of another trial
           // that would be refused the same way.
-          const cardGuard = await dependencies.enforceTrialCardUniqueness({
+          //
+          // The Google Ads accounts get the same treatment: a trial that starts
+          // while only accounts used for someone else's trial are linked is
+          // cancelled here too (and those accounts parked). The card guard goes
+          // first and the account lock is skipped once it has cancelled.
+          const trialGuards = await runTrialStartGuards({
             admin: supabase,
             userId,
             subscription: stripeSubscription,
+            enforceCard: dependencies.enforceTrialCardUniqueness,
+            enforceAccountLock: dependencies.enforceTrialStartAccountLock,
           });
-          const status = cardGuard.blocked
+          const trialBlocked = trialGuards.blocked;
+          const status = trialBlocked
             ? 'canceled'
             : normalizeSubscriptionStatus(stripeSubscription.status);
 
@@ -169,7 +180,7 @@ export function createStripeWebhookHandler(
               source: 'stripe_webhook',
             });
           }
-          if (dependencies.subscriptionEventWasApplied(writeResult) && !cardGuard.blocked) {
+          if (dependencies.subscriptionEventWasApplied(writeResult) && !trialBlocked) {
             await safeUserEmail(
               dependencies,
               supabase,
@@ -196,17 +207,23 @@ export function createStripeWebhookHandler(
           // The subscription-created event is the first place a trial exists
           // with its card attached, and checkout.session.completed can arrive
           // late or never, so the card guard runs here too (it is idempotent).
-          const cardBlocked =
+          //
+          // The Google Ads account lock runs here too, for the same reason: this
+          // event is where the trial first exists, whichever of the two events
+          // arrives first. Both guards are idempotent.
+          const trialBlocked =
             event.type === 'customer.subscription.created' && userId
               ? (
-                  await dependencies.enforceTrialCardUniqueness({
+                  await runTrialStartGuards({
                     admin: supabase,
                     userId,
                     subscription,
+                    enforceCard: dependencies.enforceTrialCardUniqueness,
+                    enforceAccountLock: dependencies.enforceTrialStartAccountLock,
                   })
                 ).blocked
               : false;
-          const status = cardBlocked
+          const status = trialBlocked
             ? 'canceled'
             : normalizeSubscriptionStatus(subscription.status);
           const row = {

@@ -150,7 +150,7 @@ export async function enforceTrialCardUniqueness({
 export const enforceTrialCardUniquenessLive: EnforceTrialCardUniqueness = (params) =>
   enforceTrialCardUniqueness({ ...params, stripe: trialCardStripe });
 
-function isLiveTrial(subscription: TrialCardSubscription, now: number) {
+export function isLiveTrial(subscription: TrialCardSubscription, now: number) {
   return (
     subscription.status === 'trialing' &&
     typeof subscription.trial_end === 'number' &&
@@ -200,7 +200,7 @@ function cleanFingerprint(value: string | null | undefined) {
  * still live. Throwing is deliberate: the webhook returns 500 and Stripe retries,
  * which is better than leaving a known-duplicate trial running.
  */
-async function cancelImmediately(stripe: TrialCardStripe, subscriptionId: string) {
+export async function cancelImmediately(stripe: TrialCardStripe, subscriptionId: string) {
   try {
     await stripe.cancelSubscription(subscriptionId);
   } catch (error) {

@@ -17,6 +17,8 @@ import {
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 import { sendOpsAlert } from '@/lib/notifications/email';
 import { enforceTrialCardUniquenessLive } from '@/lib/billing/trial-card-guard';
+import { enforceTrialStartAccountLockLive } from '@/lib/billing/trial-start-account-lock';
+import { runTrialStartGuards } from '@/lib/billing/trial-start-guards';
 
 export const runtime = 'nodejs';
 
@@ -95,12 +97,19 @@ export async function GET(req: NextRequest) {
     // instead of the success page. The trial is still recorded as USED for this
     // user: the message says "subscribe directly", and that is only true if the
     // next checkout no longer offers a trial (which would be refused again).
-    const cardGuard = await enforceTrialCardUniquenessLive({
+    //
+    // The Google Ads accounts get the same treatment: link a burned account
+    // between opening Checkout and paying and the trial would otherwise start on
+    // it. The lock parks accounts owned by another user's trial and, when none is
+    // left, cancels the subscription. The card guard goes first.
+    const trialGuards = await runTrialStartGuards({
       admin,
       userId: user.id,
       subscription,
+      enforceCard: enforceTrialCardUniquenessLive,
+      enforceAccountLock: enforceTrialStartAccountLockLive,
     });
-    const status = cardGuard.blocked ? 'canceled' : normalizeStatus(subscription.status);
+    const status = trialGuards.blocked ? 'canceled' : normalizeStatus(subscription.status);
 
     await applySubscriptionEvent(admin, {
       user_id: user.id,
@@ -116,7 +125,7 @@ export async function GET(req: NextRequest) {
       current_period_start: periodStart,
       current_period_end: stripeTimestamp(subscription.current_period_end),
       last_event_at: periodStart ?? new Date(0).toISOString(),
-      ...(cardGuard.blocked
+      ...(trialGuards.blocked
         ? { canceled_at: stripeTimestamp(subscription.canceled_at) ?? new Date().toISOString() }
         : {}),
     });
@@ -128,8 +137,9 @@ export async function GET(req: NextRequest) {
         source: 'checkout_complete',
       });
     }
-    if (cardGuard.blocked) {
-      return billingError(req, 'card_trial_used', undefined, fromOnboarding ? '/onboarding/trial' : '/billing');
+    if (trialGuards.error) {
+      // 'card_trial_used' or 'ads_account_trial_used'.
+      return billingError(req, trialGuards.error, undefined, fromOnboarding ? '/onboarding/trial' : '/billing');
     }
 
     const successPath = fromOnboarding

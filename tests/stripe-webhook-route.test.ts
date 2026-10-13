@@ -151,11 +151,21 @@ function handlerFor(
     subscriptionEventWasApplied: () => true,
     recordTrialGrant: async () => undefined,
     enforceTrialCardUniqueness: async () => ({ blocked: false, outcome: 'first_use' as const }),
+    enforceTrialStartAccountLock: async () => accountLockResult(false),
     completeStripeWebhookEvent: async () => undefined,
     failStripeWebhookEvent: async () => undefined,
     sendOpsAlert: async () => ({ sent: true, id: 'ops-test' }),
     ...overrides,
   } as Partial<StripeWebhookDependencies>);
+}
+
+function accountLockResult(blocked: boolean) {
+  return {
+    blocked,
+    outcome: (blocked ? 'blocked' : 'claimed') as 'blocked' | 'claimed',
+    pausedAccountIds: [] as string[],
+    claimedCustomerId: null as string | null,
+  };
 }
 
 function request() {
@@ -805,4 +815,184 @@ test('a lost ops alert does not fail the dispute event after the subscription wa
   }
   assert.deepEqual(calls.cancelled, ['sub_disputed']);
   assert.deepEqual(completed, ['evt_dispute']);
+});
+
+
+// ---------------------------------------------------------------------------
+// The Google Ads account lock at trial start
+// ---------------------------------------------------------------------------
+
+test('checkout.session.completed runs the account lock on the live trialing subscription after the card guard', async () => {
+  const order: string[] = [];
+  const lockCalls: Array<{ userId: string; subscriptionId: string }> = [];
+  const handler = handlerFor(checkoutCompletedEvent('evt_lock_ok'), {
+    createAdminClient: () => trialEndingDatabase() as any,
+    retrieveStripeSubscription: async () => trialingSubscription() as any,
+    enforceTrialCardUniqueness: async () => {
+      order.push('card');
+      return { blocked: false, outcome: 'first_use' };
+    },
+    enforceTrialStartAccountLock: async ({ userId, subscription: sub }) => {
+      order.push('accounts');
+      lockCalls.push({ userId, subscriptionId: sub.id });
+      return accountLockResult(false);
+    },
+    applySubscriptionEvent: async (_database, row) => {
+      order.push(`write:${row.status}`);
+      return 'inserted';
+    },
+    sendEmail: (async () => ({ sent: true })) as any,
+  });
+
+  assert.equal((await handler(request())).status, 200);
+  assert.deepEqual(order, ['card', 'accounts', 'write:trialing']);
+  assert.deepEqual(lockCalls, [{ userId: 'user-1', subscriptionId: 'sub_card' }]);
+});
+
+test('an account-locked trial is written as canceled, gets no welcome email and still counts as used', async () => {
+  const applied: Array<Record<string, unknown>> = [];
+  const sent: Array<{ to: string }> = [];
+  const grants: string[] = [];
+  const handler = handlerFor(checkoutCompletedEvent('evt_lock_block'), {
+    createAdminClient: () => trialEndingDatabase() as any,
+    retrieveStripeSubscription: async () => trialingSubscription() as any,
+    enforceTrialStartAccountLock: async () => accountLockResult(true),
+    applySubscriptionEvent: async (_database, row) => {
+      applied.push(row);
+      return 'inserted';
+    },
+    recordTrialGrant: async ({ userId }) => {
+      grants.push(userId);
+    },
+    sendEmail: (async (message: { to: string }) => {
+      sent.push(message);
+      return { sent: true };
+    }) as any,
+  });
+
+  assert.equal((await handler(request())).status, 200);
+  assert.equal(applied.length, 1);
+  assert.equal(applied[0].status, 'canceled');
+  assert.equal(applied[0].canceled_at, '2026-08-03T12:00:00.000Z');
+  assert.deepEqual(sent, []);
+  assert.deepEqual(grants, ['user-1']);
+});
+
+test('when the card guard already cancelled the trial the account lock does not run', async () => {
+  let lockCalls = 0;
+  const applied: Array<Record<string, unknown>> = [];
+  const handler = handlerFor(checkoutCompletedEvent('evt_card_first'), {
+    createAdminClient: () => trialEndingDatabase() as any,
+    retrieveStripeSubscription: async () => trialingSubscription() as any,
+    enforceTrialCardUniqueness: async () => ({ blocked: true, outcome: 'duplicate_card' }),
+    enforceTrialStartAccountLock: async () => {
+      lockCalls += 1;
+      return accountLockResult(true);
+    },
+    applySubscriptionEvent: async (_database, row) => {
+      applied.push(row);
+      return 'inserted';
+    },
+  });
+  assert.equal((await handler(request())).status, 200);
+  assert.equal(lockCalls, 0);
+  assert.equal(applied[0].status, 'canceled');
+});
+
+test('customer.subscription.created runs the account lock and a block writes canceled', async () => {
+  const lockCalls: string[] = [];
+  const applied: Array<Record<string, unknown>> = [];
+  const handler = handlerFor(
+    event('customer.subscription.created', { id: 'sub_card', metadata: { userId: 'user-1' } }, 'evt_created_lock'),
+    {
+      retrieveStripeSubscription: async () => trialingSubscription() as any,
+      enforceTrialStartAccountLock: async ({ subscription: sub }) => {
+        lockCalls.push(sub.id);
+        return accountLockResult(true);
+      },
+      applySubscriptionEvent: async (_database, row) => {
+        applied.push(row);
+        return 'updated';
+      },
+    },
+  );
+  assert.equal((await handler(request())).status, 200);
+  assert.deepEqual(lockCalls, ['sub_card']);
+  assert.equal(applied[0].status, 'canceled');
+});
+
+test('customer.subscription.updated and a missing user never run the account lock', async () => {
+  let calls = 0;
+  const lock = async () => {
+    calls += 1;
+    return accountLockResult(true);
+  };
+  const applied: Array<Record<string, unknown>> = [];
+  const apply = async (_database: unknown, row: Record<string, unknown>) => {
+    applied.push(row);
+    return 'updated' as const;
+  };
+  await handlerFor(
+    event('customer.subscription.updated', { id: 'sub_card', metadata: { userId: 'user-1' } }, 'evt_updated_lock'),
+    {
+      retrieveStripeSubscription: async () => trialingSubscription() as any,
+      enforceTrialStartAccountLock: lock,
+      applySubscriptionEvent: apply as any,
+    },
+  )(request());
+  await handlerFor(
+    event('customer.subscription.created', { id: 'sub_card' }, 'evt_created_no_user_lock'),
+    {
+      retrieveStripeSubscription: async () => trialingSubscription({ metadata: {} }) as any,
+      enforceTrialStartAccountLock: lock,
+      applySubscriptionEvent: apply as any,
+    },
+  )(request());
+  assert.equal(calls, 0);
+  assert.deepEqual(applied.map((row) => row.status), ['trialing', 'trialing']);
+});
+
+test('replaying the pair of trial-start events reaches the same canceled result both times', async () => {
+  const applied: Array<Record<string, unknown>> = [];
+  const overrides = {
+    createAdminClient: () => trialEndingDatabase() as any,
+    retrieveStripeSubscription: async () => trialingSubscription() as any,
+    enforceTrialStartAccountLock: async () => accountLockResult(true),
+    applySubscriptionEvent: async (_database: unknown, row: Record<string, unknown>) => {
+      applied.push(row);
+      return 'updated' as const;
+    },
+  };
+  await handlerFor(checkoutCompletedEvent('evt_pair_1'), overrides as any)(request());
+  await handlerFor(
+    event('customer.subscription.created', { id: 'sub_card', metadata: { userId: 'user-1' } }, 'evt_pair_2'),
+    overrides as any,
+  )(request());
+  await handlerFor(checkoutCompletedEvent('evt_pair_3'), overrides as any)(request());
+  assert.deepEqual(applied.map((row) => row.status), ['canceled', 'canceled', 'canceled']);
+});
+
+test('an account lock failure (for example a failed cancel) is a retryable 500 and nothing is written first', async () => {
+  const failures: string[] = [];
+  const handler = handlerFor(checkoutCompletedEvent('evt_lock_throw'), {
+    createAdminClient: () => trialEndingDatabase() as any,
+    retrieveStripeSubscription: async () => trialingSubscription() as any,
+    enforceTrialStartAccountLock: async () => {
+      throw new Error('stripe cancel failed');
+    },
+    applySubscriptionEvent: async () => {
+      throw new Error('must not be written before the guard settles');
+    },
+    failStripeWebhookEvent: async (_database, _id, message) => {
+      failures.push(message);
+    },
+  });
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    assert.equal((await handler(request())).status, 500);
+  } finally {
+    console.error = originalError;
+  }
+  assert.deepEqual(failures, ['stripe cancel failed']);
 });
