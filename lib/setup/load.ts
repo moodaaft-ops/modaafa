@@ -12,6 +12,8 @@ import { impactLabel, monthlyImpact, pickFirstOpportunities, type OpportunityRow
 import { getSubscriptionAccess } from '@/lib/billing/entitlements';
 import { getBillingCheckoutContext } from '@/lib/billing/checkout-policy';
 import { readFreeAuditView } from '@/lib/chat-first/free-audit-view';
+import { loadPlan } from '@/lib/plan/load';
+import type { Plan } from '@/lib/plan/plan';
 import { createAdminClient } from '@/lib/supabase/server';
 import {
   TYPE_OPTIONS,
@@ -76,6 +78,11 @@ export type SetupState = {
   subscriptionActive: boolean;
   trialEligible: boolean;
   freeAudit: 'unknown' | 'exhausted' | 'in_progress' | 'available';
+  /**
+   * «خطتك جاهزة»: the audit's summary, the first decision open and the rest
+   * locked. Read only for someone without access; null once they have it.
+   */
+  plan: Plan | null;
 };
 
 type User = { id: string; email?: string | null; user_metadata?: Record<string, unknown> | null };
@@ -205,6 +212,15 @@ export async function loadSetupState(supabase: any, user: User, opts: { edit?: b
     freeAudit = view ?? 'unknown';
   }
 
+  let plan: Plan | null = null;
+  if (!access.active && !edit && selectedAccount && !needsChoice) {
+    try {
+      plan = await loadPlan(supabase, { accountId: selectedAccount.id, currency: selectedAccount.currency_code });
+    } catch {
+      plan = null;
+    }
+  }
+
   const accountName =
     selectedAccount && !googleAdsAccountNameMissing(selectedAccount) ? selectedAccount.customer_name?.trim() || null : null;
   const namePrefill = (business?.sector ? business?.name : null) || accountName || business?.name || null;
@@ -244,6 +260,7 @@ export async function loadSetupState(supabase: any, user: User, opts: { edit?: b
     subscriptionActive: access.active,
     trialEligible,
     freeAudit,
+    plan,
   };
 }
 

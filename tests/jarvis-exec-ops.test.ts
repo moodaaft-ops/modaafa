@@ -644,6 +644,11 @@ type RouteWorld = {
   consumed: number;
   refunded: number;
   subscriptionActive?: boolean;
+  /** Stripe-style status the fake access reports, default 'active'. */
+  subscriptionStatus?: string;
+  suspended?: boolean;
+  /** Plan on the fake access; defaults to 'pro' (null when the caller has no access at all). */
+  plan?: string | null;
 };
 
 function routeHarness(world: RouteWorld, customer: ReturnType<typeof fakeCustomer>) {
@@ -687,10 +692,11 @@ function routeHarness(world: RouteWorld, customer: ReturnType<typeof fakeCustome
     getCustomer: (() => customer) as any,
     getSubscriptionAccess: (async () => ({
       active: world.subscriptionActive ?? true,
-      plan: 'pro',
-      status: 'active',
+      plan: world.plan === undefined ? 'pro' : world.plan,
+      status: world.subscriptionStatus ?? 'active',
       trialEndsAt: null,
       currentPeriodEnd: null,
+      ...(world.suspended ? { suspended: true } : {}),
     })) as any,
     consumeFeatureUsage: (async () => {
       world.consumed += 1;
@@ -776,13 +782,43 @@ test('approve_execute keeps every execute check: a failed preflight leaves the r
   assert.equal(customer.calls.length, 0);
 });
 
-test('approve_execute without an active subscription approves but never touches Google Ads', async () => {
-  const w = world('pending', { operation: 'pause_campaign', target_id: CAMPAIGN }, { subscriptionActive: false });
-  const customer = fakeCustomer();
-  const result = await routeHarness(w, customer)('approve_execute');
-  assert.match(result.location, /error=subscription_required$/);
-  assert.equal(w.status, 'approved');
-  assert.equal(customer.calls.length + customer.queries.length, 0);
+test('without access NOTHING is approved or executed: approve, approve_execute and execute all stop at the door', async () => {
+  const noAccess: Array<[string, Partial<RouteWorld>]> = [
+    ['no subscription at all', { subscriptionActive: false, plan: null, subscriptionStatus: 'none' }],
+    ['a lapsed subscription', { subscriptionActive: false, subscriptionStatus: 'canceled' }],
+    ['a suspended account that otherwise has a plan', { suspended: true }],
+  ];
+  for (const [label, extra] of noAccess) {
+    for (const intent of ['approve', 'approve_execute', 'execute']) {
+      const w = world(intent === 'execute' ? 'approved' : 'pending', { operation: 'pause_campaign', target_id: CAMPAIGN }, extra);
+      const before = w.status;
+      const customer = fakeCustomer();
+      const result = await routeHarness(w, customer)(intent);
+      assert.equal(result.status, 303, `${label} ${intent}`);
+      assert.match(result.location, /error=subscription_required$/, `${label} ${intent}`);
+      assert.equal(w.status, before, `${label} ${intent} must leave the row untouched`);
+      assert.equal(w.aiActions.length, 0, `${label} ${intent} writes no action log`);
+      assert.equal(w.consumed, 0);
+      assert.equal(customer.calls.length + customer.queries.length, 0, `${label} ${intent} never touches Google Ads`);
+    }
+  }
+});
+
+test('a live trial and an active subscription pass the door; dismissing needs no access at all', async () => {
+  for (const status of ['trialing', 'active']) {
+    const w = world('pending', { operation: 'pause_campaign', target_id: CAMPAIGN }, { subscriptionStatus: status });
+    const result = await routeHarness(w, fakeCustomer({ campaignStatus: 'ENABLED' }))('approve_execute');
+    assert.match(result.location, /executed=1/, status);
+    assert.equal(w.status, 'applied', status);
+  }
+  const approved = world('pending', { operation: 'pause_campaign', target_id: CAMPAIGN }, { subscriptionStatus: 'trialing' });
+  await routeHarness(approved, fakeCustomer())('approve');
+  assert.equal(approved.status, 'approved');
+
+  const w = world('pending', { operation: 'pause_campaign', target_id: CAMPAIGN }, { subscriptionActive: false, plan: null });
+  const result = await routeHarness(w, fakeCustomer())('dismiss');
+  assert.doesNotMatch(result.location, /subscription_required/);
+  assert.equal(w.status, 'dismissed');
 });
 
 test('approve_execute rejects a payload for another account after approval, before any Google call', async () => {

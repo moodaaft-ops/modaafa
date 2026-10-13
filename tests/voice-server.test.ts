@@ -203,16 +203,21 @@ test('chat voice check: wrong message, other user, replay and missing secret are
   assert.equal(textFingerprint(' مرحبا   بك '), textFingerprint('مرحبا بك'));
 });
 
-test('free tier: a small allowance when configured, closed at zero, clamped by the daily cap', async () => {
-  const free = makeDeps({ tier: 'free', planAssistantDailyLimit: 2 });
-  const token = await openSession(free.deps);
-  assert.equal((await transcribeVoiceTurn(free.deps, upload(token))).status, 200);
-  assert.equal((await transcribeVoiceTurn(free.deps, upload(token))).status, 200);
-  assert.equal((await transcribeVoiceTurn(free.deps, upload(token))).status, 429);
-  const started = (await startVoiceSession(free.deps)) as unknown as { json: { tier: string } };
-  assert.equal(started.json.tier, 'free');
+test('there is no free tier: without a plan limit every voice route answers 402 before the provider, with a plan the daily cap clamps', async () => {
   const closed = makeDeps({ tier: null, planAssistantDailyLimit: null });
   assert.equal((await startVoiceSession(closed.deps)).status, 402);
+  assert.deepEqual((await startVoiceSession(closed.deps) as unknown as { json: { error: string } }).json, { error: 'subscription_required' });
+  assert.equal((await transcribeVoiceTurn(closed.deps, upload(null))).status, 402);
+  assert.equal((await speakT(closed.deps, { ticket: 'x', text: 'مرحبا' })).status, 402);
+  assert.deepEqual(closed.counters, { stt: 0, tts: 0 });
+
+  const paid = makeDeps({ tier: 'paid', planAssistantDailyLimit: 2 });
+  const token = await openSession(paid.deps);
+  assert.equal((await transcribeVoiceTurn(paid.deps, upload(token))).status, 200);
+  assert.equal((await transcribeVoiceTurn(paid.deps, upload(token))).status, 200);
+  assert.equal((await transcribeVoiceTurn(paid.deps, upload(token))).status, 429);
+  const started = (await startVoiceSession(paid.deps)) as unknown as { json: { tier: string } };
+  assert.equal(started.json.tier, 'paid');
 });
 
 test('an expired ticket and over-long spoken text are refused before the provider', async () => {
@@ -342,7 +347,7 @@ test('source guards: one mic open call inside startCall, ticket checked before a
   assert.ok(chat.indexOf('accountId ?? ') > -1, 'ticket must be checked against the loaded account');
 });
 
-test('voice rides the chat-first entry: no old assistant path, no subscription gate, no history reads', () => {
+test('voice rides the chat-first entry: no old assistant path, the reply path is gated by product access, no history reads', () => {
   const files = [
     'app/(dashboard)/assistant/voice-call-panel.tsx',
     'app/(dashboard)/start/start-client.tsx',
@@ -351,9 +356,11 @@ test('voice rides the chat-first entry: no old assistant path, no subscription g
     'app/api/voice/session/route.ts',
   ];
   for (const f of files) assert.ok(!readFileSync(f, 'utf8').includes('/api/chat/assistant'), `${f} must not use the old assistant path`);
-  // The reply path itself never demands a subscription, so a free caller gets replies.
+  // The reply path is closed to anyone without access (the same helper the voice routes
+  // and the metered features read), and it is not a metered feature of its own.
   const chat = readFileSync('app/api/chat/start/route.ts', 'utf8');
-  assert.ok(!chat.includes('consumeFeatureUsage') && !chat.includes("'subscription_required'"));
+  assert.ok(!chat.includes('consumeFeatureUsage'));
+  assert.ok(chat.includes('checkProductAccess('));
   // The call never loads any history: a switched or previous account's conversation is not readable from it.
   const panel = readFileSync('app/(dashboard)/assistant/voice-call-panel.tsx', 'utf8');
   assert.ok(!/method:\s*'GET'/.test(panel) && !panel.includes('/api/chat/start'));

@@ -1,10 +1,14 @@
-import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { ChevronLeft } from 'lucide-react';
-import { getAccountWorkspace } from '@/lib/accounts/selection';
+import { getAccountWorkspace, normalizeCustomerId } from '@/lib/accounts/selection';
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import { getRequestAuthContext, createAdminClient } from '@/lib/supabase/server';
 import { getSubscriptionAccess } from '@/lib/billing/entitlements';
+import { hasProductAccess } from '@/lib/billing/access-gate';
+import { getBillingCheckoutContext } from '@/lib/billing/checkout-policy';
+import { readFreeAuditView } from '@/lib/chat-first/free-audit-view';
+import { toPlanRecommendations } from '@/lib/plan/load';
+import { buildPlan } from '@/lib/plan/plan';
 import { buildExecutableAction } from '@/lib/ai/executable-action';
 import { readVoiceConfig } from '@/lib/ai/voice-session';
 import { TikTokPixel } from '@/lib/analytics/tiktok-pixel';
@@ -26,6 +30,7 @@ import { operationLabelAr } from '@/lib/ai/operation-labels';
 import { AskAssistant } from './ask-assistant';
 import { ApproveInline } from './approve-inline';
 import { HomeThread } from './home-thread';
+import { LockedHome } from './locked-home';
 import type { ChatQuickAction } from '@/lib/chat-first/contracts';
 
 export const metadata = { title: 'الرئيسية' };
@@ -94,6 +99,52 @@ export default async function HomePage({
   ]);
 
   const currency = (selectedAccount.currency_code ?? 'SAR').toUpperCase();
+
+  // No subscription, no live trial, no operator free plan: «خطتك جاهزة» instead
+  // of the conversation. This branch renders no chat client at all, so the page
+  // cannot call /api/chat/start or a voice route; those answer 402 anyway.
+  if (!hasProductAccess(access)) {
+    const lockedAudit = auditRes.error ? null : auditRes.data;
+    const [checkout, freeAudit] = await Promise.all([
+      access.suspended
+        ? Promise.resolve(null)
+        : getBillingCheckoutContext(supabase, user.id, user.email).catch(() => null),
+      lockedAudit
+        ? Promise.resolve('unknown' as const)
+        : readFreeAuditView(normalizeCustomerId(selectedAccount.customer_id), admin ?? undefined),
+    ]);
+    const plan = buildPlan({
+      audit: lockedAudit,
+      recommendations: toPlanRecommendations(recsRes.error ? [] : recsRes.data ?? []),
+      currency,
+    });
+    const lockedName = googleAdsAccountDisplayName(selectedAccount);
+    const lockedNotice = params.error ? noticeFrom({ error: params.error }) : null;
+    const lockedFirstName = firstNameFrom(user.user_metadata ?? null);
+    return (
+      <div className="h-full">
+        <LockedHome
+          // A new token (sidebar's «محادثة جديدة») remounts a clean page.
+          key={params.new ?? 'home'}
+          plan={plan}
+          trialEligible={Boolean(checkout?.trialEligible)}
+          suspended={Boolean(access.suspended)}
+          greeting={`${greetingFor()}${lockedFirstName ? ` ${lockedFirstName}` : ''}`}
+          voiceEnabled={readVoiceConfig().enabled}
+          auditHref={!lockedAudit && freeAudit !== 'exhausted' ? '/onboarding' : null}
+          accountLine={lockedName}
+          notice={
+            lockedNotice ? (
+              <p role="status" className="rounded-[14px] bg-danger-soft px-4 py-2.5 text-[14px] font-semibold leading-7 text-danger">
+                {lockedNotice.text}
+              </p>
+            ) : null
+          }
+        />
+      </div>
+    );
+  }
+
   const money = (amount: number) => formatCurrency(Math.round(amount), currency);
   const week = weekNumbers(campaignsRes.error ? [] : campaignsRes.data ?? []);
   const audit = auditRes.error ? null : auditRes.data;
@@ -168,7 +219,7 @@ export default async function HomePage({
           </h2>
           <ol className="space-y-3">
             {decisions.slice(0, VISIBLE_DECISIONS).map((decision) => (
-              <DecisionCard key={decision.id} decision={decision} currency={currency} subscribed={access.active} />
+              <DecisionCard key={decision.id} decision={decision} currency={currency} />
             ))}
           </ol>
           {decisions.length > VISIBLE_DECISIONS && (
@@ -179,7 +230,7 @@ export default async function HomePage({
               </summary>
               <ol className="mt-3 space-y-3">
                 {decisions.slice(VISIBLE_DECISIONS).map((decision) => (
-                  <DecisionCard key={decision.id} decision={decision} currency={currency} subscribed={access.active} />
+                  <DecisionCard key={decision.id} decision={decision} currency={currency} />
                 ))}
               </ol>
             </details>
@@ -229,15 +280,7 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function DecisionCard({
-  decision,
-  currency,
-  subscribed,
-}: {
-  decision: Decision;
-  currency: string;
-  subscribed: boolean;
-}) {
+function DecisionCard({ decision, currency }: { decision: Decision; currency: string }) {
   const impact = monthlyImpact(decision);
   const label = impactLabel(decision);
   const tone =
@@ -261,22 +304,14 @@ function DecisionCard({
         )}
       </div>
       <div className="flex flex-wrap items-center gap-2 px-3 pb-3 pt-1">
+        {/* This page only renders for an account with access; without it /home is the locked plan. */}
         {decision.executable ? (
-          subscribed ? (
-            <ApproveInline
-              id={decision.id}
-              intent={approved ? 'execute' : 'approve_execute'}
-              label={approved ? 'نفّذ الحين' : 'اعتمد'}
-              change={decision.change}
-            />
-          ) : (
-            <Link
-              href="/onboarding/trial"
-              className="inline-flex h-9 items-center rounded-full bg-primary px-4 text-[13.5px] font-bold text-primary-foreground"
-            >
-              فعّل اشتراكك وأنفذها
-            </Link>
-          )
+          <ApproveInline
+            id={decision.id}
+            intent={approved ? 'execute' : 'approve_execute'}
+            label={approved ? 'نفّذ الحين' : 'اعتمد'}
+            change={decision.change}
+          />
         ) : null}
         {!approved && (
           <DecisionForm id={decision.id} intent="dismiss">

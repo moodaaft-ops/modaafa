@@ -5,6 +5,11 @@
 //   questions  one account linked and synced, an audit on record, no setup answers yet
 //   home       set up and subscribed, with open decisions, a week of numbers and two past chats
 //   quiet      set up, but nothing spent in 7 days, no audit and no decisions
+//   unpaid     like questions (audit on record, decisions pending) but with NO subscription: the paywall
+//   unpaid_home  set up, audit and decisions on record, NO subscription: /home shows «خطتك جاهزة»
+//   active     like home, but an active (paid) subscription instead of a trial
+//   suspended  like home, but an operator suspended the account
+// questions and home represent a customer WITH access (a live trial), so the older specs keep their flow.
 // POST /__scenario?name=… switches scenario and clears stored answers, so one server serves the whole spec.
 import http from 'node:http';
 
@@ -77,6 +82,13 @@ const recs = [
   },
 ];
 
+// A live Stripe trial: the customer has access. Used by every scenario that is not about the paywall.
+const trialingSubscription = () => ({
+  id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', user_id: UID, plan: 'growth', billing_period: 'monthly', status: 'trialing',
+  trial_ends_at: new Date(Date.now() + 10 * 864e5).toISOString(), current_period_start: hoursAgo(96),
+  current_period_end: new Date(Date.now() + 10 * 864e5).toISOString(), created_at: hoursAgo(96), canceled_at: null,
+});
+
 const SCENARIOS = {
   connect: () => ({
     businesses: [{ id: BID, user_id: UID, name: 'Ayman Amin', sector: null, website: null, monthly_budget: null, primary_goal: 'leads', target_regions: [], selected_google_ads_customer_id: null }],
@@ -86,8 +98,10 @@ const SCENARIOS = {
     businesses: [{ id: BID, user_id: UID, name: 'Ayman Amin', sector: null, website: null, monthly_budget: null, primary_goal: 'leads', target_regions: [], selected_google_ads_customer_id: null }],
     google_ads_accounts: [account],
     job_runs: [{ id: 'job1', job_name: `google_ads_connect:${UID}`, status: 'success', started_at: hoursAgo(1), finished_at: hoursAgo(1), details: { stage: 'done', spend: { '1234567890': 4320 } } }],
-    audits: [audit], recommendations: recs, campaigns_cache: [camp(0, 620, 9), camp(1, 480, 7), camp(2, 140, 2)], subscriptions: [], ai_actions: [],
+    audits: [audit], recommendations: recs, campaigns_cache: [camp(0, 620, 9), camp(1, 480, 7), camp(2, 140, 2)], subscriptions: [trialingSubscription()], ai_actions: [],
   }),
+  // The same journey for someone with no subscription at all: the questions end on «خطتك جاهزة».
+  unpaid: () => ({ ...SCENARIOS.questions(), subscriptions: [] }),
   home: () => ({
     businesses: [{ id: BID, user_id: UID, name: 'متجر الريم للعطور', sector: 'متجر إلكتروني', website: 'https://alreem.example', monthly_budget: 4300, primary_goal: 'conversions', target_regions: ['الرياض', 'جدة'], selected_google_ads_customer_id: '1234567890' }],
     google_ads_accounts: [account],
@@ -117,6 +131,15 @@ const SCENARIOS = {
     ...SCENARIOS.home(),
     audits: [], recommendations: [], ai_actions: [], chat_sessions: [], chat_messages: [],
     campaigns_cache: [camp(0, 0, 0), camp(1, 0, 0)],
+  }),
+  unpaid_home: () => ({ ...SCENARIOS.home(), subscriptions: [], chat_sessions: [], chat_messages: [] }),
+  active: () => ({
+    ...SCENARIOS.home(),
+    subscriptions: [{ ...trialingSubscription(), status: 'active', trial_ends_at: null, current_period_end: new Date(Date.now() + 25 * 864e5).toISOString() }],
+  }),
+  suspended: () => ({
+    ...SCENARIOS.home(),
+    account_access_overrides: [{ id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', user_id: UID, kind: 'suspension', plan: null, expires_at: null, created_at: hoursAgo(1), revoked_at: null }],
   }),
 };
 

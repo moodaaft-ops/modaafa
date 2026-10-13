@@ -15,6 +15,8 @@ import { NO_ACCOUNT_PATH } from '@/lib/onboarding/ads-guide';
 import { whatsappHelpUrl, type WhatsAppHelpReason } from '@/lib/support/contact';
 import { formatAmount, type SetupKey } from '@/lib/setup/questions';
 import { healthWord } from '@/lib/setup/stage';
+import { PLAN_COPY, PLAN_LATER_PATH, type Plan } from '@/lib/plan/plan';
+import { PlanCard, PlanCta } from '@/lib/plan/plan-paywall';
 import type { SetupAccount, SetupFinding, SetupState } from '@/lib/setup/load';
 import { useFirstAudit } from './use-first-audit';
 import { AccountDock, AnswerTile, QuestionDock, type AnswerPayload } from './docks';
@@ -25,7 +27,8 @@ type Line =
   | { id: string; from: 'assistant'; kind: 'connecting' }
   | { id: string; from: 'assistant'; kind: 'audit' }
   | { id: string; from: 'assistant'; kind: 'score'; score: number | null; waste: number | null; currency: string }
-  | { id: string; from: 'assistant'; kind: 'findings'; findings: SetupFinding[]; currency: string };
+  | { id: string; from: 'assistant'; kind: 'findings'; findings: SetupFinding[]; currency: string }
+  | { id: string; from: 'assistant'; kind: 'plan'; plan: Plan; trialEligible: boolean };
 
 type Dock =
   | { kind: 'none' }
@@ -36,6 +39,8 @@ type Dock =
   | { kind: 'question'; key: SetupKey }
   | { kind: 'audit_retry' }
   | { kind: 'final' }
+  /** «خطتك جاهزة»: the audit is in and there is no access yet. */
+  | { kind: 'plan' }
   | { kind: 'edit_done' };
 
 type Phase = 'connect' | 'connecting' | 'choose' | 'questions' | 'finishing' | 'result';
@@ -153,7 +158,13 @@ export function SetupChat({
   }, []);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ block: 'end', behavior: reduced.current ? 'auto' : 'smooth' });
+    const behavior = reduced.current ? 'auto' : 'smooth';
+    // The plan is taller than the space above its CTA: show it from its title, not from its end.
+    if (dock.kind === 'plan' && lines.at(-1)?.from === 'assistant' && (lines.at(-1) as { kind?: string })?.kind === 'plan') {
+      document.getElementById('plan-card')?.scrollIntoView({ block: 'start', behavior });
+      return;
+    }
+    endRef.current?.scrollIntoView({ block: 'end', behavior });
   }, [lines, typing, dock]);
 
   const push = useCallback((line: Line) => setLines((cur) => [...cur, line]), []);
@@ -198,6 +209,15 @@ export function SetupChat({
       setPhase('result');
       setDock({ kind: 'none' });
       const currency = s.selected?.currency ?? 'SAR';
+      // No access yet: the audit becomes «خطتك جاهزة» (the summary, the first
+      // decision open, the rest locked) with the trial CTA, in place of the
+      // result bubbles and the old «نفّذها لي» step.
+      if (!s.subscriptionActive && s.plan) {
+        await say(s.audit ? 'خلصت الفحص.' : 'الفحوصات المجانية لهذا الحساب انستخدمت قبل.');
+        push({ id: nid(), from: 'assistant', kind: 'plan', plan: s.plan, trialEligible: s.trialEligible });
+        setDock({ kind: 'plan' });
+        return;
+      }
       if (!s.audit) {
         await say('الفحوصات المجانية لهذا الحساب انستخدمت قبل.');
         await say(
@@ -835,6 +855,8 @@ function AssistantLine({
         </div>
       );
     }
+    case 'plan':
+      return <PlanCard id="plan-card" plan={line.plan} trialEligible={line.trialEligible} />;
     case 'findings':
       return (
         <ol className={cn(bubble, 'space-y-3')}>
@@ -988,6 +1010,18 @@ function DockView({
             className="flex h-12 w-full items-center justify-center rounded-full border border-border bg-card text-[15px] font-semibold hover:bg-muted"
           >
             أكمل لصفحتي
+          </Link>
+        </div>
+      );
+    case 'plan':
+      return (
+        <div className="space-y-1">
+          <PlanCta trialEligible={state.trialEligible} />
+          <Link
+            href={PLAN_LATER_PATH}
+            className="flex h-12 w-full items-center justify-center rounded-full text-[15px] font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            {PLAN_COPY.later}
           </Link>
         </div>
       );

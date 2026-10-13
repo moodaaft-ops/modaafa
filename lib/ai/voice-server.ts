@@ -106,10 +106,10 @@ export type VoiceDeps = {
   nowMs: () => number;
   /** null when the caller is not signed in. */
   user: { id: string; email: string | null } | null;
-  /** Active plan's daily assistant quota, or null when there is no live subscription. */
+  /** Active plan's daily assistant quota, or null when there is no access (no free tier: null closes voice). */
   planAssistantDailyLimit: number | null;
-  /** Which entitlement produced the limit above. */
-  tier: 'paid' | 'free' | null;
+  /** 'paid' for any access (subscription, trial, operator free plan, operator); null for none. */
+  tier: 'paid' | null;
   /** Rate limiter. Throws when storage is down; handlers turn that into 503. */
   limit: (key: string, limit: number, windowSeconds: number) => Promise<LimitResult>;
   provider: VoiceProvider;
