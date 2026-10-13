@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Loader2 } from 'lucide-react';
+import { ArrowLeft, ExternalLink, Loader2 } from 'lucide-react';
 import { Alert } from '@/lib/ui/alert';
 import { ThemeToggle } from '@/lib/ui/theme-toggle';
 import { LogoLockup } from '@/lib/ui/logo';
@@ -12,7 +12,17 @@ type FieldErrors = Partial<Record<'name' | 'email' | 'phone', string>>;
 const inputClass =
   'h-12 w-full rounded-lg border border-input bg-card px-4 text-sm outline-none transition focus:border-primary/60';
 
-export function RegisterForm({ consentText }: { consentText: string }) {
+/** Set when the page is open inside TikTok's (or another app's) own browser. */
+export type InAppOffer = {
+  /** «تيك توك», «انستقرام»... */
+  appLabel: string;
+  /** Asks the phone to reopen the page in the real browser; null when only the app menu can. */
+  href: string | null;
+  /** The same page as a plain link, for copying. */
+  url: string;
+};
+
+export function RegisterForm({ consentText, inApp = null }: { consentText: string; inApp?: InAppOffer | null }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -74,6 +84,7 @@ export function RegisterForm({ consentText }: { consentText: string }) {
           {sent ? (
             <Alert tone="success" title={`وصلتك رسالة على ${email}`} icon>
               افتحها واضغط الزر داخلها مرة واحدة. بعدها يكتمل تسجيلك وندخلك المنصة. لو ما لقيتها، شوف مجلد الرسائل غير المرغوبة.
+              {inApp && ` تقدر تطلع من ${inApp.appLabel} الحين وتفتح الرسالة من تطبيق الإيميل.`}
             </Alert>
           ) : (
             <>
@@ -83,6 +94,8 @@ export function RegisterForm({ consentText }: { consentText: string }) {
                   اسمك وبريدك وجوالك، وتدخل المنصة. بدون بطاقة بنكية.
                 </p>
               </div>
+
+              {inApp && <InAppCard offer={inApp} />}
 
               {error && (
                 <div className="mb-4">
@@ -178,5 +191,51 @@ export function RegisterForm({ consentText }: { consentText: string }) {
         </div>
       </div>
     </main>
+  );
+}
+
+function InAppCard({ offer }: { offer: InAppOffer }) {
+  const [copy, setCopy] = useState<'idle' | 'done' | 'show'>('idle');
+
+  async function copyLink() {
+    try {
+      await navigator.clipboard.writeText(offer.url);
+      setCopy('done');
+    } catch {
+      // Some in-app browsers block the clipboard; show the link to select by hand.
+      setCopy('show');
+    }
+  }
+
+  return (
+    <div className="mb-6 rounded-lg border border-border bg-muted/50 p-4">
+      <p className="text-sm font-semibold text-foreground">فاتح من داخل {offer.appLabel}؟</p>
+      <p className="mt-1 text-xs leading-6 text-muted-foreground">
+        حساب <span dir="ltr">Google</span> حقك مسجّل في متصفح جوالك، مو هنا. افتح الصفحة هناك وتسجّل بضغطة، أو كمّل بإيميلك
+        تحت.
+      </p>
+      {offer.href && (
+        <a
+          href={offer.href}
+          className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-input bg-card text-sm font-semibold text-foreground transition hover:bg-muted"
+        >
+          <ExternalLink className="h-4 w-4" aria-hidden />
+          افتح في المتصفح
+        </a>
+      )}
+      <p className="mt-2 text-xs leading-6 text-muted-foreground">
+        {offer.href ? 'ما انفتح؟ ' : ''}اضغط النقاط اللي فوق الشاشة واختر «فتح في المتصفح»، أو{' '}
+        <button type="button" onClick={copyLink} className="font-semibold text-foreground underline underline-offset-4">
+          {copy === 'done' ? 'انسخه مرة ثانية' : 'انسخ الرابط'}
+        </button>{' '}
+        والصقه فيه.
+      </p>
+      {copy === 'done' && <p className="mt-1 text-xs text-success">انتسخ الرابط، الصقه في Safari أو Chrome.</p>}
+      {copy === 'show' && (
+        <p dir="ltr" className="mt-2 select-all break-all rounded bg-card px-2 py-1.5 text-start text-xs text-foreground">
+          {offer.url}
+        </p>
+      )}
+    </div>
   );
 }

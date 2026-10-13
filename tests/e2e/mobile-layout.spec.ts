@@ -53,7 +53,7 @@ async function offscreen(page: Page) {
 
 test.describe('public pages never overflow sideways', () => {
   for (const width of WIDTHS) {
-    for (const path of ['/', '/login', '/terms', '/privacy', '/refund', '/data-deletion']) {
+    for (const path of ['/', '/login', '/register', '/terms', '/privacy', '/refund', '/data-deletion']) {
       test(`${path} at ${width}px`, async ({ page }) => {
         await page.setViewportSize({ width, height: 800 });
         await page.goto(path, { waitUntil: 'domcontentloaded' });
