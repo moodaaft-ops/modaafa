@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { AudioLines, RotateCcw, Send, Square, X } from 'lucide-react';
+import { ArrowUp, AudioLines, RotateCcw, Square } from 'lucide-react';
 import { ASSISTANT } from '@/lib/assistant/persona';
 import { AssistantAvatar, TypingSquares } from '@/lib/ui/assistant-avatar';
 import { cn } from '@/lib/utils';
@@ -50,20 +50,29 @@ export function StartClient({
   voiceEnabled = false,
   returnPath = '/start',
   variant = 'page',
-  onClose,
-  onAsked,
+  fresh = false,
+  restoreSessionId = null,
+  intro = null,
+  introActions,
+  onSessionStarted,
 }: {
   customerId: string | null;
   notice: string | null;
   voiceEnabled?: boolean;
   /** The page the approval forms return to. */
   returnPath?: string;
-  /** 'embedded' fills its container (the home screen's chat panel or sheet). */
-  variant?: 'page' | 'embedded';
-  /** Shown as a close button in the header when the chat is a sheet. */
-  onClose?: () => void;
-  /** Called when another part of the screen asked «مُضاعِف» something. */
-  onAsked?: () => void;
+  /** 'thread' fills its container edge to edge, like ChatGPT's conversation. */
+  variant?: 'page' | 'thread';
+  /** Start a new conversation instead of reopening the latest one. */
+  fresh?: boolean;
+  /** Reopen this conversation (the sidebar's list). */
+  restoreSessionId?: string | null;
+  /** Server-rendered opening message from «مُضاعِف» (the day's briefing). */
+  intro?: React.ReactNode;
+  /** Suggestions under the opening message until the customer writes. */
+  introActions?: ChatQuickAction[];
+  /** Called once when the first message of a new conversation is saved. */
+  onSessionStarted?: (sessionId: string) => void;
 }) {
   const [voiceOpen, setVoiceOpen] = useState(false);
   const [memoryOpen, setMemoryOpen] = useState(false);
@@ -74,6 +83,9 @@ export function StartClient({
   const [failed, setFailed] = useState<null | (() => void)>(null);
   const abortRef = useRef<AbortController | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const onSessionStartedRef = useRef(onSessionStarted);
+  onSessionStartedRef.current = onSessionStarted;
 
   const push = useCallback((i: Item) => setItems((cur) => [...cur, i]), []);
   const assistant = useCallback(
@@ -84,7 +96,10 @@ export function StartClient({
 
   // Braces matter: newer Chrome returns a Promise from scrollIntoView, and an
   // effect that returns it hands React a non-function cleanup, which crashes the page.
+  // A fresh home opens on the briefing: start at its top, follow the bottom
+  // only once the conversation actually moves.
   useEffect(() => {
+    if (items.length === 0 && !busy) return;
     endRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
   }, [items, busy]);
 
@@ -98,11 +113,37 @@ export function StartClient({
     setItems([]);
     setFailed(null);
     setBusy(null);
+    const greeting: Item = {
+      id: uid(),
+      role: 'assistant',
+      text: `هلا، أنا ${ASSISTANT.name}. اسألني عن إعلاناتك بكلامك العادي، وأقرأ حسابك وأجاوبك.`,
+      cards: [],
+      actions: quickStart(),
+    };
+    if (fresh) {
+      // A new conversation: the opening message (if any) is the server's intro.
+      setItems(intro ? [] : [greeting]);
+      return () => {
+        live = false;
+      };
+    }
     (async () => {
       try {
-        const qs = customerId ? `?customerId=${encodeURIComponent(customerId)}` : '';
+        const params = new URLSearchParams();
+        if (customerId) params.set('customerId', customerId);
+        if (restoreSessionId) params.set('sessionId', restoreSessionId);
+        const qs = params.toString() ? `?${params.toString()}` : '';
         const res = await fetch(`/api/chat/start${qs}`, { cache: 'no-store' });
-        if (!res.ok) return;
+        if (!res.ok) {
+          if (live) {
+            setItems(
+              restoreSessionId
+                ? [{ id: uid(), role: 'assistant', text: 'ما لقيت هالمحادثة. ابدأ وحدة جديدة من القائمة.', cards: [], actions: [] }]
+                : [greeting]
+            );
+          }
+          return;
+        }
         const data = await res.json();
         if (!live) return;
         if (data.sessionId) setSessionId(data.sessionId);
@@ -123,9 +164,7 @@ export function StartClient({
         const n = notice ? NOTICE[notice] : null;
         setItems([
           ...restored,
-          ...(restored.length === 0
-            ? [{ id: uid(), role: 'assistant' as const, text: `هلا، أنا ${ASSISTANT.name}. اسألني عن إعلاناتك بكلامك العادي، وأقرأ حسابك وأجاوبك.`, cards: [], actions: quickStart() }]
-            : []),
+          ...(restored.length === 0 ? [greeting] : []),
           ...(n ? [{ id: uid(), role: 'assistant' as const, text: n, cards: [], actions: [] }] : []),
         ]);
       } catch {
@@ -136,7 +175,7 @@ export function StartClient({
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [customerId]);
+  }, [customerId, fresh, restoreSessionId]);
 
   async function send(body: Record<string, unknown>, shown: string, voiceTicket?: string): Promise<VoiceTurnResult> {
     abortRef.current?.abort();
@@ -183,7 +222,10 @@ export function StartClient({
         if (!voiceTicket) setFailed(() => () => send(body, ''));
         return null;
       }
-      if (data.sessionId) setSessionId(data.sessionId);
+      if (data.sessionId) {
+        if (!sessionId) onSessionStartedRef.current?.(data.sessionId);
+        setSessionId(data.sessionId);
+      }
       const turn = data.turn as ChatTurn;
       assistant(turn.reply, turn.cards, turn.actions);
       if (data.saved === false) assistant('ملاحظة: ما قدرت أحفظ هذي المحادثة في السجل.');
@@ -301,20 +343,33 @@ export function StartClient({
     const t = text.trim();
     if (!t || busy) return;
     setText('');
+    if (inputRef.current) inputRef.current.style.height = '';
     send({ message: t }, t);
+  }
+
+  function onInput(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    setText(e.target.value);
+    const el = e.target;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+  }
+
+  function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    // Enter sends, Shift+Enter adds a line; never mid-composition (Arabic IMEs).
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      e.currentTarget.form?.requestSubmit();
+    }
   }
 
   // The voice panel outlives re-renders; it always calls the newest `send`.
   const sendRef = useRef(send);
   sendRef.current = send;
-  const onAskedRef = useRef(onAsked);
-  onAskedRef.current = onAsked;
 
   useEffect(() => {
     const onAsk = (event: Event) => {
       const detail = (event as CustomEvent<AskAssistantDetail>).detail;
       if (!detail?.text) return;
-      onAskedRef.current?.();
       if (detail.recommendationId) {
         void sendRef.current(
           { action: { type: 'show_recommendation', recommendationId: detail.recommendationId } },
@@ -329,142 +384,161 @@ export function StartClient({
   }, []);
 
   const lastAssistant = [...items].reverse().find((i) => i.role === 'assistant')?.id;
+  const showIntroActions = !!intro && items.length === 0 && (introActions ?? quickStart()).length > 0;
 
   return (
     <ReturnPathContext.Provider value={returnPath}>
     <div
       className={cn(
-        'flex flex-col overflow-hidden bg-background-elevated',
-        variant === 'page' ? 'mx-auto h-[calc(100dvh-9rem)] max-w-2xl border border-border' : 'h-full w-full'
+        'flex min-h-0 flex-col bg-background',
+        variant === 'page' ? 'mx-auto h-[calc(100dvh-9rem)] w-full max-w-3xl' : 'h-full w-full'
       )}
     >
-      {variant === 'embedded' && (
-        <div className="flex h-14 flex-shrink-0 items-center gap-2.5 border-b border-border bg-background px-4">
-          <AssistantAvatar size={32} thinking={!!busy} />
-          <div className="min-w-0 flex-1 leading-tight">
-            <p className="text-[14.5px] font-bold">{ASSISTANT.name}</p>
-            <p className="truncate text-[12px] text-muted-foreground">{busy ? 'يقرأ حسابك…' : ASSISTANT.tagline}</p>
-          </div>
-          {onClose && (
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="سكّر المحادثة"
-              className="flex h-10 w-10 items-center justify-center border border-border text-foreground"
-            >
-              <X className="h-4 w-4" />
-            </button>
+      <div className="min-h-0 flex-1 overflow-y-auto scrollbar-thin" aria-live="polite">
+        <div className="mx-auto w-full max-w-[768px] space-y-7 px-4 pb-8 pt-6 sm:px-6 lg:pt-10">
+          {intro && (
+            <AssistantTurn avatar>
+              {intro}
+              {showIntroActions && (
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {(introActions ?? quickStart()).map((q, idx) => (
+                    <ActionButton key={idx} q={q} disabled={!!busy} onAction={onAction} recId={recIdOf(q.action)} />
+                  ))}
+                </div>
+              )}
+            </AssistantTurn>
           )}
-        </div>
-      )}
-      <div className="flex-1 space-y-3 overflow-y-auto p-3 sm:p-4" aria-live="polite">
-        {items.map((i, index) =>
-          i.role === 'user' ? (
-            <div key={i.id} className="flex justify-end">
-              <p className="max-w-[85%] bg-foreground px-3.5 py-2 text-[14.5px] leading-7 text-background">{i.text}</p>
-            </div>
-          ) : (
-            <div key={i.id} className="flex items-start gap-2">
-              <div className="w-8 flex-shrink-0">
-                {items[index - 1]?.role !== 'assistant' && <AssistantAvatar size={32} />}
-              </div>
-              <div className="flex min-w-0 flex-1 flex-col items-start gap-2">
-                <p className="max-w-[94%] whitespace-pre-line border border-border bg-card px-3.5 py-2 text-[14.5px] leading-7 text-foreground">
+          {items.map((i, index) =>
+            i.role === 'user' ? (
+              <div key={i.id} className="flex justify-end">
+                <p className="max-w-[82%] whitespace-pre-line rounded-[22px] bg-muted px-4 py-2.5 text-[15.5px] leading-7 text-foreground">
                   {i.text}
                 </p>
+              </div>
+            ) : (
+              <AssistantTurn key={i.id} avatar={(index === 0 && !intro) || items[index - 1]?.role !== 'assistant'}>
+                {i.text && <p className="whitespace-pre-line">{i.text}</p>}
                 {i.cards.map((c, idx) => (
                   <CardView key={idx} card={c} />
                 ))}
                 {i.id === lastAssistant && i.actions.length > 0 && (
-                  <div className="flex max-w-full flex-wrap gap-2">
+                  <div className="flex flex-wrap gap-2 pt-1">
                     {i.actions.map((q, idx) => (
                       <ActionButton key={idx} q={q} disabled={!!busy} onAction={onAction} recId={recIdOf(q.action)} />
                     ))}
                   </div>
                 )}
+              </AssistantTurn>
+            )
+          )}
+          {busy && (
+            <AssistantTurn avatar thinking>
+              <div className="flex flex-wrap items-center gap-2.5 text-[14px] text-muted-foreground">
+                <TypingSquares />
+                {busy === 'audit' ? 'أفحص حسابك، ياخذ دقائق قليلة…' : `${ASSISTANT.name} يقرأ…`}
+                <button
+                  type="button"
+                  onClick={() => abortRef.current?.abort()}
+                  className="inline-flex h-8 items-center gap-1 rounded-full border border-border px-3 text-[12.5px] text-foreground hover:bg-muted"
+                >
+                  <Square className="h-3 w-3" /> إلغاء
+                </button>
               </div>
+            </AssistantTurn>
+          )}
+          {failed && !busy && (
+            <div className="ps-10">
+              <button
+                type="button"
+                onClick={() => failed()}
+                className="inline-flex h-9 items-center gap-1.5 rounded-full border border-border bg-card px-4 text-[13.5px] hover:bg-muted"
+              >
+                <RotateCcw className="h-3.5 w-3.5" /> أعد المحاولة
+              </button>
             </div>
-          )
-        )}
-        {busy && (
-          <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
-            <div className="w-8 flex-shrink-0">
-              <AssistantAvatar size={32} thinking />
-            </div>
-            <TypingSquares />
-            {busy === 'audit' ? 'أفحص حسابك، ياخذ دقائق قليلة…' : `${ASSISTANT.name} يقرأ…`}
-            <button
-              type="button"
-              onClick={() => abortRef.current?.abort()}
-              className="inline-flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-xs text-foreground"
-            >
-              <Square className="h-3 w-3" /> إلغاء
-            </button>
-          </div>
-        )}
-        {failed && !busy && (
-          <div className="flex justify-start ps-10">
-            <button
-              type="button"
-              onClick={() => failed()}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-[13px]"
-            >
-              <RotateCcw className="h-3.5 w-3.5" /> أعد المحاولة
-            </button>
-          </div>
-        )}
-        <div ref={endRef} />
+          )}
+          <div ref={endRef} />
+        </div>
       </div>
 
-      <form onSubmit={submit} className="flex items-center gap-2 border-t border-border p-2.5">
-        <input
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          maxLength={1000}
-          placeholder={`اكتب لـ${ASSISTANT.name}…`}
-          aria-label="رسالتك"
-          className="h-11 min-w-0 flex-1 border border-border bg-background px-3 text-[14px]"
-        />
-        {voiceEnabled && (
-          <button
-            type="button"
-            onClick={() => setVoiceOpen((open) => !open)}
-            aria-label="مكالمة صوتية"
-            aria-pressed={voiceOpen}
-            className="inline-flex h-11 w-11 shrink-0 items-center justify-center border border-border text-foreground"
-          >
-            <AudioLines className="h-4 w-4" />
-          </button>
+      <div className="mx-auto w-full max-w-[768px] flex-shrink-0 px-3 pb-3 sm:px-6 sm:pb-5">
+        {voiceEnabled && voiceOpen && (
+          <div className="mb-2 overflow-hidden rounded-[20px] border border-border bg-card">
+            <VoiceCallPanel
+              customerId={customerId}
+              onUtterance={(spoken, ticket) => sendRef.current({ message: spoken }, spoken, ticket)}
+              onClose={() => setVoiceOpen(false)}
+            />
+          </div>
         )}
-        <button
-          type="submit"
-          disabled={!text.trim() || !!busy}
-          aria-label="إرسال"
-          className="inline-flex h-11 w-11 shrink-0 items-center justify-center bg-primary text-primary-foreground disabled:opacity-40"
+        {memoryOpen && (
+          <div className="mb-2 overflow-hidden rounded-[20px] border border-border bg-card">
+            <MemoryPanel onClose={() => setMemoryOpen(false)} />
+          </div>
+        )}
+        <form
+          onSubmit={submit}
+          className="flex items-end gap-1.5 rounded-[26px] border border-border bg-card p-2 ps-4 shadow-[0_8px_28px_-14px_rgba(14,20,38,0.35)] transition-colors focus-within:border-border-strong"
         >
-          <Send className="h-4 w-4 rtl:-scale-x-100" />
-        </button>
-      </form>
-      {voiceEnabled && voiceOpen && (
-        <VoiceCallPanel
-          customerId={customerId}
-          onUtterance={(spoken, ticket) => sendRef.current({ message: spoken }, spoken, ticket)}
-          onClose={() => setVoiceOpen(false)}
-        />
-      )}
-      {memoryOpen && <MemoryPanel onClose={() => setMemoryOpen(false)} />}
-      <div className="flex items-center justify-center gap-4 border-t border-border px-3 py-2 text-center text-xs text-muted-foreground">
-        <button type="button" onClick={() => setMemoryOpen((open) => !open)} className="underline underline-offset-4">
-          وش يعرف {ASSISTANT.name} عن نشاطك
-        </button>
-        {variant === 'page' && (
-          <Link href="/dashboard" className="underline underline-offset-4">
-            تبي التفاصيل؟ افتح اللوحة الكاملة
-          </Link>
-        )}
+          <textarea
+            ref={inputRef}
+            value={text}
+            onChange={onInput}
+            onKeyDown={onKeyDown}
+            rows={1}
+            maxLength={1000}
+            placeholder={`اكتب لـ${ASSISTANT.name}…`}
+            aria-label="رسالتك"
+            className="max-h-[200px] min-h-10 flex-1 resize-none bg-transparent py-2 text-[16px] leading-7 text-foreground outline-none placeholder:text-muted-foreground"
+          />
+          {voiceEnabled && (
+            <button
+              type="button"
+              onClick={() => setVoiceOpen((open) => !open)}
+              aria-label="مكالمة صوتية"
+              aria-pressed={voiceOpen}
+              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-foreground hover:bg-muted aria-pressed:bg-muted"
+            >
+              <AudioLines className="h-[18px] w-[18px]" />
+            </button>
+          )}
+          <button
+            type="submit"
+            disabled={!text.trim() || !!busy}
+            aria-label="إرسال"
+            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-opacity disabled:opacity-30"
+          >
+            <ArrowUp className="h-5 w-5" />
+          </button>
+        </form>
+        <p className="mt-2 px-2 text-center text-[11.5px] leading-5 text-muted-foreground">
+          ما يتغيّر شي في حسابك إلا باعتمادك.{' '}
+          <button type="button" onClick={() => setMemoryOpen((open) => !open)} className="underline underline-offset-4 hover:text-foreground">
+            وش يعرف {ASSISTANT.name} عن نشاطك
+          </button>
+        </p>
       </div>
     </div>
     </ReturnPathContext.Provider>
+  );
+}
+
+/** One turn from «مُضاعِف»: the mark on the start side, plain text, no bubble. */
+function AssistantTurn({
+  avatar,
+  thinking = false,
+  children,
+}: {
+  avatar: boolean;
+  thinking?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-start gap-3">
+      {/* On a phone the reply takes the full width, like ChatGPT; the avatar shows from sm up. */}
+      <div className="hidden w-7 flex-shrink-0 pt-1 sm:block">{avatar &&<AssistantAvatar size={28} thinking={thinking} />}</div>
+      <div className="min-w-0 flex-1 space-y-3 text-[15.5px] leading-8 text-foreground">{children}</div>
+    </div>
   );
 }
 
@@ -495,7 +569,7 @@ function ActionButton({
   recId: string | null;
 }) {
   const cls =
-    'border border-primary/30 bg-primary/[0.07] px-3.5 py-2 text-[13px] font-medium text-foreground disabled:opacity-50';
+    'inline-flex min-h-9 items-center rounded-full border border-border bg-card px-4 text-[13.5px] font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50';
   const a = q.action;
   if (a.type === 'connect_account' || a.type === 'subscribe' || a.type === 'open_dashboard') {
     return (
@@ -546,7 +620,7 @@ function RecommendationForm({
 }
 
 function CardView({ card }: { card: ChatCard }) {
-  const box = 'w-full max-w-[92%] border border-border bg-card p-3 text-[13px] leading-7';
+  const box = 'w-full rounded-[18px] border border-border/80 bg-card p-4 text-[14px] leading-7';
   switch (card.kind) {
     case 'audit_result':
       return (
@@ -574,7 +648,7 @@ function CardView({ card }: { card: ChatCard }) {
       );
     case 'approval':
       return (
-        <div className={`${box} border-primary/40`}>
+        <div className={box}>
           <p className="text-[11px] text-muted-foreground">بيتغيّر في حسابك</p>
           <p className="font-semibold">{card.title}</p>
           {card.changes.map((c, i) => (
@@ -625,9 +699,9 @@ function ProposalCard({ card }: { card: Extract<ChatCard, { kind: 'proposal' }> 
   const returnPath = useContext(ReturnPathContext);
   const live = !card.status || OPEN_STATUSES.has(card.status);
   const btn =
-    'border px-3.5 py-2 text-[13px] font-medium disabled:opacity-50';
+    'inline-flex h-9 items-center rounded-full border px-4 text-[13.5px] font-semibold disabled:opacity-50';
   return (
-    <div id={`card-${card.recommendationId}`} className="w-full max-w-[92%] border border-primary/40 bg-card p-3 text-[13px] leading-7">
+    <div id={`card-${card.recommendationId}`} className="w-full rounded-[18px] border border-border/80 bg-card p-4 text-[14px] leading-7">
       <p className="text-[11px] text-muted-foreground">
         {card.size === 'small' ? 'تعديل صغير' : 'يحتاج اعتمادك'}
         {card.status === 'applied' ? ' · انطبق' : card.status === 'dismissed' ? ' · انشال' : card.status === 'failed' ? ' · ما انطبق' : ''}
@@ -706,7 +780,7 @@ function MemoryCard({ card }: { card: Extract<ChatCard, { kind: 'memory_saved' }
     }
   }
   return (
-    <div className="w-full max-w-[92%] border border-border bg-card p-3 text-[13px] leading-7">
+    <div className="w-full rounded-[18px] border border-border/80 bg-card p-4 text-[14px] leading-7">
       <p className="text-[11px] text-muted-foreground">حفظت عن نشاطك</p>
       <p className={state === 'deleted' ? 'line-through text-muted-foreground' : ''}>{card.fact}</p>
       {card.quote && <p className="text-[12px] text-muted-foreground">من كلامك: «{card.quote}»</p>}
@@ -742,7 +816,7 @@ function ConsentCard({ card }: { card: Extract<ChatCard, { kind: 'consent' }> })
   const btn = 'border px-3.5 py-2 text-[13px] font-medium disabled:opacity-50';
   if (answer === 'auto_small' || answer === 'always_ask') {
     return (
-      <div className="w-full max-w-[92%] border border-border bg-card p-3 text-[13px] leading-7">
+      <div className="w-full rounded-[18px] border border-border/80 bg-card p-4 text-[14px] leading-7">
         {answer === 'auto_small'
           ? 'تمام. أول ما يفتح التنفيذ التلقائي في المنصة أشغّله لك على التعديلات الصغيرة بس، وللحين أجهز وأنت تعتمد.'
           : 'تمام، بستأذنك في كل تعديل.'}
@@ -750,7 +824,7 @@ function ConsentCard({ card }: { card: Extract<ChatCard, { kind: 'consent' }> })
     );
   }
   return (
-    <div className="w-full max-w-[92%] border border-primary/40 bg-card p-3 text-[13px] leading-7">
+    <div className="w-full rounded-[18px] border border-border/80 bg-card p-4 text-[14px] leading-7">
       <p className="font-semibold">سؤال واحد قبل نكمل</p>
       <p>
         التعديلات الصغيرة، مثل إني أمنع إعلانك يطلع لعبارة بحث واضح إنها مو لك وصرفت بدون فايدة، تبيني أسويها لحالي
@@ -804,7 +878,7 @@ function MemoryPanel({ onClose }: { onClose: () => void }) {
     if (res?.ok) setRows((cur) => (cur ?? []).filter((row) => row.id !== id));
   }
   return (
-    <div className="max-h-64 overflow-y-auto border-t border-border bg-card px-3 py-2 text-[13px] leading-7">
+    <div className="max-h-64 overflow-y-auto px-4 py-3 text-[13.5px] leading-7">
       <div className="mb-1 flex items-center justify-between">
         <p className="font-semibold">وش يعرف {ASSISTANT.name} عن نشاطك</p>
         <button type="button" onClick={onClose} className="text-xs text-muted-foreground underline">

@@ -26,7 +26,7 @@ export function ApproveInline({
       <button
         type="button"
         onClick={() => setConfirming(true)}
-        className="inline-flex h-10 items-center bg-primary px-4 text-[14px] font-bold text-primary-foreground"
+        className="inline-flex h-9 items-center rounded-full bg-primary px-4 text-[13.5px] font-bold text-primary-foreground"
       >
         {label}
       </button>
@@ -40,13 +40,13 @@ export function ApproveInline({
       <p className="w-full text-[13.5px] leading-6">
         {change ? `بيتغيّر في حسابك: ${change}.` : 'بيتغيّر في حسابك اللي مكتوب فوق.'} وتقدر ترجعه خلال 30 يوم.
       </p>
-      <button type="submit" className="inline-flex h-10 items-center bg-primary px-4 text-[14px] font-bold text-primary-foreground">
+      <button type="submit" className="inline-flex h-9 items-center rounded-full bg-primary px-4 text-[13.5px] font-bold text-primary-foreground">
         إيه، نفّذ
       </button>
       <button
         type="button"
         onClick={() => setConfirming(false)}
-        className="inline-flex h-10 items-center border border-border bg-background px-4 text-[14px] font-bold"
+        className="inline-flex h-9 items-center rounded-full border border-border bg-background px-4 text-[13.5px] font-bold hover:bg-muted"
       >
         لا، رجوع
       </button>

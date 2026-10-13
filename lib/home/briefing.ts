@@ -73,7 +73,8 @@ export function summaryLine(args: { week: WeekNumbers; decisions: number; money:
     decisions > 0
       ? ` عندي لك ${decisionsLabel(decisions)} اليوم، ابدأ بأولها.`
       : ' وما فيه شي يحتاج قرارك اليوم، وأنا أراقب الحساب.';
-  if (!week.hasData) {
+  // Campaigns that exist but spent nothing read as "no spend", not "you spent 0".
+  if (!week.hasData || week.spend <= 0) {
     return `ما شفت صرف في حسابك آخر 7 أيام. لو حملاتك واقفة قل لي وأشوف معك السبب.${decisions > 0 ? next : ''}`;
   }
   if (week.results <= 0) {

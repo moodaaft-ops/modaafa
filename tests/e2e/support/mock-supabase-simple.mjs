@@ -3,7 +3,8 @@
 // Scenarios:
 //   connect    signed up, nothing linked yet
 //   questions  one account linked and synced, an audit on record, no setup answers yet
-//   home       set up and subscribed, with open decisions and a week of numbers
+//   home       set up and subscribed, with open decisions, a week of numbers and two past chats
+//   quiet      set up, but nothing spent in 7 days, no audit and no decisions
 // POST /__scenario?name=… switches scenario and clears stored answers, so one server serves the whole spec.
 import http from 'node:http';
 
@@ -93,6 +94,19 @@ const SCENARIOS = {
     job_runs: [], audits: [audit], recommendations: recs, campaigns_cache: [camp(0, 620, 9), camp(1, 480, 7), camp(2, 140, 2)],
     subscriptions: [{ id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', user_id: UID, plan: 'growth', billing_period: 'monthly', status: 'trialing', trial_ends_at: new Date(Date.now() + 10 * 864e5).toISOString(), current_period_start: hoursAgo(96), current_period_end: new Date(Date.now() + 10 * 864e5).toISOString(), created_at: hoursAgo(96), canceled_at: null }],
     ai_actions: [{ id: '77777777-7777-4777-8777-777777777777', account_id: A1, action_type: 'add_negative_keyword', description_ar: 'منعت إعلانك يطلع لعبارة «عطور مجانية»', created_at: hoursAgo(30), reverted_at: null }],
+    chat_sessions: [
+      { id: '99999999-9999-4999-8999-999999999901', user_id: UID, account_id: A1, title: 'وين تروح فلوسي في الإعلانات؟', created_at: hoursAgo(20), updated_at: hoursAgo(20) },
+      { id: '99999999-9999-4999-8999-999999999902', user_id: UID, account_id: A1, title: 'ليش الطلبات قليلة في الويكند؟', created_at: hoursAgo(50), updated_at: hoursAgo(50) },
+    ],
+    chat_messages: [
+      { id: '98989898-9898-4898-8898-989898989801', session_id: '99999999-9999-4999-8999-999999999901', role: 'user', content: 'وين تروح فلوسي في الإعلانات؟', tool_results: null, seq: 1, created_at: hoursAgo(20) },
+      { id: '98989898-9898-4898-8898-989898989802', session_id: '99999999-9999-4999-8999-999999999901', role: 'assistant', content: 'أكبر هدر عندك آخر 30 يوم عبارة «عطور رخيصة»: صرفت عليها 412 ريال وما جابت ولا طلب. لو اعتمدت إيقافها من الرئيسية توفّر تقريباً نفس المبلغ كل شهر.', tool_results: null, seq: 2, created_at: hoursAgo(20) },
+    ],
+  }),
+  quiet: () => ({
+    ...SCENARIOS.home(),
+    audits: [], recommendations: [], ai_actions: [], chat_sessions: [], chat_messages: [],
+    campaigns_cache: [camp(0, 0, 0), camp(1, 0, 0)],
   }),
 };
 
@@ -140,12 +154,13 @@ http.createServer(async (req, res) => {
     const accept = req.headers.accept || '';
     if (req.method === 'POST') {
       const body = await readBody(req);
-      const items = Array.isArray(body) ? body : body ? [body] : [];
+      const items = (Array.isArray(body) ? body : body ? [body] : []).map((item) => ({ id: crypto.randomUUID(), ...item }));
       if (name === 'business_memory') {
         for (const item of items) rows.push({ id: `m${rows.length}`, status: 'active', created_at: new Date().toISOString(), ...item });
         tables[name] = rows;
       }
       if (name === 'autopilot_settings') tables[name] = items;
+      if (name === 'chat_sessions' || name === 'chat_messages') tables[name] = [...items, ...rows];
       return send(201, accept.includes('vnd.pgrst.object') ? items[0] ?? {} : items);
     }
     if (req.method === 'PATCH') {

@@ -52,3 +52,34 @@ export async function loadScopedHistory(args: {
   }));
   return { found: true, sessionId: session.id, messages: history };
 }
+
+export type RecentChat = { id: string; title: string };
+
+/**
+ * The sidebar's list of past conversations: this user's sessions on the
+ * selected ad account only, newest first. A read error is an empty list, never
+ * a broken page.
+ */
+export async function listRecentChats(args: {
+  supabase: any;
+  userId: string;
+  accountId: string | null;
+  limit?: number;
+}): Promise<RecentChat[]> {
+  if (!args.accountId) return [];
+  try {
+    const { data, error } = await args.supabase
+      .from('chat_sessions')
+      .select('id, title')
+      .eq('user_id', args.userId)
+      .eq('account_id', args.accountId)
+      .order('updated_at', { ascending: false })
+      .limit(args.limit ?? 30);
+    if (error || !Array.isArray(data)) return [];
+    return data
+      .filter((row: any) => typeof row?.id === 'string')
+      .map((row: any) => ({ id: row.id, title: String(row.title ?? '').trim() || 'محادثة' }));
+  } catch {
+    return [];
+  }
+}
