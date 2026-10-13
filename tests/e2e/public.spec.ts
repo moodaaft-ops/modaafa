@@ -3,6 +3,7 @@ import { expect, test } from '@playwright/test';
 const publicPages = [
   { path: '/', heading: /مضاعف|إعلانات Google/i },
   { path: '/login', heading: 'تسجيل الدخول' },
+  { path: '/register', heading: 'أنشئ حسابك' },
   { path: '/privacy', heading: /الخصوصية/ },
   { path: '/terms', heading: /شروط/ },
   { path: '/refund', heading: /الاسترجاع والاسترداد/ },
@@ -34,7 +35,7 @@ test.describe('public launch surface', () => {
 
     await expect(page).toHaveTitle(/مُضاعِف|Modaafa/);
     await expect(page.getByRole('link', { name: 'تسجيل الدخول' }).first()).toHaveAttribute('href', '/login');
-    await expect(page.getByRole('link', { name: /افحص حسابك مجاناً/ }).first()).toHaveAttribute('href', '/login');
+    await expect(page.getByRole('link', { name: /افحص حسابك مجاناً/ }).first()).toHaveAttribute('href', '/register');
   });
 
   test('theme choice persists after reload', async ({ page }) => {
@@ -98,4 +99,24 @@ test.describe('public launch surface', () => {
       expect(response.status(), `${path} should be published`).toBe(200);
     }
   });
+});
+
+test.describe('registration inside the TikTok app browser', () => {
+  test.use({
+    userAgent:
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 musical_ly_40.1.0 JsSdk/2.0 ByteLocale/ar Region/SA',
+  });
+
+  test('offers to reopen the page in the phone browser, form still usable', async ({ page }) => {
+    await page.goto('/register?utm_source=tiktok&ttclid=E.C.P.e2e123');
+    await expect(page.getByText('فاتح من داخل تيك توك؟')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'انسخ الرابط' })).toBeVisible();
+    await expect(page.getByRole('button', { name: /أرسل لي رابط التفعيل/ })).toBeVisible();
+  });
+});
+
+test('registration in a normal browser shows no in-app notice', async ({ page }) => {
+  await page.goto('/register');
+  await expect(page.getByRole('heading', { name: 'أنشئ حسابك' })).toBeVisible();
+  await expect(page.getByText('فاتح من داخل')).toHaveCount(0);
 });

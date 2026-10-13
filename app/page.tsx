@@ -173,7 +173,7 @@ export default async function HomePage({
             </p>
 
             <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-              <Link href="/login" className={buttonClasses({ variant: 'primary', size: 'lg' })}>
+              <Link href="/register" className={buttonClasses({ variant: 'primary', size: 'lg' })}>
                 افحص حسابك مجاناً
                 <ArrowLeft className="h-4 w-4" aria-hidden />
               </Link>
@@ -459,10 +459,10 @@ export default async function HomePage({
         <div className="relative mx-auto max-w-2xl text-center">
           <h2 className="text-display-sm font-bold text-balance">جاهز تشوف حسابك بعين ثانية؟</h2>
           <p className="mx-auto mt-4 max-w-lg text-[14px] leading-8 text-muted-foreground">
-            سجّل دخولك، اربط إعلانات Google، واختر الحساب الذي تريد أن يعمل عليه المساعد.
+            أنشئ حسابك، اربط إعلانات Google، واختر الحساب الذي تريد أن يعمل عليه المساعد.
           </p>
-          <Link href="/login" className={`${buttonClasses({ variant: 'primary', size: 'lg' })} mt-8`}>
-            الدخول إلى المنصة
+          <Link href="/register" className={`${buttonClasses({ variant: 'primary', size: 'lg' })} mt-8`}>
+            افحص حسابك مجاناً
             <ArrowLeft className="h-4 w-4" aria-hidden />
           </Link>
         </div>
