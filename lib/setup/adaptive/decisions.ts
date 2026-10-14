@@ -316,7 +316,7 @@ const SHOPPERS: PainGroup = { said: 'يسألون عن السعر وما يشت�
 const PAIN_GROUPS: Record<string, PainGroup> = {
   few_leads: FEW,
   expensive: PRICEY,
-  grow: { said: 'تبي تكبر', categories: ['budget', 'structure'] },
+  grow: { said: 'أبي أكبر', categories: ['budget', 'structure'] },
   shop_few_orders: { said: 'الطلبات قليلة', categories: FEW.categories },
   shop_profit_eaten: { said: 'الإعلان ياكل الربح', categories: PRICEY.categories },
   clinic_few_calls: { said: 'الاتصالات قليلة', categories: FEW.categories },
@@ -348,13 +348,13 @@ export function planReason(args: {
   const painChoice = answeredChoice(args.answered, 'pain');
   const pain = painChoice ? PAIN_GROUPS[painChoice] : undefined;
   if (pain && pain.categories.includes(category)) {
-    return `لأنك قلت إن ${pain.said}، والقرار هذا يمس ${touches}.`;
+    return `لأنك قلت «${pain.said}»، وهالقرار يمس ${touches}.`;
   }
 
   const focusChoice = answeredChoice(args.answered, 'focus_service');
   if (focusChoice && focusChoice !== 'all' && FOCUS_CATEGORIES.includes(category)) {
     const label = args.labels.focus_service?.trim() || focusLabel(focusChoice);
-    if (label) return `لأنك قلت إن اللي تبي تكثره ${label}، والقرار هذا يمس ${touches}.`;
+    if (label) return `لأنك تبي طلب أكثر على «${label}»، وهالقرار يمس ${touches}.`;
   }
   return null;
 }

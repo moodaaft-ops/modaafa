@@ -12,7 +12,7 @@ import {
   contactValueLine,
   parseAdaptiveAnswer,
 } from '../lib/setup/adaptive/answers';
-import { adaptivePending, adaptiveQuestion, pushProductChoices } from '../lib/setup/adaptive/bank';
+import { adaptivePending, adaptiveQuestion, pushProductChoices, withProductTitles } from '../lib/setup/adaptive/bank';
 import { AGENCY_FULL_MANAGEMENT_CARD, agencyQuestions, firstCampaignPlan } from '../lib/setup/adaptive/endings';
 import { scenarioDecision, planReason, largestClosedStretch } from '../lib/setup/adaptive/decisions';
 import { ALL_FOCUS_ENTRIES } from '../lib/setup/adaptive/focus';
@@ -826,10 +826,33 @@ test('answers: every other key writes one fact with its setup key and choice and
     if (answer.choices) assert.deepEqual(effects.fact.data.choices, answer.choices);
     if (answer.text) assert.equal(effects.fact.data.text, answer.text);
   }
-  assert.deepEqual(adaptiveEffects({ key: 'margin', choice: '20_40' }).fact?.data, { setup_key: 'margin', choice: '20_40', min_per_100: 20, max_per_100: 40 });
+  assert.deepEqual(adaptiveEffects({ key: 'margin', choice: '20_40' }).fact?.data, {
+    setup_key: 'margin',
+    choice: '20_40',
+    label: 'من 20 إلى 40 ريال',
+    min_per_100: 20,
+    max_per_100: 40,
+  });
   assert.equal(adaptiveEffects({ key: 'margin', choice: '20_40' }).fact?.fact_ar, 'يتبقى له من كل 100 ريال من 20 إلى 40 ريال بعد تكلفة المنتج والشحن');
   assert.deepEqual(adaptiveEffects({ key: 'call_hours', choice: 'day_8_23' }).fact?.data.windows, [[8, 23]]);
   assert.equal(adaptiveEffects({ key: 'deal_value', choice: 'gt50k' }).fact?.fact_ar, 'الصفقة الواحدة تسوى له تقريباً أكثر من 50,000 ريال');
+});
+
+test('answers: picked products keep their titles so a reload shows the same words', () => {
+  const signals = sallaAccount();
+  const chips = pushProductChoices(signals);
+  assert.ok(chips.length >= 2);
+  const answer = withProductTitles({ key: 'push_products', choice: 'p_0', choices: ['p_0', 'p_1'] }, signals);
+  assert.deepEqual(answer.titles, [chips[0].title, chips[1].title]);
+  const fact = adaptiveEffects(answer).fact;
+  assert.equal(fact?.data.label, `${chips[0].title}، ${chips[1].title}`);
+  assert.equal(fact?.fact_ar, `منتجات يبي تبيع أكثر: ${chips[0].title}، ${chips[1].title}`);
+  // Without a read the ids stay ids and nothing is invented.
+  assert.equal(withProductTitles({ key: 'push_products', choice: 'p_0', choices: ['p_0'] }, null).titles, undefined);
+  assert.equal(adaptiveLabel({ key: 'push_products', choice: 'p_0', choices: ['p_0'] }), 'منتجات من القائمة');
+  // Other keys pass through untouched.
+  const margin: AdaptiveAnswer = { key: 'margin', choice: 'lt20' };
+  assert.equal(withProductTitles(margin, signals), margin);
 });
 
 test('answers: the customer bubble says what they tapped', () => {
@@ -1148,11 +1171,11 @@ test('planReason: ties the audit decision to what the customer said, or says not
     planReason({ scenario, answered, labels, decision: { title: 'قرار', category }, });
   assert.equal(
     reason('bidding', { pain: 'shop_profit_eaten' }),
-    'لأنك قلت إن الإعلان ياكل الربح، والقرار هذا يمس كم تدفع على كل نقرة.'
+    'لأنك قلت «الإعلان ياكل الربح»، وهالقرار يمس كم تدفع على كل نقرة.'
   );
   assert.equal(
     reason('keywords', { pain: 'clinic_price_shoppers' }),
-    'لأنك قلت إن يتصلون يسألون عن السعر وما يحجزون، والقرار هذا يمس الكلمات اللي تطلع فيها إعلاناتك.'
+    'لأنك قلت «يتصلون يسألون عن السعر وما يحجزون»، وهالقرار يمس الكلمات اللي تطلع فيها إعلاناتك.'
   );
   // A decision the answer has nothing to do with says nothing rather than force a link.
   assert.equal(reason('ads', { pain: 'shop_profit_eaten' }), null);
@@ -1164,11 +1187,11 @@ test('planReason: ties the audit decision to what the customer said, or says not
   // The service they want to grow connects to the budget, the structure and the keywords.
   assert.equal(
     reason('budget', { focus_service: 'dental_braces' }, { focus_service: 'تقويم' }),
-    'لأنك قلت إن اللي تبي تكثره تقويم، والقرار هذا يمس كم يروح من فلوسك وعلى أي حملة.'
+    'لأنك تبي طلب أكثر على «تقويم»، وهالقرار يمس كم يروح من فلوسك وعلى أي حملة.'
   );
   assert.equal(reason('ads', { focus_service: 'dental_braces' }), null);
   assert.equal(reason('budget', { focus_service: 'all' }), null);
-  assert.equal(reason('keywords', { focus_service: 'dental_braces' }), 'لأنك قلت إن اللي تبي تكثره تقويم، والقرار هذا يمس الكلمات اللي تطلع فيها إعلاناتك.');
+  assert.equal(reason('keywords', { focus_service: 'dental_braces' }), 'لأنك تبي طلب أكثر على «تقويم»، وهالقرار يمس الكلمات اللي تطلع فيها إعلاناتك.');
 });
 
 // ---------------------------------------------------------------------------

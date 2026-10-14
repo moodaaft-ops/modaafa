@@ -310,7 +310,8 @@ export function adaptiveLabel(answer: AdaptiveAnswer): string {
   if (key === 'focus_service' && choice === FOCUS_OTHER_ID) return answer.text ?? adaptiveOptionLabel(key, choice) ?? choice;
   if (key === 'push_products') {
     if (choice === PUSH_NONE_ID) return 'لا، كلها سوا';
-    if (answer.text) return answer.text;
+    const named = [...(answer.titles ?? []), ...(answer.text ? [answer.text] : [])].filter(Boolean);
+    if (named.length > 0) return named.join('، ');
     return 'منتجات من القائمة';
   }
   if (key === 'exclude_products' && choice === 'text') return answer.text ?? 'منتج معيّن';
@@ -356,6 +357,8 @@ export function adaptiveEffects(answer: AdaptiveAnswer): {
     choice,
     ...(answer.choices ? { choices: answer.choices } : {}),
     ...(answer.text ? { text: answer.text } : {}),
+    // The words the customer saw, so a reload can show the same «فهمت عليك» rows.
+    label: adaptiveLabel(answer),
     ...extra,
   });
   const label = adaptiveOptionLabel(key, choice) ?? choice;
@@ -446,8 +449,8 @@ export function adaptiveEffects(answer: AdaptiveAnswer): {
           fact_ar:
             choice === PUSH_NONE_ID
               ? 'ما عنده منتجات معيّنة يبيها تبيع أكثر، كلها عنده سوا'
-              : answer.text
-                ? `منتجات يبي تبيع أكثر: ${answer.text}`
+              : (answer.titles?.length ?? 0) > 0 || answer.text
+                ? `منتجات يبي تبيع أكثر: ${adaptiveLabel(answer)}`
                 : 'اختار منتجات من قائمة الصرف يبيها تبيع أكثر',
           data: data(),
         },

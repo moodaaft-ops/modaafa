@@ -201,6 +201,12 @@ export type AdaptiveAnswer = {
   /** confirm only: the kind and outcome the opener proposed, so a «yes» can be written as stated facts. */
   kind?: BusinessKind;
   outcome?: DominantOutcome;
+  /**
+   * push_products only: the product titles behind the picked `p_<index>` ids,
+   * filled by the server from the stored signals after parsing. Never read
+   * from the browser.
+   */
+  titles?: string[];
 };
 
 export type AdaptiveOption = { id: string; label: string; hint?: string; icon?: string };

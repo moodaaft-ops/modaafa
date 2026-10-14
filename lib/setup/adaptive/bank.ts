@@ -46,6 +46,7 @@ import {
 } from './shared';
 import type {
   AccountSignals,
+  AdaptiveAnswer,
   AdaptiveOption,
   AdaptiveQuestion,
   BusinessKind,
@@ -270,6 +271,20 @@ export function pushProductChoices(signals: AccountSignals | null): Array<{ id: 
     .filter(Boolean)
     .slice(0, 6)
     .map((title, index) => ({ id: `p_${index}`, title }));
+}
+
+/**
+ * Fills `titles` on a push_products answer from the same chips the question
+ * showed, so the fact and the «فهمت عليك» row name the products. Server side
+ * only, after parsing; any other answer comes back as is.
+ */
+export function withProductTitles(answer: AdaptiveAnswer, signals: AccountSignals | null): AdaptiveAnswer {
+  if (answer.key !== 'push_products' || !answer.choices) return answer;
+  const chips = pushProductChoices(signals);
+  const titles = answer.choices
+    .map((id) => chips.find((chip) => chip.id === id)?.title)
+    .filter((title): title is string => Boolean(title));
+  return titles.length > 0 ? { ...answer, titles } : answer;
 }
 
 function managerQuestion(ctx: QuestionContext): AdaptiveQuestion | null {
