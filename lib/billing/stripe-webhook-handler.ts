@@ -15,6 +15,8 @@ import {
   sendOpsAlert,
   subscriptionWelcomeEmail,
   trialEndingEmail,
+  type TransactionalMail,
+  type TransactionalRecipient,
 } from '@/lib/notifications/email';
 import { recordTrialGrant } from '@/lib/billing/checkout-policy';
 import { enforceTrialCardUniquenessLive } from '@/lib/billing/trial-card-guard';
@@ -25,6 +27,7 @@ import {
   subscriptionEventWasApplied,
 } from '@/lib/billing/subscription-events';
 import { recordPaidInvoice } from '@/lib/billing/invoices';
+import { recordUserEvent } from '@/lib/stages/events';
 import {
   claimStripeWebhookEvent,
   completeStripeWebhookEvent,
@@ -50,6 +53,7 @@ const defaultDependencies = {
   applySubscriptionEvent,
   subscriptionEventWasApplied,
   recordPaidInvoice,
+  recordUserEvent,
   claimStripeWebhookEvent,
   completeStripeWebhookEvent,
   failStripeWebhookEvent,
@@ -181,11 +185,11 @@ export function createStripeWebhookHandler(
             });
           }
           if (dependencies.subscriptionEventWasApplied(writeResult) && !trialBlocked) {
-            await safeUserEmail(
-              dependencies,
-              supabase,
-              userId,
-              dependencies.subscriptionWelcomeEmail(),
+            await safeUserEmail(dependencies, supabase, userId, (recipient) =>
+              dependencies.subscriptionWelcomeEmail(
+                recipient,
+                stripeSubscription.trial_end ? stripeTimestamp(stripeSubscription.trial_end) : null,
+              ),
             );
           }
           break;
@@ -281,11 +285,8 @@ export function createStripeWebhookHandler(
               console.error('Could not confirm cancellation state before the trial-ending email', error);
             }
             if (!cancelScheduled) {
-              await safeUserEmail(
-                dependencies,
-                supabase,
-                trialing.user_id,
-                dependencies.trialEndingEmail(stripeTimestamp(subscription.trial_end)),
+              await safeUserEmail(dependencies, supabase, trialing.user_id, (recipient) =>
+                dependencies.trialEndingEmail(stripeTimestamp(subscription.trial_end), recipient),
               );
             }
           }
@@ -398,6 +399,15 @@ export function createStripeWebhookHandler(
               userId: localSubscription.user_id,
               invoice,
             });
+            // "Paid" means money actually moved. Starting a trial produces a
+            // zero-amount invoice that Stripe also reports as succeeded, and
+            // that must not count: the user has not paid yet. Never throws.
+            if ((invoice.amount_paid ?? 0) > 0) {
+              await dependencies.recordUserEvent(localSubscription.user_id, 'subscription_paid', {
+                admin: supabase,
+                metadata: { stripe_invoice_id: invoice.id ?? null },
+              });
+            }
           }
           break;
         }
@@ -418,11 +428,8 @@ export function createStripeWebhookHandler(
             status === 'past_due' &&
             userId
           ) {
-            await safeUserEmail(
-              dependencies,
-              supabase,
-              userId,
-              dependencies.paymentFailedEmail(),
+            await safeUserEmail(dependencies, supabase, userId, (recipient) =>
+              dependencies.paymentFailedEmail(recipient),
             );
           }
           break;
@@ -457,20 +464,44 @@ export function createStripeWebhookHandler(
   };
 }
 
+/**
+ * Sends one of the billing mails to the user the event belongs to.
+ *
+ * The user row is read once, for the address, the name (greeting) and the
+ * suppression mark: a hard bounce or a spam complaint stops everything sent to
+ * that address, billing mail included. If the suppression column cannot be read
+ * (the lifecycle migration has not run yet) the read falls back to address and
+ * name only, so billing mail never depends on the migration.
+ */
 async function safeUserEmail(
   dependencies: StripeWebhookDependencies,
   supabase: ReturnType<typeof createAdminClient>,
   userId: string,
-  email: { subject: string; html: string },
+  build: (recipient: TransactionalRecipient) => TransactionalMail | null,
 ) {
   try {
-    const { data: profile, error } = await supabase
+    let { data: profile, error } = await supabase
       .from('users')
-      .select('email')
+      .select('email, name, email_suppressed_at')
       .eq('id', userId)
       .maybeSingle();
+    if (error) {
+      ({ data: profile, error } = await supabase
+        .from('users')
+        .select('email, name')
+        .eq('id', userId)
+        .maybeSingle());
+    }
     if (error) throw error;
-    if (profile?.email) await dependencies.sendEmail({ to: profile.email, ...email });
+    if (!profile?.email) return;
+    if ((profile as { email_suppressed_at?: string | null }).email_suppressed_at) return;
+
+    const mail = build({ id: userId, email: profile.email, name: (profile as { name?: string | null }).name ?? null });
+    if (!mail) {
+      console.error('Stripe lifecycle email has no content', { userId });
+      return;
+    }
+    await dependencies.sendEmail({ to: profile.email, ...mail });
   } catch (error) {
     console.error('Failed to send Stripe lifecycle email', { userId, error });
   }

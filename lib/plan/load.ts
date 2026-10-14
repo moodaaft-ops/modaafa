@@ -11,6 +11,13 @@ import { buildPlan, paywallCtaFromCheckout, type PaywallCta, type Plan, type Pla
 /** Pending and approved decisions, newest first: the same rows /home lists as «قرارات اليوم». */
 export const PLAN_DECISION_LIMIT = 30;
 
+/**
+ * A decision is still waiting for the person while it is `pending` (not decided) or
+ * `approved` (decided, "وافقت عليه، باقي التنفيذ": the last press is theirs). /home,
+ * the plan and the lifecycle emails' open-decision count all read this one list.
+ */
+export const OPEN_DECISION_STATUSES: readonly string[] = ['pending', 'approved'];
+
 /** Maps stored recommendation rows to plan input. `executable` comes from the payload, never from model text. */
 export function toPlanRecommendations(rows: unknown): PlanRecommendation[] {
   if (!Array.isArray(rows)) return [];
@@ -54,7 +61,7 @@ export async function loadPlan(
       .from('recommendations')
       .select('id, title, description, severity, status, category, expected_impact, action_payload, created_at')
       .eq('account_id', args.accountId)
-      .in('status', ['pending', 'approved'])
+      .in('status', [...OPEN_DECISION_STATUSES])
       .order('created_at', { ascending: false })
       .limit(PLAN_DECISION_LIMIT),
   ]);
