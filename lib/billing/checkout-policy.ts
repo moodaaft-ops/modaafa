@@ -28,6 +28,8 @@ export type TrialIneligibleReason =
 
 export type BillingCheckoutContext = {
   activeSubscriptionId: string | null;
+  /** Stripe status of that subscription (trialing, active, past_due or paused). */
+  activeSubscriptionStatus: string | null;
   stripeCustomerId: string | null;
   /** Always `trialIneligibleReason === null`. */
   trialEligible: boolean;
@@ -83,7 +85,7 @@ export async function getBillingCheckoutContext(
   const [liveResult, customerResult, grantResult, priorTrialResult] = await Promise.all([
     supabase
       .from('subscriptions')
-      .select('stripe_subscription_id')
+      .select('stripe_subscription_id, status')
       .eq('user_id', userId)
       .in('status', LIVE_STATUSES)
       .order('created_at', { ascending: false })
@@ -141,6 +143,7 @@ export async function getBillingCheckoutContext(
 
   return {
     activeSubscriptionId: liveResult.data?.stripe_subscription_id ?? null,
+    activeSubscriptionStatus: liveResult.data?.status ?? null,
     stripeCustomerId: customerResult.data?.stripe_customer_id ?? null,
     trialEligible: trialIneligibleReason === null,
     trialIneligibleReason,

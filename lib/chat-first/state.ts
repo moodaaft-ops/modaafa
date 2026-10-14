@@ -5,6 +5,15 @@ import { buildExecutableAction } from '@/lib/ai/executable-action';
 import type { ChatRecommendation, ChatState } from './contracts';
 import { readFreeAuditView } from './free-audit-view';
 
+/** What an account with no readable currency is shown in (the app-wide default of formatCurrency). */
+export const DEFAULT_CHAT_CURRENCY = 'SAR';
+
+/** The account's currency as an upper-case ISO code, or the default when it is missing or not a code. */
+export function accountCurrency(value: unknown): string {
+  const code = String(value ?? '').trim().toUpperCase();
+  return /^[A-Z]{3}$/.test(code) ? code : DEFAULT_CHAT_CURRENCY;
+}
+
 export type LoadedChatState =
   | { ok: true; state: ChatState; accountId: string | null }
   | { ok: false; error: 'account_not_found' | 'read_failed' };
@@ -37,7 +46,7 @@ export async function loadChatState({
       supabase,
       userId,
       customerId,
-      select: 'id, customer_id, customer_name',
+      select: 'id, customer_id, customer_name, currency_code',
     }),
   ]);
 
@@ -49,7 +58,7 @@ export async function loadChatState({
       const fallback = await getLinkedGoogleAdsAccount({
         supabase,
         userId,
-        select: 'id, customer_id, customer_name',
+        select: 'id, customer_id, customer_name, currency_code',
       });
       if (fallback.account) return build(supabase, fallback.account, subscription.active);
     }
@@ -60,6 +69,7 @@ export async function loadChatState({
         accountLinked: false,
         accountName: null,
         customerId: null,
+        currency: DEFAULT_CHAT_CURRENCY,
         latestAudit: null,
         recommendations: [],
         subscriptionActive: subscription.active,
@@ -108,6 +118,7 @@ async function build(supabase: any, account: any, subscriptionActive: boolean): 
       accountLinked: true,
       accountName: googleAdsAccountDisplayName(account),
       customerId: normalizeCustomerId(account.customer_id),
+      currency: accountCurrency(account.currency_code),
       latestAudit: audit
         ? {
             id: audit.id,

@@ -22,6 +22,7 @@ import { trapTabKey } from '@/lib/ui/focus-trap';
 import { SUPPORT_WHATSAPP_NUMBER } from '@/lib/support/contact';
 import { cn } from '@/lib/utils';
 import { AccountMenu } from './account-menu';
+import { RecentChats } from './recent-chats';
 
 type Item = { href: string; label: string; icon: React.ComponentType<{ className?: string }> };
 
@@ -74,10 +75,12 @@ export function SimpleChrome({
   const selected = accounts.find((account) => account.customer_id === selectedCustomerId);
   const accountLabel = selected?.customer_name?.trim() || null;
   const activeChat = pathname === '/home' ? searchParams.get('c') : null;
+  // The text, not the object: a refresh after a rename must not close the phone drawer.
+  const search = searchParams.toString();
 
   useEffect(() => {
     setOpen(false);
-  }, [pathname, searchParams]);
+  }, [pathname, search]);
 
   useEffect(() => {
     if (!open) return;
@@ -251,26 +254,7 @@ function Sidebar({
         })}
       </nav>
 
-      <div className="mt-5 min-h-0 flex-1 overflow-y-auto px-2 pb-2 scrollbar-thin">
-        <p className="px-3 pb-1.5 text-[12px] font-semibold text-muted-foreground">محادثاتك</p>
-        {recentChats.length === 0 ? (
-          <p className="px-3 text-[12.5px] leading-6 text-muted-foreground">أول ما تكلم مُضاعِف تطلع محادثاتك هنا.</p>
-        ) : (
-          <ul className="space-y-0.5">
-            {recentChats.map((chat) => (
-              <li key={chat.id}>
-                <Link
-                  href={`/home?c=${chat.id}`}
-                  aria-current={activeChat === chat.id ? 'page' : undefined}
-                  className={cn(ROW, 'min-h-9 text-[13.5px]', activeChat === chat.id ? ROW_ACTIVE : ROW_IDLE)}
-                >
-                  <span className="truncate">{chat.title}</span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      <RecentChats chats={recentChats} activeChat={activeChat} />
 
       <div className="flex-shrink-0 space-y-1 border-t border-border/60 p-2">
         <a

@@ -6,6 +6,7 @@ import {
   CARD_TRIAL_USED_MESSAGE,
   TRIAL_STARTER_LIMITS_NOTE,
   trialIneligibleNotice,
+  trialPageIntro,
 } from '../lib/billing/trial-copy';
 import { auditAccessMessage } from '../lib/billing/free-audit';
 import { CONNECT_ERROR_MESSAGES, connectErrorRetryHelps } from '../lib/onboarding/connect-progress';
@@ -82,4 +83,17 @@ test('a reconnect is not offered for an error a reconnect cannot fix', () => {
   }
   const src = read('app/onboarding/preparing/preparing-accounts.tsx');
   assert.match(src, /connectErrorRetryHelps\(view\.error\)/);
+});
+
+test('the trial page no longer promises free recommendations: the first audit is free, the decisions open with the plan', () => {
+  assert.equal(trialPageIntro(true), 'الفحص الأول مجاني، والقرارات كلها تنفتح مع تجربتك.');
+  assert.equal(trialPageIntro(false), 'الفحص الأول مجاني، والقرارات كلها تنفتح مع اشتراكك.');
+  const page = read('app/onboarding/trial/page.tsx');
+  assert.match(page, /\{trialPageIntro\(trialEligible\)\}/);
+  assert.doesNotMatch(page, /بدون اشتراك/);
+  assert.doesNotMatch(page, /مفتوحة لك/);
+  for (const text of [trialPageIntro(true), trialPageIntro(false)]) {
+    assert.doesNotMatch(text, /[—–]/);
+    assert.ok(!text.includes(','), text);
+  }
 });

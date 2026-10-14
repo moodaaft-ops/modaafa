@@ -1,6 +1,7 @@
 import type { NextRequest } from 'next/server';
 import { createServerClient } from '@/lib/supabase/server';
-import { effectiveLimitPlan, getSubscriptionAccess, PLAN_LIMITS } from '@/lib/billing/entitlements';
+import { effectiveLimitPlan, getSubscriptionAccess, PLAN_LIMITS, type SubscriptionAccess } from '@/lib/billing/entitlements';
+import { hasProductAccess } from '@/lib/billing/access-gate';
 import { checkRateLimit, peekRateLimitWindow } from '@/lib/security/rate-limit';
 import { SELECTED_ADS_ACCOUNT_COOKIE } from '@/lib/accounts/selection';
 import { loadChatState } from '@/lib/chat-first/state';
@@ -15,6 +16,24 @@ import {
 } from '@/lib/ai/voice-server';
 import type { VoiceConfig } from '@/lib/ai/voice-session';
 import { NextResponse } from 'next/server';
+
+/**
+ * What a caller may do on a call, from their access. There is no free tier:
+ * speech-to-text and text-to-speech are paid by the minute, so without an
+ * active subscription, a live trial, an operator free plan or operator access
+ * the daily turn limit is null and every voice route answers 402
+ * `subscription_required` before it touches the provider. A suspended account
+ * gets nothing either. A trial runs on Starter limits (effectiveLimitPlan).
+ */
+export function voiceEntitlement(
+  subscription: Pick<SubscriptionAccess, 'active' | 'plan' | 'status' | 'suspended'>
+): { planAssistantDailyLimit: number | null; tier: VoiceDeps['tier'] } {
+  if (!hasProductAccess(subscription) || !subscription.plan) return { planAssistantDailyLimit: null, tier: null };
+  return {
+    planAssistantDailyLimit: PLAN_LIMITS[effectiveLimitPlan(subscription) ?? subscription.plan].assistant.limit,
+    tier: 'paid',
+  };
+}
 
 /** Wires the injectable voice handlers to Supabase, the rate limiter and the provider. */
 export async function buildVoiceDeps(req: NextRequest): Promise<VoiceDeps & { supabase: any }> {
@@ -32,22 +51,9 @@ export async function buildVoiceDeps(req: NextRequest): Promise<VoiceDeps & { su
     } = await supabase.auth.getUser();
     if (authUser) {
       user = { id: authUser.id, email: authUser.email ?? null };
-      const subscription = await getSubscriptionAccess(supabase, authUser.id, authUser.email);
-      if (subscription.suspended) {
-        // Suspended by an operator: no paid turns and no free allowance either.
-        tier = null;
-      } else if (subscription.active && subscription.plan) {
-        // A trial runs on Starter limits (see effectiveLimitPlan).
-        planAssistantDailyLimit =
-          PLAN_LIMITS[effectiveLimitPlan(subscription) ?? subscription.plan].assistant.limit;
-        tier = 'paid';
-      } else if (config.freeDailyTurns > 0) {
-        // Not locked before the person has seen value (task 05 contract): a
-        // small read-only allowance. Writes stay behind subscription, preview
-        // and approval in the paths that perform them, not here.
-        planAssistantDailyLimit = config.freeDailyTurns;
-        tier = 'free';
-      }
+      ({ planAssistantDailyLimit, tier } = voiceEntitlement(
+        await getSubscriptionAccess(supabase, authUser.id, authUser.email)
+      ));
     }
   }
 

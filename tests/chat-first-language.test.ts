@@ -18,6 +18,7 @@ const state = (over: Partial<ChatState> = {}): ChatState => ({
   accountLinked: true,
   accountName: 'متجر الأمل',
   customerId: '1234567890',
+  currency: 'SAR',
   latestAudit: { id: 'a1', healthScore: 62, findingsCount: 7, estimatedMonthlyWaste: 340, ranAt: '2026-10-08T10:00:00Z' },
   recommendations: [rec(), rec({ id: 'r2', title: 'قلل ميزانية حملة ضعيفة', severity: 'medium' })],
   subscriptionActive: false,

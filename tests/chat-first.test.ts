@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import test from 'node:test';
 import { classify, planApply, planTurn } from '../lib/chat-first/orchestrator';
 import { isChatFirstEnabled } from '../lib/chat-first/flag';
@@ -19,6 +21,7 @@ const base = (over: Partial<ChatState> = {}): ChatState => ({
   accountLinked: true,
   accountName: 'متجر الأمل',
   customerId: '1234567890',
+  currency: 'SAR',
   latestAudit: {
     id: 'a1',
     healthScore: 62,
@@ -200,4 +203,59 @@ test('a user with no business gets the connect state, not an error', async () =>
   const r = await loadChatState({ supabase: fakeSupabase(world), userId: 'ghost' });
   assert.equal(r.ok, true);
   if (r.ok) assert.equal(r.state.accountLinked, false);
+});
+
+// ---- the amounts in the chat's rule-based answers use the account's own currency ----
+
+test('the audit answer words the waste in the selected account\'s currency, never in dollars', () => {
+  const cases: Array<[string, RegExp]> = [
+    ['SAR', /340\sر\.س/],
+    ['AED', /340\sد\.إ/],
+    ['USD', /340\sUS\$/],
+    ['EGP', /340\sج\.م/],
+  ];
+  for (const [currency, shown] of cases) {
+    const t = planTurn('وش وضع حسابي', base({ currency }));
+    assert.match(t.reply, shown, currency);
+    assert.doesNotMatch(t.reply, /دولار/, currency);
+    // The amount ends the sentence once: «ر.س.» already carries its full stop.
+    assert.doesNotMatch(t.reply, /\.\u200f?\./, currency);
+    const card = t.cards[0];
+    assert.equal(card.kind, 'audit_result');
+    if (card.kind === 'audit_result') assert.equal(card.currency, currency);
+  }
+});
+
+test('a state with no currency reads as the app default, so an older caller never shows dollars', () => {
+  const { currency: _omitted, ...withoutCurrency } = base();
+  const t = planTurn('وش وضع حسابي', withoutCurrency as ChatState);
+  assert.match(t.reply, /340\sر\.س/);
+  assert.doesNotMatch(t.reply, /دولار/);
+});
+
+test('loadChatState carries the selected account\'s currency, falling back to SAR for a missing or odd value', async () => {
+  const withCurrency = (code: unknown) => ({
+    ...world,
+    google_ads_accounts: [
+      { id: 'accA', business_id: 'bA', customer_id: '1111111111', customer_name: 'متجر أ', status: 'active', currency_code: code },
+      world.google_ads_accounts[1],
+    ],
+  });
+  for (const [stored, expected] of [['AED', 'AED'], ['usd', 'USD'], [null, 'SAR'], ['', 'SAR'], ['دولار', 'SAR']] as const) {
+    const r = await loadChatState({ supabase: fakeSupabase(withCurrency(stored)), userId: 'userA' });
+    assert.equal(r.ok, true);
+    if (r.ok) assert.equal(r.state.currency, expected, String(stored));
+  }
+  const none = await loadChatState({ supabase: fakeSupabase(world), userId: 'ghost' });
+  assert.equal(none.ok, true);
+  if (none.ok) assert.equal(none.state.currency, 'SAR');
+});
+
+test('the audit card in the thread formats its amount with the formatter and the account currency, with no hard-coded dollar', () => {
+  const view = readFileSync(join(__dirname, '..', 'app/(dashboard)/start/start-client.tsx'), 'utf8');
+  assert.doesNotMatch(view, /دولار/);
+  assert.match(view, /formatCurrency\(Math\.round\(card\.estimatedMonthlyWaste\), card\.currency \?\? accountCurrency\)/);
+  assert.doesNotMatch(readFileSync(join(__dirname, '..', 'lib/chat-first/orchestrator.ts'), 'utf8'), /دولار/);
+  const state = readFileSync(join(__dirname, '..', 'lib/chat-first/state.ts'), 'utf8');
+  assert.match(state, /select: 'id, customer_id, customer_name, currency_code'/);
 });

@@ -399,6 +399,7 @@ const baseState: ChatState = {
   accountLinked: true,
   accountName: 'Honey',
   customerId: CID,
+  currency: 'SAR',
   latestAudit: null,
   recommendations: [],
   subscriptionActive: true,

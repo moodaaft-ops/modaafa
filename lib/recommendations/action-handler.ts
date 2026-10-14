@@ -20,6 +20,7 @@ import {
   getSubscriptionAccess,
   refundFeatureUsage,
 } from '@/lib/billing/entitlements';
+import { hasProductAccess } from '@/lib/billing/access-gate';
 import { safeLocalPath } from '@/lib/security/redirect';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 import { sendOpsAlert } from '@/lib/notifications/email';
@@ -92,6 +93,19 @@ export function createRecommendationActionHandler(
 
     if (!recommendationId || !(RECOMMENDATION_INTENTS as readonly string[]).includes(intent)) {
       return NextResponse.redirect(new URL(`${next}?error=invalid_recommendation_action`, req.url), 303);
+    }
+
+    // Approving and applying a change belongs to an account with access: an
+    // active subscription, a live trial or an operator free plan. This runs
+    // before the row is read and before anything is written, for approve,
+    // approve_execute and execute alike, so a visitor without access can no
+    // longer leave an `approved` row behind. «مو الحين» (dismiss) stays open: it
+    // changes nothing on the account.
+    if (intent !== 'dismiss') {
+      const subscriptionAccess = await deps.getSubscriptionAccess(supabase, user.id, user.email);
+      if (!hasProductAccess(subscriptionAccess)) {
+        return NextResponse.redirect(new URL(`${next}?error=subscription_required`, req.url), 303);
+      }
     }
 
     const { data: recommendation, error: recError } = await supabase
@@ -251,15 +265,11 @@ async function executeApprovedRecommendation(
     return NextResponse.redirect(new URL(`${next}?error=account_not_found`, req.url), 303);
   }
 
-  // Cheap entitlement gate BEFORE the Google Ads preflight. The quota
-  // reservation further down is still authoritative; this check exists so a
-  // lapsed subscriber repeatedly clicking تنفيذ does not spend live Google
-  // Ads reads and guardrail aggregation against the shared developer token
-  // just to be told no afterwards.
-  const subscriptionAccess = await deps.getSubscriptionAccess(supabase, user.id, user.email);
-  if (!subscriptionAccess.active) {
-    return NextResponse.redirect(new URL(`${next}?error=subscription_required`, req.url), 303);
-  }
+  // The entitlement gate ran at the top of the handler, before the Google Ads
+  // preflight, so a lapsed subscriber repeatedly clicking تنفيذ does not spend
+  // live Google Ads reads and guardrail aggregation against the shared
+  // developer token just to be told no afterwards. The quota reservation further
+  // down (consumeFeatureUsage) stays authoritative for the plan's daily limit.
 
   // Re-validate the resource names against THIS account's customer id now
   // that it is known. The first pass accepts any `customers/<id>/…`, so

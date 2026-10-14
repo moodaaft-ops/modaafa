@@ -18,7 +18,8 @@ const recs = ['critical', 'medium', 'growth', 'critical'].map((s, i) => ({
   status: i === 3 ? 'applied' : 'pending', created_at: now,
 }));
 const tables = {
-  users: [{ id: UID, email: user.email, name: 'مستخدم تجريبي', preferred_lang: 'ar', registered_at: now }],
+  // Registered (#83's gate sends anyone without registered_at to /register/complete).
+  users: [{ id: UID, email: user.email, name: 'مستخدم تجريبي', preferred_lang: 'ar', registered_at: new Date(Date.now() - 5 * 3600_000).toISOString() }],
   businesses: [{ id: BID, user_id: UID, name: 'متجر العبايات الفاخرة للأزياء النسائية', sector: 'ecommerce', website: 'https://example.com', monthly_budget: 5000, primary_goal: 'conversions', target_regions: ['الرياض', 'جدة'], selected_google_ads_customer_id: '1234567890' }],
   google_ads_accounts: [
     { id: A1, business_id: BID, customer_id: '1234567890', customer_name: long, manager_id: null, status: 'active', is_manager: false, google_status: 'ENABLED', currency_code: 'SAR', time_zone: 'Asia/Riyadh', last_synced_at: now, linked_at: now },

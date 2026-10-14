@@ -23,6 +23,16 @@ export const TRIAL_CHECK_FAILED_MESSAGE = 'صار خلل مؤقت في التح�
 /** Shown wherever a trial is offered: the trial runs on Starter limits (effectiveLimitPlan). */
 export const TRIAL_STARTER_LIMITS_NOTE = 'خلال التجربة تشتغل بحدود باقة البداية، والحدود الكاملة تبدأ من أول دفعة.';
 
+/**
+ * The line under the title of the trial page: what is free (the first audit)
+ * and what opens with the plan (every decision). It must agree with the
+ * paywall, where only the first decision is open, so it never says that reading
+ * the recommendations is free. «تجربتك» when a trial is on offer, «اشتراكك» when it is not.
+ */
+export function trialPageIntro(trialEligible: boolean): string {
+  return `الفحص الأول مجاني، والقرارات كلها تنفتح مع ${trialEligible ? 'تجربتك' : 'اشتراكك'}.`;
+}
+
 const ADS_ACCOUNT_USED_NOTICE = 'حساب الإعلانات هذا أخذ تجربته المجانية قبل، فالاشتراك يبدأ مباشرة.';
 const DISPOSABLE_EMAIL_NOTICE = 'التجربة المجانية تحتاج إيميل دائم، تقدر تشترك مباشرة.';
 

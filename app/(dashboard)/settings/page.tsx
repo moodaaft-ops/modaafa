@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Activity, Building2, Link2, LogOut, Pencil, Settings as SettingsIcon } from 'lucide-react';
+import { Activity, LogOut, Pencil } from 'lucide-react';
 import { redirect } from 'next/navigation';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import {
@@ -12,12 +12,7 @@ import { cn } from '@/lib/utils';
 import { getPlatformReadiness, readinessSummary } from '@/lib/platform/readiness';
 import { isModaafaOperator } from '@/lib/platform/operators';
 import { PendingSubmitButton } from '@/lib/ui/pending-submit-button';
-import { PageHeader } from '@/lib/ui/page-header';
-import { Alert } from '@/lib/ui/alert';
-import { StatusBadge } from '@/lib/ui/status-badge';
-import { EmptyState } from '@/lib/ui/empty-state';
-import { buttonClasses } from '@/lib/ui/button';
-import { inputClasses } from '@/lib/ui/field';
+import { CARD, CalmHeading, CalmNote, CalmPage, CalmTitle, FIELD, StatusWord, pill } from '../calm-page';
 
 const deleteErrors: Record<string, string> = {
   invalid_origin: 'تعذر التحقق من مصدر الطلب. أعد المحاولة من داخل المنصة.',
@@ -62,222 +57,225 @@ export default async function SettingsPage({
   const readiness = isOperator ? getPlatformReadiness() : [];
   const summary = readinessSummary(readiness);
 
+
   return (
-    <>
-      <PageHeader icon={SettingsIcon} title="الإعدادات" description="بيانات النشاط والحسابات المربوطة وإدارة الجلسة." />
+    <CalmPage>
+      <CalmTitle title="الإعدادات" description="بيانات النشاط والحسابات المربوطة وإدارة الجلسة." />
 
-      <div className="space-y-6 p-4 sm:p-6 lg:p-8">
-        {params?.renamed && <Alert tone="success">تم حفظ اسم الحساب.</Alert>}
-        {params?.rename_error && (
-          <Alert tone="danger">{renameErrors[params.rename_error] ?? 'تعذر حفظ الاسم.'}</Alert>
-        )}
+      {(params?.renamed || params?.rename_error) && (
+        <div className="mt-6 space-y-3">
+          {params?.renamed && <CalmNote tone="success">تم حفظ اسم الحساب.</CalmNote>}
+          {params?.rename_error && (
+            <CalmNote tone="danger">{renameErrors[params.rename_error] ?? 'تعذر حفظ الاسم.'}</CalmNote>
+          )}
+        </div>
+      )}
 
-        {/* Readiness — operators only */}
-        {isOperator && (
-        <section className="surface-card p-6">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <h2 className="text-[15px] font-semibold">جاهزية الإطلاق</h2>
-              <p className="mt-1 text-sm text-muted-foreground">فحص آمن للإعدادات الحرجة بدون عرض أي مفاتيح أو أسرار.</p>
-            </div>
-            <StatusBadge tone={summary.ok ? 'success' : 'danger'}>
-              {summary.ok ? 'جاهز تقنياً' : `${summary.blockers} عائق إطلاق`}
-            </StatusBadge>
+      {/* Linked accounts: the part of this page people actually use. */}
+      <section className="mt-8" aria-labelledby="accounts-title">
+        <CalmHeading
+          id="accounts-title"
+          title="حسابات إعلانات Google"
+          hint="سمِّ أي حساب باسم يسهل عليك تمييزه، خاصة الحسابات التي لم ترجع Google اسماً لها."
+          action={
+            <Link href="/onboarding/connect" className={pill.quietSm}>
+              إضافة حساب
+            </Link>
+          }
+          className="mb-3"
+        />
+
+        {(accounts ?? []).length === 0 ? (
+          <div className="py-8 text-center">
+            <p className="text-[17px] font-semibold leading-8">لا توجد حسابات مربوطة</p>
+            <p className="mx-auto mt-1 max-w-[460px] text-[14.5px] leading-8 text-muted-foreground">
+              اربط إعلانات Google بموافقة واحدة، ونسحب حسابك المباشر وكل حساب عميل تحت أي حساب إداري.
+            </p>
+            <Link href="/onboarding/connect" className={cn(pill.primary, 'mt-5')}>
+              ربط إعلانات Google
+            </Link>
           </div>
-          <div className="mt-5 grid gap-3 md:grid-cols-2">
+        ) : (
+          <ul className={cn(CARD, 'divide-y divide-border/70 overflow-hidden')}>
+            {(accounts ?? []).map((account: any) => {
+              const missing = googleAdsAccountNameMissing(account);
+              return (
+                <li key={account.customer_id} className="px-5 py-5 sm:px-7">
+                  <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-[16px] font-semibold leading-7 text-foreground">
+                        {googleAdsAccountDisplayName(account)}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-x-2 text-[13px] leading-6 text-muted-foreground">
+                        <span className="numeric" dir="ltr">
+                          {formatGoogleAdsCustomerId(account.customer_id)}
+                        </span>
+                        {account.currency_code && (
+                          <>
+                            <span aria-hidden>·</span>
+                            <span dir="ltr">{account.currency_code}</span>
+                          </>
+                        )}
+                        {account.time_zone && (
+                          <>
+                            <span aria-hidden>·</span>
+                            <span dir="ltr">{account.time_zone}</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    {missing && <StatusWord tone="warning">بدون اسم من Google</StatusWord>}
+                  </div>
+
+                  <form
+                    action="/api/accounts/rename"
+                    method="post"
+                    className="mt-4 grid gap-2 sm:grid-cols-[1fr_auto]"
+                  >
+                    <input type="hidden" name="customer_id" value={account.customer_id} />
+                    <input
+                      name="customer_name"
+                      defaultValue={missing ? '' : account.customer_name ?? ''}
+                      className={FIELD}
+                      placeholder={missing ? 'اكتب اسم عرض لهذا الحساب' : 'اسم الحساب'}
+                      aria-label={`اسم العرض للحساب ${account.customer_id}`}
+                    />
+                    <PendingSubmitButton pendingLabel="جاري الحفظ..." className={cn(pill.quiet, 'h-11')}>
+                      حفظ الاسم
+                    </PendingSubmitButton>
+                  </form>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+
+      {/* Business profile */}
+      <section className="mt-10" aria-labelledby="business-title">
+        <CalmHeading
+          id="business-title"
+          title="النشاط"
+          action={
+            <Link href="/onboarding/business" className={cn(pill.quietSm, 'gap-1.5')}>
+              <Pencil className="h-3.5 w-3.5" aria-hidden />
+              تعديل
+            </Link>
+          }
+          className="mb-3"
+        />
+        <dl className={cn(CARD, 'divide-y divide-border/70 px-5 sm:px-7')}>
+          <Row label="الاسم" value={business?.name} />
+          <Row label="المجال" value={business?.sector} />
+          <Row label="الموقع" value={business?.website} />
+          <Row label="الميزانية" value={business?.monthly_budget ? `${business.monthly_budget} ر.س` : null} />
+        </dl>
+      </section>
+
+      {/* Session */}
+      <section className="mt-10" aria-labelledby="session-title">
+        <CalmHeading id="session-title" title="الجلسة" />
+        <p className="mt-1 max-w-[640px] text-[14.5px] leading-8 text-muted-foreground">
+          أنت مسجّل الدخول بالبريد <span dir="ltr" className="font-medium text-foreground"><span className="break-all">{user?.email}</span></span>. يمكنك
+          تسجيل الخروج في أي وقت والعودة بنفس الحساب.
+        </p>
+        <form action="/api/auth/signout" method="post" className="mt-4">
+          <PendingSubmitButton pendingLabel="جاري الخروج..." className={pill.quiet}>
+            <LogOut className="h-4 w-4" aria-hidden />
+            تسجيل الخروج
+          </PendingSubmitButton>
+        </form>
+      </section>
+
+      {/* Cancel without deleting: the subscription card lives on the billing page. */}
+      <section className="mt-10" aria-labelledby="cancel-title">
+        <CalmHeading id="cancel-title" title="إلغاء الاشتراك فقط" />
+        <p className="mt-1 max-w-[640px] text-[14.5px] leading-8 text-muted-foreground">
+          تبي توقف الدفع بدون ما تحذف حسابك؟ الإلغاء من صفحة الفوترة، وبياناتك تبقى كما هي.
+        </p>
+        <Link href="/billing#cancel" className={cn(pill.quiet, 'mt-4')}>
+          إلغاء الاشتراك
+        </Link>
+      </section>
+
+      {/* Danger zone */}
+      <section className="mt-12 rounded-[18px] border border-danger/25 bg-danger-soft/40 p-6 sm:p-7" aria-labelledby="delete-title">
+        <h2 id="delete-title" className="text-[16px] font-bold leading-8 text-danger">
+          حذف الحساب نهائياً
+        </h2>
+        <p className="mt-1 max-w-[640px] text-[14.5px] leading-8 text-muted-foreground">
+          هذا الإجراء يحذف حسابك من مُضاعِف، بيانات النشاط، الحسابات الإعلانية المربوطة، المحادثات، التقارير،
+          والتوصيات. إذا كان لديك اشتراك Stripe نشط فسيتم إلغاؤه أولاً، ولن نحذف الحساب إذا تعذر الإلغاء.
+        </p>
+        {params?.delete_error && (
+          <div className="mt-4">
+            <CalmNote tone="danger">{deleteErrors[params.delete_error] ?? 'تعذر حذف الحساب.'}</CalmNote>
+          </div>
+        )}
+        <form action="/api/account/delete" method="post" className="mt-5 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+          <label className="text-sm">
+            <span className="mb-2 block text-[14px] font-medium text-foreground">للتأكيد اكتب: حذف حسابي</span>
+            <input
+              name="confirmation"
+              className={cn(FIELD, 'border-danger/40 focus:border-danger/70 focus:ring-danger/15')}
+              placeholder="حذف حسابي"
+              aria-label="اكتب عبارة التأكيد: حذف حسابي"
+              autoComplete="off"
+            />
+          </label>
+          <PendingSubmitButton pendingLabel="جاري حذف الحساب..." className={cn(pill.danger, 'h-11')}>
+            حذف حسابي نهائياً
+          </PendingSubmitButton>
+        </form>
+      </section>
+
+      {/* Readiness: operators only, last, so it never looks like part of a customer's settings. */}
+      {isOperator && (
+        <section className="mt-12" aria-labelledby="readiness-title">
+          <CalmHeading
+            id="readiness-title"
+            title="جاهزية الإطلاق"
+            hint="فحص آمن للإعدادات الحرجة بدون عرض أي مفاتيح أو أسرار."
+            action={
+              <StatusWord tone={summary.ok ? 'success' : 'danger'}>
+                {summary.ok ? 'جاهز تقنياً' : `${summary.blockers} عائق إطلاق`}
+              </StatusWord>
+            }
+            className="mb-3"
+          />
+          <ul className={cn(CARD, 'divide-y divide-border/70 overflow-hidden')}>
             {readiness.map((item) => (
-              <div key={item.id} className="surface-card p-4">
+              <li key={item.id} className="px-5 py-4 sm:px-7">
                 <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="font-semibold text-foreground">{item.label_ar}</div>
-                    <div className="mt-0.5 text-xs text-muted-foreground" dir="ltr">
+                    <div className="text-[15px] font-semibold text-foreground">{item.label_ar}</div>
+                    <div className="text-[12.5px] text-muted-foreground" dir="ltr">
                       {item.label_en}
                     </div>
                   </div>
-                  <StatusBadge tone={item.ok ? 'success' : item.severity === 'blocker' ? 'danger' : 'warning'}>
+                  <StatusWord tone={item.ok ? 'success' : item.severity === 'blocker' ? 'danger' : 'warning'}>
                     {item.ok ? 'مكتمل' : item.severity === 'blocker' ? 'عائق' : 'تنبيه'}
-                  </StatusBadge>
+                  </StatusWord>
                 </div>
-                {!item.ok && <p className="mt-3 text-xs leading-6 text-muted-foreground">{item.fix_ar}</p>}
-              </div>
+                {!item.ok && <p className="mt-2 text-[13.5px] leading-7 text-muted-foreground">{item.fix_ar}</p>}
+              </li>
             ))}
-          </div>
-          <div className="mt-5 border-t border-border pt-4">
-            <Link href="/operations" className={buttonClasses({ variant: 'outline' })}>
-              <Activity className="h-4 w-4" />
-              فتح مركز التشغيل
-            </Link>
-          </div>
-        </section>
-        )}
-
-        <div className="grid gap-6 lg:grid-cols-2">
-          {/* Business profile */}
-          <section className="surface-card p-6">
-            <div className="flex items-center justify-between gap-4">
-              <h2 className="text-[15px] font-semibold">النشاط</h2>
-              <Link href="/onboarding/business" className="inline-flex min-h-10 items-center gap-1 px-1 text-sm font-semibold text-primary hover:underline">
-                <Pencil className="h-3.5 w-3.5" />
-                تعديل
-              </Link>
-            </div>
-            <dl className="mt-5 space-y-3 text-sm">
-              <Row label="الاسم" value={business?.name} />
-              <Row label="المجال" value={business?.sector} />
-              <Row label="الموقع" value={business?.website} />
-              <Row label="الميزانية" value={business?.monthly_budget ? `${business.monthly_budget} ر.س` : null} />
-            </dl>
-          </section>
-
-          {/* Session */}
-          <section className="flex flex-col surface-card p-6">
-            <h2 className="text-[15px] font-semibold">الجلسة</h2>
-            <p className="mt-1 flex-1 text-sm leading-7 text-muted-foreground">
-              أنت مسجّل الدخول بالبريد <span dir="ltr" className="font-medium text-foreground"><span className="break-all">{user?.email}</span></span>. يمكنك
-              تسجيل الخروج في أي وقت والعودة بنفس الحساب.
-            </p>
-            <form action="/api/auth/signout" method="post" className="mt-4">
-              <PendingSubmitButton pendingLabel="جاري الخروج..." className={buttonClasses({ variant: 'outline' })}>
-                <LogOut className="h-4 w-4" />
-                تسجيل الخروج
-              </PendingSubmitButton>
-            </form>
-          </section>
-        </div>
-
-        {/* Linked accounts + rename */}
-        <section className="surface-card p-6">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <h2 className="text-[15px] font-semibold">حسابات إعلانات Google</h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                سمِّ أي حساب باسم يسهل عليك تمييزه، خاصة الحسابات التي لم ترجع Google اسماً لها.
-              </p>
-            </div>
-            <Link href="/onboarding/connect" className={buttonClasses({ variant: 'outline', size: 'sm' })}>
-              إضافة حساب
-            </Link>
-          </div>
-
-          {(accounts ?? []).length === 0 ? (
-            <div className="mt-5">
-              <EmptyState
-                bare
-                icon={Link2}
-                title="لا توجد حسابات مربوطة"
-                description="اربط إعلانات Google بموافقة واحدة، ونسحب حسابك المباشر وكل حساب عميل تحت أي حساب إداري."
-                className="rounded-lg border border-border bg-background-elevated py-10"
-                action={
-                  <Link href="/onboarding/connect" className={buttonClasses({ variant: 'primary' })}>
-                    ربط إعلانات Google
-                  </Link>
-                }
-              />
-            </div>
-          ) : (
-            <div className="mt-5 space-y-3">
-              {(accounts ?? []).map((account: any) => {
-                const missing = googleAdsAccountNameMissing(account);
-                return (
-                  <div key={account.customer_id} className="surface-card p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div className="flex min-w-0 items-center gap-3">
-                        <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-                          <Building2 className="h-4 w-4" />
-                        </span>
-                        <div className="min-w-0">
-                          <div className="truncate font-semibold text-foreground">{googleAdsAccountDisplayName(account)}</div>
-                          <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                            <span dir="ltr">{formatGoogleAdsCustomerId(account.customer_id)}</span>
-                            <span>· {account.currency_code ?? '—'}</span>
-                            <span>· {account.time_zone ?? '—'}</span>
-                          </div>
-                        </div>
-                      </div>
-                      {missing && <StatusBadge tone="warning">بدون اسم من Google</StatusBadge>}
-                    </div>
-
-                    <form
-                      action="/api/accounts/rename"
-                      method="post"
-                      className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]"
-                    >
-                      <input type="hidden" name="customer_id" value={account.customer_id} />
-                      <input
-                        name="customer_name"
-                        defaultValue={missing ? '' : account.customer_name ?? ''}
-                        className={inputClasses}
-                        placeholder={missing ? 'اكتب اسم عرض لهذا الحساب' : 'اسم الحساب'}
-                        aria-label={`اسم العرض للحساب ${account.customer_id}`}
-                      />
-                      <PendingSubmitButton
-                        pendingLabel="جاري الحفظ..."
-                        className={buttonClasses({ variant: 'outline' })}
-                      >
-                        حفظ الاسم
-                      </PendingSubmitButton>
-                    </form>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </section>
-
-        {/* Cancel without deleting: the subscription card lives on the billing page. */}
-        <section className="surface-card p-6">
-          <h2 className="text-[15px] font-semibold">إلغاء الاشتراك فقط</h2>
-          <p className="mt-2 max-w-3xl text-[13px] leading-7 text-muted-foreground">
-            تبي توقف الدفع بدون ما تحذف حسابك؟ الإلغاء من صفحة الفوترة، وبياناتك تبقى كما هي.
-          </p>
-          <Link href="/billing#cancel" className={cn(buttonClasses({ variant: 'outline' }), 'mt-4')}>
-            إلغاء الاشتراك
+          </ul>
+          <Link href="/operations" className={cn(pill.quiet, 'mt-4')}>
+            <Activity className="h-4 w-4" aria-hidden />
+            فتح مركز التشغيل
           </Link>
         </section>
-
-        {/* Danger zone */}
-        <section className="rounded-xl border border-danger/25 bg-danger/[0.04] p-6">
-          <h2 className="text-[15px] font-semibold text-danger dark:text-danger">
-            حذف الحساب نهائياً
-          </h2>
-          <p className="mt-2 max-w-3xl text-[13px] leading-7 text-muted-foreground">
-            هذا الإجراء يحذف حسابك من مُضاعِف، بيانات النشاط، الحسابات الإعلانية المربوطة، المحادثات، التقارير،
-            والتوصيات. إذا كان لديك اشتراك Stripe نشط فسيتم إلغاؤه أولاً، ولن نحذف الحساب إذا تعذر الإلغاء.
-          </p>
-          {params?.delete_error && (
-            <div className="mt-4">
-              <Alert tone="danger">{deleteErrors[params.delete_error] ?? 'تعذر حذف الحساب.'}</Alert>
-            </div>
-          )}
-          <form action="/api/account/delete" method="post" className="mt-5 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
-            <label className="text-sm">
-              <span className="mb-2 block text-[13px] font-medium text-foreground">للتأكيد اكتب: حذف حسابي</span>
-              <input
-                name="confirmation"
-                className="h-11 w-full rounded-lg border border-danger/30 bg-background-elevated px-3.5 text-base text-foreground outline-none sm:text-sm transition-[border-color,box-shadow] duration-150 placeholder:text-foreground-subtle focus:border-danger/70 focus:ring-4 focus:ring-danger/15"
-                placeholder="حذف حسابي"
-                aria-label="اكتب عبارة التأكيد: حذف حسابي"
-                autoComplete="off"
-              />
-            </label>
-            <PendingSubmitButton
-              pendingLabel="جاري حذف الحساب..."
-              className={buttonClasses({ variant: 'danger', size: 'lg' })}
-            >
-              حذف حسابي نهائياً
-            </PendingSubmitButton>
-          </form>
-        </section>
-      </div>
-    </>
+      )}
+    </CalmPage>
   );
 }
 
 function Row({ label, value }: { label: string; value?: string | number | null }) {
   return (
-    <div className="flex justify-between gap-4 border-b border-border pb-3 last:border-0">
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="min-w-0 truncate font-medium text-foreground">{value ?? '—'}</dd>
+    <div className="flex items-center justify-between gap-4 py-4">
+      <dt className="text-[14.5px] text-muted-foreground">{label}</dt>
+      <dd className="min-w-0 truncate text-[15px] font-medium text-foreground">{value ?? 'ما فيه'}</dd>
     </div>
   );
 }

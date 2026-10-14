@@ -13,7 +13,9 @@ import { EmptyState } from '@/lib/ui/empty-state';
 import { StatusBadge, severityTone, recommendationStatusTone } from '@/lib/ui/status-badge';
 import { buttonClasses } from '@/lib/ui/button';
 import { getSubscriptionAccess, featureAccessMessage } from '@/lib/billing/entitlements';
-import { SubscriptionGate } from '@/lib/ui/subscription-gate';
+import { hasProductAccess } from '@/lib/billing/access-gate';
+import { loadPlanLock, type PlanLockData } from '@/lib/plan/load';
+import { PlanLock } from '@/lib/plan/plan-lock';
 import { Alert } from '@/lib/ui/alert';
 
 export const metadata = {
@@ -28,14 +30,23 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
     getAccountWorkspace(user.id),
     getSubscriptionAccess(supabase, user.id, user.email),
   ]);
-  const [recommendationsResult, actionsResult] = await Promise.all([
+  // Without a plan the recommendations are not listed here: the screen shows the
+  // same «خطتك جاهزة» lock as /home, and the read below keeps only what the
+  // counts need (id and status), so a description, a payload or an amount of a
+  // locked decision is never in the page. The execution log and its undo stay.
+  const locked = !hasProductAccess(subscription);
+  const [recommendationsResult, actionsResult, lock] = await Promise.all([
     selectedAccount
       ? supabase
           .from('recommendations')
           // action_payload is selected so the approval card can state EXACTLY
           // what will change. Without it the user was approving an LLM-written
           // sentence while a completely different object drove the mutation.
-          .select('id, title, description, severity, status, expected_impact, action_payload, created_at')
+          .select(
+            locked
+              ? 'id, status'
+              : 'id, title, description, severity, status, expected_impact, action_payload, created_at'
+          )
           .eq('account_id', selectedAccount.id)
           .order('created_at', { ascending: false })
           .limit(20)
@@ -48,6 +59,15 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
           .order('created_at', { ascending: false })
           .limit(20)
       : Promise.resolve({ data: [], error: null }),
+    locked && selectedAccount
+      ? loadPlanLock(supabase, {
+          accountId: selectedAccount.id,
+          currency: selectedAccount.currency_code,
+          userId: user.id,
+          userEmail: user.email,
+          suspended: Boolean(subscription.suspended),
+        }).catch((): PlanLockData | null => null)
+      : Promise.resolve(null),
   ]);
   assertSupabaseRead(recommendationsResult.error, 'load optimizer recommendations');
   assertSupabaseRead(actionsResult.error, 'load optimizer actions');
@@ -80,7 +100,6 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
           />
         ) : (
           <div className="space-y-6">
-            {!subscription.active && <SubscriptionGate compact description="يمكنك مراجعة التوصيات الآن، لكن تنفيذ أي تعديل على إعلانات Google يحتاج تجربة أو اشتراكاً نشطاً." />}
             {params?.error && (
               <Alert tone="danger">{optimizerErrorMessage(params.error)}</Alert>
             )}
@@ -99,6 +118,29 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
             </section>
 
             <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+              {locked ? (
+                lock ? (
+                  // Beside the log the card keeps its own height instead of stretching to the log's.
+                  <div className="lg:self-start">
+                    <PlanLock
+                      plan={lock.plan}
+                      trialEligible={lock.trialEligible}
+                      cta={lock.cta}
+                      suspended={Boolean(subscription.suspended)}
+                    />
+                  </div>
+                ) : (
+                  <section className="surface-card p-5">
+                    <div className="text-[14px] font-semibold">التوصيات</div>
+                    <p className="mt-1 text-sm leading-7 text-muted-foreground">
+                      تفاصيل التوصيات تنفتح مع تجربتك أو اشتراكك.
+                    </p>
+                    <a href="/billing" className={buttonClasses({ variant: 'primary', size: 'sm', className: 'mt-3' })}>
+                      فعّل اشتراكك
+                    </a>
+                  </section>
+                )
+              ) : (
               <section className="surface-card overflow-hidden">
                 <div className="border-b border-border px-5 py-4">
                   <div className="text-[14px] font-semibold">التوصيات</div>
@@ -183,8 +225,9 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
                   </div>
                 )}
               </section>
+              )}
 
-              <section className="surface-card overflow-hidden">
+              <section id="execution-log" className="surface-card scroll-mt-4 overflow-hidden">
                 <div className="border-b border-border px-5 py-4">
                   <div className="text-[14px] font-semibold">سجل التنفيذ</div>
                   <p className="mt-1 text-xs leading-6 text-muted-foreground">أثر واضح لكل قرار اعتمدته أو نفّذته المنصة لاحقاً.</p>

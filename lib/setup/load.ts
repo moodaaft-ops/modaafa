@@ -8,10 +8,13 @@ import {
   type ConnectJobSnapshot,
   type ConnectPhase,
 } from '@/lib/onboarding/connect-progress';
-import { impactLabel, monthlyImpact, pickFirstOpportunities, type OpportunityRow } from '@/lib/onboarding/first-opportunities';
+import { firstFindings, type OpportunityRow } from '@/lib/onboarding/first-opportunities';
 import { getSubscriptionAccess } from '@/lib/billing/entitlements';
 import { getBillingCheckoutContext } from '@/lib/billing/checkout-policy';
+import { hasProductAccess } from '@/lib/billing/access-gate';
 import { readFreeAuditView } from '@/lib/chat-first/free-audit-view';
+import { loadPlan } from '@/lib/plan/load';
+import { paywallCta, paywallCtaFromCheckout, type PaywallCta, type Plan } from '@/lib/plan/plan';
 import { createAdminClient } from '@/lib/supabase/server';
 import {
   TYPE_OPTIONS,
@@ -75,7 +78,14 @@ export type SetupState = {
   findingsTotal: number;
   subscriptionActive: boolean;
   trialEligible: boolean;
+  /** Where the paywall button goes: the trial checkout, or /billing for a subscription that is stopped. */
+  cta: PaywallCta;
   freeAudit: 'unknown' | 'exhausted' | 'in_progress' | 'available';
+  /**
+   * «خطتك جاهزة»: the audit's summary, the first decision open and the rest
+   * locked. Read only for someone without access; null once they have it.
+   */
+  plan: Plan | null;
 };
 
 type User = { id: string; email?: string | null; user_metadata?: Record<string, unknown> | null };
@@ -163,13 +173,9 @@ export async function loadSetupState(supabase: any, user: User, opts: { edit?: b
         .limit(50);
       const rows = (recs?.error ? [] : recs?.data ?? []) as OpportunityRow[];
       findingsTotal = rows.length;
-      findings = pickFirstOpportunities(rows).map((rec) => ({
-        id: rec.id,
-        title: rec.title,
-        severity: rec.severity ?? null,
-        impactLabel: impactLabel(rec),
-        impactAmount: monthlyImpact(rec),
-      }));
+      // Without access the amounts of the top decisions stay on the server
+      // (this state goes whole to the browser): only titles are sent.
+      findings = firstFindings(rows, hasProductAccess(access));
     }
   }
 
@@ -195,6 +201,7 @@ export async function loadSetupState(supabase: any, user: User, opts: { edit?: b
   });
 
   let trialEligible = false;
+  let cta = paywallCta({ trialEligible: false });
   let freeAudit: SetupState['freeAudit'] = 'unknown';
   if (!access.active && accounts.length > 0) {
     const [checkout, view] = await Promise.all([
@@ -202,7 +209,17 @@ export async function loadSetupState(supabase: any, user: User, opts: { edit?: b
       selectedId ? readFreeAuditView(selectedId, admin ?? undefined) : Promise.resolve('unknown' as const),
     ]);
     trialEligible = Boolean(checkout?.trialEligible);
+    cta = paywallCtaFromCheckout(checkout);
     freeAudit = view ?? 'unknown';
+  }
+
+  let plan: Plan | null = null;
+  if (!access.active && !edit && selectedAccount && !needsChoice) {
+    try {
+      plan = await loadPlan(supabase, { accountId: selectedAccount.id, currency: selectedAccount.currency_code });
+    } catch {
+      plan = null;
+    }
   }
 
   const accountName =
@@ -243,7 +260,9 @@ export async function loadSetupState(supabase: any, user: User, opts: { edit?: b
     findingsTotal,
     subscriptionActive: access.active,
     trialEligible,
+    cta,
     freeAudit,
+    plan,
   };
 }
 

@@ -2,6 +2,7 @@ import { after } from 'next/server';
 import { createMessageForAgent } from '@/lib/ai/client';
 import { probeWriteAccess, type WriteAccess } from '@/lib/ai/execution-preflight';
 import { llmBudgetState, type LlmBudgetState } from '@/lib/ai/usage';
+import { hasProductAccess } from '@/lib/billing/access-gate';
 import { getSubscriptionAccess } from '@/lib/billing/entitlements';
 import type { ChatState } from '@/lib/chat-first/contracts';
 import { decrypt } from '@/lib/crypto';
@@ -96,6 +97,10 @@ export async function answerWithJarvis(args: {
   const isOperator = isModaafaOperator(user.email);
 
   const subscription = await getSubscriptionAccess(supabase, user.id, user.email);
+  // Closed to anyone without access, whatever called this. /api/chat/start has
+  // already refused them; throwing here sends a stray caller to the rule-based
+  // answer (planTurn), which costs nothing, before any model or database work.
+  if (!hasProductAccess(subscription)) throw new Error('subscription_required');
   const budget = await llmBudgetState({
     userId: user.id,
     // The LLM budget is a share of the plan price; llmBudgetState prices a
@@ -212,8 +217,15 @@ export async function answerWithJarvis(args: {
       readPlaybook: async (ids) => formatPlaybookResult(await readPlaybook(admin, ids)),
     },
   });
-  // Implicit memory: only when the brain did not already save a fact this turn.
-  if (businessRow && !result.tools.some((tool) => tool.name === 'save_business_fact')) {
+  // Implicit memory: only when the brain did not already save a fact this turn,
+  // and only for an account with access. /api/chat/start already refuses anyone
+  // without it; this is the second lock on the one background model call that
+  // runs after the answer, so it can never be reached from another entry.
+  if (
+    hasProductAccess(subscription) &&
+    businessRow &&
+    !result.tools.some((tool) => tool.name === 'save_business_fact')
+  ) {
     runAfter(() =>
       extractAndSaveFacts({
         message,

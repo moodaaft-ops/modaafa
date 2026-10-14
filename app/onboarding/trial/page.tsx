@@ -17,6 +17,7 @@ import {
   TRIAL_CHECK_FAILED_MESSAGE,
   TRIAL_STARTER_LIMITS_NOTE,
   trialIneligibleNotice,
+  trialPageIntro,
 } from '@/lib/billing/trial-copy';
 import { Alert } from '@/lib/ui/alert';
 import { buttonClasses } from '@/lib/ui/button';
@@ -63,6 +64,10 @@ export default async function TrialPage({
     getBillingCheckoutContext(supabase, user.id, user.email),
     getPlanPriceAmounts(),
   ]);
+  // A subscription already exists but gives no access (a payment that did not
+  // go through, paused): start-trial refuses it with «already_subscribed», so
+  // this page would be a dead end. The card and the portal live on /billing.
+  if (checkout.activeSubscriptionId) redirect('/billing');
   const trialEligible = checkout.trialEligible;
   // The eligibility check could not run: say so and offer a retry, never a
   // paid start (the checkout route refuses it too).
@@ -80,9 +85,9 @@ export default async function TrialPage({
             {trialEligible ? `ابدأ تجربتك ${daysLabel(TRIAL_DAYS)}` : checkFailed ? 'تابع تفعيل اشتراكك' : 'فعّل اشتراكك'}
           </h2>
           <p className="mt-2 max-w-2xl text-sm leading-7 text-muted-foreground">
-            الفحص وقراءة التوصيات مفتوحة لك بدون اشتراك. الاشتراك يفعّل تنفيذ التوصيات على{' '}
-            <span className="font-semibold text-foreground">{googleAdsAccountDisplayName(selectedAccount)}</span>
-            ، وكل تنفيذ يبقى بعد معاينتك وموافقتك.
+            {trialPageIntro(trialEligible)} وكل تنفيذ على{' '}
+            <span className="font-semibold text-foreground">{googleAdsAccountDisplayName(selectedAccount)}</span>{' '}
+            يبقى بعد معاينتك وموافقتك.
           </p>
         </div>
 

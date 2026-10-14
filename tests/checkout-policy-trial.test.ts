@@ -94,6 +94,8 @@ type World = {
   customerLedgerError?: boolean | { code?: string; message: string };
   /** An error to return for the businesses read instead of rows. */
   businessesError?: { code?: string; message: string };
+  /** A subscription row in a live state (trialing, active, past_due, paused). */
+  live?: { stripe_subscription_id: string; status: string };
 };
 
 /** `true` is a plain failure; an object is returned as the PostgREST error. */
@@ -105,6 +107,10 @@ function userClient(world: World) {
   return fakeClient((query) => {
     switch (query.table) {
       case 'subscriptions': {
+        // The live-subscription read is the one filtered on status.
+        if (query.filters.some(([op, column]) => op === 'in' && column === 'status')) {
+          return { data: world.live ?? null, error: NO_ERROR };
+        }
         const wantsPriorTrial = query.filters.some(([, column]) => column === 'trial_ends_at');
         return { data: wantsPriorTrial && world.priorTrial ? { id: 's1' } : null, error: NO_ERROR };
       }
@@ -631,4 +637,15 @@ test('checkoutTrialDecision: only an eligible user gets trial days, check_failed
     action: 'blocked',
     error: 'trial_check_failed',
   });
+});
+
+test('a live subscription is reported with its Stripe status, so the paywall can say why it is stopped', async () => {
+  const none = await context({ accounts: [{ customer_id: '1234567890' }] });
+  assert.equal(none.result.activeSubscriptionId, null);
+  assert.equal(none.result.activeSubscriptionStatus, null);
+  for (const status of ['past_due', 'paused', 'trialing', 'active']) {
+    const { result } = await context({ live: { stripe_subscription_id: 'sub_1', status } });
+    assert.equal(result.activeSubscriptionId, 'sub_1', status);
+    assert.equal(result.activeSubscriptionStatus, status, status);
+  }
 });
