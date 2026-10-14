@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Image from 'next/image';
 import Link from 'next/link';
 import { headers } from 'next/headers';
-import { Check, MessageCircle, Mic, ShieldCheck } from 'lucide-react';
+import { BadgeCheck, Check, MessageCircle, Mic, ShieldCheck } from 'lucide-react';
 import { TikTokPixel } from '@/lib/analytics/tiktok-pixel';
 import { getPlanPriceAmounts, type PeriodKey, type PlanKey } from '@/lib/billing/stripe';
 import { NONCE_HEADER } from '@/lib/security/csp';
@@ -155,6 +155,7 @@ export default async function HomePage({
     getProofCounts({
       auditedAccounts: ownerConfig.proofMinAuditedAccounts,
       recommendations: ownerConfig.proofMinRecommendations,
+      monthlyImpactSar: ownerConfig.proofMinMonthlyImpactSar,
     }),
     headers().then((h) => h.get(NONCE_HEADER) ?? undefined),
   ]);
@@ -227,11 +228,22 @@ export default async function HomePage({
               الفحص الأول بدون بطاقة، وما يتغيّر شي في حسابك إلا باعتمادك.
             </p>
             {proof.auditedAccounts !== null && (
-              <p className="mt-6 inline-flex items-center gap-2.5 border-s-2 border-brand-signal ps-3 text-[14.5px] text-brand-paper/80">
+              <p className="mt-6 max-w-[34rem] border-s-2 border-brand-signal ps-3 text-[14.5px] leading-7 text-brand-paper/80">
                 انفحص فيه <span className="font-bold text-brand-paper numeric">{proof.auditedAccounts}</span> حساب إعلانات
-                حقيقي لين اليوم
+                حقيقي
+                {proof.monthlyImpactSar !== null && (
+                  <>
+                    ، وطلّع قرارات قيمتها التقديرية{' '}
+                    <span className="font-bold text-brand-paper numeric">
+                      {proof.monthlyImpactSar.toLocaleString('en-US')}
+                    </span>{' '}
+                    ريال في الشهر
+                  </>
+                )}
+                .
               </p>
             )}
+            {ownerConfig.googlePartner && <PartnerBadge tone="navy" className="mt-6" />}
           </div>
 
           <HeroStage />
@@ -436,6 +448,7 @@ export default async function HomePage({
                 <p className="font-display text-[1.5rem] font-semibold leading-none">أيمن أمين</p>
                 <p className="mt-2 text-[14px] text-muted-foreground">مؤسس وكالة مُضاعفة ومنصة مُضاعِف</p>
               </div>
+              {ownerConfig.googlePartner && <PartnerBadge tone="paper" />}
               <a
                 href={WHATSAPP.general}
                 target="_blank"
@@ -460,60 +473,67 @@ export default async function HomePage({
           </div>
         </div>
 
-        {(proof.auditedAccounts !== null || proof.recommendations !== null || ownerConfig.agencyResults.length > 0) && (
-          <div className={cn(container, 'mt-16 sm:mt-24')}>
-            <div
-              className={cn(
-                'grid gap-px overflow-hidden border border-border bg-border',
-                (proof.auditedAccounts !== null || proof.recommendations !== null) &&
-                  ownerConfig.agencyResults.length > 0 &&
-                  'lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]'
-              )}
-            >
-              {(proof.auditedAccounts !== null || proof.recommendations !== null) && (
-                <div className="bg-card p-7 sm:p-9">
+        {(proof.monthlyImpactSar !== null || proof.auditedAccounts !== null || ownerConfig.agencyResults.length > 0) && (
+          <div className={cn(container, 'mt-16 space-y-5 sm:mt-24')}>
+            {(proof.monthlyImpactSar !== null || proof.auditedAccounts !== null) && (
+              <div className="grid items-end gap-10 border border-border bg-card p-7 sm:p-10 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
+                <div>
                   <p className="text-[14px] font-semibold text-muted-foreground">من قاعدة بيانات المنصة، تتحدث كل ساعة</p>
-                  <dl className="mt-6 space-y-7">
-                    {proof.auditedAccounts !== null && (
-                      <div>
-                        <dt className="font-display text-[2.6rem] font-semibold leading-none numeric">
-                          {proof.auditedAccounts.toLocaleString('en-US')}
-                        </dt>
-                        <dd className="mt-2 text-[16px] text-muted-foreground">حساب إعلانات انفحص في مُضاعِف</dd>
-                      </div>
-                    )}
-                    {proof.recommendations !== null && (
-                      <div>
-                        <dt className="font-display text-[2.6rem] font-semibold leading-none numeric">
-                          {proof.recommendations.toLocaleString('en-US')}
-                        </dt>
-                        <dd className="mt-2 text-[16px] text-muted-foreground">قرار جهّزه لأصحابها، كل واحد بسببه</dd>
-                      </div>
-                    )}
-                  </dl>
+                  {proof.monthlyImpactSar !== null && (
+                    <>
+                      <p className="mt-5 flex flex-wrap items-baseline gap-x-3 font-display font-semibold leading-none">
+                        <span className="text-[3.4rem] numeric sm:text-[4.6rem]">
+                          {proof.monthlyImpactSar.toLocaleString('en-US')}
+                        </span>
+                        <span className="text-[1.6rem] text-muted-foreground sm:text-[2rem]">ريال في الشهر</span>
+                      </p>
+                      <p className="mt-4 max-w-[30rem] text-[16.5px] leading-8 text-muted-foreground">
+                        القيمة التقديرية للهدر والفرص في القرارات اللي جهّزها مُضاعِف لأصحاب الحسابات، كل قرار بسببه
+                        ورقمه.
+                      </p>
+                    </>
+                  )}
                 </div>
-              )}
-              {ownerConfig.agencyResults.map((r) => (
-                <div key={r.business} className="bg-card p-7 sm:p-9">
-                  <p className="text-[14px] font-semibold text-muted-foreground">
-                    من شغل الوكالة: {r.business}، {r.period}
-                  </p>
-                  <dl className="mt-6 space-y-6">
-                    {r.lines.map((line) => (
-                      <div key={line.label}>
-                        <dt className="text-[15.5px]">{line.label}</dt>
-                        <dd className="mt-2 flex flex-wrap items-baseline gap-x-3 font-display text-[1.9rem] font-semibold leading-tight numeric">
-                          <span className="text-muted-foreground line-through decoration-1">{line.before}</span>
-                          <span aria-hidden className="text-[1.2rem] text-muted-foreground">←</span>
-                          <span>{line.after}</span>
-                        </dd>
-                      </div>
-                    ))}
-                  </dl>
-                  <p className="mt-6 text-[14px] leading-7 text-muted-foreground">{r.note}</p>
-                </div>
-              ))}
-            </div>
+                <dl className="grid grid-cols-2 gap-px overflow-hidden border border-border bg-border">
+                  {proof.auditedAccounts !== null && (
+                    <div className="bg-card p-5 sm:p-6">
+                      <dt className="font-display text-[2.2rem] font-semibold leading-none numeric">
+                        {proof.auditedAccounts.toLocaleString('en-US')}
+                      </dt>
+                      <dd className="mt-2 text-[14.5px] leading-6 text-muted-foreground">حساب إعلانات انفحص</dd>
+                    </div>
+                  )}
+                  {proof.recommendations !== null && (
+                    <div className="bg-card p-5 sm:p-6">
+                      <dt className="font-display text-[2.2rem] font-semibold leading-none numeric">
+                        {proof.recommendations.toLocaleString('en-US')}
+                      </dt>
+                      <dd className="mt-2 text-[14.5px] leading-6 text-muted-foreground">قرار جهّزه بسببه</dd>
+                    </div>
+                  )}
+                </dl>
+              </div>
+            )}
+            {ownerConfig.agencyResults.map((r) => (
+              <div key={r.business} className="border border-border bg-card p-7 sm:p-9">
+                <p className="text-[14px] font-semibold text-muted-foreground">
+                  من شغل الوكالة: {r.business}، {r.period}
+                </p>
+                <dl className="mt-6 grid gap-6 sm:grid-cols-2">
+                  {r.lines.map((line) => (
+                    <div key={line.label}>
+                      <dt className="text-[15.5px]">{line.label}</dt>
+                      <dd className="mt-2 flex flex-wrap items-baseline gap-x-3 font-display text-[1.9rem] font-semibold leading-tight numeric">
+                        <span className="text-muted-foreground line-through decoration-1">{line.before}</span>
+                        <span aria-hidden className="text-[1.2rem] text-muted-foreground">←</span>
+                        <span>{line.after}</span>
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+                <p className="mt-6 text-[14px] leading-7 text-muted-foreground">{r.note}</p>
+              </div>
+            ))}
           </div>
         )}
       </section>
@@ -791,5 +811,26 @@ export default async function HomePage({
         }}
       />
     </main>
+  );
+}
+
+/** Text badge for the agency's Google Partner status. No Google logo is drawn. */
+function PartnerBadge({ tone, className }: { tone: 'navy' | 'paper'; className?: string }) {
+  return (
+    <p
+      className={cn(
+        'inline-flex items-center gap-2.5 border px-3.5 py-2',
+        tone === 'navy' ? 'border-brand-paper/25 text-brand-paper' : 'border-foreground/30 text-foreground',
+        className
+      )}
+    >
+      <BadgeCheck className={cn('h-5 w-5', tone === 'navy' ? 'text-brand-signal' : 'text-foreground')} aria-hidden />
+      <span dir="ltr" className="text-[14.5px] font-bold">
+        Google Partner
+      </span>
+      <span className={cn('text-[13.5px]', tone === 'navy' ? 'text-brand-paper/70' : 'text-muted-foreground')}>
+        وكالة مُضاعفة شريك معتمد
+      </span>
+    </p>
   );
 }

@@ -63,40 +63,32 @@ export const ownerConfig = {
   proofMinRecommendations: 100 as number | null,
 
   /**
-   * Real results from the agency's own client work, without client names.
-   * Source: the agency's June and July 2026 measurement for a dental clinic
-   * (real cost per contact, calls and WhatsApp clicks).
+   * Real results from the agency's own client work, without client names,
+   * each with the numbers the agency measured. Empty = the card is hidden.
    */
-  agencyResults: [
-    {
-      business: 'عيادة أسنان',
-      period: 'يونيو ويوليو 2026',
-      lines: [
-        { label: 'تكلفة التواصل الحقيقي', before: '5.82 ريال', after: '5.41 ريال' },
-        { label: 'نسبة اللي تواصلوا من اللي ضغطوا', before: '23.3%', after: '32.2%' },
-      ],
-      note: 'نتيجة إدارة يدوية في الوكالة، مو نتيجة المنصة. حطيناها لأن نفس طريقة القراءة هي اللي داخل مُضاعِف.',
-    },
-  ] as AgencyResult[],
+  agencyResults: [] as AgencyResult[],
+
+  /** The money line (decisions' estimated monthly value) shows from this many SAR. null = never show. */
+  proofMinMonthlyImpactSar: 5000 as number | null,
 
   /** A real audit report with the client details covered. null = hidden. */
   reportSample: null as ReportSample | null,
 
-  /** Set to true only after Google lists the agency as an official Partner. */
-  googlePartner: false,
+  /** The agency is a Google Partner (confirmed by Ayman, 14 Oct 2026). Text badge only, no Google logo. */
+  googlePartner: true,
 
+  // Approved by Ayman on 14 Oct 2026 («اخر فكرة الضمان حالياً»): the
+  // unconditional first-payment guarantee.
   guarantee: {
-    title: 'ضمان أول شهر',
-    promise:
-      'إذا ما لقى لك مُضاعِف في أول شهر مدفوع هدر أو فرص قيمتها أكثر من اشتراكك، نرجع لك فلوس هالشهر كاملة.',
+    title: 'ضمان أول دفعة',
+    promise: 'جرّب أول شهر مدفوع، وإذا ما شفت فايدة نرجع لك فلوسك كاملة بدون أسئلة.',
     terms: [
-      'يشمل أول دفعة شهرية بعد التجربة، مرة وحدة لكل عميل ولكل حساب إعلانات.',
-      'القياس من القرارات اللي جهّزها لك مُضاعِف خلال أول 30 يوم بعد الدفعة: نجمع «التوفير المتوقع شهرياً» و«الزيادة المتوقعة شهرياً» المكتوبة على كل قرار، سواء اعتمدته أو لا.',
-      'لازم يكون الحساب مربوط ويصرف خلال الشهر، لأن الحساب الواقف ما يطلع له قرارات.',
-      'تطلب الاسترجاع خلال 14 يوم بعد نهاية الشهر، على الواتساب أو الإيميل، ويرجع المبلغ لنفس البطاقة.',
-      'الاسترجاع يلغي الاشتراك.',
+      'يشمل أول دفعة بعد التجربة المجانية، شهرية كانت أو سنوية، مرة وحدة لكل عميل ولكل حساب إعلانات.',
+      'تطلب الاسترجاع خلال 30 يوم من تاريخ الدفعة، على الواتساب أو الإيميل، بدون ما تذكر سبب.',
+      'يرجع المبلغ كامل لنفس البطاقة، وموعد ظهوره في كشف حسابك يحدده البنك.',
+      'الاسترجاع يلغي الاشتراك، والتعديلات اللي اعتمدتها على حسابك تبقى لك.',
     ],
-    approved: false,
+    approved: true,
   } as Guarantee,
 };
 

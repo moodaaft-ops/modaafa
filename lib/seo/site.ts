@@ -81,7 +81,7 @@ export const PAGE_DATES: Record<string, string> = {
   '/register': '2026-10-14',
   '/privacy': '2026-09-29',
   '/terms': '2026-10-07',
-  '/refund': '2026-10-07',
+  '/refund': '2026-10-14',
   '/data-deletion': '2026-07-21',
 };
 

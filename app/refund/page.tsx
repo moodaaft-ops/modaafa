@@ -17,7 +17,7 @@ export default function RefundPage() {
     <LegalPage
       title="سياسة الاسترجاع والاسترداد"
       description="متى يُخصم الاشتراك، وكيف تلغيه قبل أول خصم، وما الذي يشمله الاسترداد."
-      updatedAt="7 أكتوبر 2026"
+      updatedAt="14 أكتوبر 2026"
     >
       <LegalSection title="ما الذي تغطيه هذه السياسة">
         <p>
