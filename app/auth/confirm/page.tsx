@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
   ...pageMetadata({
-    title: 'أكمل دخولك | مُضاعِف',
+    title: 'أكمل دخولك',
     path: '/auth/confirm',
     description: 'أكمل دخولك إلى مُضاعِف بالضغط على الزر.',
     noIndex: true,
