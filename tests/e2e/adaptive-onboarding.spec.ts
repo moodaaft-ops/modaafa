@@ -102,11 +102,12 @@ async function answerFirstCampaignQuestions(page: Page) {
   await pick(page, 'مدن معيّنة');
   await pick(page, 'الرياض');
   await pick(page, /^تم،/);
-  // The goal is not asked: the business type already answers it (a store wants orders).
+  // The goal is asked in the store's words, even though the type answer wrote the sector.
+  await expect(page.getByText('متى تقول إن الإعلان نجح؟')).toBeVisible({ timeout: 15_000 });
+  await pick(page, 'طلبات شراء من المتجر');
   await expect(page.getByText('كم تبي تصرف على إعلانات قوقل بالشهر؟')).toBeVisible({ timeout: 15_000 });
   await pick(page, 'من 3,000 إلى 10,000 ريال');
   await pick(page, 'بكتبه بعدين');
-  await expect(page.getByText('متى تقول إن الإعلان نجح؟')).toHaveCount(0);
 }
 
 // ---------------------------------------------------------------------------

@@ -75,7 +75,10 @@ export type AdaptiveViewResult = {
  */
 export function adaptiveAnswered(args: { answered: Answered; ledger: ReadonlyMap<string, string | null> }): Answered {
   const out: Answered = { ...args.answered };
-  if (args.ledger.get('confirm') === 'yes') {
+  // The same holds when this chat wrote the sector through a `type` answer: the
+  // screen re-plans after `type`, and the goal (asked in the kind's words for
+  // new, dormant and no_account) must not vanish because the sector now exists.
+  if (args.ledger.get('confirm') === 'yes' || args.ledger.has('type')) {
     for (const key of ['type', 'name', 'goal']) {
       if (!args.ledger.has(key)) delete out[key];
     }

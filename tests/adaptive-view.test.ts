@@ -491,6 +491,9 @@ test('answered: a «yes» on the opener does not turn the sector it wrote into a
   // A real answer in the ledger stays.
   const kept = adaptiveAnswered({ answered: { ...profileAnswered, goal: 'clinic_calls' }, ledger: new Map([...ledger, ['goal', 'clinic_calls']]) });
   assert.equal(kept.goal, 'clinic_calls');
+  // A `type` answered in this chat wrote the sector too: the goal is still asked.
+  const typed = adaptiveAnswered({ answered: { type: 'ecommerce', name: null, goal: null }, ledger: new Map([['type', 'ecommerce']]) });
+  assert.deepEqual(typed, { type: 'ecommerce' });
   // Without a yes nothing is touched.
   const untouched = adaptiveAnswered({ answered: { type: 'clinic', goal: null }, ledger: new Map([['confirm', 'no']]) });
   assert.deepEqual(untouched, { type: 'clinic', goal: null });
