@@ -9,6 +9,7 @@ import {
   adaptiveLabel,
   adaptiveReaction,
   breakEvenLine,
+  breakEvenContactLine,
   contactValueLine,
   parseAdaptiveAnswer,
 } from '../lib/setup/adaptive/answers';
@@ -393,11 +394,13 @@ test('managed: an agency answer confirms, an outside manager or other editors on
 // adaptivePending
 // ---------------------------------------------------------------------------
 
-test('pending: the dental clinic is asked eight things', () => {
+test('pending: the dental clinic is asked ten things (profit per patient and close rate included)', () => {
   assert.deepEqual(pending(classify(clinicAccount())), [
     'confirm',
     'focus_service',
     'value',
+    'profit_per_deal',
+    'close_rate',
     'pain',
     'call_hours',
     'whatsapp_booking',
@@ -436,11 +439,18 @@ test('pending: answered keys are never asked again, and consent follows its own 
   const scenario = classify(clinicAccount());
   assert.deepEqual(pending(scenario, { confirm: 'yes', focus_service: 'dental_braces', pain: 'clinic_few_calls' }), [
     'value',
+    'profit_per_deal',
+    'close_rate',
     'call_hours',
     'whatsapp_booking',
     'budget',
     'consent',
   ]);
+  // The two economics questions are skipped once answered, one at a time.
+  assert.deepEqual(
+    pending(scenario, { confirm: 'yes', focus_service: 'dental_braces', value: '100_500', pain: 'clinic_few_calls', profit_per_deal: '200_1k' }),
+    ['close_rate', 'call_hours', 'whatsapp_booking', 'budget', 'consent']
+  );
   assert.equal(pending(scenario, {}, { consent: true }).includes('consent'), false);
   // An answer stored without a choice id (budget set on the business) still counts as answered.
   assert.equal(pending(scenario, { budget: null }).includes('budget'), false);
@@ -503,6 +513,7 @@ test('pending: services and local have their own lists', () => {
     'confirm',
     'focus_service',
     'deal_value',
+    'profit_per_deal',
     'close_rate',
     'pain',
     'budget',
@@ -519,7 +530,17 @@ test('pending: services and local have their own lists', () => {
     externalManager: { ok: true, value: { linked: false, managerIds: [] } },
     otherEditors14d: { ok: true, value: 0 },
   });
-  assert.deepEqual(pending(classify(local)), ['confirm', 'goal', 'peak_hours', 'value', 'delivery_apps', 'budget', 'consent']);
+  assert.deepEqual(pending(classify(local)), [
+    'confirm',
+    'goal',
+    'peak_hours',
+    'value',
+    'profit_per_deal',
+    'close_rate',
+    'delivery_apps',
+    'budget',
+    'consent',
+  ]);
 });
 
 test('pending: no tracking adds tracking_now before the budget', () => {
@@ -559,6 +580,8 @@ test('pending: edit mode asks every key of the scenario again, except confirm an
     'goal',
     'focus_service',
     'value',
+    'profit_per_deal',
+    'close_rate',
     'pain',
     'call_hours',
     'whatsapp_booking',
@@ -655,13 +678,47 @@ test('questions: services and local ask their own goal, deal and rhythm question
   const services = classify(null, { type: 'services' });
   const ctx = (scenario: Scenario) => ({ scenario, signals: null, answered: {}, edit: false });
   assert.equal(adaptiveQuestion('deal_value', ctx(services))?.text, 'كم تسوى لك الصفقة الواحدة تقريباً؟');
-  assert.equal(adaptiveQuestion('close_rate', ctx(services))?.text, 'من كل 10 يتواصلون معك، كم يصيرون عملاء؟');
+  assert.equal(adaptiveQuestion('close_rate', ctx(services))?.text, 'من كل 10 يتواصلون معك، كم واحد يصير عميل؟');
+  assert.equal(adaptiveQuestion('profit_per_deal', ctx(services))?.text, 'كم تربح تقريباً من العميل الواحد بعد التكاليف؟');
   assert.deepEqual(adaptiveQuestion('pain', ctx(services))?.options.map((option) => option.id), ['svc_wrong_calls', 'svc_price_ghosts', 'svc_few_calls', 'unsure']);
   const local = classify(null, { type: 'restaurant' });
   assert.deepEqual(adaptiveQuestion('goal', ctx(local))?.options.map((option) => option.id), ['local_visits', 'local_delivery', 'local_bookings', 'local_calls']);
   assert.equal(adaptiveQuestion('peak_hours', ctx(local))?.layout, 'chips');
   assert.equal(adaptiveQuestion('pain', ctx(local)), null, 'local never asks the pain question');
   assert.equal(adaptiveQuestion('value', ctx(local))?.text, 'كم متوسط الفاتورة؟');
+  assert.equal(adaptiveQuestion('profit_per_deal', ctx(local))?.text, 'كم تربح تقريباً من الزبون الواحد بعد التكاليف؟');
+  assert.equal(adaptiveQuestion('close_rate', ctx(local))?.text, 'من كل 10 يتواصلون معك، كم واحد يصير زبون؟');
+  const clinic = classify(null, { type: 'clinic' });
+  assert.equal(adaptiveQuestion('profit_per_deal', ctx(clinic))?.text, 'كم تربح تقريباً من المريض الواحد بعد التكاليف؟');
+  assert.equal(adaptiveQuestion('close_rate', ctx(clinic))?.text, 'من كل 10 يتواصلون معك، كم واحد يصير عميل؟');
+});
+
+test('questions: the profit per customer is a bucketed question with a "don\'t know" tile and no long dashes', () => {
+  const services = classify(null, { type: 'services' });
+  const question = adaptiveQuestion('profit_per_deal', { scenario: services, signals: null, answered: {}, edit: false });
+  assert.ok(question);
+  assert.deepEqual(question!.options.map((option) => option.id), ['lt50', '50_200', '200_1k', '1k_5k', 'gt5k', 'unknown']);
+  assert.equal(question!.options.at(-1)?.label, 'ما أدري');
+  for (const text of [question!.text, question!.why ?? '', ...question!.options.map((option) => option.label)]) {
+    assert.doesNotMatch(text, /[\u2013\u2014]/);
+  }
+  // Edit mode marks the answer on record.
+  assert.equal(adaptiveQuestion('profit_per_deal', { scenario: services, signals: null, answered: { profit_per_deal: '1k_5k' }, edit: true })?.current, '1k_5k');
+  // The answer is stored like every other: a fact with the bucket edges the optimizer reads.
+  const effects = adaptiveEffects({ key: 'profit_per_deal', choice: '200_1k' });
+  assert.deepEqual(effects.fact?.data, {
+    setup_key: 'profit_per_deal',
+    choice: '200_1k',
+    label: 'من 200 إلى 1,000 ريال',
+    min_sar: 200,
+    max_sar: 1000,
+  });
+  assert.equal(effects.fact?.fact_ar, 'يربح من العميل الواحد بعد التكاليف تقريباً من 200 إلى 1,000 ريال');
+  assert.equal(adaptiveEffects({ key: 'profit_per_deal', choice: 'lt50' }).fact?.fact_ar, 'يربح من العميل الواحد بعد التكاليف تقريباً أقل من 50 ريال');
+  assert.equal(adaptiveEffects({ key: 'profit_per_deal', choice: 'gt5k' }).fact?.fact_ar, 'يربح من العميل الواحد بعد التكاليف تقريباً أكثر من 5,000 ريال');
+  assert.equal(adaptiveEffects({ key: 'profit_per_deal', choice: 'unknown' }).fact?.data.min_sar, null);
+  assert.deepEqual(parseAdaptiveAnswer('profit_per_deal', { choice: '1k_5k' }), { ok: true, answer: { key: 'profit_per_deal', choice: '1k_5k' } });
+  assert.deepEqual(parseAdaptiveAnswer('profit_per_deal', { choice: '2k_10k' }), { ok: false, error: 'invalid_choice' });
 });
 
 test('questions: no tracking asks how the customer knows a customer came', () => {
@@ -813,6 +870,7 @@ test('answers: every other key writes one fact with its setup key and choice and
     { key: 'call_hours', choice: 'split_9_13_16_22' },
     { key: 'whatsapp_booking', choice: 'link' },
     { key: 'deal_value', choice: '2k_10k' },
+    { key: 'profit_per_deal', choice: '200_1k' },
     { key: 'close_rate', choice: '2_3' },
     { key: 'peak_hours', choice: 'lunch', choices: ['lunch', 'dinner'] },
     { key: 'delivery_apps', choice: 'yes' },
@@ -902,6 +960,27 @@ test('answers: the close-rate reaction needs the deal range, and most answers ge
   assert.equal(contactValueLine('2k_10k', 'unknown', 'SAR'), null);
   assert.equal(adaptiveReaction({ key: 'close_rate', choice: '2_3' }, { dealValue: '2k_10k' }), 'يعني الاتصال الواحد يسوى لك من 400 إلى 3,000 ريال تقريباً.');
   assert.equal(adaptiveReaction({ key: 'close_rate', choice: '2_3' }), null);
+  // With the profit per customer on record the reaction is the most one contact may cost, as the RANGE the two
+  // buckets leave (profit 200..1,000 x close 2..3 of 10 = 40..300): the same ends the optimizer's break-even uses.
+  assert.equal(adaptiveReaction({ key: 'close_rate', choice: '2_3' }, { profit: '200_1k' }), 'يعني أقصى سعر للاتصال الواحد عشان تطلع رابح بين 40 و300 ريال تقريباً. بحسبها كذا.');
+  assert.equal(adaptiveReaction({ key: 'close_rate', choice: '2_3' }, { profit: '200_1k', dealValue: '2k_10k' }), 'يعني أقصى سعر للاتصال الواحد عشان تطلع رابح بين 40 و300 ريال تقريباً. بحسبها كذا.');
+  // A thin profit with a low close rate never quotes a silly number («أقل من 1.3 ريال»): it says the margin is thin.
+  assert.equal(breakEvenContactLine('lt50', 'le1'), 'يعني الربح على الاتصال الواحد ضيّق، فلازم كل اتصال يجي رخيص. بحسبها كذا.');
+  // Only the low end under 10 riyals: the ceiling alone (profit 25..50 x close 2..3 of 10 = 5..15).
+  assert.equal(breakEvenContactLine('lt50', '2_3'), 'يعني أقصى سعر للاتصال الواحد عشان تطلع رابح أقل من 15 ريال تقريباً. بحسبها كذا.');
+  assert.equal(breakEvenContactLine('gt5k', 'ge4'), 'يعني أقصى سعر للاتصال الواحد عشان تطلع رابح بين 2,000 و6,000 ريال تقريباً. بحسبها كذا.');
+  // No line ever carries a limit under 5 riyals.
+  for (const profit of ['lt50', '50_200', '200_1k', '1k_5k', 'gt5k']) {
+    for (const close of ['le1', '2_3', 'ge4']) {
+      const line = breakEvenContactLine(profit, close) ?? '';
+      assert.doesNotMatch(line, /(^|[^\d,.])[0-4](\.\d)? ريال/, `${profit}/${close}: ${line}`);
+    }
+  }
+  assert.equal(breakEvenContactLine('unknown', '2_3'), null);
+  assert.equal(breakEvenContactLine('200_1k', 'unknown'), null);
+  assert.equal(breakEvenContactLine(null, '2_3'), null);
+  // A profit answer without a close rate says nothing yet.
+  assert.equal(adaptiveReaction({ key: 'profit_per_deal', choice: '200_1k' }, { profit: '200_1k' }), null);
   assert.equal(adaptiveReaction({ key: 'whatsapp_booking', choice: 'yes' }), null);
   assert.equal(adaptiveReaction({ key: 'focus_service', choice: 'all' }), null);
   assert.equal(adaptiveReaction({ key: 'confirm', choice: 'yes' }), null);
@@ -1281,15 +1360,25 @@ test('understanding: services show the deal and the close rate', () => {
   const rows = understandingRows({
     scenario: classify(null, { type: 'services' }),
     signals: null,
-    answered: { type: 'services', deal_value: '2k_10k', close_rate: '2_3' },
+    answered: { type: 'services', deal_value: '2k_10k', profit_per_deal: '200_1k', close_rate: '2_3' },
     labels: { type: 'شركة خدمات' },
     business: null,
   });
   assert.deepEqual(rows.map((row) => [row.label, row.value]), [
     ['النشاط', 'شركة خدمات'],
     ['الصفقة الواحدة', 'من 2,000 إلى 10,000 ريال'],
+    ['ربحك من العميل الواحد', 'من 200 إلى 1,000 ريال'],
     ['من كل 10 يتواصلون معك يصيرون عملاء', 'من 2 إلى 3'],
   ]);
+  // «ما أدري» is not shown as an answer.
+  const unsure = understandingRows({
+    scenario: classify(null, { type: 'services' }),
+    signals: null,
+    answered: { type: 'services', profit_per_deal: 'unknown' },
+    labels: { type: 'شركة خدمات' },
+    business: null,
+  });
+  assert.equal(unsure.some((row) => row.label === 'ربحك من العميل الواحد'), false);
 });
 
 // ---------------------------------------------------------------------------
@@ -1327,7 +1416,7 @@ test('first campaign: a dental clinic gets a search campaign on the service it n
   assert.match(byLabel['التتبع'], /الاتصال/);
 });
 
-test('first campaign: a store with Merchant Center gets a product campaign, without it a search campaign', () => {
+test('first campaign: a store with Merchant Center starts on Standard Shopping (not Performance Max), without it a search campaign', () => {
   const withFeed = account({ campaigns: { ok: true, value: [] }, merchantCenterLinked: { ok: true, value: true } });
   const scenarioFeed = classify(withFeed, { type: 'ecommerce' });
   const feed = firstCampaignPlan({
@@ -1338,9 +1427,17 @@ test('first campaign: a store with Merchant Center gets a product campaign, with
     currency: 'SAR',
   });
   assert.ok(feed);
-  assert.equal(feed.campaign, 'حملة أداء أقصى على منتجات المتجر في السعودية');
+  // Titan 8.1, 21.12: a new store starts on Standard Shopping; PMax needs ~30 conversions a month and a healthy feed.
+  assert.equal(feed.campaign, 'حملة تسوق على منتجات المتجر في السعودية');
+  assert.doesNotMatch(feed.campaign, /أداء أقصى/);
   assert.equal(feed.items.some((item) => item.label === 'أول كلمات البحث'), false, 'a product feed runs on products, not on typed words');
   assert.match(feed.items[0].detail, /Merchant Center/);
+  assert.match(feed.items[0].detail, /حملة تسوق/);
+  const pmax = feed.items.find((item) => item.label === 'أداء أقصى');
+  assert.ok(pmax, 'the plan says when Performance Max comes');
+  assert.match(pmax.detail, /30 عملية شراء/);
+  assert.match(pmax.detail, /الفيد سليم/);
+  assert.ok(feed.items.length >= 3 && feed.items.length <= 5);
 
   const noFeed = classify(null, { type: 'ecommerce', has_account: 'none' }, { linked: 0 });
   const search = firstCampaignPlan({
@@ -1505,6 +1602,7 @@ test('copy: no long dash, no Latin comma, no banned phrase in anything the funct
   }
   for (const choice of ['lt20', '20_40', 'gt40', 'unknown']) returned.push(breakEvenLine(186, choice, 'SAR'));
   for (const deal of ['lt2k', '2k_10k', '10k_50k', 'gt50k']) for (const close of ['le1', '2_3', 'ge4']) returned.push(contactValueLine(deal, close, 'SAR'));
+  for (const profit of ['lt50', '50_200', '200_1k', '1k_5k', 'gt5k']) for (const close of ['le1', '2_3', 'ge4']) returned.push(breakEvenContactLine(profit, close));
 
   const texts = allStrings(returned);
   assert.ok(texts.length > 400, `walked ${texts.length} strings`);

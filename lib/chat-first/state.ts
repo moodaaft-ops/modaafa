@@ -2,6 +2,7 @@ import { getLinkedGoogleAdsAccount, normalizeCustomerId } from '@/lib/accounts/s
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import { getSubscriptionAccess } from '@/lib/billing/entitlements';
 import { buildExecutableAction } from '@/lib/ai/executable-action';
+import { dropStalePending } from '@/lib/recommendations/staleness';
 import type { ChatRecommendation, ChatState } from './contracts';
 import { readFreeAuditView } from './free-audit-view';
 
@@ -90,7 +91,7 @@ async function build(supabase: any, account: any, subscriptionActive: boolean): 
       .maybeSingle(),
     supabase
       .from('recommendations')
-      .select('id, title, description, severity, status, action_payload')
+      .select('id, title, description, severity, status, action_payload, created_at')
       .eq('account_id', account.id)
       .in('status', ['pending', 'approved'])
       .order('created_at', { ascending: false })
@@ -101,7 +102,8 @@ async function build(supabase: any, account: any, subscriptionActive: boolean): 
   const audit = auditRes.data;
   // Subscribers use their plan allowance, so the free ledger is irrelevant to them.
   const freeAudit = subscriptionActive ? undefined : await readFreeAuditView(normalizeCustomerId(account.customer_id));
-  const recommendations: ChatRecommendation[] = (recRes.data ?? []).map((r: any) => ({
+  // A pending optimizer card older than 14 days is not a current decision (lib/recommendations/staleness.ts).
+  const recommendations: ChatRecommendation[] = dropStalePending<any>(recRes.data ?? []).map((r: any) => ({
     id: r.id,
     title: r.title,
     description: r.description ?? null,

@@ -4,6 +4,7 @@ import { getBillingCheckoutContext } from '@/lib/billing/checkout-policy';
 import { isAdaptiveOnboarding } from '@/lib/setup/adaptive/flag';
 import { adaptiveLockedPlan } from '@/lib/setup/adaptive/locked-plan';
 import type { ScenarioDecision } from '@/lib/setup/adaptive/types';
+import { dropStalePending } from '@/lib/recommendations/staleness';
 import { createAdminClient } from '@/lib/supabase/server';
 import { buildPlan, paywallCtaFromCheckout, type PaywallCta, type Plan, type PlanRecommendation } from './plan';
 
@@ -13,7 +14,8 @@ export const PLAN_DECISION_LIMIT = 30;
 /** Maps stored recommendation rows to plan input. `executable` comes from the payload, never from model text. */
 export function toPlanRecommendations(rows: unknown): PlanRecommendation[] {
   if (!Array.isArray(rows)) return [];
-  return rows.map((row: any) => ({
+  // A pending optimizer card older than 14 days is not a current decision (lib/recommendations/staleness.ts).
+  return dropStalePending(rows).map((row: any) => ({
     id: row.id,
     title: row.title ?? null,
     description: row.description ?? null,

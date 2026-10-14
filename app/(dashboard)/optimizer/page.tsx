@@ -16,6 +16,7 @@ import { getSubscriptionAccess, featureAccessMessage } from '@/lib/billing/entit
 import { hasProductAccess } from '@/lib/billing/access-gate';
 import { loadPlanLock, type PlanLockData } from '@/lib/plan/load';
 import { PlanLock } from '@/lib/plan/plan-lock';
+import { dropStalePending } from '@/lib/recommendations/staleness';
 import { Alert } from '@/lib/ui/alert';
 
 export const metadata = {
@@ -73,9 +74,15 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
   assertSupabaseRead(actionsResult.error, 'load optimizer actions');
   const recommendations = recommendationsResult.data;
   const actions = actionsResult.data;
-  const recs = recommendations ?? [];
+  // A pending optimizer card older than 14 days is not a current decision any
+  // more (lib/recommendations/staleness.ts), so it is neither listed nor counted.
+  const recs = dropStalePending<any>((recommendations ?? []) as any[]);
   const pending = recs.filter((item: any) => item.status === 'pending');
   const approved = recs.filter((item: any) => item.status === 'approved');
+  // A locked screen reads only id and status, so it cannot tell a stale card
+  // apart; the plan lock beside it is built from the filtered rows, so its
+  // count is the one to show.
+  const pendingCount = locked && lock ? lock.plan.decisionsCount : pending.length;
   const accountName = selectedAccount ? googleAdsAccountDisplayName(selectedAccount) : 'الحساب المختار';
 
   return (
@@ -112,7 +119,7 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
             {params?.executed && <Alert tone="success">تم التحقق من العملية وتنفيذها وتسجيل نتيجتها.</Alert>}
             {params?.reverted && <Alert tone="success">تم التحقق من التراجع وإعادة الحالة السابقة في Google Ads.</Alert>}
             <section className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3">
-              <MetricCard label="بانتظار الموافقة" value={formatNumberAr(pending.length)} tone={pending.length ? 'brand' : 'default'} />
+              <MetricCard label="بانتظار الموافقة" value={formatNumberAr(pendingCount)} tone={pendingCount ? 'brand' : 'default'} />
               <MetricCard label="معتمدة للتنفيذ" value={formatNumberAr(approved.length)} />
               <MetricCard label="إجراءات مسجّلة" value={formatNumberAr((actions ?? []).length)} />
             </section>
@@ -191,7 +198,7 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
                                   href={`/assistant?brief=${encodeURIComponent(String(item.action_payload?.brief_ar ?? ''))}`}
                                   className={buttonClasses({ variant: 'primary', size: 'sm' })}
                                 >
-                                  ابنِ الحملة في المساعد
+                                  افتح في المساعد
                                 </a>
                                 <RecommendationAction id={item.id} intent="dismiss" label="تجاهل" secondary />
                               </div>
@@ -294,6 +301,8 @@ function optimizerErrorMessage(code: string) {
   const messages: Record<string, string> = {
     approve_before_execution: 'اعتمد التوصية أولاً قبل تنفيذها.',
     blocked_by_guardrails: 'أوقفت ضوابط الأمان هذه العملية قبل وصولها إلى إعلانات Google.',
+    recommendation_expired: 'مرّ على هذا الاقتراح أكثر من 7 أيام، والأرقام اللي بُني عليها تغيّرت، فلم ننفذه. راجعه يدوياً أو انتظر اقتراح الليلة إذا كان التعديل ما زال مناسباً.',
+    recent_change_lock: 'صار تعديل على نفس الميزانية أو الهدف قبل أقل من 7 أيام، فأوقفنا هذا الاقتراح القديم حتى لا يتكرر التعديل في نفس الأسبوع. راجعه يدوياً أو انتظر اقتراح الليلة.',
     manual_review_required: 'هذه التوصية وصفية وتحتاج مراجعة يدوية، لذلك لم ننفذها تلقائياً.',
     execution_failed: 'اجتازت العملية المراجعة الأولية لكن تعذر تنفيذها في Google Ads. لم نعتبرها مطبقة.',
     execution_recording_failed: 'تم إرسال التعديل إلى Google Ads لكن تعذر تأكيد حفظ السجل. أوقفنا إعادة التنفيذ وأبلغنا فريق التشغيل للمطابقة اليدوية.',
@@ -373,7 +382,7 @@ function ChangePreview({
     pause_campaign: 'إيقاف حملة',
     enable_campaign: 'تشغيل حملة',
     add_negative_keywords_batch: 'منع عبارات بحث (دفعة)',
-    build_campaign_opportunity: 'اقتراح حملة جديدة (تُبنى في المساعد)',
+    build_campaign_opportunity: 'عبارات بحث رابحة (تُراجع في المساعد)',
     manual_campaign_draft: 'مسودة حملة جديدة (تحتاج مراجعة يدوية)',
   };
 
@@ -550,6 +559,8 @@ function actionTypeLabel(value?: string | null) {
     approval_queued: 'اعتماد توصية',
     execution_blocked: 'محجوب: يحتاج مراجعة',
     blocked_by_guardrails: 'محجوب بحواجز الأمان',
+    recommendation_expired: 'محجوب: الاقتراح تجاوز 7 أيام',
+    recent_change_lock: 'محجوب: تعديل حديث على نفس الهدف',
     preflight_failed: 'فشل التحقق قبل التنفيذ',
     resource_account_mismatch: 'محجوب: مورد خارج الحساب',
     record_failed: 'نُفّذ ولم يُسجّل',

@@ -299,11 +299,13 @@ async function discoverAvailableModels(force = false) {
  * The free audit is the one model call a customer costs before they have
  * started a subscription, so it runs on Sonnet by default. Set
  * FREE_AUDIT_MODEL_TIER=opus to put it back on the top tier (sonnet and haiku
- * are accepted too); anything else is ignored. Only the audit reads this: the
- * weekly deep review stays on Opus, Jarvis answers daily questions on Sonnet
- * (spec 8.2), the /assistant page and the campaign builder run on Sonnet
- * (Ayman, 2026-10-12), and the cheap classification and extraction role runs on
- * Haiku.
+ * are accepted too); anything else is ignored. Only the audit reads this.
+ * The 'jarvis_deep' role maps to Opus here, but NO CODE CALLS IT today: there
+ * is no weekly deep review, and nothing in the product runs on Opus unless
+ * this variable is set. Not implemented. Jarvis answers daily questions on
+ * Sonnet (spec 8.2), the /assistant page and the campaign builder run on
+ * Sonnet (Ayman, 2026-10-12), the hourly optimizer runs on Sonnet, and the
+ * cheap classification and extraction role runs on Haiku.
  */
 export function freeAuditTier(env: Record<string, string | undefined> = process.env): ModelTier {
   const value = env.FREE_AUDIT_MODEL_TIER?.trim().toLowerCase();

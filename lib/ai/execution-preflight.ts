@@ -182,6 +182,23 @@ export async function prepareActionForExecution(action: OptimizerAction, custome
       captured_at: capturedAt,
     };
   } else if (action.type === 'add_negative_keyword') {
+    // The single negative gets the same collision check as a batch: not already
+    // a negative, not blocking a term that converted in the last 30 days, and
+    // not blocking an enabled keyword of the campaign. A negative that matches
+    // a keyword the account is paying to show on would switch that keyword off
+    // (titan 7.1). Any read failure propagates: a negative is never sent unchecked.
+    const campaignResource = String(params.campaign_resource ?? '');
+    const keywordText = String(params.keyword_text ?? '').trim();
+    const matchType = String(params.match_type ?? '').trim();
+    if (!campaignResource || !keywordText || !['EXACT', 'PHRASE', 'BROAD'].includes(matchType)) {
+      throw new Error('Negative keyword is malformed');
+    }
+    const { keep, dropped } = await filterNegativeKeywordBatch(customer, campaignResource, matchType, [keywordText]);
+    if (keep.length === 0) {
+      throw new Error(
+        `Negative keyword was dropped (${dropped.map((d) => `${d.text}: ${d.reason}`).join('; ')}); nothing to add.`
+      );
+    }
     rollbackPayload = {
       reversible: true,
       action_type: 'remove_created_negative_keyword',

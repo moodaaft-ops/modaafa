@@ -328,6 +328,7 @@ export function reactionContextFor(args: {
     aov: agreed ? averageOrder(signals) : null,
     currency: signals?.currency ?? null,
     dealValue: ledger.get('deal_value') ?? null,
+    profit: ledger.get('profit_per_deal') ?? null,
   };
 }
 

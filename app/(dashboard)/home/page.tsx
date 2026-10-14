@@ -17,6 +17,9 @@ import { isSimpleExperience } from '@/lib/setup/mode';
 import { isAdaptiveOnboarding } from '@/lib/setup/adaptive/flag';
 import { adaptiveLockedPlan } from '@/lib/setup/adaptive/locked-plan';
 import { readLedgerEntries } from '@/lib/setup/load';
+import { economicsKindFromLedger } from '@/lib/setup/ledger';
+import { homeMissingKeys, loadEconomicsNudgeInput } from '@/lib/setup/adaptive/economics-nudge';
+import { adaptiveAnswered, answeredOnRecord } from '@/lib/setup/adaptive/view';
 import { loadRecentChanges } from '@/lib/home/recent-changes';
 import { keysAnsweredByProfile, missingCoreKeys, type SetupKey } from '@/lib/setup/questions';
 import { firstNameFrom, healthWord } from '@/lib/setup/stage';
@@ -37,6 +40,7 @@ import { HomeThread } from './home-thread';
 import { LockedHome } from './locked-home';
 import { RecentChanges } from './recent-changes';
 import type { ChatQuickAction } from '@/lib/chat-first/contracts';
+import { dropStalePending } from '@/lib/recommendations/staleness';
 
 export const metadata = { title: 'الرئيسية' };
 
@@ -112,6 +116,8 @@ export default async function HomePage({
     loadRecentChanges(supabase, { accountId: selectedAccount.id, customerId: selectedAccount.customer_id }),
   ]);
 
+  // A pending optimizer card older than 14 days is not today's decision any more (lib/recommendations/staleness.ts).
+  const currentRecs: any[] = dropStalePending<any>(recsRes.error ? [] : ((recsRes.data ?? []) as any[]));
   const ledger = ledgerEntries.choices;
   const currency = (selectedAccount.currency_code ?? 'SAR').toUpperCase();
   const hasRecentChanges = recentChanges.items.length > 0;
@@ -138,7 +144,7 @@ export default async function HomePage({
     ]);
     const basePlan = buildPlan({
       audit: lockedAudit,
-      recommendations: toPlanRecommendations(recsRes.error ? [] : recsRes.data ?? []),
+      recommendations: toPlanRecommendations(currentRecs),
       currency,
       includeCategory: adaptiveOn,
     });
@@ -189,7 +195,7 @@ export default async function HomePage({
   const week = weekNumbers(campaignsRes.error ? [] : campaignsRes.data ?? []);
   const audit = auditRes.error ? null : auditRes.data;
   const decisions: Decision[] = orderDecisions(
-    (recsRes.error ? [] : recsRes.data ?? []).map((row: any) => ({
+    currentRecs.map((row: any) => ({
       id: row.id,
       title: row.title,
       description: row.description ?? null,
@@ -203,7 +209,21 @@ export default async function HomePage({
   );
   const actions = actionsRes.error ? [] : actionsRes.data ?? [];
   const answered = new Set<SetupKey>([...keysAnsweredByProfile(business), ...ledger.keys()]);
-  const missing = missingCoreKeys(answered);
+  // Core answers plus, by the kind of business, the economics ones the optimizer needs before it may touch a
+  // budget. Only the economics keys the edit questionnaire would actually ask this account (its real scenario:
+  // a new, dormant or no-account customer, or an account the read could not place, is never asked a margin),
+  // and only where the adaptive onboarding exists at all: a chip that leads nowhere would nag a customer who
+  // cannot answer.
+  const missing = adaptiveOn
+    ? homeMissingKeys({
+        answeredKeys: answered,
+        kind: economicsKindFromLedger(ledgerEntries, business),
+        answered: adaptiveAnswered({ answered: answeredOnRecord({ business, ledger }), ledger }),
+        linkedAccounts: accounts.length,
+        confirmed: ledgerEntries.confirmed ?? null,
+        ...(await loadEconomicsNudgeInput({ admin, supabase, account: selectedAccount, weekSpend: week.spend })),
+      })
+    : missingCoreKeys(answered);
   const notice = noticeFrom(params);
   const firstName = firstNameFrom(user.user_metadata ?? null);
   const accountName = googleAdsAccountDisplayName(selectedAccount);
@@ -221,7 +241,7 @@ export default async function HomePage({
       ? [{ label: audit ? 'افحص حسابي من جديد' : 'افحص حسابي', action: { type: 'run_audit' as const, customerId: selectedAccount.customer_id } }]
       : [{ label: 'ليش الطلبات قليلة؟', action: { type: 'say' as const, text: 'ليش الطلبات قليلة؟' } }]),
     ...(missing.length > 0
-      ? [{ label: 'كمّل تعريف نشاطك، دقيقة', action: { type: 'open_dashboard' as const, href: '/onboarding?edit=1' } }]
+      ? [{ label: 'كمّل تعريف نشاطك، كم دقيقة', action: { type: 'open_dashboard' as const, href: '/onboarding?edit=1' } }]
       : [{ label: 'وش وضع حسابي؟', action: { type: 'say' as const, text: 'وش وضع حسابي' } }]),
   ];
 

@@ -9,12 +9,26 @@ import { decrypt } from '@/lib/crypto';
 import {
   decideOptimizations,
   checkGuardrails,
-  type ConversionTrackingStatus,
   type OptimizerSnapshot,
 } from '@/lib/ai/optimizer-agent';
+import {
+  buildConversionTracking,
+  composeEconomicsFields,
+  enrichPoorAds,
+} from '@/lib/ai/optimizer-snapshot';
+import { loadEconomics } from '@/lib/economics/load';
+import { isStalePendingRecommendation } from '@/lib/recommendations/staleness';
+import type { BreakEven } from '@/lib/economics/break-even';
 import { consumeFeatureUsage } from '@/lib/billing/entitlements';
 import { executeAutopilotAction } from '@/lib/autopilot/executor';
-import { findBlockingAutopilotRecommendation } from '@/lib/autopilot/recommendation-dedupe';
+import {
+  findBlockingAutopilotRecommendation,
+  findPendingDuplicate,
+  loadActiveRecommendationPool,
+  rememberRecommendation,
+  renewStalePendingRecommendation,
+  type ActiveRecommendationRow,
+} from '@/lib/autopilot/recommendation-dedupe';
 import { recordAutopilotDecision } from '@/lib/autopilot/log';
 import {
   autopilotPolicyMetadata,
@@ -32,9 +46,24 @@ import {
 } from '@/lib/autopilot/types';
 import { measureObservedImpacts } from '@/lib/ai/impact';
 import {
+  buildOpportunityRecommendation,
   detectCampaignOpportunity,
   mapConvertingTermRows,
 } from '@/lib/ai/opportunity';
+import {
+  emptyEconomicsTally,
+  emptyReasonTally,
+  emptyTrackingVerdictCounts,
+  tallyEconomics,
+  tallyReason,
+  tallyTrackingVerdict,
+} from '@/lib/ai/optimizer-audit-trail';
+import {
+  queryDailyConversions,
+  riyadhToday,
+  dailyConversionsLookTruncated,
+  queryCampaignRows,
+} from '@/lib/ai/optimizer-queries';
 import {
   getSectorBenchmark,
   refreshSectorBenchmarks,
@@ -317,6 +346,18 @@ async function runOptimizerCron(req: NextRequest) {
     impacts_measured: 0,
     opportunities_queued: 0,
     benchmarks_refreshed: 0,
+    /** Proposals skipped because the same change already waits for the owner (or hit the 3 per ad group cap). */
+    duplicates_skipped: 0,
+    /** Pending rows older than 14 days that the optimizer proposed again and that were refreshed in place. */
+    recommendations_renewed: 0,
+    /** Audit trail: accounts of this run per conversion tracking verdict. */
+    tracking_verdicts: emptyTrackingVerdictCounts(),
+    /** Audit trail: proposals the guardrails and gates refused, by reason code and by action type. */
+    gate_rejections: emptyReasonTally(),
+    /** Audit trail: proposals skipped as duplicates, by reason code and by action type. */
+    dedupe_skips: emptyReasonTally(),
+    /** Audit trail: accounts whose break-even is unknown (no budget or bid decision for them) and which answers are missing. */
+    economics: emptyEconomicsTally(),
     /** Accounts that reached the model (the paid step). */
     model_calls: 0,
     /** Accounts with nothing to act on, so the model was not asked. */
@@ -372,6 +413,17 @@ async function runOptimizerCron(req: NextRequest) {
       }
       const sectorBenchmark = benchmarkCache.get(benchmarkKey) ?? null;
 
+      // What the owner told us about margin, deal value and close rate: the
+      // only source of targets. Read-only, never throws; an unreadable or
+      // unanswered set reports its gaps and withholds budget and bid changes.
+      const economics = await loadEconomics(supabase, {
+        businessId: account.business_id,
+        sector: businessContext?.sector ?? null,
+        primaryGoal: businessContext?.primary_goal ?? null,
+        accountCurrency: account.currency_code ?? 'SAR',
+      });
+      tallyEconomics(results.economics, economics);
+
       // Build a focused snapshot for the optimizer
       const snapshot = await buildOptimizerSnapshot(
         customer,
@@ -379,8 +431,10 @@ async function runOptimizerCron(req: NextRequest) {
         account.customer_id,
         account.currency_code ?? 'SAR',
         businessContext,
-        sectorBenchmark
+        sectorBenchmark,
+        economics
       );
+      tallyTrackingVerdict(results.tracking_verdicts, snapshot.conversion_tracking?.status);
 
       // Get AI decisions. An account with no spend and no evidence rows gives
       // the model nothing to act on, so we skip the paid call and record a
@@ -424,6 +478,21 @@ async function runOptimizerCron(req: NextRequest) {
       // it never decides whether a live mutation is allowed.
       const maxKeywordPauses = Math.floor(snapshot.keyword_count * 0.2);
       let keywordPauses = 0;
+      // What already waits for the owner (or is about to run) on this account.
+      // Read once; every row this run queues is added, so two proposals for
+      // the same target in one run are not both queued. Null = unreadable.
+      const recommendationPool: ActiveRecommendationRow[] | null =
+        actions.length > 0 ? await loadActiveRecommendationPool(supabase, account.id) : [];
+      const noteQueued = (
+        action: AutopilotCandidate,
+        queued: { id: string | null; created: boolean; renewed: boolean },
+        source: string
+      ) => {
+        if (queued.renewed) results.recommendations_renewed++;
+        if (queued.created || queued.renewed) {
+          rememberRecommendation(recommendationPool, action, { id: queued.id, status: 'pending', source });
+        }
+      };
       for (const proposedAction of actions.slice(0, 8)) {
         let action = groundAutopilotCandidate(
           proposedAction as AutopilotCandidate,
@@ -451,7 +520,13 @@ async function runOptimizerCron(req: NextRequest) {
           keywordPauses++;
         }
 
-        const guarded = await checkGuardrails(action, account.id, supabase);
+        // The snapshot goes along so the queue-time gates (economics, tracking,
+        // impression share, conversion volume, one change per target per
+        // week) judge the proposal against the same numbers the model saw.
+        const guarded = await checkGuardrails(action, account.id, supabase, {
+          snapshot,
+          onReject: (rejection) => tallyReason(results.gate_rejections, rejection),
+        });
         if (!guarded) {
           results.actions_blocked++;
           results.autopilot_blocked++;
@@ -470,6 +545,28 @@ async function runOptimizerCron(req: NextRequest) {
           continue;
         }
         action = guarded as AutopilotCandidate;
+
+        // The same change already waits for the owner (any match type for a
+        // keyword, same campaign for a negative, same budget or ad group), or
+        // this ad group already has 3 keyword additions waiting: do not stack
+        // another card on the owner's table. Pending optimizer rows older than
+        // 14 days are stale and do not count.
+        const duplicate = findPendingDuplicate(recommendationPool, action);
+        if (duplicate.skip) {
+          results.duplicates_skipped++;
+          tallyReason(results.dedupe_skips, { code: duplicate.code, action_type: action.type });
+          await safeRecordAutopilotDecision(results, {
+            supabase,
+            accountId: account.id,
+            jobRunId: job.id,
+            recommendationId: duplicate.recommendation_id ?? undefined,
+            mode: settings.mode,
+            action,
+            decision: 'blocked',
+            verdict: blockedVerdict(duplicate.code, duplicate.reason_ar),
+          });
+          continue;
+        }
 
         const targetKey = autopilotTargetKey(action);
         const cooldownCutoff = new Date(
@@ -521,6 +618,7 @@ async function runOptimizerCron(req: NextRequest) {
             source: settings.mode === 'observe' ? 'autopilot_observe' : 'optimizer_cron',
           });
           if (queued.created) results.recommendations_queued++;
+          noteQueued(action, queued, settings.mode === 'observe' ? 'autopilot_observe' : 'optimizer_cron');
           results.autopilot_observed++;
           await safeRecordAutopilotDecision(results, {
             supabase,
@@ -549,6 +647,7 @@ async function runOptimizerCron(req: NextRequest) {
             source: 'autopilot_fail_closed',
           });
           if (queued.created) results.recommendations_queued++;
+          noteQueued(action, queued, 'autopilot_fail_closed');
           results.autopilot_blocked++;
           await safeRecordAutopilotDecision(results, {
             supabase,
@@ -589,6 +688,7 @@ async function runOptimizerCron(req: NextRequest) {
             source: 'autopilot_quota_blocked',
           });
           if (queued.created) results.recommendations_queued++;
+          noteQueued(action, queued, 'autopilot_quota_blocked');
           results.autopilot_blocked++;
           await safeRecordAutopilotDecision(results, {
             supabase,
@@ -619,6 +719,10 @@ async function runOptimizerCron(req: NextRequest) {
           results.actions_executed++;
           results.autopilot_executed++;
           executedThisRun.set(account.id, (executedThisRun.get(account.id) ?? 0) + 1);
+          rememberRecommendation(recommendationPool, action, {
+            id: execution.recommendationId ?? null,
+            status: 'executing',
+          });
           accountHistory.push({
             decision: 'executed',
             target_id: targetKey,
@@ -706,6 +810,7 @@ async function runOptimizerCron(req: NextRequest) {
             currencyCode: account.currency_code ?? 'SAR',
           });
           if (queued) results.opportunities_queued++;
+          if (queued === 'renewed') results.recommendations_renewed++;
         } catch (opportunityError) {
           console.warn(`Campaign opportunity detection failed for ${account.customer_id}`, opportunityError);
         }
@@ -820,6 +925,17 @@ async function runOptimizerCron(req: NextRequest) {
       opportunities_queued: results.opportunities_queued,
       benchmarks_refreshed: results.benchmarks_refreshed,
       live_execution_enabled: allowLiveExecution,
+      // Audit trail (counts only): why accounts got no money decision. The
+      // conversion tracking verdict per account of this run, every proposal the
+      // guardrails and gates refused (by reason and by action type), and the
+      // proposals skipped as duplicates of a card that is already waiting.
+      tracking_verdicts: results.tracking_verdicts,
+      // Accounts with an unknown break-even (they get no budget or bid decision) and the answers they lack.
+      economics: results.economics,
+      gate_rejections: results.gate_rejections,
+      duplicates_skipped: results.duplicates_skipped,
+      dedupe_skips: results.dedupe_skips,
+      recommendations_renewed: results.recommendations_renewed,
       // Never truncate silently: an operator reading job_runs must be able to
       // tell "covered everything" from "ran out of time".
       skipped_for_time: skippedForTime,
@@ -938,33 +1054,47 @@ async function queueOptimizerRecommendation({
   fingerprint: string;
   verdict: AutopilotPolicyVerdict;
   source: string;
-}): Promise<{ id: string | null; created: boolean }> {
+}): Promise<{ id: string | null; created: boolean; renewed: boolean }> {
+  const fields = {
+    category: categoryForAction(action.type),
+    severity: severityForAction(action),
+    title: action.reason_ar.slice(0, 120),
+    description: action.reason_ar,
+    expected_impact: action.expected_impact,
+    action_payload: {
+      operation: action.type,
+      target_id: action.target_id,
+      params: action.params,
+      confidence: action.confidence ?? null,
+      evidence: action.evidence ?? null,
+      source,
+      autopilot: autopilotPolicyMetadata(verdict),
+    },
+  };
+
   const existing = await findBlockingAutopilotRecommendation(
     supabase,
     accountId,
     fingerprint
   );
-  if (existing) return { id: existing.id, created: false };
+  if (existing) {
+    // The same change is still pending after more than 14 days (7 for a budget
+    // or bid card, which can no longer be executed after that). It is hidden
+    // from every list as stale, and the unique fingerprint stops a new row, so
+    // refresh the old one with tonight's numbers instead of losing the proposal.
+    if (isStalePendingRecommendation({ ...existing, action_payload: fields.action_payload })) {
+      const renewed = await renewStalePendingRecommendation(supabase, existing.id, fields);
+      if (renewed) return { id: existing.id, created: false, renewed: true };
+    }
+    return { id: existing.id, created: false, renewed: false };
+  }
 
   const { data, error } = await supabase
     .from('recommendations')
     .insert({
       account_id: accountId,
       fingerprint,
-      category: categoryForAction(action.type),
-      severity: severityForAction(action),
-      title: action.reason_ar.slice(0, 120),
-      description: action.reason_ar,
-      expected_impact: action.expected_impact,
-      action_payload: {
-        operation: action.type,
-        target_id: action.target_id,
-        params: action.params,
-        confidence: action.confidence ?? null,
-        evidence: action.evidence ?? null,
-        source,
-        autopilot: autopilotPolicyMetadata(verdict),
-      },
+      ...fields,
       status: 'pending',
     })
     .select('id')
@@ -976,11 +1106,11 @@ async function queueOptimizerRecommendation({
         accountId,
         fingerprint
       );
-      return { id: raced?.id ?? null, created: false };
+      return { id: raced?.id ?? null, created: false, renewed: false };
     }
     throw error;
   }
-  return { id: data?.id ?? null, created: true };
+  return { id: data?.id ?? null, created: true, renewed: false };
 }
 
 function blockedVerdict(code: string, reason_ar: string): AutopilotPolicyVerdict {
@@ -1014,25 +1144,41 @@ async function buildOptimizerSnapshot(
   customerId: string,
   currencyCode: string,
   businessContext: { sector: string | null; primary_goal: string | null; monthly_budget: number | null } | null,
-  sectorBenchmark: SectorBenchmarkRow | null = null
+  sectorBenchmark: SectorBenchmarkRow | null,
+  economics: BreakEven
 ): Promise<OptimizerSnapshot> {
-  const [campaigns, highPerforming, underperforming, wastedTerms, convertingTerms, poorAds, enabledKeywords, adGroupBidTargets] =
-    await Promise.all([
+  const [
+    campaignRows,
+    campaigns30d,
+    highPerforming,
+    underperforming,
+    wastedTerms,
+    convertingTerms,
+    poorAdRows,
+    adGroupRows,
+    enabledAdRows,
+    enabledKeywords,
+    conversionActionRows,
+    conversionDailyRows,
+  ] = await Promise.all([
     // Bounded, highest-spend first. This and the underperforming query below
     // had no LIMIT: a large account could return thousands of rows, ballooning
     // the per-account prompt to hundreds of KB every hourly run (real token
     // cost, and request-too-large failures that aborted the account).
-    customer.query(`
-      SELECT
-        campaign.id, campaign.name, campaign.resource_name,
-        campaign_budget.id, campaign_budget.amount_micros, campaign_budget.resource_name,
-        metrics.cost_micros, metrics.clicks, metrics.conversions, metrics.conversions_value
+    queryCampaignRows(customer, customerId),
+    // 30-day totals per campaign: the window the scale and cut gates judge on.
+    // Seven days is a trend; budgets are decided on thirty. Null when the read
+    // fails, which closes every gate that needs it.
+    customer
+      .query(`
+      SELECT campaign.resource_name,
+        metrics.cost_micros, metrics.conversions, metrics.conversions_value
       FROM campaign
-      WHERE segments.date DURING LAST_7_DAYS
+      WHERE segments.date DURING LAST_30_DAYS
         AND campaign.status = 'ENABLED'
-      ORDER BY metrics.cost_micros DESC
       LIMIT 200
-    `),
+    `)
+      .catch(() => null as any[] | null),
     customer.query(`
       SELECT
         ad_group_criterion.resource_name,
@@ -1046,19 +1192,24 @@ async function buildOptimizerSnapshot(
       ORDER BY metrics.conversions_value DESC
       LIMIT 100
     `),
+    // Waste candidates over 30 days (the window the pause rule judges on):
+    // cost, match type and ad group travel with the row so the cost-versus-
+    // allowable-CPA test needs nothing else. No CTR filter: a keyword that
+    // burns two CPAs with zero conversions is waste whatever its CTR.
     customer.query(`
       SELECT
         ad_group_criterion.resource_name,
         ad_group_criterion.keyword.text,
+        ad_group_criterion.keyword.match_type,
+        ad_group.name,
         metrics.clicks, metrics.cost_micros, metrics.ctr, metrics.conversions
       FROM keyword_view
-      WHERE segments.date DURING LAST_7_DAYS
-        AND metrics.clicks > 20
+      WHERE segments.date DURING LAST_30_DAYS
+        AND metrics.clicks >= 20
         AND metrics.conversions = 0
-        AND metrics.ctr < 0.01
         AND ad_group_criterion.status = 'ENABLED'
       ORDER BY metrics.cost_micros DESC
-      LIMIT 100
+      LIMIT 40
     `),
     // campaign.resource_name is selected so add_negative_keyword can name the
     // campaign that actually served the term. Without it the model saw the
@@ -1102,101 +1253,110 @@ async function buildOptimizerSnapshot(
       // server filters with > 1 and the exact >= 2 cut is applied here.
       rows.filter((row: any) => Number(row.metrics?.conversions ?? 0) >= 2)
     ),
+    // Ads the pause rule may look at: enough impressions to judge (1000 in 30
+    // days) and the lowest CTR first. Ad Strength is carried for reading only;
+    // it is never a reason to pause.
     customer.query(`
       SELECT
         ad_group_ad.resource_name,
-        ad_group_ad.ad.id,
         ad_group_ad.ad_strength,
+        ad_group.resource_name,
         metrics.ctr,
-        metrics.impressions
+        metrics.impressions, metrics.cost_micros, metrics.conversions
       FROM ad_group_ad
       WHERE segments.date DURING LAST_30_DAYS
         AND ad_group_ad.status = 'ENABLED'
-        AND metrics.impressions >= 100
+        AND metrics.impressions >= 1000
       ORDER BY metrics.ctr ASC
-      LIMIT 100
-    `),
-    customer.query(`
-      SELECT ad_group_criterion.resource_name
-      FROM keyword_view
-      WHERE ad_group_criterion.status = 'ENABLED'
-      LIMIT 10000
+      LIMIT 20
     `),
     // Current ad-group bid targets — the data adjust_bid decisions anchor to.
     // Without this list the model had no current value to copy, the queue-time
     // ±20% guardrail failed closed (unknown current ⇒ blocked), and not one
-    // bid recommendation ever reached the approval centre.
-    customer.query(`
+    // bid recommendation ever reached the approval centre. The same 30-day
+    // rows give each ad group's CTR and CPA, which the pause_ad rule compares
+    // an ad against. Null when the read fails.
+    customer
+      .query(`
       SELECT
         ad_group.resource_name,
         ad_group.name,
         ad_group.campaign,
         ad_group.target_cpa_micros,
         ad_group.target_roas,
+        metrics.impressions, metrics.clicks,
         metrics.conversions, metrics.cost_micros
       FROM ad_group
       WHERE segments.date DURING LAST_30_DAYS
         AND ad_group.status = 'ENABLED'
       ORDER BY metrics.cost_micros DESC
-      LIMIT 50
-    `).then((rows: any[]) =>
-      rows.filter((row: any) => {
-        const adGroup = row.adGroup ?? row.ad_group ?? {};
-        const cpa = Number(adGroup.targetCpaMicros ?? adGroup.target_cpa_micros ?? 0);
-        const roas = Number(adGroup.targetRoas ?? adGroup.target_roas ?? 0);
-        return cpa > 0 || roas > 0;
-      })
-    ).catch(() => [] as any[]),
-  ]);
-
-  // ---- Conversion tracking health: the gate every other decision sits behind.
-  let conversionTracking: OptimizerSnapshot['conversion_tracking'] = { status: 'unknown', enabled_actions: 0 };
-  try {
-    const conversionActions = await customer.query(`
-      SELECT conversion_action.resource_name, conversion_action.status
+      LIMIT 200
+    `)
+      .catch(() => null as any[] | null),
+    // One row per enabled ad: how many siblings an ad has in its group.
+    customer
+      .query(`
+      SELECT ad_group.resource_name
+      FROM ad_group_ad
+      WHERE ad_group_ad.status = 'ENABLED'
+        AND ad_group.status = 'ENABLED'
+        AND campaign.status = 'ENABLED'
+      LIMIT 10000
+    `)
+      .catch(() => null as any[] | null),
+    customer.query(`
+      SELECT ad_group_criterion.resource_name
+      FROM keyword_view
+      WHERE ad_group_criterion.status = 'ENABLED'
+      LIMIT 10000
+    `),
+    // ---- Conversion tracking health: the gate every other decision sits behind.
+    // The same verdict the Jarvis tool and the autopilot read
+    // (lib/jarvis/tools/get-conversion-health.ts conversionVerdict), not a count
+    // of enabled actions. Two compact queries; the clicks and conversions of the
+    // last 7 days come from the campaign rows above.
+    customer
+      .query(`
+      SELECT conversion_action.name, conversion_action.status, conversion_action.category,
+        conversion_action.primary_for_goal, conversion_action.include_in_conversions_metric
       FROM conversion_action
       WHERE conversion_action.status = 'ENABLED'
-      LIMIT 50
-    `);
-    const enabledActions = conversionActions.length;
-    const clicks7 = campaigns.reduce(
-      (total: number, row: any) => total + Number(row.metrics?.clicks ?? 0),
-      0
-    );
-    const conversions7 = campaigns.reduce(
-      (total: number, row: any) =>
-        total + Number(row.metrics?.conversions ?? 0),
-      0
-    );
-    const status: ConversionTrackingStatus =
-      enabledActions === 0
-        ? 'missing'
-        : clicks7 >= 100 && conversions7 === 0
-          ? 'suspect'
-          : 'healthy';
-    conversionTracking = {
-      status,
-      enabled_actions: enabledActions,
-      ...(status === 'suspect'
-        ? { note: 'Enabled conversion actions exist but real click volume produced zero conversions in 7 days.' }
-        : {}),
-    };
-  } catch (error) {
-    console.warn(`Conversion tracking check failed for ${customerId}`, error);
-  }
+      LIMIT 100
+    `)
+      .catch((error: unknown) => {
+        console.warn(`Conversion tracking check failed for ${customerId}`, error);
+        return null as any[] | null;
+      }),
+    queryDailyConversions(customer),
+  ]);
 
-  const totals = campaigns.reduce(
-    (acc: { cost: number; conversions: number; value: number }, row: any) => {
-      const metrics = row.metrics ?? {};
-      acc.cost += Number(metrics.costMicros ?? metrics.cost_micros ?? 0) / 1_000_000;
-      acc.conversions += Number(metrics.conversions ?? 0);
-      acc.value += Number(metrics.conversionsValue ?? metrics.conversions_value ?? 0);
+  // Ad groups that carry an explicit target CPA / target ROAS — the only ones
+  // adjust_bid may touch.
+  const adGroupBidTargets = (adGroupRows ?? []).filter((row: any) => {
+    const adGroup = row.adGroup ?? row.ad_group ?? {};
+    const cpa = Number(adGroup.targetCpaMicros ?? adGroup.target_cpa_micros ?? 0);
+    const roas = Number(adGroup.targetRoas ?? adGroup.target_roas ?? 0);
+    return cpa > 0 || roas > 0;
+  });
+
+  const sum7 = campaignRows.reduce(
+    (acc: { clicks: number; conversions: number }, row: any) => {
+      acc.clicks += Number(row.metrics?.clicks ?? 0);
+      acc.conversions += Number(row.metrics?.conversions ?? 0);
       return acc;
     },
-    { cost: 0, conversions: 0, value: 0 }
+    { clicks: 0, conversions: 0 }
   );
+  const conversionTracking = buildConversionTracking({
+    actionRows: conversionActionRows,
+    dailyRows: conversionDailyRows,
+    dailyTruncated: dailyConversionsLookTruncated(conversionDailyRows),
+    clicks7d: sum7.clicks,
+    conversions7d: sum7.conversions,
+    today: riyadhToday(),
+  });
 
-  const budgetUtilization = campaigns.map((row: any) => {
+  const budgetUtilization = campaignRows.map((row: any) => {
     const metrics = row.metrics ?? {};
     const budget = row.campaignBudget ?? row.campaign_budget ?? {};
     const weeklyBudget = (Number(budget.amountMicros ?? budget.amount_micros ?? 0) / 1_000_000) * 7;
@@ -1208,6 +1368,11 @@ async function buildOptimizerSnapshot(
       utilization: weeklyBudget > 0 ? spend / weeklyBudget : 0,
     };
   });
+
+  // The client's targets (break-even, from the onboarding answers) and the
+  // account's own history, kept apart. budget_utilization above reads the raw
+  // rows before the new fields are folded into `diag`.
+  const economicsFields = composeEconomicsFields({ economics, campaignRows, rows30d: campaigns30d });
 
   return {
     account_id: accountId,
@@ -1224,18 +1389,20 @@ async function buildOptimizerSnapshot(
         }
       : null,
     conversion_tracking: conversionTracking,
-    campaigns,
+    economics: economicsFields.economics,
+    account_history: economicsFields.account_history,
+    campaigns: economicsFields.campaigns,
     underperforming_keywords: underperforming,
     high_performing_keywords: highPerforming,
     wasted_search_terms: wastedTerms,
     converting_search_terms: convertingTerms,
     ad_group_bid_targets: adGroupBidTargets,
     budget_utilization: budgetUtilization,
-    poor_ads: poorAds,
+    poor_ads: enrichPoorAds(poorAdRows, adGroupRows, enabledAdRows),
     keyword_count: enabledKeywords.length,
     currency_code: currencyCode,
-    target_roas: totals.cost > 0 ? totals.value / totals.cost : 0,
-    target_cpa: totals.conversions > 0 ? totals.cost / totals.conversions : 0,
+    target_roas: economicsFields.target_roas,
+    target_cpa: economicsFields.target_cpa,
   };
 }
 
@@ -1246,10 +1413,21 @@ async function buildOptimizerSnapshot(
 const OPPORTUNITY_COOLDOWN_MS = 14 * 24 * 60 * 60 * 1000;
 
 /**
- * Queue a "build a new campaign" recommendation when the converting-terms pool
- * justifies one. Deduped two ways: a stable fingerprint blocks a second ACTIVE
- * opportunity, and a 14-day cooldown (any status, including dismissed) stops
- * the platform from re-nagging an owner who said no.
+ * Queue a "winning search terms" recommendation when the converting-terms pool
+ * justifies one. What it suggests follows the opportunity's own mode (titan
+ * 3.5 and 20.3): Exact keywords inside the ad group that already earns the
+ * terms, and a separate campaign only from 30 conversions in 30 days. The
+ * expected impact is the terms' measured cost and conversions, never a
+ * percentage, and the conversion value is left out when the account never set
+ * one (see buildOpportunityRecommendation).
+ *
+ * Deduped two ways: a stable fingerprint blocks a second ACTIVE opportunity, and
+ * a 14-day cooldown (any status, including dismissed) stops the platform from
+ * re-nagging an owner who said no. An opportunity still pending after the
+ * cooldown is stale (hidden from the lists) and holds the fingerprint, so it is
+ * renewed in place with the new numbers.
+ *
+ * Returns 'created', 'renewed', or false when nothing was queued.
  */
 async function maybeQueueCampaignOpportunity({
   supabase,
@@ -1261,7 +1439,7 @@ async function maybeQueueCampaignOpportunity({
   accountId: string;
   convertingTermRows: any[];
   currencyCode: string;
-}): Promise<boolean> {
+}): Promise<'created' | 'renewed' | false> {
   const opportunity = detectCampaignOpportunity(mapConvertingTermRows(convertingTermRows), currencyCode);
   if (!opportunity) return false;
 
@@ -1275,32 +1453,32 @@ async function maybeQueueCampaignOpportunity({
     .maybeSingle();
   if (recent) return false;
 
+  const fingerprint = createHash('sha256').update(`${accountId}:build_campaign_opportunity`).digest('hex');
+  const row = buildOpportunityRecommendation(opportunity, currencyCode);
+
   const { error } = await supabase.from('recommendations').insert({
     account_id: accountId,
-    fingerprint: createHash('sha256').update(`${accountId}:build_campaign_opportunity`).digest('hex'),
-    category: 'structure',
-    severity: opportunity.totals.conversions >= 15 ? 'medium' : 'growth',
-    title: opportunity.title_ar.slice(0, 120),
-    description: opportunity.description_ar,
-    expected_impact: {
-      metric: 'conversions',
-      delta_pct: 15,
-      delta_sar_per_month: Math.round(opportunity.totals.conversion_value * 0.15),
-    },
-    action_payload: {
-      operation: 'build_campaign_opportunity',
-      brief_ar: opportunity.brief_ar,
-      terms: opportunity.terms,
-      totals: opportunity.totals,
-      source: 'optimizer_cron',
-    },
+    fingerprint,
+    ...row,
     status: 'pending',
   });
   if (error) {
-    if (error.code === '23505') return false; // an active opportunity already exists
-    throw error;
+    if (error.code !== '23505') throw error;
+    // An opportunity already holds the fingerprint. If it is a pending one that
+    // went stale, refresh it; anything else (approved, executing) stays as it is.
+    const { data: held } = await supabase
+      .from('recommendations')
+      .select('id')
+      .eq('account_id', accountId)
+      .eq('fingerprint', fingerprint)
+      .eq('status', 'pending')
+      .limit(1)
+      .maybeSingle();
+    if (!held?.id) return false;
+    const renewed = await renewStalePendingRecommendation(supabase, held.id, row);
+    return renewed ? 'renewed' : false;
   }
-  return true;
+  return 'created';
 }
 
 // ---------------------------------------------------------------------------

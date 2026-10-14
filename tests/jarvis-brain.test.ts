@@ -318,6 +318,14 @@ test('budget change amount is computed on the server and guardrails can block it
     prepareCtx(registry, fakeDb())
   );
   assert.equal((tooBig as any).code, 'bad_delta');
+  // Updated: the step bound is 5 to 20 percent either way (was -30..25), the same as the optimizer's guardrail.
+  for (const delta_pct of [22, -25, 3]) {
+    const outOfBounds = await prepareChange(
+      { operation: 'adjust_budget', evidence_refs: ['cmp_1'], choices: { delta_pct }, why_ar: 'x' },
+      prepareCtx(registry, fakeDb())
+    );
+    assert.equal((outOfBounds as any).code, 'bad_delta', `delta_pct=${delta_pct}`);
+  }
 
   const blocked = await prepareChange(
     { operation: 'adjust_budget', evidence_refs: ['cmp_1'], choices: { delta_pct: 10 }, why_ar: 'x' },

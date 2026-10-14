@@ -15,6 +15,8 @@ type ActionHistoryInput = {
 const FAILED_ACTION_TYPES = new Set([
   'execution_blocked',
   'blocked_by_guardrails',
+  'recommendation_expired',
+  'recent_change_lock',
   'preflight_failed',
   'resource_account_mismatch',
   'record_failed',

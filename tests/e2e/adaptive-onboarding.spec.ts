@@ -140,6 +140,11 @@ test('a clinic: the opener shows what was read, the answers lead to «فهمت �
   await shot(page, 'clinic-service-tiles');
   await pick(page, /^زراعة/);
   await pick(page, 'من 100 إلى 500 ريال');
+  // Profit per patient and how many contacts become patients: what the break-even CPA is worked out from.
+  await expect(page.getByText('كم تربح تقريباً من المريض الواحد بعد التكاليف؟')).toBeVisible({ timeout: 15_000 });
+  await pick(page, /^من 50 إلى 200 ريال$/);
+  await expect(page.getByText('من كل 10 يتواصلون معك، كم واحد يصير عميل؟')).toBeVisible({ timeout: 15_000 });
+  await pick(page, /^من 2 إلى 3$/);
   await pick(page, 'الاتصالات قليلة');
   await expect(page.getByText('متى أحد يرد على اتصالات العيادة؟')).toBeVisible({ timeout: 15_000 });
   await noSidewaysOverflow(page);
@@ -284,6 +289,8 @@ test('an agency-managed account: the plan comes with questions for the agency an
   await expect(page.getByText('وش الخدمة اللي تبي تكثر حجوزاتها؟')).toBeVisible({ timeout: 15_000 });
   await pick(page, /^زراعة/);
   await pick(page, 'من 100 إلى 500 ريال');
+  await pick(page, /^من 50 إلى 200 ريال$/);
+  await pick(page, /^من 2 إلى 3$/);
   await pick(page, 'الاتصالات قليلة');
   await pick(page, /^فترتين/);
   await pick(page, /^إي$/);
@@ -501,6 +508,8 @@ test('a clinic: /home shows the same plan (the call-hours decision open, the aud
   await pick(page, 'إي صح');
   await pick(page, /^زراعة/);
   await pick(page, 'من 100 إلى 500 ريال');
+  await pick(page, /^من 50 إلى 200 ريال$/);
+  await pick(page, /^من 2 إلى 3$/);
   await pick(page, 'الاتصالات قليلة');
   await pick(page, /^فترتين/);
   await pick(page, /^إي$/);

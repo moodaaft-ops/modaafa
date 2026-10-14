@@ -46,8 +46,11 @@ test('budget guardrail blocks unsafe single and cumulative increases', async () 
     ai_actions: { data: [{ payload: { action: { params: { delta_pct: 30 } } } }], error: null },
     google_ads_accounts: { data: { business_id: null, currency_code: 'USD' }, error: null },
   });
+  // Updated: the single-step bound is now 20 (was 25), so 26 and 21 are refused as too large.
   assert.equal(await checkGuardrails(budgetAction({ delta_pct: 26 }), 'account-1', supabase), null);
   assert.equal(await checkGuardrails(budgetAction({ delta_pct: 21 }), 'account-1', supabase), null);
+  // A legal single step on top of a prior +30% in the same day is still refused by the cumulative cap.
+  assert.equal(await checkGuardrails(budgetAction({ delta_pct: 20, new_amount_micros: 12_000_000 }), 'account-1', supabase), null);
 });
 
 test('budget guardrail allows a bounded change when required metadata is available', async () => {
@@ -80,18 +83,21 @@ test('a SAR-denominated business cap is not compared 1:1 with a non-SAR account'
   assert.equal(await checkGuardrails(action, 'account-1', supabase), action);
 });
 
-test('two +25% changes on the same budget compound past 50% and block the second', async () => {
+test('two rises on the same budget compound past 50% and block the second', async () => {
   // Summing linearly, 25 + 25 = 50 read as "not over 50" and passed. The true
   // compounded rise is 1.25 × 1.25 = 56.25%.
+  // Updated: a single step is now capped at 20, so the legal pair is a prior
+  // +30% (made under the old cap, a row without a budget_resource) and a new
+  // +20%: 1.30 × 1.20 = 156%, still over the 24-hour cap.
   const resource = 'customers/123/campaignBudgets/456';
   const supabase = mockSupabase({
     ai_actions: {
-      data: [{ payload: { action: { params: { delta_pct: 25, budget_resource: resource } } } }],
+      data: [{ payload: { action: { params: { delta_pct: 30 } } } }],
       error: null,
     },
     google_ads_accounts: { data: { business_id: null }, error: null },
   });
-  const action = budgetAction({ delta_pct: 25, budget_resource: resource });
+  const action = budgetAction({ delta_pct: 20, budget_resource: resource });
   assert.equal(await checkGuardrails(action, 'account-1', supabase), null);
 });
 
@@ -101,7 +107,7 @@ test('a prior increase on an UNRELATED budget does not block this one', async ()
   const supabase = mockSupabase({
     ai_actions: {
       data: [
-        { payload: { action: { params: { delta_pct: 25, budget_resource: 'customers/123/campaignBudgets/999' } } } },
+        { payload: { action: { params: { delta_pct: 20, budget_resource: 'customers/123/campaignBudgets/999' } } } },
       ],
       error: null,
     },

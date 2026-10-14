@@ -183,6 +183,7 @@ export function understandingRows(args: {
     own(VALUE_LABEL[kind], 'value');
   }
   own('الصفقة الواحدة', 'deal_value');
+  own('ربحك من العميل الواحد', 'profit_per_deal');
   own('من كل 10 يتواصلون معك يصيرون عملاء', 'close_rate');
 
   own('اللي يتبقى من كل 100 ريال', 'margin');

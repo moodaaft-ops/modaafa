@@ -7,13 +7,27 @@
  * every branch without a database.
  *
  * Every answer writes two things: the matching `businesses` column when there
- * is one (the audit, the optimizer and the brain already read those), and one
- * `business_memory` fact (source "onboarding", basis "stated") that the brain
- * reads as something the customer told it. The fact also carries
- * `data.setup_key`, which is how a refreshed page knows which questions were
- * already answered without a new column or migration.
+ * is one, and one `business_memory` fact (source "onboarding", basis "stated")
+ * that the brain reads as something the customer told it. The fact also
+ * carries `data.setup_key`, which is how a refreshed page knows which
+ * questions were already answered without a new column or migration.
+ *
+ * Who reads what. The audit and the optimizer read the `businesses` columns
+ * (sector, primary goal, monthly budget) as context. The scheduled optimizer
+ * reads exactly these facts and no others: the economics answers (`margin`,
+ * `deal_value`, `profit_per_deal`, `close_rate`, `aov_check`) plus `confirm`
+ * and `type` to tell which kind of business it is, through
+ * lib/economics/load.ts, and turns them into the break-even ROAS or CPA its
+ * budget and bid decisions are held to.
+ * Every other answer here (pain points, hours, products to push or exclude,
+ * regions, website) is for the brain and the screens; the optimizer does not
+ * see them. Which kinds are asked which economics questions is decided in
+ * lib/setup/adaptive/bank.ts: an e-commerce store is asked its margin; a
+ * services business, a clinic and a local business are asked the profit per
+ * customer after costs and the close rate (a services business also its deal value).
  */
 
+import type { EconomicsKind } from '../economics/break-even';
 import { ADAPTIVE_KEYS, type AdaptiveAnswer, type AdaptiveKey } from './adaptive/types';
 import {
   adaptiveEffects,
@@ -45,6 +59,33 @@ export function isAdaptiveKey(value: unknown): value is AdaptiveKey {
 
 /** The questions the brain needs most. Missing any of them puts the «كمّل تعريفي» card on the home screen. */
 export const CORE_KEYS: SetupKey[] = ['type', 'goal', 'value', 'budget'];
+
+/**
+ * The answers behind the break-even (lib/economics/break-even.ts). Without them
+ * the optimizer proposes NO budget or bid change at all, so an owner who never
+ * answered gets a card that quietly does nothing; missing ones count as missing
+ * core answers for the «كمّل تعريفي» card, by the kind of business:
+ *
+ *   a store                        margin
+ *   a clinic, services or local    profit_per_deal and close_rate
+ *                                  (an owner who answered the older deal_value and margin pair already has a
+ *                                  break-even, so profit_per_deal is covered; close_rate is still needed)
+ *
+ * An answer of «ما أدري» is an answer: it is on record, so it is not asked again.
+ * Callers that do not know the kind get no economics keys, which is the old behavior.
+ */
+export function missingEconomicsKeys(answered: Iterable<SetupKey>, kind: EconomicsKind | null | undefined): SetupKey[] {
+  const done = new Set(answered);
+  if (kind === 'ecommerce') return done.has('margin') ? [] : ['margin'];
+  if (kind === 'clinic' || kind === 'services' || kind === 'local') {
+    const missing: SetupKey[] = [];
+    const profitCovered = done.has('profit_per_deal') || (done.has('deal_value') && done.has('margin'));
+    if (!profitCovered) missing.push('profit_per_deal');
+    if (!done.has('close_rate')) missing.push('close_rate');
+    return missing;
+  }
+  return [];
+}
 
 export type IconKey =
   | 'bag'
@@ -881,14 +922,17 @@ export function pendingKeys(args: {
   });
 }
 
-export function missingCoreKeys(answered: Iterable<SetupKey>): SetupKey[] {
+export function missingCoreKeys(answered: Iterable<SetupKey>, kind?: EconomicsKind | null): SetupKey[] {
   const done = new Set(answered);
   // The adaptive tree replaces «value» with the question that fits the kind: the average order the account
   // reported (aov_check) for a store, the deal value (deal_value) for a services business, and for a new,
   // dormant or no-account customer nothing but what they want to sell (focus_service). Any of them covers it.
   // Nobody outside the tree has these answers on record, so the old flow is unchanged.
   const valueCovered = done.has('aov_check') || done.has('deal_value') || done.has('focus_service');
-  return CORE_KEYS.filter((key) => !done.has(key) && !(key === 'value' && valueCovered));
+  return [
+    ...CORE_KEYS.filter((key) => !done.has(key) && !(key === 'value' && valueCovered)),
+    ...missingEconomicsKeys(done, kind),
+  ];
 }
 
 export function isSetupKey(value: unknown): value is SetupKey {

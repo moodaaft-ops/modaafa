@@ -24,6 +24,7 @@ import {
 } from './types';
 import { ALL_FOCUS_ENTRIES, FOCUS_ALL_ID, FOCUS_ALL_LABEL, FOCUS_OTHER_ID, FOCUS_TEXT_MAX, FOCUS_TEXT_MIN } from './focus';
 import { KIND_TYPE_ID, currencyWord, money } from './shared';
+import { bucketBounds, closeRateBoundsOf10 } from '../../economics/break-even';
 
 export type AdaptiveParse = { ok: true; answer: AdaptiveAnswer } | { ok: false; error: string };
 
@@ -40,6 +41,8 @@ export type AdaptiveReactionContext = {
   currency?: string | null;
   /** The stored deal_value choice id, for close_rate's reaction. */
   dealValue?: string | null;
+  /** The stored profit_per_deal choice id, for close_rate's reaction (it wins over the deal value). */
+  profit?: string | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -137,6 +140,30 @@ export const DEAL_VALUE_OPTIONS: AdaptiveOption[] = [
   { id: 'unknown', label: 'ما أدري', icon: 'help' },
 ];
 
+/**
+ * What is left of ONE customer after the costs, in riyals (services, clinic, local). The buckets start low
+ * on purpose: a shop or a restaurant makes tens of riyals on a customer, a clinic hundreds, a contractor
+ * thousands, and the optimizer takes the lower edge of the answered bucket as the profit
+ * (lib/economics/break-even.ts), so a bucket never makes the client look richer than they said.
+ */
+export const PROFIT_PER_DEAL_RANGES: Record<string, { min: number | null; max: number | null }> = {
+  lt50: { min: 0, max: 50 },
+  '50_200': { min: 50, max: 200 },
+  '200_1k': { min: 200, max: 1000 },
+  '1k_5k': { min: 1000, max: 5000 },
+  gt5k: { min: 5000, max: null },
+  unknown: { min: null, max: null },
+};
+
+export const PROFIT_PER_DEAL_OPTIONS: AdaptiveOption[] = [
+  { id: 'lt50', label: 'أقل من 50 ريال' },
+  { id: '50_200', label: 'من 50 إلى 200 ريال' },
+  { id: '200_1k', label: 'من 200 إلى 1,000 ريال' },
+  { id: '1k_5k', label: 'من 1,000 إلى 5,000 ريال' },
+  { id: 'gt5k', label: 'أكثر من 5,000 ريال' },
+  { id: 'unknown', label: 'ما أدري', icon: 'help' },
+];
+
 /** Out of every 10 who get in touch, how many become customers. */
 export const CLOSE_RATE_RANGES: Record<string, { min: number | null; max: number | null }> = {
   le1: { min: 0, max: 1 },
@@ -188,6 +215,7 @@ export const ADAPTIVE_CATALOG: Record<AdaptiveKey, AdaptiveOption[]> = {
   call_hours: CALL_HOURS_OPTIONS,
   whatsapp_booking: WHATSAPP_BOOKING_OPTIONS,
   deal_value: DEAL_VALUE_OPTIONS,
+  profit_per_deal: PROFIT_PER_DEAL_OPTIONS,
   close_rate: CLOSE_RATE_OPTIONS,
   peak_hours: PEAK_HOURS_OPTIONS,
   delivery_apps: DELIVERY_APPS_OPTIONS,
@@ -532,6 +560,21 @@ export function adaptiveEffects(answer: AdaptiveAnswer): {
       };
     }
 
+    case 'profit_per_deal': {
+      const range = PROFIT_PER_DEAL_RANGES[choice] ?? { min: null, max: null };
+      return {
+        business: {},
+        fact: {
+          kind: 'margin',
+          fact_ar:
+            choice === 'unknown'
+              ? 'ما يعرف كم يربح من العميل الواحد بعد التكاليف'
+              : `يربح من العميل الواحد بعد التكاليف تقريباً ${rangeText(range, 'ريال')}`,
+          data: data({ min_sar: range.min, max_sar: range.max }),
+        },
+      };
+    }
+
     case 'close_rate': {
       const range = CLOSE_RATE_RANGES[choice] ?? { min: null, max: null };
       return {
@@ -627,6 +670,41 @@ export function contactValueLine(dealChoice: string | null | undefined, closeCho
   return `يعني الاتصال الواحد يسوى لك من ${formatAmount(low)} إلى ${formatAmount(high)} ${word} تقريباً.`;
 }
 
+/** Under this many riyals a limit per contact is not a number worth showing: one click can cost that much. */
+export const CONTACT_LINE_FLOOR_SAR = 10;
+
+/**
+ * The most one contact may cost before the ads lose money: the profit per
+ * customer times the share of contacts that become customers. The customer
+ * answered two buckets, so the limit is a RANGE (low edges to high edges, the
+ * same ends the optimizer holds the account to: lib/economics/break-even.ts),
+ * and the line says so instead of quoting one edge as if it were exact.
+ *
+ * Small numbers are not shown. A profit under 50 riyals with a close rate of one
+ * in ten gives a limit near one riyal, which reads as an error and means only
+ * "the margin per contact is thin": the line then says that in words. When just
+ * the low end is under the floor the line gives the ceiling alone («أقل من»).
+ */
+export function breakEvenContactLine(profitChoice: string | null | undefined, closeChoice: string): string | null {
+  const profitRange = profitChoice ? PROFIT_PER_DEAL_RANGES[profitChoice] : undefined;
+  const closeRange = CLOSE_RATE_RANGES[closeChoice];
+  if (!profitRange || !closeRange) return null;
+  const profit = bucketBounds(profitRange.min, profitRange.max);
+  const close = closeRateBoundsOf10(closeRange.min, closeRange.max);
+  if (!profit || !close) return null;
+
+  const low = (profit.low * close.low) / 10;
+  const high = (profit.high * close.high) / 10;
+  // The profit buckets are in riyals whatever the account's currency, so the line says riyals.
+  if (high < CONTACT_LINE_FLOOR_SAR) {
+    return 'يعني الربح على الاتصال الواحد ضيّق، فلازم كل اتصال يجي رخيص. بحسبها كذا.';
+  }
+  if (low < CONTACT_LINE_FLOOR_SAR) {
+    return `يعني أقصى سعر للاتصال الواحد عشان تطلع رابح أقل من ${formatAmount(Math.round(high))} ريال تقريباً. بحسبها كذا.`;
+  }
+  return `يعني أقصى سعر للاتصال الواحد عشان تطلع رابح بين ${formatAmount(Math.round(low))} و${formatAmount(Math.round(high))} ريال تقريباً. بحسبها كذا.`;
+}
+
 /**
  * CONTRACT (part B): the short line «مُضاعِف» says back, or null. Most answers
  * get none on purpose. `context` carries what only the server knows; without
@@ -650,7 +728,7 @@ export function adaptiveReaction(answer: AdaptiveAnswer, context: AdaptiveReacti
     case 'call_hours':
       return choice === 'always' ? null : 'تمام، أشوف كم ينصرف وكم يتصل خارج هالساعات.';
     case 'close_rate':
-      return contactValueLine(context.dealValue, choice, context.currency);
+      return breakEvenContactLine(context.profit, choice) ?? contactValueLine(context.dealValue, choice, context.currency);
     case 'tracking_now':
       if (choice === 'dont_know') return 'ولا يهمك، أول شي نركّب التتبع عشان تشوف النتيجة بعينك.';
       if (choice === 'tells_me') return 'زين، والتتبع يخلي قوقل نفسه يعرف.';

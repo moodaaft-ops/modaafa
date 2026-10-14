@@ -1,5 +1,6 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import { buildExecutableAction } from '@/lib/ai/executable-action';
+import { BUDGET_STEP_MAX_PCT, BUDGET_STEP_MIN_PCT } from '@/lib/ai/optimizer-gates';
 import { checkGuardrails, sanitizePromptText, type OptimizerAction } from '@/lib/ai/optimizer-agent';
 import { actionFingerprint, categoryForAction, severityForAction } from '@/lib/ai/action-fingerprint';
 import { operationLabelAr } from '@/lib/ai/operation-labels';
@@ -44,7 +45,7 @@ export const PREPARE_CHANGE_TOOL = {
     'with an approve button. Point at evidence refs returned by the read tools in THIS turn; the server builds every ' +
     'resource name and number from those rows. add_negative_keywords: 1 to 10 refs of wasted search terms (st_) or ' +
     'negative word candidates (nw_), all in the same campaign. pause_keyword: one kw_ ref. add_keyword: one winning st_ ' +
-    'ref. adjust_budget: one cmp_ ref plus choices.delta_pct (between -30 and 25). pause_ad: one ad_ ref. ' +
+    'ref. adjust_budget: one cmp_ ref plus choices.delta_pct (5 to 20 up, or -5 to -20 down). pause_ad: one ad_ ref. ' +
     'pause_campaign / enable_campaign: one cmp_ ref. manual_steps: no refs, steps_ar only, for things the customer ' +
     'does by hand (locations, schedule, languages, tracking, new campaigns). Max 3 per turn.',
   input_schema: {
@@ -60,7 +61,7 @@ export const PREPARE_CHANGE_TOOL = {
         type: 'object',
         properties: {
           match_type: { type: 'string', enum: ['EXACT', 'PHRASE'] },
-          delta_pct: { type: 'number', minimum: -30, maximum: 25 },
+          delta_pct: { type: 'number', minimum: -BUDGET_STEP_MAX_PCT, maximum: BUDGET_STEP_MAX_PCT },
           campaign_ref: { type: 'string', pattern: '^cmp_[0-9]{1,4}$' },
         },
         additionalProperties: false,
@@ -373,7 +374,9 @@ function resolve(ctx: PrepareContext, operation: PrepareOperation, rows: Evidenc
     case 'adjust_budget': {
       const row = one(rows, 'campaign');
       const delta = Math.round(numberOf(choices.delta_pct) * 10) / 10;
-      if (!delta || delta < -30 || delta > 25) fail('bad_delta', 'نسبة تعديل الميزانية لازم تكون بين -30 و25 وما تكون صفر.');
+      if (!delta || Math.abs(delta) < BUDGET_STEP_MIN_PCT || Math.abs(delta) > BUDGET_STEP_MAX_PCT) {
+        fail('bad_delta', 'نسبة تعديل الميزانية لازم تكون من 5 إلى 20 بالزيادة أو بالنقصان.');
+      }
       const budgetResource = String(row.data.budget_resource_name ?? '');
       const current = numberOf(row.data.budget_micros);
       if (!budgetResource || current <= 0) fail('no_budget', 'ما لقيت ميزانية الحملة في البيانات.');

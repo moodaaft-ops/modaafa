@@ -1,4 +1,5 @@
 import type { OptimizerAction } from './optimizer-agent';
+import { BUDGET_STEP_MAX_PCT, BUDGET_STEP_MIN_PCT } from './optimizer-gates';
 
 /**
  * Translate a stored recommendation payload into an executable OptimizerAction.
@@ -97,8 +98,12 @@ export function buildExecutableAction(
     // absolute-amount requirement here and dead-ended in
     // `manual_review_required` on every تنفيذ click. The pre-execution
     // preflight reads the LIVE budget and converts the delta to an absolute
-    // amount; bounds mirror the prompt and the queue-time guardrail.
-    const hasBoundedDelta = Number.isFinite(deltaPct) && deltaPct !== 0 && deltaPct >= -30 && deltaPct <= 25;
+    // amount; bounds mirror the prompt and the queue-time guardrail
+    // (evaluateBudgetBounds in optimizer-gates.ts): a step of 5 to 20% either way.
+    const hasBoundedDelta =
+      Number.isFinite(deltaPct) &&
+      Math.abs(deltaPct) >= BUDGET_STEP_MIN_PCT &&
+      Math.abs(deltaPct) <= BUDGET_STEP_MAX_PCT;
     if (!hasAbsolute && !hasBoundedDelta) return null;
     return base;
   }
