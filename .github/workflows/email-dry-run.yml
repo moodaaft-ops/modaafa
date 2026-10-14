@@ -1,0 +1,23 @@
+name: Email lifecycle dry run
+
+# Manual only. Plans what the lifecycle runner WOULD send if activated now.
+# Sends nothing and writes nothing (?dry=1). Prints the planner summary.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dry-run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Plan (no sending)
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          test -n "$CRON_SECRET"
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          curl -sS --max-time 110 -w '\nHTTP %{http_code}\n' \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "https://ai.modaafa.com/api/cron/email-lifecycle?dry=1&assume_approved=1&activated_at=$NOW"
