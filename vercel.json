@@ -15,6 +15,9 @@
     "app/api/chat/assistant/route.ts": {
       "maxDuration": 120
     },
+    "app/api/cron/welcome-email/route.ts": {
+      "maxDuration": 60
+    },
     "app/api/webhooks/stripe/route.ts": {
       "maxDuration": 60
     },

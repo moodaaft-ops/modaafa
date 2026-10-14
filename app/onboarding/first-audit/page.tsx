@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
+import { after } from 'next/server';
 import { ArrowLeft, MessageCircle } from 'lucide-react';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
@@ -17,6 +18,7 @@ import {
 } from '@/lib/onboarding/first-opportunities';
 import { TikTokPixel } from '@/lib/analytics/tiktok-pixel';
 import { CHAT_HANDOFF_PATH } from '@/lib/onboarding/chat-handoff';
+import { recordUserEvent } from '@/lib/stages/events';
 import { FirstAuditRunner } from './first-audit-runner';
 import { isSimpleExperience } from '@/lib/setup/mode';
 import { simpleOnboardingTarget } from '@/lib/setup/routes';
@@ -70,6 +72,11 @@ export default async function FirstAuditPage({
     recommendations = (data ?? []) as OpportunityRow[];
   }
   const top = pickFirstOpportunities(recommendations);
+  // The first opportunities are on screen: first_analysis_viewed, once per
+  // user, after the response, never throws.
+  if (audit) {
+    after(() => recordUserEvent(user.id, 'first_analysis_viewed', { metadata: { page: 'first-audit' } }));
+  }
 
   return (
     <main className="px-4 py-8 sm:px-6">

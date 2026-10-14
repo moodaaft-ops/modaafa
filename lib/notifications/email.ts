@@ -4,7 +4,17 @@ type EmailPayload = {
   to: string;
   subject: string;
   html: string;
+  replyTo?: string;
+  headers?: Record<string, string>;
+  /** Resend de-duplicates two calls carrying the same key for 24 hours. */
+  idempotencyKey?: string;
+  /** Skip the operational footer when the caller supplies its own. */
+  footer?: string;
 };
+
+export function isEmailConfigured() {
+  return isConfiguredEnv(process.env.RESEND_API_KEY) && isConfiguredEnv(process.env.RESEND_FROM_EMAIL);
+}
 
 export async function sendEmail(payload: EmailPayload) {
   const apiKey = process.env.RESEND_API_KEY;
@@ -19,12 +29,15 @@ export async function sendEmail(payload: EmailPayload) {
     headers: {
       Authorization: `Bearer ${apiKey.trim()}`,
       'Content-Type': 'application/json',
+      ...(payload.idempotencyKey ? { 'Idempotency-Key': payload.idempotencyKey } : {}),
     },
     body: JSON.stringify({
       from: from.trim(),
       to: [payload.to],
       subject: payload.subject,
-      html: emailShell(payload.html),
+      html: emailShell(payload.html, payload.footer),
+      ...(payload.replyTo ? { reply_to: payload.replyTo } : {}),
+      ...(payload.headers ? { headers: payload.headers } : {}),
     }),
   });
 
@@ -103,8 +116,8 @@ export function paymentFailedEmail() {
   };
 }
 
-function emailShell(content: string) {
-  return `<div dir="rtl" style="font-family:Arial,sans-serif;line-height:1.8;color:#0E1426;max-width:640px;margin:auto"><div style="padding:20px 0;font-size:22px;font-weight:700;color:#0E1426">مُضاعِف</div>${content}<hr style="border:0;border-top:1px solid #CDCFD4;margin:28px 0"><p style="font-size:12px;color:#586174">هذه رسالة تشغيلية تخص حسابك في منصة مُضاعِف.</p></div>`;
+function emailShell(content: string, footer = 'هذه رسالة تشغيلية تخص حسابك في منصة مُضاعِف.') {
+  return `<div dir="rtl" style="font-family:Arial,sans-serif;line-height:1.8;color:#0E1426;max-width:640px;margin:auto"><div style="padding:20px 0;font-size:22px;font-weight:700;color:#0E1426">مُضاعِف</div>${content}<hr style="border:0;border-top:1px solid #CDCFD4;margin:28px 0"><p style="font-size:12px;color:#586174">${footer}</p></div>`;
 }
 
 function escapeHtml(value: string) {

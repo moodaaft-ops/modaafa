@@ -25,6 +25,7 @@ import {
   subscriptionEventWasApplied,
 } from '@/lib/billing/subscription-events';
 import { recordPaidInvoice } from '@/lib/billing/invoices';
+import { recordUserEvent } from '@/lib/stages/events';
 import {
   claimStripeWebhookEvent,
   completeStripeWebhookEvent,
@@ -50,6 +51,7 @@ const defaultDependencies = {
   applySubscriptionEvent,
   subscriptionEventWasApplied,
   recordPaidInvoice,
+  recordUserEvent,
   claimStripeWebhookEvent,
   completeStripeWebhookEvent,
   failStripeWebhookEvent,
@@ -398,6 +400,15 @@ export function createStripeWebhookHandler(
               userId: localSubscription.user_id,
               invoice,
             });
+            // "Paid" means money actually moved. Starting a trial produces a
+            // zero-amount invoice that Stripe also reports as succeeded, and
+            // that must not count: the user has not paid yet. Never throws.
+            if ((invoice.amount_paid ?? 0) > 0) {
+              await dependencies.recordUserEvent(localSubscription.user_id, 'subscription_paid', {
+                admin: supabase,
+                metadata: { stripe_invoice_id: invoice.id ?? null },
+              });
+            }
           }
           break;
         }

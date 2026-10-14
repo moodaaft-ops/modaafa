@@ -12,6 +12,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { redirect } from 'next/navigation';
+import { after } from 'next/server';
 import { getRequestAuthContext } from '@/lib/supabase/server';
 import { assertSupabaseRead } from '@/lib/supabase/query-errors';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
@@ -33,6 +34,7 @@ import { auditAccessMessage, freeAuditView, getFreeAuditStatus } from '@/lib/bil
 import { SubscriptionGate } from '@/lib/ui/subscription-gate';
 import { isCurrentAuditEngine } from '@/lib/audit/version';
 import { isRecommendationActionable, orderRecommendationsForGuidance } from '@/lib/audit/guidance';
+import { recordUserEvent } from '@/lib/stages/events';
 import { AuditRunner } from './audit-runner';
 
 type AccountLite = { customer_id: string; customer_name: string | null };
@@ -118,6 +120,10 @@ export default async function AuditPage({
       </>
     );
   }
+
+  // The analysis result is on screen: the first time this happens for a user
+  // is the first_analysis_viewed event. Runs after the response, never throws.
+  after(() => recordUserEvent(user.id, 'first_analysis_viewed', { metadata: { page: 'audit' } }));
 
   const metricsSnapshot = (audit.metrics_snapshot ?? {}) as any;
   const currentAuditEngine = isCurrentAuditEngine(metricsSnapshot);
