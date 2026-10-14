@@ -111,6 +111,9 @@ function questionCopy(key: SetupKey, s: SetupState): { text: string; why?: strin
         text: 'آخر سؤال. التعديلات الصغيرة، مثل إني أوقف عبارة بحث تصرف بدون فايدة، أسويها لحالي وأبلغك؟',
         why: 'أي شي يلمس الميزانية أو يوقف حملة بستأذنك فيه دايماً، وأي تعديل ترجعه خلال 30 يوم.',
       };
+    default:
+      // Adaptive keys carry their own copy (lib/setup/adaptive/bank.ts).
+      return { text: '' };
   }
 }
 

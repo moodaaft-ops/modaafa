@@ -14,6 +14,10 @@
  * already answered without a new column or migration.
  */
 
+import { ADAPTIVE_KEYS, type AdaptiveAnswer, type AdaptiveKey } from './adaptive/types';
+import { adaptiveEffects, adaptiveLabel, adaptiveReaction, parseAdaptiveAnswer } from './adaptive/answers';
+
+/** The ten fixed questions. The adaptive tree adds ADAPTIVE_KEYS on top (lib/setup/adaptive). */
 export const SETUP_KEYS = [
   'type',
   'name',
@@ -26,7 +30,12 @@ export const SETUP_KEYS = [
   'website',
   'consent',
 ] as const;
-export type SetupKey = (typeof SETUP_KEYS)[number];
+export type LegacySetupKey = (typeof SETUP_KEYS)[number];
+export type SetupKey = LegacySetupKey | AdaptiveKey;
+
+export function isAdaptiveKey(value: unknown): value is AdaptiveKey {
+  return typeof value === 'string' && (ADAPTIVE_KEYS as readonly string[]).includes(value);
+}
 
 /** The questions the brain needs most. Missing any of them puts the «كمّل تعريفي» card on the home screen. */
 export const CORE_KEYS: SetupKey[] = ['type', 'goal', 'value', 'budget'];
@@ -165,6 +174,7 @@ export const CONSENT_OPTIONS: SetupOption[] = [
 // ---------------------------------------------------------------------------
 
 export type SetupAnswer =
+  | AdaptiveAnswer
   | { key: 'type'; choice: string; text?: string }
   | { key: 'name'; text: string }
   | { key: 'goal'; choice: keyof typeof GOAL_COLUMN }
@@ -237,6 +247,7 @@ export function parseAmount(raw: unknown): number | null | 'invalid' {
 const ids = (options: SetupOption[]) => options.map((option) => option.id);
 
 export function parseAnswer(key: unknown, raw: unknown): ParseResult {
+  if (isAdaptiveKey(key)) return parseAdaptiveAnswer(key, raw);
   const input = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
   const choice = typeof input.choice === 'string' ? input.choice : '';
   switch (key) {
@@ -301,7 +312,16 @@ export function parseAnswer(key: unknown, raw: unknown): ParseResult {
   }
 }
 
-export type MemoryKindForSetup = 'goal' | 'margin' | 'constraint' | 'geo' | 'agency' | 'other';
+export type MemoryKindForSetup =
+  | 'goal'
+  | 'margin'
+  | 'constraint'
+  | 'geo'
+  | 'agency'
+  | 'other'
+  | 'product'
+  | 'schedule'
+  | 'capacity';
 
 export type AnswerEffects = {
   /** Columns on `businesses`. Empty when the answer has no column. */
@@ -347,7 +367,15 @@ export function formatAmount(amount: number) {
   return Math.round(amount).toLocaleString('en-US');
 }
 
+function isAdaptiveAnswer(answer: SetupAnswer): answer is AdaptiveAnswer {
+  return isAdaptiveKey(answer.key);
+}
+
 export function answerEffects(answer: SetupAnswer): AnswerEffects {
+  if (isAdaptiveAnswer(answer)) {
+    const effects = adaptiveEffects(answer);
+    return { business: effects.business, fact: effects.fact as AnswerEffects['fact'] };
+  }
   const data = (extra: Record<string, unknown> = {}) => ({ setup_key: answer.key, ...extra });
   switch (answer.key) {
     case 'type': {
@@ -431,6 +459,7 @@ export function answerEffects(answer: SetupAnswer): AnswerEffects {
 
 /** What the customer's own bubble says after they answer. */
 export function answerLabel(answer: SetupAnswer): string {
+  if (isAdaptiveAnswer(answer)) return adaptiveLabel(answer);
   switch (answer.key) {
     case 'type':
       return answer.choice === 'other' ? answer.text ?? '' : optionLabel(TYPE_OPTIONS, answer.choice);
@@ -462,6 +491,7 @@ export function answerLabel(answer: SetupAnswer): string {
  * instead of only asking. Most answers get none on purpose.
  */
 export function reactionTo(answer: SetupAnswer): string | null {
+  if (isAdaptiveAnswer(answer)) return adaptiveReaction(answer);
   switch (answer.key) {
     case 'goal':
       if (answer.choice === 'calls') return 'تمام، كل ريال بحسبه على الاتصالات والواتساب اللي يجيبها.';
@@ -575,5 +605,5 @@ export function missingCoreKeys(answered: Iterable<SetupKey>): SetupKey[] {
 }
 
 export function isSetupKey(value: unknown): value is SetupKey {
-  return typeof value === 'string' && (SETUP_KEYS as readonly string[]).includes(value);
+  return (typeof value === 'string' && (SETUP_KEYS as readonly string[]).includes(value)) || isAdaptiveKey(value);
 }
