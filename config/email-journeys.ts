@@ -79,7 +79,7 @@ export const JOURNEY_STEPS: Record<JourneyId, Step[]> = {
  * The moment the lifecycle goes live (ISO, with offset). A step whose due time
  * is earlier than this is never sent, whatever else is true. null = nobody.
  */
-export const EMAIL_LIFECYCLE_ACTIVATED_AT: string | null = null;
+export const EMAIL_LIFECYCLE_ACTIVATED_AT: string | null = '2026-10-15T09:00:00+03:00';
 
 /** Percent of users (stable, by hash of the user id) who receive no journey mail. See lib/lifecycle/holdout.ts. */
 export const HOLDOUT_PERCENT = 10;
