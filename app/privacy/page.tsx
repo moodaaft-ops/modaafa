@@ -1,9 +1,12 @@
 import Link from 'next/link';
 import { LegalPage, LegalSection } from '@/lib/ui/legal-page';
+import { pageMetadata } from '@/lib/seo/site';
 
-export const metadata = {
+export const metadata = pageMetadata({
   title: 'سياسة الخصوصية',
-};
+  path: '/privacy',
+  description: 'البيانات التي يجمعها مُضاعِف من حسابك ومن حساب إعلانات جوجل، وكيف تُستخدم وتُحمى، ومتى تُحذف.',
+});
 
 export default function PrivacyPage() {
   return (

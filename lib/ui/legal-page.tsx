@@ -1,8 +1,5 @@
 import type { ReactNode } from 'react';
-import Image from 'next/image';
-import Link from 'next/link';
-import { ThemeToggle } from '@/lib/ui/theme-toggle';
-import { LogoMark } from '@/lib/ui/logo';
+import { SiteFooter, SiteHeader } from '@/lib/ui/site-chrome';
 
 export function LegalPage({
   title,
@@ -17,20 +14,7 @@ export function LegalPage({
 }) {
   return (
     <main className="min-h-screen bg-background text-foreground">
-      <header className="border-b border-border bg-card">
-        <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
-          <Link href="/" className="flex items-center gap-3">
-            <LogoMark size={38} alt="مُضاعِف" />
-            <span className="text-[14px] font-semibold">مُضاعِف</span>
-          </Link>
-          <div className="flex items-center gap-3">
-            <ThemeToggle />
-            <Link href="/login" className="text-sm font-semibold text-primary hover:underline dark:text-primary">
-              تسجيل الدخول
-            </Link>
-          </div>
-        </div>
-      </header>
+      <SiteHeader />
 
       <article className="mx-auto max-w-3xl px-4 py-12 sm:px-6 sm:py-16">
         <header className="border-b border-border pb-8">
@@ -41,17 +25,7 @@ export function LegalPage({
         <div className="legal-content py-8">{children}</div>
       </article>
 
-      <footer className="border-t border-border px-4 py-7 text-sm text-muted-foreground sm:px-6">
-        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-4">
-          <span>© 2026 مُضاعِف / Modaafa Ads AI · مؤسسة تقنيات أيمن للتسويق الإلكتروني · الرقم الوطني الموحد 7038156571</span>
-          <nav className="flex flex-wrap gap-4" aria-label="الصفحات القانونية">
-            <Link href="/privacy" className="hover:text-foreground">الخصوصية</Link>
-            <Link href="/terms" className="hover:text-foreground">الشروط</Link>
-            <Link href="/refund" className="hover:text-foreground">الاسترداد</Link>
-            <Link href="/data-deletion" className="hover:text-foreground">حذف البيانات</Link>
-          </nav>
-        </div>
-      </footer>
+      <SiteFooter />
     </main>
   );
 }

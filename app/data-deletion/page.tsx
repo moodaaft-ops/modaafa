@@ -1,9 +1,12 @@
 import Link from 'next/link';
 import { LegalPage, LegalSection } from '@/lib/ui/legal-page';
+import { pageMetadata } from '@/lib/seo/site';
 
-export const metadata = {
+export const metadata = pageMetadata({
   title: 'حذف الحساب والبيانات',
-};
+  path: '/data-deletion',
+  description: 'كيف تحذف حسابك وبياناتك من مُضاعِف، وكيف تسحب صلاحية الوصول لإعلانات جوجل من حساب Google.',
+});
 
 export default function DataDeletionPage() {
   return (

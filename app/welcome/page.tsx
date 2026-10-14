@@ -5,10 +5,14 @@ import { getRequestAuthContext, createAdminClient } from '@/lib/supabase/server'
 import { isRegistrationComplete, REGISTRATION_COMPLETE_PATH } from '@/lib/registration/gate';
 import { RegistrationPixel } from '@/lib/analytics/registration-pixel';
 import { LogoLockup } from '@/lib/ui/logo';
+import { pageMetadata } from '@/lib/seo/site';
 
-export const metadata: Metadata = {
+export const metadata: Metadata = pageMetadata({
   title: 'أهلاً بك',
-};
+  path: '/welcome',
+  description: 'أهلاً بك في مُضاعِف. حسابك جاهز وتقدر تكمل من هنا.',
+  noIndex: true,
+});
 
 /**
  * First page after registration. Placeholder content: the real welcome page is

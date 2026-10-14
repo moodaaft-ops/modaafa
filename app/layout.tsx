@@ -3,6 +3,7 @@ import { headers } from 'next/headers';
 import { IBM_Plex_Mono, IBM_Plex_Sans_Arabic, Reem_Kufi } from 'next/font/google';
 import { NONCE_HEADER } from '@/lib/security/csp';
 import './globals.css';
+import { SiteStructuredData } from '@/lib/seo/json-ld';
 
 const arabic = IBM_Plex_Sans_Arabic({
   // Load the Latin subset too: customer IDs, emails, URLs and plan names are
@@ -127,6 +128,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <body className="w-full max-w-full overflow-x-hidden bg-background font-sans text-foreground antialiased">
         <script nonce={nonce} dangerouslySetInnerHTML={{ __html: themeScript }} />
         <script nonce={nonce} dangerouslySetInnerHTML={{ __html: installCaptureScript }} />
+        <SiteStructuredData nonce={nonce} />
         {children}
       </body>
     </html>

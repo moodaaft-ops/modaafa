@@ -1,9 +1,12 @@
 import Link from 'next/link';
 import { LegalPage, LegalSection } from '@/lib/ui/legal-page';
+import { pageMetadata } from '@/lib/seo/site';
 
-export const metadata = {
+export const metadata = pageMetadata({
   title: 'شروط الاستخدام',
-};
+  path: '/terms',
+  description: 'شروط استخدام منصة مُضاعِف: ربط حسابات إعلانات جوجل، والموافقة قبل أي تعديل، والاشتراكات والتجربة المجانية 14 يوماً.',
+});
 
 export default function TermsPage() {
   return (

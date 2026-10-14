@@ -4,11 +4,19 @@ import Link from 'next/link';
 import { Alert } from '@/lib/ui/alert';
 import { ConfirmForm } from './confirm-form';
 import { LogoMark } from '@/lib/ui/logo';
+import { pageMetadata } from '@/lib/seo/site';
 
 export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
-  title: 'أكمل دخولك | مُضاعِف',
+  ...pageMetadata({
+    title: 'أكمل دخولك',
+    path: '/auth/confirm',
+    description: 'أكمل دخولك إلى مُضاعِف بالضغط على الزر.',
+    noIndex: true,
+  }),
+  // This page carries a one-time sign-in token in its URL: keep crawlers from
+  // following anything on it, not just from indexing it.
   robots: { index: false, follow: false },
 };
 

@@ -4,10 +4,14 @@ import { getRequestAuthContext, createAdminClient } from '@/lib/supabase/server'
 import { isRegistrationComplete } from '@/lib/registration/gate';
 import { REGISTRATION_CONSENT_TEXT } from '@/lib/registration/consent';
 import { CompleteForm } from './complete-form';
+import { pageMetadata } from '@/lib/seo/site';
 
-export const metadata: Metadata = {
+export const metadata: Metadata = pageMetadata({
   title: 'أكمل بياناتك',
-};
+  path: '/register/complete',
+  description: 'أكمل بيانات حسابك في مُضاعِف لتبدأ ربط حساب إعلانات جوجل.',
+  noIndex: true,
+});
 
 export default async function CompleteRegistrationPage({
   searchParams,
