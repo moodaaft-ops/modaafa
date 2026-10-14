@@ -44,6 +44,13 @@ export function ownManagerIdsFrom(configured: Array<string | null | undefined> =
 
 const CHANGE_WINDOW_DAYS = 14;
 
+/**
+ * Google rejects a WHERE filter on a field of a resource other than the FROM
+ * resource unless that field is also selected
+ * (EXPECTED_REFERENCED_FIELD_IN_SELECT_CLAUSE, seen live on campaign_asset on
+ * 14 Oct 2026). Every such field below is selected, even where the answer
+ * does not read it.
+ */
 export const SIGNAL_GAQL = {
   /** Metrics-free, so a campaign with no activity still appears. */
   campaignList: `
@@ -75,12 +82,12 @@ export const SIGNAL_GAQL = {
     FROM customer
     LIMIT 1`,
   adFinalUrls: `
-    SELECT ad_group_ad.ad.final_urls
+    SELECT ad_group_ad.ad.final_urls, ad_group_ad.status, campaign.status
     FROM ad_group_ad
     WHERE ad_group_ad.status = 'ENABLED' AND campaign.status = 'ENABLED'
     LIMIT 200`,
   assetGroupFinalUrls: `
-    SELECT asset_group.final_urls
+    SELECT asset_group.final_urls, asset_group.status, campaign.status
     FROM asset_group
     WHERE asset_group.status = 'ENABLED' AND campaign.status = 'ENABLED'
     LIMIT 50`,
@@ -90,12 +97,12 @@ export const SIGNAL_GAQL = {
     WHERE campaign.status != 'REMOVED'
     LIMIT 1000`,
   customerAssets: `
-    SELECT customer_asset.field_type
+    SELECT customer_asset.field_type, customer_asset.status
     FROM customer_asset
     WHERE customer_asset.status = 'ENABLED'
     LIMIT 1000`,
   campaignAssets: `
-    SELECT campaign_asset.field_type
+    SELECT campaign_asset.field_type, campaign_asset.status, campaign.status
     FROM campaign_asset
     WHERE campaign_asset.status = 'ENABLED' AND campaign.status = 'ENABLED'
     LIMIT 2000`,
@@ -105,14 +112,14 @@ export const SIGNAL_GAQL = {
    * customer_asset and campaign_asset never show one; the link tables are the only place to look.
    */
   customerLocationSets: `
-    SELECT asset_set.id, asset_set.type, customer_asset_set.status
+    SELECT asset_set.id, asset_set.type, asset_set.status, customer_asset_set.status
     FROM customer_asset_set
     WHERE customer_asset_set.status = 'ENABLED'
       AND asset_set.status = 'ENABLED'
       AND asset_set.type = 'LOCATION_SYNC'
     LIMIT 50`,
   campaignLocationSets: `
-    SELECT asset_set.id, asset_set.type, campaign_asset_set.status
+    SELECT asset_set.id, asset_set.type, asset_set.status, campaign_asset_set.status, campaign.status
     FROM campaign_asset_set
     WHERE campaign_asset_set.status = 'ENABLED'
       AND asset_set.status = 'ENABLED'
@@ -120,7 +127,7 @@ export const SIGNAL_GAQL = {
       AND campaign.status = 'ENABLED'
     LIMIT 200`,
   targetedLocations: `
-    SELECT campaign_criterion.location.geo_target_constant
+    SELECT campaign_criterion.location.geo_target_constant, campaign.status
     FROM campaign_criterion
     WHERE campaign_criterion.type = 'LOCATION'
       AND campaign_criterion.negative = FALSE

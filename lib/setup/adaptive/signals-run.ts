@@ -56,7 +56,9 @@ export async function readAndStoreSignals(
     customerId: String(account.customer_id).replace(/\D/g, ''),
     currency: account.currency_code || 'SAR',
     connectedEmail,
-    ownManagerIds: ownManagerIdsFrom(safeManagerIds(deps)),
+    // The manager the account was connected through is the connecting person's own (they reached the
+    // account with it), so a link to it is not an outside agency.
+    ownManagerIds: ownManagerIdsFrom([...safeManagerIds(deps), account.manager_id]),
     timeoutMs: args.timeoutMs,
     now: args.now,
   });

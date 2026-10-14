@@ -223,6 +223,12 @@ export const SERVICES_WORDS = [
   'سباكة',
   'تكييف',
   'ديكور',
+  // Trades seen on real accounts (14 Oct 2026): pools, doors and aluminium contractors.
+  'مسابح',
+  'مسبح',
+  'برك سباحة',
+  'أبواب',
+  'ألمنيوم',
 ] as const;
 
 export const LOCAL_WORDS = ['مطعم', 'مطاعم', 'كافيه', 'قهوة', 'فرع', 'فروع', 'مشويات', 'حلويات', 'restaurant', 'cafe'] as const;
