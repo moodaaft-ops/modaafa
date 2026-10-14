@@ -43,7 +43,8 @@ export function createFakeAdmin(seed: Tables = {}) {
     auth: {
       admin: {
         async getUserById(id: string) {
-          return { data: { user: { id, email_confirmed_at: confirmed.has(id) ? '2026-10-12T00:00:00Z' : null } }, error: null };
+          const email = tables.users.find((u) => u.id === id)?.email ?? null;
+          return { data: { user: { id, email, email_confirmed_at: confirmed.has(id) ? '2026-10-12T00:00:00Z' : null } }, error: null };
         },
       },
     },
@@ -151,6 +152,21 @@ class Query implements PromiseLike<{ data: any; error: any }> {
   }
   gte(column: string, value: any) {
     this.filters.push((row) => row[column] != null && new Date(row[column]).getTime() >= new Date(value).getTime());
+    return this;
+  }
+  /** jsonb @>: the column holds an object that contains every key/value of `value` (nested objects compare the same way). */
+  contains(column: string, value: Record<string, any>) {
+    const holds = (actual: any, wanted: any): boolean =>
+      wanted && typeof wanted === 'object'
+        ? actual != null && typeof actual === 'object' && Object.entries(wanted).every(([key, inner]) => holds(actual[key], inner))
+        : actual === wanted;
+    this.filters.push((row) => holds(row[column], value));
+    return this;
+  }
+  /** Only the `is` operator (not.is.null / not.is.true), which is all the callers use. */
+  not(column: string, operator: string, value: any) {
+    if (operator !== 'is') throw new Error(`fake admin: not(${column}, ${operator}) is not supported`);
+    this.filters.push((row) => (value === null ? row[column] != null : row[column] !== value));
     return this;
   }
   lt(column: string, value: any) {

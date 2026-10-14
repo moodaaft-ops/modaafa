@@ -515,6 +515,26 @@ test('weekly report obeys the gap, the window and the weekly_report preference',
   assert.equal(plan([active({ user: { emailPrefs: { lifecycle: false } } })], sunday).sends.length, 1);
 });
 
+test('weekly report: not offered until this week\'s report exists, and it never stands in front of a journey step', () => {
+  // Trial since Sat 17 Oct 12:00: trial_d1 is due Sun 18 Oct 12:00. The weekly slot opened at 09:00, so it has waited longer.
+  const trial = (hasWeeklyReport: boolean) =>
+    makeCtx({
+      user: { stage: 'analysis_viewed' },
+      subscription: { status: 'trialing', createdAt: riyadh('2026-10-17T12:00').toISOString() },
+      hasWeeklyReport,
+    });
+  const noon = riyadh('2026-10-18T12:00');
+  assert.deepEqual(keys(plan([trial(false)], noon)), ['u1:trial_d1']);
+  assert.deepEqual(keys(plan([trial(true)], noon)), ['u1:weekly_report_2026-W42'], 'with the report it goes first, as before');
+});
+
+test('weekly report: a subscriber without this week\'s report has nothing due and is counted as no_weekly_report', () => {
+  const result = plan([active({ hasWeeklyReport: false }), active({ user: { id: 'u2' } })], riyadh('2026-10-18T12:00'));
+  assert.deepEqual(keys(result), ['u2:weekly_report_2026-W42']);
+  assert.equal(result.ignored.no_weekly_report, 1);
+  assert.deepEqual(result.skips, [], 'waiting for a report writes nothing down');
+});
+
 test('weekly report is exempt from the holdout', () => {
   assert.equal(plan([active({ user: { id: 'held' } })], riyadh('2026-10-18T10:00'), { isHeldOut: () => true }).sends.length, 1);
 });

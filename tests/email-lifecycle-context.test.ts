@@ -13,6 +13,7 @@ import {
   loadHandledUserIds,
   toLogRow,
 } from '../lib/lifecycle/context';
+import { saudiWeekStart } from '../lib/lifecycle/riyadh';
 import { createFakeAdmin } from './support/fake-admin';
 import { ACTIVATED_AT, riyadh } from './support/lifecycle';
 
@@ -163,6 +164,149 @@ test('loadContexts reads five tables per chunk of 150, however many people', asy
   const contexts = await loadContexts(admin, Array.from({ length: count }, (_, i) => padded('u', i)), NOW, { relevantTemplates: ['registered_1d'] });
   assert.equal(contexts.length, count);
   assert.equal(reads, 3 * 5, 'three chunks (150, 150, 20) times five reads');
+});
+
+// ---------------------------------------------------------------------------
+// hasWeeklyReport: the same question lib/lifecycle/facts.ts asks, for a whole chunk
+// ---------------------------------------------------------------------------
+
+/** Sunday 18 Oct 2026, 10:00 Riyadh: the week started on Saturday 17 Oct 00:00 UTC. */
+const SUNDAY = riyadh('2026-10-18T10:00');
+const THIS_WEEK = '2026-10-17T00:30:00Z';
+const LAST_WEEK = '2026-10-10T00:30:00Z';
+const weeklyRow = (accountId: string, generatedAt: string, extra: Record<string, unknown> = {}) => ({
+  id: `rep-${accountId}-${generatedAt}`,
+  account_id: accountId,
+  period_type: 'weekly',
+  generated_at: generatedAt,
+  metrics: { kind: 'weekly_performance' },
+  ...extra,
+});
+const business = (id: string, userId: string, extra: Record<string, unknown> = {}) => ({
+  id,
+  user_id: userId,
+  selected_google_ads_customer_id: null,
+  created_at: '2026-09-01T00:00:00Z',
+  ...extra,
+});
+const adsAccount = (id: string, businessId: string, customerId: string, extra: Record<string, unknown> = {}) => ({
+  id,
+  business_id: businessId,
+  customer_id: customerId,
+  status: 'active',
+  is_manager: false,
+  linked_at: '2026-09-02T00:00:00Z',
+  ...extra,
+});
+const weeklyFlags = async (admin: ReturnType<typeof createFakeAdmin>, ids: string[]) => {
+  const contexts = await loadContexts(admin, ids, SUNDAY, { relevantTemplates: [], weeklyReportSince: saudiWeekStart(SUNDAY) });
+  return Object.fromEntries(contexts.map((c) => [c.user.id, c.hasWeeklyReport]));
+};
+
+test('hasWeeklyReport: true only with this Saudi week\'s weekly_performance report on the selected account', async () => {
+  assert.equal(saudiWeekStart(SUNDAY).toISOString(), '2026-10-17T00:00:00.000Z');
+  const admin = createFakeAdmin({
+    users: ['has', 'old', 'none', 'nobiz', 'monthly', 'other'].map((id) => user(id)),
+    businesses: ['has', 'old', 'none', 'monthly', 'other'].map((id) => business(`b-${id}`, id)),
+    google_ads_accounts: ['has', 'old', 'none', 'monthly', 'other'].map((id, i) => adsAccount(`a-${id}`, `b-${id}`, `100000000${i}`)),
+    reports: [
+      weeklyRow('a-has', THIS_WEEK),
+      weeklyRow('a-old', LAST_WEEK), // last week's numbers must not count
+      weeklyRow('a-monthly', THIS_WEEK, { period_type: 'monthly' }),
+      weeklyRow('a-other', THIS_WEEK, { metrics: { kind: 'something_else' } }),
+      weeklyRow('a-nobody', THIS_WEEK), // an account nobody in the chunk owns
+    ],
+  });
+  assert.deepEqual(await weeklyFlags(admin, ['has', 'old', 'none', 'nobiz', 'monthly', 'other']), {
+    has: true,
+    old: false,
+    none: false,
+    nobiz: false,
+    monthly: false,
+    other: false,
+  });
+});
+
+test('hasWeeklyReport: the account is chosen the way the fact loader chooses it (persisted selection, newest business, no managers)', async () => {
+  const admin = createFakeAdmin({
+    users: ['sel', 'twin', 'mgr', 'revoked'].map((id) => user(id)),
+    businesses: [
+      business('b-sel', 'sel', { selected_google_ads_customer_id: '2222222222' }),
+      // twin: an older business with a report and a newer one without; the newest business wins.
+      business('b-twin-old', 'twin', { created_at: '2026-08-01T00:00:00Z' }),
+      business('b-twin-new', 'twin', { created_at: '2026-09-15T00:00:00Z' }),
+      business('b-mgr', 'mgr'),
+      business('b-revoked', 'revoked'),
+    ],
+    google_ads_accounts: [
+      adsAccount('a-sel-1', 'b-sel', '1111111111', { linked_at: '2026-09-05T00:00:00Z' }), // newest linked, not selected
+      adsAccount('a-sel-2', 'b-sel', '2222222222', { linked_at: '2026-09-02T00:00:00Z' }), // the persisted selection
+      adsAccount('a-twin-old', 'b-twin-old', '3333333333'),
+      adsAccount('a-twin-new', 'b-twin-new', '4444444444'),
+      adsAccount('a-mgr-manager', 'b-mgr', '5555555555', { is_manager: true, linked_at: '2026-09-09T00:00:00Z' }),
+      adsAccount('a-mgr-client', 'b-mgr', '6666666666'),
+      adsAccount('a-revoked', 'b-revoked', '7777777777', { status: 'revoked' }),
+    ],
+    reports: [
+      weeklyRow('a-sel-1', THIS_WEEK), // the report is on the account that is NOT selected
+      weeklyRow('a-twin-old', THIS_WEEK),
+      weeklyRow('a-mgr-manager', THIS_WEEK),
+      weeklyRow('a-revoked', THIS_WEEK),
+    ],
+  });
+  assert.deepEqual(await weeklyFlags(admin, ['sel', 'twin', 'mgr', 'revoked']), {
+    sel: false, // a-sel-2 is selected and has no report
+    twin: false, // b-twin-new has no report
+    mgr: false, // the manager account is never the account
+    revoked: false, // only active accounts are selectable: a revoked-only business has none
+  });
+
+  admin.tables.reports!.push(weeklyRow('a-sel-2', THIS_WEEK), weeklyRow('a-twin-new', THIS_WEEK), weeklyRow('a-mgr-client', THIS_WEEK));
+  assert.deepEqual(await weeklyFlags(admin, ['sel', 'twin', 'mgr', 'revoked']), { sel: true, twin: true, mgr: true, revoked: false });
+});
+
+test('hasWeeklyReport: three extra reads per chunk while a slot is open, none without weeklyReportSince (and then it is false)', async () => {
+  const count = 320;
+  const ids = Array.from({ length: count }, (_, i) => padded('u', i));
+  const admin = createFakeAdmin({
+    users: ids.map((id) => user(id)),
+    businesses: ids.map((id) => business(`b-${id}`, id)),
+    google_ads_accounts: ids.map((id, i) => adsAccount(`a-${id}`, `b-${id}`, String(1000000000 + i))),
+    reports: ids.map((id) => weeklyRow(`a-${id}`, THIS_WEEK)),
+  });
+  const original = admin.from.bind(admin);
+  const tables: string[] = [];
+  admin.from = (table: string) => {
+    tables.push(table);
+    return original(table);
+  };
+
+  const without = await loadContexts(admin, ids, SUNDAY, { relevantTemplates: [] });
+  assert.equal(tables.length, 3 * 5);
+  assert.ok(without.every((c) => c.hasWeeklyReport === false));
+
+  tables.length = 0;
+  const withFlag = await loadContexts(admin, ids, SUNDAY, { relevantTemplates: [], weeklyReportSince: saudiWeekStart(SUNDAY) });
+  assert.equal(tables.length, 3 * 5 + 3 * 3, 'five reads plus businesses, accounts and reports, per chunk');
+  assert.equal(withFlag.filter((c) => c.hasWeeklyReport).length, count);
+});
+
+test('hasWeeklyReport: a failed read is a clear exception, never a silent "no report"', async () => {
+  const admin = createFakeAdmin({
+    users: [user('a')],
+    businesses: [business('b-a', 'a')],
+    google_ads_accounts: [adsAccount('a-a', 'b-a', '1111111111')],
+  });
+  const original = admin.from.bind(admin);
+  admin.from = (table: string) => {
+    const query = original(table);
+    if (table === 'reports') {
+      const then = query.then.bind(query);
+      query.then = ((resolve: any, reject: any) => then(() => resolve({ data: null, error: { code: '57014' } }), reject)) as typeof query.then;
+    }
+    return query;
+  };
+  await assert.rejects(weeklyFlags(admin, ['a']), /could not load reports \(57014\)/);
 });
 
 test('loadContexts pages past the 1000 row response cap', async () => {

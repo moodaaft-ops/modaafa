@@ -49,6 +49,16 @@ test('gate: ready only with a global activation moment, both approvals and notBe
   assert.equal(gate({ broadcast: broadcast({ notBefore: 'garbage' }) }), 'not_yet', 'an unreadable notBefore blocks, it never opens');
 });
 
+test('gate: an activation moment that has not arrived yet keeps an approved broadcast closed, even with no notBefore', () => {
+  const approved = broadcast({ notBefore: null });
+  const gate = (activatedAt: string) => broadcastGate({ broadcast: approved, now: NOW, activatedAt, copy });
+
+  assert.equal(gate(riyadh('2026-10-14T12:01').toISOString()), 'not_activated', 'activation one minute from now');
+  assert.equal(gate('2027-01-01T00:00:00+03:00'), 'not_activated', 'activation months from now');
+  assert.equal(gate(NOW.toISOString()), 'ready', 'the activation moment itself is inclusive');
+  assert.equal(gate(riyadh('2026-10-14T11:59').toISOString()), 'ready');
+});
+
 test('gate: the shipped broadcast is closed in every way', () => {
   assert.equal(broadcastGate({ broadcast: { ...broadcast(), approved: false }, now: NOW, activatedAt: null }), 'not_activated');
   assert.equal(broadcastGate({ broadcast: broadcast({ approved: false }), now: NOW, activatedAt: ACTIVATED_AT }), 'not_approved');

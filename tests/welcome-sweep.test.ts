@@ -12,11 +12,28 @@ const ACTIVATED = '2026-10-01T00:00:00+03:00';
 const approved: EmailCopy = { ...EMAIL_COPY.welcome_ads_connect, approved: true };
 const secrets = { UNSUBSCRIBE_SECRET: 'test-secret-value', NEXT_PUBLIC_APP_URL: 'https://ai.modaafa.com', WELCOME_REPLY_TO_EMAIL: undefined };
 
-type Person = { id: string; hoursAgo: number; handled?: boolean };
+type Person = {
+  id: string;
+  hoursAgo: number;
+  handled?: boolean;
+  /** The one-click stop (users.messages_opt_out). */
+  optOut?: boolean;
+  /** A bounced address (users.email_suppressed_at). */
+  suppressed?: boolean;
+  /** The preferences page switch for the welcome's own category. */
+  onboardingOff?: boolean;
+};
 
 /** People who registered `hoursAgo` hours ago; `handled` ones already have a sent welcome in message_log. */
 function setup(people: Person[]) {
-  const users = people.map((p) => ({ id: p.id, email: `${p.id}@example.com`, name: 'سلمان العتيبي', messages_opt_out: false, email_prefs: {} }));
+  const users = people.map((p) => ({
+    id: p.id,
+    email: `${p.id}@example.com`,
+    name: 'سلمان العتيبي',
+    messages_opt_out: p.optOut === true,
+    email_prefs: p.onboardingOff ? { onboarding: false } : {},
+    email_suppressed_at: p.suppressed ? hoursAgo(100) : null,
+  }));
   const user_events = people.map((p, i) => ({
     id: `ev-${String(i + 1).padStart(4, '0')}`,
     user_id: p.id,
@@ -182,4 +199,75 @@ test('welcome sweep: one run mails at most `limit` people, oldest first, and the
     assert.equal(sent.length, 10);
     await sendDueWelcomeEmails(admin, { ...options, limit: 5 });
     assert.equal(sent.length, 12);
+  }));
+
+// ---------------------------------------------------------------------------
+// People who can never be mailed must not use up the run's slots
+// ---------------------------------------------------------------------------
+
+test('welcome sweep: 25 older sign-ups who opted out cannot starve the newer one', () =>
+  withEnv(secrets, async () => {
+    // sendTemplate turns an opted-out person away without a log row, so they stay "due" forever. Before they were
+    // filtered ahead of the limit, the oldest 25 of them took every slot of every run and the 26th was never mailed.
+    const people: Person[] = [
+      ...Array.from({ length: 25 }, (_, i) => ({ id: uid(i), hoursAgo: 40 - i, optOut: true })),
+      { id: uid('ff'), hoursAgo: 2 },
+    ];
+    const { admin, sent, options } = setup(people);
+    const summary = await sendDueWelcomeEmails(admin, { ...options, limit: 25 });
+    assert.deepEqual(mailedIds(sent), [uid('ff')]);
+    assert.equal(summary.sent, 1);
+    assert.equal(summary.checked, 1, 'the opted-out people are not even tried');
+    assert.deepEqual(admin.tables.message_log.filter((r) => r.user_id !== uid('ff')), []);
+  }));
+
+test('welcome sweep: suppressed addresses and a switched-off onboarding category are filtered the same way', () =>
+  withEnv(secrets, async () => {
+    const people: Person[] = [
+      ...Array.from({ length: 13 }, (_, i) => ({ id: uid(i), hoursAgo: 40 - i, suppressed: true })),
+      ...Array.from({ length: 12 }, (_, i) => ({ id: uid(100 + i), hoursAgo: 30 - i, onboardingOff: true })),
+      { id: uid('ff'), hoursAgo: 2 },
+    ];
+    const { admin, sent, options } = setup(people);
+    await sendDueWelcomeEmails(admin, { ...options, limit: 25 });
+    assert.deepEqual(mailedIds(sent), [uid('ff')]);
+  }));
+
+test('welcome sweep: before the lifecycle migration (no email_suppressed_at / email_prefs columns) the opt-out flag still keeps people out of the slots', () =>
+  withEnv(secrets, async () => {
+    const people: Person[] = [
+      ...Array.from({ length: 25 }, (_, i) => ({ id: uid(i), hoursAgo: 40 - i, optOut: true })),
+      { id: uid('ff'), hoursAgo: 2 },
+    ];
+    const { admin, sent, options } = setup(people);
+    const from = admin.from.bind(admin);
+    admin.from = ((table: string) => {
+      const query = from(table);
+      if (table !== 'users') return query;
+      const select = query.select.bind(query);
+      query.select = ((columns?: string) => {
+        // Only the sweep's own read (it starts with `id`); sendTemplate reads the preference row itself, later.
+        if (typeof columns === 'string' && columns.startsWith('id,') && columns.includes('email_suppressed_at')) {
+          query.then = ((resolve: any) => Promise.resolve(resolve({ data: null, error: { code: '42703', message: 'column users.email_suppressed_at does not exist' } }))) as typeof query.then;
+        }
+        return select();
+      }) as typeof query.select;
+      return query;
+    }) as typeof admin.from;
+
+    const summary = await sendDueWelcomeEmails(admin, { ...options, limit: 25 });
+    assert.deepEqual(mailedIds(sent), [uid('ff')]);
+    assert.equal(summary.sent, 1);
+  }));
+
+test('welcome sweep: any other users read error is still a clear exception', () =>
+  withEnv(secrets, async () => {
+    const { admin, options } = setup([{ id: uid('a'), hoursAgo: 1 }]);
+    const from = admin.from.bind(admin);
+    admin.from = ((table: string) => {
+      const query = from(table);
+      if (table === 'users') query.then = ((resolve: any) => Promise.resolve(resolve({ data: null, error: { code: '57014', message: 'canceling statement' } }))) as typeof query.then;
+      return query;
+    }) as typeof admin.from;
+    await assert.rejects(sendDueWelcomeEmails(admin, options), /welcome sweep: lookup failed: canceling statement/);
   }));

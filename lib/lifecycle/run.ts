@@ -44,7 +44,7 @@ import {
   type PlannedSend,
   type PlannedSkip,
 } from '@/lib/lifecycle/plan';
-import { weeklyReportSlot } from '@/lib/lifecycle/riyadh';
+import { saudiWeekStart, weeklyReportSlot } from '@/lib/lifecycle/riyadh';
 import type { BuiltEmail, CopyKey, EmailCopy, EmailFacts, FactNeed } from '@/lib/lifecycle/types';
 import { sendTemplate, type SendDeps } from '@/lib/messaging/send';
 import { loadEmailFacts } from '@/lib/lifecycle/facts';
@@ -180,13 +180,16 @@ export async function runEmailLifecycle(options: LifecycleRunOptions): Promise<L
     ]),
   ];
 
+  // While the slot is open each person's "does this week's report exist" is read with them, so the planner only
+  // offers a weekly report that can be delivered (see plan.ts).
+  const weeklyReportSince = slot ? saudiWeekStart(now) : null;
   const candidateIds = await findJourneyCandidateIds(admin, {
     now,
     activatedAt,
     config: planConfig,
     weeklyKey: slot?.templateKey ?? null,
   });
-  const contexts = await loadContexts(admin, candidateIds, now, { relevantTemplates });
+  const contexts = await loadContexts(admin, candidateIds, now, { relevantTemplates, weeklyReportSince });
   summary.considered = contexts.length;
 
   const base = planEmails({ now, contexts, copy, config: planConfig });
@@ -244,7 +247,7 @@ export async function runEmailLifecycle(options: LifecycleRunOptions): Promise<L
   // 5. Re-read the people we are about to mail; send only what is still planned.
   const toSend = sends.slice(0, maxSends);
   if (toSend.length === 0) return summary;
-  const fresh = await loadContexts(admin, [...new Set(toSend.map((send) => send.userId))], now, { relevantTemplates });
+  const fresh = await loadContexts(admin, [...new Set(toSend.map((send) => send.userId))], now, { relevantTemplates, weeklyReportSince });
   const freshByUser = new Map(fresh.map((ctx) => [ctx.user.id, ctx]));
   const confirmed = confirmSends({ toSend, fresh, broadcasts, now, copy, planConfig });
 
@@ -421,8 +424,10 @@ async function deliver(args: {
   }
 
   const missing = needs.filter((need) => facts[need] == null);
+  // The planner only offers the weekly report once this week's report exists (plan.ts, `hasWeeklyReport`), so this
+  // is the safety net for the race: the report went away, or its read failed, between planning and sending.
   // The weekly report is written by a different job (the hourly optimize cron, once per account per Saudi week),
-  // so "no report yet" is "not yet", not "never". Recording missing_facts here would settle the week's message
+  // so "no report" is "not yet", not "never". Recording missing_facts here would settle the week's message
   // for good before the report exists. Leave it unclaimed (no message_log row) and let the next run try again;
   // the planner stops offering it when the slot's window closes.
   if (planned.kind === 'weekly' && missing.includes('weekly') && args.weeklyWindowOpen) return 'skipped:weekly_pending';

@@ -1,4 +1,6 @@
 import type { SegmentId } from '@/config/email-broadcasts';
+import type { AdsAccountSummary } from '@/lib/accounts/selection';
+import { LIFECYCLE_ACCOUNT_STATUSES, pickLifecycleAccount } from '@/lib/lifecycle/facts/account';
 import { journeyHorizonMinutes, journeyLastStepMinutes, type JourneyEvents, type JourneySubscription } from '@/lib/lifecycle/journey';
 import { isHandled, type PlanConfig, type PlanContext, type PlanLogRow, type PlanUser } from '@/lib/lifecycle/plan';
 import type { JourneyId } from '@/lib/lifecycle/types';
@@ -125,13 +127,92 @@ function isNewer(a: SubscriptionRowRaw, b: SubscriptionRowRaw): boolean {
 export type LoadContextOptions = {
   /** Templates whose rows decide "already handled" (journey copy keys, the open weekly key, broadcast keys). */
   relevantTemplates: string[];
+  /**
+   * While a weekly report slot is open: the start of the Saudi week (saudiWeekStart(now)). Each person's
+   * `hasWeeklyReport` is then read, three more batched reads per chunk. Left out, nothing extra is read and
+   * `hasWeeklyReport` is false, which is only right for contexts that are never planned for the weekly report
+   * (broadcast audiences, a run with no open slot).
+   */
+  weeklyReportSince?: Date | null;
 };
+
+type BusinessRowRaw = { id: string; user_id: string; selected_google_ads_customer_id: string | null };
+type AccountRowRaw = AdsAccountSummary & { business_id: string };
+
+/**
+ * Who already has this week's report to send: the same question lib/lifecycle/facts.ts asks one person at send
+ * time, asked for a whole chunk. Per user, the newest business, its selected account (the shared rule in
+ * facts/account.ts), and a `reports` row of that account with period_type = 'weekly', metrics.kind =
+ * 'weekly_performance' and generated_at >= `since`. Three reads for the chunk (businesses, accounts, reports),
+ * however many people are in it.
+ */
+export async function loadUsersWithWeeklyReport(admin: any, userIds: string[], since: Date): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (userIds.length === 0) return out;
+
+  const businesses = await fetchAll<BusinessRowRaw>('businesses', (from, to) =>
+    admin
+      .from('businesses')
+      .select('id, user_id, selected_google_ads_customer_id')
+      .in('user_id', userIds)
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: true })
+      .range(from, to)
+  );
+  // Newest first per user, so the first one seen is the one facts.ts picks (`order created_at desc limit 1`).
+  const newestBusiness = new Map<string, BusinessRowRaw>();
+  for (const row of businesses) if (!newestBusiness.has(row.user_id)) newestBusiness.set(row.user_id, row);
+  if (newestBusiness.size === 0) return out;
+
+  const businessIds = [...new Set([...newestBusiness.values()].map((row) => row.id))];
+  const accounts = await fetchAll<AccountRowRaw>('google_ads_accounts', (from, to) =>
+    admin
+      .from('google_ads_accounts')
+      .select('id, business_id, customer_id, status, is_manager')
+      .in('business_id', businessIds)
+      .in('status', [...LIFECYCLE_ACCOUNT_STATUSES])
+      .order('linked_at', { ascending: false })
+      .order('id', { ascending: true })
+      .range(from, to)
+  );
+  const accountsByBusiness = new Map<string, AccountRowRaw[]>();
+  for (const row of accounts) {
+    const list = accountsByBusiness.get(row.business_id) ?? [];
+    list.push(row);
+    accountsByBusiness.set(row.business_id, list);
+  }
+
+  const selected = new Map<string, string>(); // user id -> selected account id
+  for (const [userId, business] of newestBusiness) {
+    const account = pickLifecycleAccount(accountsByBusiness.get(business.id) ?? [], business.selected_google_ads_customer_id ?? null);
+    if (account) selected.set(userId, account.id);
+  }
+  if (selected.size === 0) return out;
+
+  const withReport = new Set<string>();
+  const reports = await fetchAll<{ account_id: string }>('reports', (from, to) =>
+    admin
+      .from('reports')
+      .select('account_id')
+      .in('account_id', [...new Set(selected.values())])
+      .eq('period_type', 'weekly')
+      .gte('generated_at', since.toISOString())
+      .contains('metrics', { kind: 'weekly_performance' })
+      .order('id', { ascending: true })
+      .range(from, to)
+  );
+  for (const row of reports) withReport.add(row.account_id);
+
+  for (const [userId, accountId] of selected) if (withReport.has(accountId)) out.add(userId);
+  return out;
+}
 
 /**
  * For each id: the user row, the latest subscription, the funnel events and the
  * message_log rows the planner needs. Four reads per chunk of IN_CHUNK people
  * (users, events, subscriptions, logs by template) plus one for the rolling
- * 7 day send history. Ids with no users row are dropped.
+ * 7 day send history, and three more (businesses, accounts, reports) while a weekly slot is open
+ * (`weeklyReportSince`). Ids with no users row are dropped.
  */
 export async function loadContexts(
   admin: any,
@@ -144,7 +225,7 @@ export async function loadContexts(
   const out: PlanContext[] = [];
 
   for (const part of chunk(unique)) {
-    const [users, events, subscriptions, templateLogs, recentLogs] = await Promise.all([
+    const [users, events, subscriptions, templateLogs, recentLogs, withWeeklyReport] = await Promise.all([
       fetchAll<UserRowRaw>('users', (from, to) =>
         admin
           .from('users')
@@ -190,6 +271,7 @@ export async function loadContexts(
           .order('id', { ascending: true })
           .range(from, to)
       ),
+      options.weeklyReportSince ? loadUsersWithWeeklyReport(admin, part, options.weeklyReportSince) : Promise.resolve(new Set<string>()),
     ]);
 
     const eventsByUser = new Map<string, JourneyEvents>();
@@ -228,6 +310,7 @@ export async function loadContexts(
         subscription: subscription ? toSubscription(subscription) : null,
         events: eventsByUser.get(row.id) ?? {},
         logs: [...(logsByUser.get(row.id)?.values() ?? [])],
+        hasWeeklyReport: withWeeklyReport.has(row.id),
       });
     }
   }

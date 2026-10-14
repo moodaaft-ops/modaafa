@@ -31,6 +31,13 @@ import type { CopyKey, EmailCategory, EmailCopy, JourneyId } from '@/lib/lifecyc
  *   - weekly:  the open weekly report slot, for trialing and active subscribers
  * When both are due the one that has been waiting longest goes first; the other
  * follows once the 24 hour gap allows (it stays inside its own expiry).
+ *
+ * The weekly report is only offered to someone whose report for this Saudi week
+ * already exists (`hasWeeklyReport`). It is written by a different job (the
+ * optimize cron), and an offer the runner cannot deliver yet would sit first in
+ * line (its due time is the Sunday slot, usually earlier than any journey step),
+ * so the person's journey steps would expire unsent and, with the per-run cap,
+ * people without a report would crowd out everyone else.
  */
 export type PlanUser = {
   id: string;
@@ -65,6 +72,12 @@ export type PlanContext = {
   subscription: JourneySubscription | null;
   events: JourneyEvents;
   logs: PlanLogRow[];
+  /**
+   * This Saudi week's weekly report exists for the person's selected Google Ads account (the same table, filters
+   * and account choice as the weekly fact in lib/lifecycle/facts.ts). Read by loadContexts while a weekly slot is
+   * open; false for contexts loaded without it, which are never planned for the weekly report.
+   */
+  hasWeeklyReport: boolean;
 };
 
 export type CopyMeta = Pick<EmailCopy, 'category' | 'approved'>;
@@ -95,6 +108,7 @@ export const IGNORE_REASONS = [
   'no_journey',
   'holdout',
   'nothing_due',
+  'no_weekly_report',
   'before_activation',
   'not_approved',
   'opted_out',
@@ -402,6 +416,9 @@ function evaluateWeekly(args: {
   if (!weeklyCopy.approved) return none('not_approved');
   const state = categoryState(ctx.user, weeklyCopy.category);
   if (state !== 'on') return none(state);
+  // Not written yet (or never, for an account the optimize cron cannot read): nothing to send, and nothing that
+  // may stand in front of the person's journey steps.
+  if (!ctx.hasWeeklyReport) return none('no_weekly_report');
 
   return {
     candidate: {

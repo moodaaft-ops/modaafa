@@ -2,6 +2,7 @@ import { EMAIL_LIFECYCLE_ACTIVATED_AT } from '@/config/email-journeys';
 import { EMAIL_COPY } from '@/lib/lifecycle/copy';
 import { EMPTY_FACTS, type EmailCopy } from '@/lib/lifecycle/types';
 import { firstName } from '@/lib/lifecycle/format';
+import { isCategoryOn, normalizePrefs } from './prefs';
 import { sendTemplate, type SendDeps, type SendTemplateResult } from './send';
 
 const TEMPLATE = 'welcome_ads_connect' as const;
@@ -12,6 +13,16 @@ const SENDING_LEASE_MS = 10 * 60 * 1000;
 const EVENT_PAGE_SIZE = 100;
 const MAX_EVENT_PAGES = 10;
 const DEFAULT_LIMIT = 25;
+
+/** Postgres undefined_column, or PostgREST's schema-cache miss for an unknown column (same test as lib/messaging/send.ts). */
+function isMissingColumn(error: { code?: string; message?: string } | null | undefined) {
+  if (!error) return false;
+  return (
+    error.code === '42703' ||
+    error.code === 'PGRST204' ||
+    /column .* does not exist|could not find the .* column/i.test(error.message ?? '')
+  );
+}
 
 export type WelcomeSweepSummary = {
   checked: number;
@@ -53,9 +64,12 @@ export type WelcomeSweepOptions = {
  * first.
  *
  * The oldest people come first, but people who are already handled (sent,
- * skipped, in flight, connected) are filtered while paging, so a backlog of
- * handled sign-ups can never hide a newer one: pages are read until `limit`
- * candidates are found or the bounded scan ends.
+ * skipped, in flight, connected) and people who can never be mailed (the
+ * one-click stop, the onboarding category switched off, a bounced address:
+ * sendTemplate answers `skipped` for them and writes no row) are filtered while
+ * paging, BEFORE `limit` is applied, so a backlog of either can never hide a
+ * newer sign-up: pages are read until `limit` candidates are found or the
+ * bounded scan ends.
  */
 export async function sendDueWelcomeEmails(supabase: any, options: WelcomeSweepOptions = {}): Promise<WelcomeSweepSummary> {
   const summary: WelcomeSweepSummary = {
@@ -104,7 +118,7 @@ export async function sendDueWelcomeEmails(supabase: any, options: WelcomeSweepO
         .eq('template', TEMPLATE)
         .in('user_id', ids),
       supabase.from('user_events').select('user_id').eq('event', 'ads_account_connected').in('user_id', ids),
-      supabase.from('users').select('id, email, name, messages_opt_out').in('id', ids),
+      loadUsers(supabase, ids),
     ]);
     for (const res of [logsRes, connectedRes, usersRes]) {
       if (res.error) throw new Error(`welcome sweep: lookup failed: ${res.error.message}`);
@@ -126,6 +140,7 @@ export async function sendDueWelcomeEmails(supabase: any, options: WelcomeSweepO
       if (finished.has(id) || connected.has(id)) continue;
       const user = usersById.get(id);
       if (!user?.email) continue;
+      if (cannotBeMailed(user)) continue;
       candidates.push(user);
     }
 
@@ -153,4 +168,24 @@ export async function sendDueWelcomeEmails(supabase: any, options: WelcomeSweepO
   }
 
   return summary;
+}
+
+/**
+ * The users read, with the columns that say "never mail this person". They come from
+ * db/migrations/20261014_email_lifecycle.sql: until it is applied the read is repeated without them,
+ * and the sweep behaves as before (sendTemplate still enforces the rules for whoever is picked).
+ */
+async function loadUsers(supabase: any, ids: string[]): Promise<{ data: any[] | null; error: { message: string } | null }> {
+  const full = await supabase
+    .from('users')
+    .select('id, email, name, messages_opt_out, email_prefs, email_suppressed_at')
+    .in('id', ids);
+  if (!full.error || !isMissingColumn(full.error)) return full;
+  return supabase.from('users').select('id, email, name, messages_opt_out').in('id', ids);
+}
+
+/** Someone sendTemplate would turn away without a log row: bounced address, or the welcome's category off. */
+function cannotBeMailed(user: { messages_opt_out?: boolean | null; email_prefs?: unknown; email_suppressed_at?: string | null }): boolean {
+  if (user.email_suppressed_at) return true;
+  return !isCategoryOn(normalizePrefs(user.email_prefs), user.messages_opt_out === true, 'onboarding');
 }

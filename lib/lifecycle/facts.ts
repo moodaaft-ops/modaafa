@@ -1,4 +1,5 @@
-import { partitionGoogleAdsAccounts, pickSelectedAdsAccount, type AdsAccountSummary } from '@/lib/accounts/selection';
+import { type AdsAccountSummary } from '@/lib/accounts/selection';
+import { getBillingCheckoutContext } from '@/lib/billing/checkout-policy';
 import { googleAdsAccountNameMissing } from '@/lib/accounts/display';
 import { OPEN_DECISION_STATUSES, PLAN_DECISION_LIMIT, toPlanRecommendations } from '@/lib/plan/load';
 import { buildPlan, type PlanAuditRow } from '@/lib/plan/plan';
@@ -14,6 +15,7 @@ import {
   type TrialFacts,
   type WeeklyFacts,
 } from './types';
+import { LIFECYCLE_ACCOUNT_STATUSES, pickLifecycleAccount } from './facts/account';
 import { firstNameOf, highlightsFrom } from './facts/text';
 import { riyadhDay, saudiWeekStart } from './riyadh';
 
@@ -46,6 +48,8 @@ import { riyadhDay, saudiWeekStart } from './riyadh';
  *   reports               metrics.kind = 'weekly_performance'       -> weekly (only one generated in the current Saudi
  *                                                                          week, see saudiWeekStart)
  *   users                 email (only when the adaptive onboarding may be on)
+ *   auth.admin.getUserById + billing_trial_grants / subscriptions / billing_trial_ledger / businesses /
+ *   google_ads_accounts / trial_customer_ledger   -> plan.trialEligible (lib/billing/checkout-policy, the paywall's rule)
  */
 export type LoadFactsOptions = {
   /** For tests. */
@@ -221,13 +225,15 @@ async function load(
         .from('google_ads_accounts')
         .select(ACCOUNT_COLUMNS)
         .eq('business_id', business.id)
-        .in('status', ['active', 'revoked', 'paused'])
+        .in('status', [...LIFECYCLE_ACCOUNT_STATUSES])
         .order('linked_at', { ascending: false })
         .limit(500)
     );
     if (accountsRead.ok) {
-      const { accounts } = partitionGoogleAdsAccounts(accountsRead.data ?? []);
-      account = pickSelectedAdsAccount(accounts, null, business.selected_google_ads_customer_id ?? null) as AccountRow | null;
+      account = pickLifecycleAccount(
+        (accountsRead.data ?? []) as AccountRow[],
+        business.selected_google_ads_customer_id ?? null
+      );
     }
   }
 
@@ -311,7 +317,33 @@ async function load(
       firstDecisionTitle: text(plan.first?.title) ?? leadTitle,
       wasteEstimate: plan.waste,
       currency: plan.currency,
+      trialEligible: await trialEligibility(),
     };
+  };
+
+  /**
+   * Can this person still start the free trial? The paywall's own rule: the same getBillingCheckoutContext call
+   * /home and loadPlanLock make, so the mail never promises a trial the button would refuse. The address it is
+   * asked about is the sign-in identity (Supabase Auth, what the paywall reads from the session), never the
+   * client-writable users.email. Anything that cannot be settled is null, and so is a ledger lookup that failed
+   * (`check_failed`: nothing is known to be wrong, it just could not be checked): the copy then says nothing
+   * about a free trial instead of guessing either way.
+   */
+  const trialEligibility = async (): Promise<boolean | null> => {
+    try {
+      const identity = await admin.auth.admin.getUserById(user.id);
+      const email = text(identity?.data?.user?.email);
+      if (!email) {
+        note('auth_user', identity?.error);
+        return null;
+      }
+      const checkout = await getBillingCheckoutContext(admin, user.id, email, { admin });
+      if (checkout.trialIneligibleReason === 'check_failed') return null;
+      return checkout.trialEligible;
+    } catch (error) {
+      note('trial_eligibility', error);
+      return null;
+    }
   };
 
   const trialTask = async (): Promise<TrialFacts | null> => {

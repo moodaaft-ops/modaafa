@@ -3,7 +3,7 @@ import test from 'node:test';
 import { riyadhHour } from '../lib/lifecycle/riyadh';
 import { runEmailLifecycle } from '../lib/lifecycle/run';
 import { createFakeAdmin } from './support/fake-admin';
-import { ACTIVATED_AT, approvedCopy, fakeSendTemplate, richFacts } from './support/lifecycle';
+import { ACTIVATED_AT, adsAccountSeed, approvedCopy, fakeSendTemplate, richFacts, weeklyReportRow } from './support/lifecycle';
 
 /**
  * Thirty days of the real runner, every 15 minutes, over a small population in
@@ -58,6 +58,12 @@ const patchSubscription = (userId: string, patch: Row, tables: Record<string, Ro
 };
 
 const USERS = ['r1', 'r2', 'r3', 'c1', 'p1', 't1', 't2', 'l1', 'x1', 'd1', 'b1', 'o1', 's1', 'h1'];
+
+// The weekly report is only offered once the optimize cron has written it: every account that can be a trialing or
+// active subscriber gets one at Saturday 00:30 UTC (03:30 Riyadh), the day before the Sunday 09:00 slot.
+const SUBSCRIBERS = ['t1', 't2', 'l1', 'x1', 'd1'];
+const SATURDAYS = [0, 7, 14, 21, 28].map((offset) => new Date(Date.UTC(2026, 9, 17 + offset, 0, 30)));
+for (const saturday of SATURDAYS) on(saturday, (t) => t.reports!.push(...SUBSCRIBERS.map((id) => weeklyReportRow(id, saturday))));
 
 // r1: registers Monday morning, never connects. Has the welcome mail from minute five.
 on(at(0, '10:00'), (t) => event('r1', 'registration_completed', at(0, '10:00'), t));
@@ -157,7 +163,14 @@ function seed() {
     updated_at: at(0, '10:05').toISOString(),
     category: 'onboarding',
   });
-  return createFakeAdmin({ users, message_log: [welcome('r1'), welcome('c1')] });
+  // The week before the simulation starts (Saturday 10 Oct): its slot is still open on the first day.
+  const lastWeek = new Date(Date.UTC(2026, 9, 10, 0, 30));
+  return createFakeAdmin({
+    users,
+    message_log: [welcome('r1'), welcome('c1')],
+    ...adsAccountSeed(SUBSCRIBERS),
+    reports: SUBSCRIBERS.map((id) => weeklyReportRow(id, lastWeek)),
+  });
 }
 
 const local = (iso: string) => {
@@ -393,6 +406,9 @@ test('trial_lapsed_2d and canceled_1d go out 2 and 1 days after the subscription
       // k2 pays on d0, asks to cancel d1 12:00 and the subscription ends d2 10:00.
       { id: 'sub-k2', user_id: 'k2', status: 'active', created_at: at(0, '08:00').toISOString(), trial_ends_at: null, canceled_at: null, last_event_at: at(0, '08:00').toISOString() },
     ],
+    // k2's account has last week's report (the Sunday slot of 11 Oct is still open on d0).
+    ...adsAccountSeed(['k2']),
+    reports: [weeklyReportRow('k2', new Date(Date.UTC(2026, 9, 10, 0, 30)))],
   });
   const pending: Change[] = [
     // k1 starts a trial d2 10:00, asks to cancel d3 12:00 (Stripe's canceled_at), and it ends d4 10:00.

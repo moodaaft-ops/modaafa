@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test, { mock } from 'node:test';
+import { legacyTrialEmailKey } from '../lib/billing/trial-identity';
 import { loadEmailFacts } from '../lib/lifecycle/facts';
 import { cleanHighlightLine, firstNameOf, highlightsFrom, toLatinDigits } from '../lib/lifecycle/facts/text';
 import { EMPTY_FACTS, type FactNeed } from '../lib/lifecycle/types';
@@ -203,7 +204,8 @@ test('with no needs only the business is read, and the onboarding name is the bu
 test('each need reads only its own tables', async () => {
   const cases: Array<[FactNeed[], string[]]> = [
     [['billing'], ['businesses', 'subscriptions']],
-    [['plan'], ['businesses', 'google_ads_accounts', 'audits', 'recommendations']],
+    // plan also asks the paywall's trial rule (getBillingCheckoutContext) whether a free trial is still on offer.
+    [['plan'], ['businesses', 'google_ads_accounts', 'audits', 'recommendations', 'subscriptions', 'billing_trial_grants', 'billing_trial_ledger', 'trial_customer_ledger']],
     [['weekly'], ['businesses', 'google_ads_accounts', 'reports', 'recommendations']],
     [['trial'], ['businesses', 'subscriptions']],
   ];
@@ -291,6 +293,7 @@ test('plan: counts, first title, waste and currency are what the plan screen com
     firstDecisionTitle: 'أوقف الكلمات الخاسرة',
     wasteEstimate: 1840,
     currency: 'SAR',
+    trialEligible: true,
   });
   assert.equal(facts.trial, null);
   assert.equal(facts.weekly, null);
@@ -326,6 +329,7 @@ test('plan: an audit with nothing to decide is a plan with zero decisions; no au
     firstDecisionTitle: null,
     wasteEstimate: 1840,
     currency: 'SAR',
+    trialEligible: true,
   });
 
   const noAudit = baseTables();
@@ -386,6 +390,7 @@ test('plan: with the adaptive onboarding on, the plan is the one the lock shows 
     firstDecisionTitle: 'ركّب تتبع النتائج قبل أي تعديل',
     wasteEstimate: null,
     currency: 'SAR',
+    trialEligible: true,
   });
 
   const off = await load(admin(tables), ['plan'], { env: NO_ADAPTIVE });
@@ -395,6 +400,7 @@ test('plan: with the adaptive onboarding on, the plan is the one the lock shows 
     firstDecisionTitle: 'أوقف الكلمات الخاسرة',
     wasteEstimate: 1840,
     currency: 'SAR',
+    trialEligible: true,
   });
 });
 
@@ -403,6 +409,71 @@ test('plan: adaptive on but the user email cannot be read gives null instead of 
     const { client } = watched(admin(), { users: 'error' });
     const facts = await load(client, ['plan'], { env: { CHAT_FIRST_ENTRY: 'true', ADAPTIVE_ONBOARDING: 'true' } });
     assert.equal(facts.plan, null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// plan.trialEligible: the paywall's own rule (getBillingCheckoutContext), never a second copy of it
+// ---------------------------------------------------------------------------
+
+const eligibility = async (client: unknown) => (await load(client, ['plan'])).plan?.trialEligible;
+
+test('plan.trialEligible: true for someone who never had a trial', async () => {
+  assert.equal(await eligibility(admin()), true);
+});
+
+test('plan.trialEligible: false when the paywall would not offer the trial (own grant, earlier trial, email ledger, ads account, throwaway inbox)', async () => {
+  const grant = baseTables();
+  grant.billing_trial_grants = [{ user_id: 'u1' }];
+  assert.equal(await eligibility(admin(grant)), false, 'this user already had the trial');
+
+  const earlier = baseTables();
+  earlier.subscriptions = [{ id: 's1', user_id: 'u1', status: 'canceled', plan: 'starter', created_at: '2026-06-01T00:00:00Z', trial_ends_at: '2026-06-15T00:00:00Z' }];
+  assert.equal(await eligibility(admin(earlier)), false, 'an earlier trial subscription');
+
+  const ledger = baseTables();
+  ledger.billing_trial_ledger = [{ email_hash: legacyTrialEmailKey('owner@example.test') }];
+  assert.equal(await eligibility(admin(ledger)), false, 'this inbox took its trial under an older account');
+
+  const adsAccount = baseTables();
+  adsAccount.trial_customer_ledger = [{ customer_id: '1111111111', first_user_id: 'someone-else' }];
+  assert.equal(await eligibility(admin(adsAccount)), false, 'a linked ads account already had a trial under another user');
+
+  const throwaway = baseTables();
+  throwaway.users = [{ id: 'u1', email: 'x@mailinator.com', name: 'أيمن أمين' }];
+  assert.equal(await eligibility(admin(throwaway)), false, 'a throwaway inbox');
+});
+
+test('plan.trialEligible: the address asked about is the sign-in identity, not the client-writable users.email', async () => {
+  const tables = baseTables();
+  tables.users = [{ id: 'u1', email: 'clean@example.test', name: 'أيمن أمين' }];
+  tables.billing_trial_ledger = [{ email_hash: legacyTrialEmailKey('used@example.test') }];
+  const base = admin(tables);
+  const signedInAs = (email: string) => ({
+    ...base,
+    auth: { admin: { getUserById: async (id: string) => ({ data: { user: { id, email } }, error: null }) } },
+  });
+  assert.equal(await eligibility(signedInAs('used@example.test')), false, 'the sign-in address is in the ledger');
+  assert.equal(await eligibility(signedInAs('clean@example.test')), true);
+});
+
+test('plan.trialEligible: null when the answer cannot be had, never a guess either way', async () => {
+  await quietly(async () => {
+    const ledger = watched(admin(), { billing_trial_ledger: 'error' });
+    const facts = await load(ledger.client, ['plan']);
+    assert.equal(facts.plan?.trialEligible, null, 'the ledger could not be read (check_failed)');
+    assert.equal(facts.plan?.decisionsTotal, 3, 'the rest of the plan is unaffected');
+
+    const subscriptions = watched(admin(), { subscriptions: 'throw' });
+    assert.equal((await load(subscriptions.client, ['plan'])).plan?.trialEligible, null, 'the policy itself threw');
+
+    const base = admin();
+    const noIdentity = { ...base, auth: { admin: { getUserById: async () => ({ data: { user: null }, error: { message: 'not found' } }) } } };
+    assert.equal(await eligibility(noIdentity), null, 'no sign-in address to ask about');
+    const authDown = { ...base, auth: { admin: { getUserById: async () => { throw new Error('auth down'); } } } };
+    assert.equal(await eligibility(authDown), null, 'the identity lookup threw');
+    const noAuthClient = { from: base.from.bind(base) };
+    assert.equal(await eligibility(noAuthClient), null, 'a client without the auth admin API');
   });
 });
 

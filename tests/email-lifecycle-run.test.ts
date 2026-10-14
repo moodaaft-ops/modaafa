@@ -5,14 +5,22 @@ import { EMAIL_COPY } from '../lib/lifecycle/copy';
 import { runEmailLifecycle, type LoadEmailFactsFn, type SendTemplateFn, type SendTemplateInput } from '../lib/lifecycle/run';
 import { EMPTY_FACTS, type EmailCopy } from '../lib/lifecycle/types';
 import { createFakeAdmin } from './support/fake-admin';
-import { ACTIVATED_AT, approvedCopy, fakeSendTemplate, richFacts, riyadh } from './support/lifecycle';
+import { ACTIVATED_AT, adsAccountSeed, approvedCopy, fakeSendTemplate, richFacts, riyadh, weeklyReportRow } from './support/lifecycle';
 
 /** Wednesday 14 Oct 2026, noon in Riyadh: inside the window, no weekly slot open. */
 const NOW = riyadh('2026-10-14T12:00');
 const SUNDAY = riyadh('2026-10-18T10:00');
 
 type Admin = ReturnType<typeof createFakeAdmin>;
-type Seed = { users?: Array<Record<string, unknown>>; user_events?: Array<Record<string, unknown>>; subscriptions?: Array<Record<string, unknown>>; message_log?: Array<Record<string, unknown>> };
+type Seed = {
+  users?: Array<Record<string, unknown>>;
+  user_events?: Array<Record<string, unknown>>;
+  subscriptions?: Array<Record<string, unknown>>;
+  message_log?: Array<Record<string, unknown>>;
+  businesses?: Array<Record<string, unknown>>;
+  google_ads_accounts?: Array<Record<string, unknown>>;
+  reports?: Array<Record<string, unknown>>;
+};
 
 const user = (id: string, stage: string | null = 'registered', extra: Record<string, unknown> = {}) => ({
   id,
@@ -49,8 +57,18 @@ function merge(...parts: Seed[]): Seed {
     user_events: parts.flatMap((p) => p.user_events ?? []),
     subscriptions: parts.flatMap((p) => p.subscriptions ?? []),
     message_log: parts.flatMap((p) => p.message_log ?? []),
+    businesses: parts.flatMap((p) => p.businesses ?? []),
+    google_ads_accounts: parts.flatMap((p) => p.google_ads_accounts ?? []),
+    reports: parts.flatMap((p) => p.reports ?? []),
   };
 }
+
+/** Saturday 00:30 UTC before SUNDAY: when the optimize cron writes the week's report (the week starts 00:00 UTC). */
+const REPORT_W42 = new Date('2026-10-17T00:30:00Z');
+/** These users have an account and this week's (W42) weekly report is already stored. */
+const withReports = (...ids: string[]): Seed => ({ ...adsAccountSeed(ids), reports: ids.map((id) => weeklyReportRow(id, REPORT_W42)) });
+/** The facts loader as it behaves for a user whose weekly report does not exist: everything but the weekly fact. */
+const noWeeklyFact: LoadEmailFactsFn = async (a, u) => ({ ...(await richFacts(a, u)), weekly: null });
 
 type GoOptions = {
   now?: Date;
@@ -475,7 +493,8 @@ test('the weekly report goes to trialing and active subscribers once per week', 
   const seed = merge(
     { users: [user('act', 'subscribed')], subscriptions: [subscription('act', 'active')], user_events: [event('act', 'subscription_paid', '2026-09-15T10:00')] },
     { users: [user('tri', 'analysis_viewed')], subscriptions: [subscription('tri', 'trialing', { created_at: riyadh('2026-10-11T10:00').toISOString() })] },
-    { users: [user('can', 'subscribed')], subscriptions: [subscription('can', 'canceled', { canceled_at: riyadh('2026-10-01T10:00').toISOString() })], user_events: [event('can', 'subscription_paid', '2026-09-15T10:00')] }
+    { users: [user('can', 'subscribed')], subscriptions: [subscription('can', 'canceled', { canceled_at: riyadh('2026-10-01T10:00').toISOString() })], user_events: [event('can', 'subscription_paid', '2026-09-15T10:00')] },
+    withReports('act', 'tri', 'can')
   );
   const admin = createFakeAdmin(seed);
   const first = await go(admin, { now: SUNDAY });
@@ -499,11 +518,12 @@ test('the weekly report is only looked for while its slot is open', async () => 
   assert.equal(sun.summary.considered, 1);
 });
 
-test('a missing weekly fact leaves the report unclaimed while the slot is open, and a later run sends it once the report exists', async () => {
-  const admin = createFakeAdmin({ users: [user('act', 'subscribed')], subscriptions: [subscription('act', 'active')] });
+test('safety net: a weekly report that vanishes between planning and sending stays unclaimed while the slot is open, and a later run sends it', async () => {
+  // The planner saw this week's report (it is stored), but the facts read at send time cannot find it: the race.
+  const admin = createFakeAdmin(merge({ users: [user('act', 'subscribed')], subscriptions: [subscription('act', 'active')] }, withReports('act')));
   const none: LoadEmailFactsFn = async () => ({ ...EMPTY_FACTS });
 
-  // The optimize cron has not written this account's report yet: not a final answer.
+  // Not a final answer.
   const sunday = await go(admin, { now: SUNDAY, facts: none });
   assert.deepEqual(sunday.summary.results.map((r) => r.result), ['skipped:weekly_pending']);
   assert.equal(sunday.calls.length, 0);
@@ -521,12 +541,13 @@ test('a missing weekly fact leaves the report unclaimed while the slot is open, 
   const again = await go(admin, { now: new Date(SUNDAY.getTime() + 3 * 60 * 60 * 1000) });
   assert.equal(again.summary.sent, 0);
 
+  admin.tables.reports!.push(weeklyReportRow('act', new Date('2026-10-24T00:30:00Z')));
   const nextSunday = await go(admin, { now: riyadh('2026-10-25T10:00') });
   assert.deepEqual(nextSunday.calls.map((c) => c.templateKey), ['weekly_report_2026-W43']);
 });
 
-test('a weekly report that never appears is dropped when the slot closes, still without a skip row', async () => {
-  const admin = createFakeAdmin({ users: [user('act', 'subscribed')], subscriptions: [subscription('act', 'active')] });
+test('a planned weekly report that never loads is dropped when the slot closes, still without a skip row', async () => {
+  const admin = createFakeAdmin(merge({ users: [user('act', 'subscribed')], subscriptions: [subscription('act', 'active')] }, withReports('act')));
   const none: LoadEmailFactsFn = async () => ({ ...EMPTY_FACTS });
   const lastOpen = await go(admin, { now: riyadh('2026-10-20T20:59'), facts: none });
   assert.deepEqual(lastOpen.summary.results.map((r) => r.result), ['skipped:weekly_pending']);
@@ -536,6 +557,55 @@ test('a weekly report that never appears is dropped when the slot closes, still 
   assert.equal(closed.summary.planned.total, 0);
   assert.deepEqual(closed.summary.results, []);
   assert.deepEqual(admin.tables.message_log ?? [], []);
+});
+
+test('a subscriber whose weekly report does not exist yet is not offered it, so their journey step is not blocked', async () => {
+  // Trial started Sat 17 Oct 12:00: trial_d1 is due Sun 18 Oct 12:00. The weekly slot opened at 09:00 and has waited
+  // longer, so before the fix it came first, found no report ("weekly_pending", no log row) and trial_d1 never went out.
+  const trialStart = riyadh('2026-10-17T12:00').toISOString();
+  const admin = createFakeAdmin({
+    users: [user('tri', 'analysis_viewed')],
+    subscriptions: [subscription('tri', 'trialing', { created_at: trialStart })],
+    // The account is linked; the optimize cron has not written this week's report yet.
+    ...adsAccountSeed(['tri']),
+    reports: [],
+  });
+  const noon = riyadh('2026-10-18T12:00');
+  const { summary, calls } = await go(admin, { now: noon, facts: noWeeklyFact });
+
+  assert.deepEqual(calls.map((c) => `${c.user.id}:${c.templateKey}`), ['tri:trial_d1']);
+  assert.deepEqual(summary.results.map((r) => r.result), ['sent']);
+  assert.equal(logRow(admin, 'tri', 'trial_d1')!.status, 'sent');
+  assert.equal(logRow(admin, 'tri', 'weekly_report_2026-W42'), undefined);
+
+  // Once the report is written the weekly goes out, after the 24 hour gap.
+  admin.tables.reports!.push(weeklyReportRow('tri', REPORT_W42));
+  const next = await go(admin, { now: riyadh('2026-10-19T12:00') });
+  assert.deepEqual(next.calls.map((c) => c.templateKey), ['weekly_report_2026-W42']);
+});
+
+test('subscribers without a report do not use up the run cap: the person with a journey step is still mailed', async () => {
+  // Three subscribers (weekly due Sun 09:00) and one registered user whose registered_1d is due Sun 10:00. The cap is 3
+  // and sends are ordered by due time, so three report-less weeklies used to take every slot of every run.
+  const subscribers = ['s1', 's2', 's3'].map((id) => ({ users: [user(id, 'subscribed')], subscriptions: [subscription(id, 'active')] }));
+  const admin = createFakeAdmin(
+    merge(...subscribers, { users: [user('reg')], user_events: [event('reg', 'registration_completed', '2026-10-17T10:00')] })
+  );
+  const { summary, calls } = await go(admin, { now: riyadh('2026-10-18T12:00'), facts: noWeeklyFact, config: { maxSendsPerRun: 3 } });
+
+  assert.deepEqual(calls.map((c) => `${c.user.id}:${c.templateKey}`), ['reg:registered_1d']);
+  assert.equal(summary.ignored.no_weekly_report, 3);
+  assert.deepEqual(summary.results.map((r) => r.result), ['sent']);
+});
+
+test('a subscriber whose weekly report exists still gets it, and only the one with a report', async () => {
+  const subscribers = ['has', 'lacks'].map((id) => ({ users: [user(id, 'subscribed')], subscriptions: [subscription(id, 'active')] }));
+  const admin = createFakeAdmin(merge(...subscribers, withReports('has'), adsAccountSeed(['lacks'])));
+  const { summary, calls } = await go(admin, { now: riyadh('2026-10-18T12:00') });
+
+  assert.deepEqual(calls.map((c) => `${c.user.id}:${c.templateKey}`), ['has:weekly_report_2026-W42']);
+  assert.deepEqual(summary.planned.byTemplate, { weekly_report: 1 });
+  assert.equal(summary.ignored.no_weekly_report, 1);
 });
 
 test('a missing journey fact is still a final skip (only the weekly report waits for its data)', async () => {
@@ -613,6 +683,20 @@ test('a broadcast does not need the activation date to have passed for each pers
   assert.equal(off.summary.sent, 0);
   const on = await go(admin, { config: { activatedAt: riyadh('2026-10-14T11:00').toISOString(), broadcasts: [chatRelaunch()] } });
   assert.equal(on.summary.sent, 1);
+});
+
+test('a broadcast stays closed until the activation moment has arrived: nothing is sent or written', async () => {
+  const admin = createFakeAdmin({ users: [user('b1')] });
+  const future = riyadh('2026-10-14T13:00').toISOString();
+  const early = await go(admin, { config: { activatedAt: future, broadcasts: [chatRelaunch()] } });
+  assert.deepEqual(early.summary.broadcasts, [{ id: 'chat_relaunch', gate: 'not_activated', planned: 0 }]);
+  assert.equal(early.summary.sent, 0);
+  assert.deepEqual(early.calls, []);
+  assert.equal(admin.tables.message_log!.length, 0);
+
+  const open = await go(admin, { config: { activatedAt: riyadh('2026-10-14T12:00').toISOString(), broadcasts: [chatRelaunch()] } });
+  assert.equal(open.summary.broadcasts[0]!.gate, 'ready');
+  assert.equal(open.summary.sent, 1);
 });
 
 test('permanent blockers of a broadcast are recorded once and not scanned again', async () => {

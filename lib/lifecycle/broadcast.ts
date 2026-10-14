@@ -23,7 +23,9 @@ import type { CopyKey } from '@/lib/lifecycle/types';
  * side (finding the people, loading their context) is in lib/lifecycle/context.ts
  * and the sending is in run.ts.
  *
- * A broadcast ignores the activation date and the holdout group, and obeys:
+ * A broadcast ignores the holdout group and the per-person activation rule (it is
+ * not tied to when someone's step fell due), but it never opens before the
+ * activation moment itself (see broadcastGate), and it obeys:
  * the category preference of its copy, suppression, the send window, the 24 hour
  * gap, the 3 in 7 days cap and the per-run batch size. Each person is mailed at
  * most once per broadcast (message_log key `broadcast_<id>`).
@@ -43,8 +45,9 @@ export function broadcastGate(args: {
 }): BroadcastGate {
   const { broadcast, now } = args;
   const copy = args.copy ?? EMAIL_COPY;
-  // The global switch: nothing is sent while the lifecycle has no activation moment.
-  if (!args.activatedAt || !Number.isFinite(Date.parse(args.activatedAt))) return 'not_activated';
+  // The global switch: nothing is sent while the lifecycle has no activation moment, or before it has arrived.
+  const activatedMs = args.activatedAt ? Date.parse(args.activatedAt) : Number.NaN;
+  if (!Number.isFinite(activatedMs) || now.getTime() < activatedMs) return 'not_activated';
   if (!broadcast.approved) return 'not_approved';
   if (!copy[broadcast.copyKey]?.approved) return 'copy_not_approved';
   if (broadcast.notBefore) {
