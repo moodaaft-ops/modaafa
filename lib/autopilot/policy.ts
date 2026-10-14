@@ -51,31 +51,17 @@ export function evaluateAutopilotPolicy(
     );
   }
 
+  // Live execution needs a conversion signal that can be trusted, whatever the
+  // two tracking toggles in the settings say (they are forced on at the edges,
+  // and this check does not depend on them). Only the verdict "healthy" passes;
+  // "missing", "suspect", "broken_recently", "wrong_primary" and "unknown" all
+  // queue the decision for a human instead.
   if (
-    settings.anomaly_pause_enabled &&
-    !check(
-      'anomaly_pause',
-      context.trackingStatus === 'healthy',
-      `tracking=${context.trackingStatus}`
-    )
+    !check('anomaly_pause', context.trackingStatus === 'healthy', `tracking=${context.trackingStatus}`)
   ) {
     return queue(
       'anomaly_pause',
       'أوقفنا التنفيذ التلقائي احترازياً لأن قياس التحويلات يحتاج مراجعة.',
-      checks
-    );
-  }
-
-  if (
-    !check(
-      'tracking_health',
-      !settings.require_healthy_tracking || context.trackingStatus === 'healthy',
-      `tracking=${context.trackingStatus}`
-    )
-  ) {
-    return queue(
-      'tracking_not_healthy',
-      'بيانات التحويل غير موثوقة بما يكفي للتنفيذ التلقائي؛ يلزم إصلاح القياس أو مراجعة بشرية.',
       checks
     );
   }

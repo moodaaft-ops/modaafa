@@ -119,6 +119,19 @@ test('tracking anomalies, weak evidence, daily limits and cooldowns prevent exec
   );
 });
 
+test('only a healthy tracking verdict lets autopilot execute, whatever the tracking toggles say', () => {
+  assert.equal(evaluateAutopilotPolicy(context({ trackingStatus: 'healthy' })).outcome, 'execute');
+  for (const trackingStatus of ['missing', 'suspect', 'broken_recently', 'wrong_primary', 'unknown'] as const) {
+    const verdict = evaluateAutopilotPolicy(context({ trackingStatus }));
+    assert.equal(verdict.outcome, 'queue', trackingStatus);
+    assert.equal(verdict.code, 'anomaly_pause', trackingStatus);
+  }
+  // The two settings toggles are forced on at the edges; the policy does not depend on them either.
+  const lax = { ...settings, require_healthy_tracking: false, anomaly_pause_enabled: false };
+  assert.equal(evaluateAutopilotPolicy(context({ settings: lax, trackingStatus: 'broken_recently' })).outcome, 'queue');
+  assert.equal(evaluateAutopilotPolicy(context({ settings: lax, trackingStatus: 'wrong_primary' })).outcome, 'queue');
+});
+
 test('grounding replaces model-supplied numbers with the matching Google Ads row', () => {
   const snapshot = {
     wasted_search_terms: [

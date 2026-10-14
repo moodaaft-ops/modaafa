@@ -82,7 +82,8 @@ test('the private build output is gitignored and nothing playbook-shaped is comm
   assert.match(gitignore, /^\.playbook-build\/$/m);
   assert.equal(existsSync(resolve('lib/jarvis/playbook/chunks.json')), false);
   const files = readdirSync(resolve('lib/jarvis/playbook'));
-  assert.deepEqual(files.sort(), ['build.ts', 'index.ts', 'types.ts']);
+  // core-rules.ts is the dependency-free home of the always-on rules (already public in index.ts), shared with the optimizer.
+  assert.deepEqual(files.sort(), ['build.ts', 'core-rules.ts', 'index.ts', 'types.ts']);
   // The scripts write under the ignored folder by default.
   assert.match(buildScript, /\.playbook-build\/chunks\.json/);
   assert.match(importScript, /\.playbook-build\/chunks\.json/);

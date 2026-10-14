@@ -38,12 +38,23 @@ test('a budget payload with neither amount nor delta stays manual-review', () =>
 });
 
 test('a delta outside the guardrail bounds is rejected up front', () => {
-  for (const delta_pct of [26, -31, 0, Number.NaN]) {
+  // Updated: the bound is now a step of 5 to 20 percent either way (was -30..25), so 21, -21 and the small steps are refused too.
+  for (const delta_pct of [26, -31, 21, -21, 4.9, -4, 0, Number.NaN]) {
     const action = buildExecutableAction(
       { operation: 'adjust_budget', target_id: '', params: { budget_resource: 'customers/123/campaignBudgets/9', delta_pct } },
       rec
     );
     assert.equal(action, null, `delta_pct=${delta_pct} must be rejected`);
+  }
+});
+
+test('the edges of the budget step bound are executable', () => {
+  for (const delta_pct of [5, -5, 20, -20, 12.5]) {
+    const action = buildExecutableAction(
+      { operation: 'adjust_budget', target_id: '', params: { budget_resource: 'customers/123/campaignBudgets/9', delta_pct } },
+      rec
+    );
+    assert.ok(action, `delta_pct=${delta_pct} must be accepted`);
   }
 });
 

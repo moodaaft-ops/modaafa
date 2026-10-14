@@ -9,9 +9,15 @@ import { decrypt } from '@/lib/crypto';
 import {
   decideOptimizations,
   checkGuardrails,
-  type ConversionTrackingStatus,
   type OptimizerSnapshot,
 } from '@/lib/ai/optimizer-agent';
+import {
+  buildConversionTracking,
+  composeEconomicsFields,
+  enrichPoorAds,
+} from '@/lib/ai/optimizer-snapshot';
+import { loadEconomics } from '@/lib/economics/load';
+import type { BreakEven } from '@/lib/economics/break-even';
 import { consumeFeatureUsage } from '@/lib/billing/entitlements';
 import { executeAutopilotAction } from '@/lib/autopilot/executor';
 import { findBlockingAutopilotRecommendation } from '@/lib/autopilot/recommendation-dedupe';
@@ -372,6 +378,16 @@ async function runOptimizerCron(req: NextRequest) {
       }
       const sectorBenchmark = benchmarkCache.get(benchmarkKey) ?? null;
 
+      // What the owner told us about margin, deal value and close rate: the
+      // only source of targets. Read-only, never throws; an unreadable or
+      // unanswered set reports its gaps and withholds budget and bid changes.
+      const economics = await loadEconomics(supabase, {
+        businessId: account.business_id,
+        sector: businessContext?.sector ?? null,
+        primaryGoal: businessContext?.primary_goal ?? null,
+        accountCurrency: account.currency_code ?? 'SAR',
+      });
+
       // Build a focused snapshot for the optimizer
       const snapshot = await buildOptimizerSnapshot(
         customer,
@@ -379,7 +395,8 @@ async function runOptimizerCron(req: NextRequest) {
         account.customer_id,
         account.currency_code ?? 'SAR',
         businessContext,
-        sectorBenchmark
+        sectorBenchmark,
+        economics
       );
 
       // Get AI decisions. An account with no spend and no evidence rows gives
@@ -451,7 +468,10 @@ async function runOptimizerCron(req: NextRequest) {
           keywordPauses++;
         }
 
-        const guarded = await checkGuardrails(action, account.id, supabase);
+        // The snapshot goes along so the queue-time gates (economics, tracking,
+        // impression share, conversion volume, one change per target per
+        // week) judge the proposal against the same numbers the model saw.
+        const guarded = await checkGuardrails(action, account.id, supabase, { snapshot });
         if (!guarded) {
           results.actions_blocked++;
           results.autopilot_blocked++;
@@ -1008,21 +1028,35 @@ export async function POST(req: NextRequest) {
   return runOptimizerCron(req);
 }
 
-async function buildOptimizerSnapshot(
-  customer: any,
-  accountId: string,
-  customerId: string,
-  currencyCode: string,
-  businessContext: { sector: string | null; primary_goal: string | null; monthly_budget: number | null } | null,
-  sectorBenchmark: SectorBenchmarkRow | null = null
-): Promise<OptimizerSnapshot> {
-  const [campaigns, highPerforming, underperforming, wastedTerms, convertingTerms, poorAds, enabledKeywords, adGroupBidTargets] =
-    await Promise.all([
-    // Bounded, highest-spend first. This and the underperforming query below
-    // had no LIMIT: a large account could return thousands of rows, ballooning
-    // the per-account prompt to hundreds of KB every hourly run (real token
-    // cost, and request-too-large failures that aborted the account).
-    customer.query(`
+/**
+ * The campaign list with the diagnostics a media buyer reads before touching a
+ * budget: channel type, bidding strategy, Google's own status and reasons, and
+ * the impression share lost to budget and to rank. If this richer query is
+ * rejected (a field the account's API version does not accept), fall back to
+ * the plain one so the run still happens; the rows then carry no diagnostics
+ * and every gate that needs them fails closed (no budget increase).
+ */
+async function queryCampaignRows(customer: any, customerId: string): Promise<any[]> {
+  try {
+    return await customer.query(`
+      SELECT
+        campaign.id, campaign.name, campaign.resource_name,
+        campaign.advertising_channel_type, campaign.bidding_strategy_type,
+        campaign.primary_status, campaign.primary_status_reasons,
+        campaign_budget.id, campaign_budget.amount_micros, campaign_budget.resource_name,
+        metrics.cost_micros, metrics.impressions, metrics.clicks,
+        metrics.conversions, metrics.conversions_value,
+        metrics.search_impression_share, metrics.search_budget_lost_impression_share,
+        metrics.search_rank_lost_impression_share
+      FROM campaign
+      WHERE segments.date DURING LAST_7_DAYS
+        AND campaign.status = 'ENABLED'
+      ORDER BY metrics.cost_micros DESC
+      LIMIT 200
+    `);
+  } catch (error) {
+    console.warn(`Campaign diagnostics query failed for ${customerId}; using the plain campaign query`, error);
+    return customer.query(`
       SELECT
         campaign.id, campaign.name, campaign.resource_name,
         campaign_budget.id, campaign_budget.amount_micros, campaign_budget.resource_name,
@@ -1032,7 +1066,51 @@ async function buildOptimizerSnapshot(
         AND campaign.status = 'ENABLED'
       ORDER BY metrics.cost_micros DESC
       LIMIT 200
-    `),
+    `);
+  }
+}
+
+async function buildOptimizerSnapshot(
+  customer: any,
+  accountId: string,
+  customerId: string,
+  currencyCode: string,
+  businessContext: { sector: string | null; primary_goal: string | null; monthly_budget: number | null } | null,
+  sectorBenchmark: SectorBenchmarkRow | null,
+  economics: BreakEven
+): Promise<OptimizerSnapshot> {
+  const [
+    campaignRows,
+    campaigns30d,
+    highPerforming,
+    underperforming,
+    wastedTerms,
+    convertingTerms,
+    poorAdRows,
+    adGroupRows,
+    enabledAdRows,
+    enabledKeywords,
+    conversionActionRows,
+    conversionDailyRows,
+  ] = await Promise.all([
+    // Bounded, highest-spend first. This and the underperforming query below
+    // had no LIMIT: a large account could return thousands of rows, ballooning
+    // the per-account prompt to hundreds of KB every hourly run (real token
+    // cost, and request-too-large failures that aborted the account).
+    queryCampaignRows(customer, customerId),
+    // 30-day totals per campaign: the window the scale and cut gates judge on.
+    // Seven days is a trend; budgets are decided on thirty. Null when the read
+    // fails, which closes every gate that needs it.
+    customer
+      .query(`
+      SELECT campaign.resource_name,
+        metrics.cost_micros, metrics.conversions, metrics.conversions_value
+      FROM campaign
+      WHERE segments.date DURING LAST_30_DAYS
+        AND campaign.status = 'ENABLED'
+      LIMIT 200
+    `)
+      .catch(() => null as any[] | null),
     customer.query(`
       SELECT
         ad_group_criterion.resource_name,
@@ -1046,19 +1124,24 @@ async function buildOptimizerSnapshot(
       ORDER BY metrics.conversions_value DESC
       LIMIT 100
     `),
+    // Waste candidates over 30 days (the window the pause rule judges on):
+    // cost, match type and ad group travel with the row so the cost-versus-
+    // allowable-CPA test needs nothing else. No CTR filter: a keyword that
+    // burns two CPAs with zero conversions is waste whatever its CTR.
     customer.query(`
       SELECT
         ad_group_criterion.resource_name,
         ad_group_criterion.keyword.text,
+        ad_group_criterion.keyword.match_type,
+        ad_group.name,
         metrics.clicks, metrics.cost_micros, metrics.ctr, metrics.conversions
       FROM keyword_view
-      WHERE segments.date DURING LAST_7_DAYS
-        AND metrics.clicks > 20
+      WHERE segments.date DURING LAST_30_DAYS
+        AND metrics.clicks >= 20
         AND metrics.conversions = 0
-        AND metrics.ctr < 0.01
         AND ad_group_criterion.status = 'ENABLED'
       ORDER BY metrics.cost_micros DESC
-      LIMIT 100
+      LIMIT 40
     `),
     // campaign.resource_name is selected so add_negative_keyword can name the
     // campaign that actually served the term. Without it the model saw the
@@ -1102,101 +1185,117 @@ async function buildOptimizerSnapshot(
       // server filters with > 1 and the exact >= 2 cut is applied here.
       rows.filter((row: any) => Number(row.metrics?.conversions ?? 0) >= 2)
     ),
+    // Ads the pause rule may look at: enough impressions to judge (1000 in 30
+    // days) and the lowest CTR first. Ad Strength is carried for reading only;
+    // it is never a reason to pause.
     customer.query(`
       SELECT
         ad_group_ad.resource_name,
-        ad_group_ad.ad.id,
         ad_group_ad.ad_strength,
+        ad_group.resource_name,
         metrics.ctr,
-        metrics.impressions
+        metrics.impressions, metrics.cost_micros, metrics.conversions
       FROM ad_group_ad
       WHERE segments.date DURING LAST_30_DAYS
         AND ad_group_ad.status = 'ENABLED'
-        AND metrics.impressions >= 100
+        AND metrics.impressions >= 1000
       ORDER BY metrics.ctr ASC
-      LIMIT 100
-    `),
-    customer.query(`
-      SELECT ad_group_criterion.resource_name
-      FROM keyword_view
-      WHERE ad_group_criterion.status = 'ENABLED'
-      LIMIT 10000
+      LIMIT 20
     `),
     // Current ad-group bid targets — the data adjust_bid decisions anchor to.
     // Without this list the model had no current value to copy, the queue-time
     // ±20% guardrail failed closed (unknown current ⇒ blocked), and not one
-    // bid recommendation ever reached the approval centre.
-    customer.query(`
+    // bid recommendation ever reached the approval centre. The same 30-day
+    // rows give each ad group's CTR and CPA, which the pause_ad rule compares
+    // an ad against. Null when the read fails.
+    customer
+      .query(`
       SELECT
         ad_group.resource_name,
         ad_group.name,
         ad_group.campaign,
         ad_group.target_cpa_micros,
         ad_group.target_roas,
+        metrics.impressions, metrics.clicks,
         metrics.conversions, metrics.cost_micros
       FROM ad_group
       WHERE segments.date DURING LAST_30_DAYS
         AND ad_group.status = 'ENABLED'
       ORDER BY metrics.cost_micros DESC
-      LIMIT 50
-    `).then((rows: any[]) =>
-      rows.filter((row: any) => {
-        const adGroup = row.adGroup ?? row.ad_group ?? {};
-        const cpa = Number(adGroup.targetCpaMicros ?? adGroup.target_cpa_micros ?? 0);
-        const roas = Number(adGroup.targetRoas ?? adGroup.target_roas ?? 0);
-        return cpa > 0 || roas > 0;
-      })
-    ).catch(() => [] as any[]),
-  ]);
-
-  // ---- Conversion tracking health: the gate every other decision sits behind.
-  let conversionTracking: OptimizerSnapshot['conversion_tracking'] = { status: 'unknown', enabled_actions: 0 };
-  try {
-    const conversionActions = await customer.query(`
-      SELECT conversion_action.resource_name, conversion_action.status
+      LIMIT 200
+    `)
+      .catch(() => null as any[] | null),
+    // One row per enabled ad: how many siblings an ad has in its group.
+    customer
+      .query(`
+      SELECT ad_group.resource_name
+      FROM ad_group_ad
+      WHERE ad_group_ad.status = 'ENABLED'
+        AND ad_group.status = 'ENABLED'
+        AND campaign.status = 'ENABLED'
+      LIMIT 10000
+    `)
+      .catch(() => null as any[] | null),
+    customer.query(`
+      SELECT ad_group_criterion.resource_name
+      FROM keyword_view
+      WHERE ad_group_criterion.status = 'ENABLED'
+      LIMIT 10000
+    `),
+    // ---- Conversion tracking health: the gate every other decision sits behind.
+    // The same verdict the Jarvis tool and the autopilot read
+    // (lib/jarvis/tools/get-conversion-health.ts conversionVerdict), not a count
+    // of enabled actions. Two compact queries; the clicks and conversions of the
+    // last 7 days come from the campaign rows above.
+    customer
+      .query(`
+      SELECT conversion_action.name, conversion_action.status, conversion_action.category,
+        conversion_action.primary_for_goal, conversion_action.include_in_conversions_metric
       FROM conversion_action
       WHERE conversion_action.status = 'ENABLED'
-      LIMIT 50
-    `);
-    const enabledActions = conversionActions.length;
-    const clicks7 = campaigns.reduce(
-      (total: number, row: any) => total + Number(row.metrics?.clicks ?? 0),
-      0
-    );
-    const conversions7 = campaigns.reduce(
-      (total: number, row: any) =>
-        total + Number(row.metrics?.conversions ?? 0),
-      0
-    );
-    const status: ConversionTrackingStatus =
-      enabledActions === 0
-        ? 'missing'
-        : clicks7 >= 100 && conversions7 === 0
-          ? 'suspect'
-          : 'healthy';
-    conversionTracking = {
-      status,
-      enabled_actions: enabledActions,
-      ...(status === 'suspect'
-        ? { note: 'Enabled conversion actions exist but real click volume produced zero conversions in 7 days.' }
-        : {}),
-    };
-  } catch (error) {
-    console.warn(`Conversion tracking check failed for ${customerId}`, error);
-  }
+      LIMIT 100
+    `)
+      .catch((error: unknown) => {
+        console.warn(`Conversion tracking check failed for ${customerId}`, error);
+        return null as any[] | null;
+      }),
+    customer
+      .query(`
+      SELECT segments.date, segments.conversion_action_name, metrics.all_conversions
+      FROM campaign
+      WHERE segments.date DURING LAST_30_DAYS
+        AND metrics.all_conversions > 0
+      LIMIT 5000
+    `)
+      .catch(() => null as any[] | null),
+  ]);
 
-  const totals = campaigns.reduce(
-    (acc: { cost: number; conversions: number; value: number }, row: any) => {
-      const metrics = row.metrics ?? {};
-      acc.cost += Number(metrics.costMicros ?? metrics.cost_micros ?? 0) / 1_000_000;
-      acc.conversions += Number(metrics.conversions ?? 0);
-      acc.value += Number(metrics.conversionsValue ?? metrics.conversions_value ?? 0);
+  // Ad groups that carry an explicit target CPA / target ROAS — the only ones
+  // adjust_bid may touch.
+  const adGroupBidTargets = (adGroupRows ?? []).filter((row: any) => {
+    const adGroup = row.adGroup ?? row.ad_group ?? {};
+    const cpa = Number(adGroup.targetCpaMicros ?? adGroup.target_cpa_micros ?? 0);
+    const roas = Number(adGroup.targetRoas ?? adGroup.target_roas ?? 0);
+    return cpa > 0 || roas > 0;
+  });
+
+  const sum7 = campaignRows.reduce(
+    (acc: { clicks: number; conversions: number }, row: any) => {
+      acc.clicks += Number(row.metrics?.clicks ?? 0);
+      acc.conversions += Number(row.metrics?.conversions ?? 0);
       return acc;
     },
-    { cost: 0, conversions: 0, value: 0 }
+    { clicks: 0, conversions: 0 }
   );
+  const conversionTracking = buildConversionTracking({
+    actionRows: conversionActionRows,
+    dailyRows: conversionDailyRows,
+    clicks7d: sum7.clicks,
+    conversions7d: sum7.conversions,
+    today: new Date().toISOString().slice(0, 10),
+  });
 
-  const budgetUtilization = campaigns.map((row: any) => {
+  const budgetUtilization = campaignRows.map((row: any) => {
     const metrics = row.metrics ?? {};
     const budget = row.campaignBudget ?? row.campaign_budget ?? {};
     const weeklyBudget = (Number(budget.amountMicros ?? budget.amount_micros ?? 0) / 1_000_000) * 7;
@@ -1208,6 +1307,11 @@ async function buildOptimizerSnapshot(
       utilization: weeklyBudget > 0 ? spend / weeklyBudget : 0,
     };
   });
+
+  // The client's targets (break-even, from the onboarding answers) and the
+  // account's own history, kept apart. budget_utilization above reads the raw
+  // rows before the new fields are folded into `diag`.
+  const economicsFields = composeEconomicsFields({ economics, campaignRows, rows30d: campaigns30d });
 
   return {
     account_id: accountId,
@@ -1224,18 +1328,20 @@ async function buildOptimizerSnapshot(
         }
       : null,
     conversion_tracking: conversionTracking,
-    campaigns,
+    economics: economicsFields.economics,
+    account_history: economicsFields.account_history,
+    campaigns: economicsFields.campaigns,
     underperforming_keywords: underperforming,
     high_performing_keywords: highPerforming,
     wasted_search_terms: wastedTerms,
     converting_search_terms: convertingTerms,
     ad_group_bid_targets: adGroupBidTargets,
     budget_utilization: budgetUtilization,
-    poor_ads: poorAds,
+    poor_ads: enrichPoorAds(poorAdRows, adGroupRows, enabledAdRows),
     keyword_count: enabledKeywords.length,
     currency_code: currencyCode,
-    target_roas: totals.cost > 0 ? totals.value / totals.cost : 0,
-    target_cpa: totals.conversions > 0 ? totals.cost / totals.conversions : 0,
+    target_roas: economicsFields.target_roas,
+    target_cpa: economicsFields.target_cpa,
   };
 }
 
