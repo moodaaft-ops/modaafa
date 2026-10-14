@@ -16,12 +16,15 @@ export function HomeThread({
   restoreSessionId,
   intro,
   introActions,
+  currency,
 }: {
   customerId: string;
   voiceEnabled: boolean;
   restoreSessionId: string | null;
   intro: React.ReactNode;
   introActions?: ChatQuickAction[];
+  /** The selected account's currency, for amounts in cards saved before they carried their own. */
+  currency?: string | null;
 }) {
   const router = useRouter();
   return (
@@ -35,6 +38,7 @@ export function HomeThread({
       restoreSessionId={restoreSessionId}
       intro={intro}
       introActions={introActions}
+      currency={currency}
       onSessionStarted={() => router.refresh()}
     />
   );

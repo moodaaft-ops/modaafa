@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   createMessageForAgent,
+  freeAuditTier,
   getAnthropicClient,
   getModelForAgent,
   getModelName,
@@ -12,6 +13,7 @@ import {
 } from '../lib/ai/client';
 
 const MODEL_ENV = [
+  'FREE_AUDIT_MODEL_TIER',
   'ANTHROPIC_MODEL_OPUS',
   'ANTHROPIC_MODEL_AUDIT',
   'ANTHROPIC_MODEL_BUILDER',
@@ -62,9 +64,13 @@ test('model ranking ignores non-Claude entries', () => {
   assert.ok(!rankModelCandidates(models, 'sonnet').includes('unrelated-model'));
 });
 
-test('agent roles map to the intended tiers', () => {
+test('agent roles map to the intended tiers', async () => {
+  await withCleanModelEnv(() => tiersCheck());
+});
+
+function tiersCheck() {
   const expected: Record<AgentRole, 'opus' | 'sonnet' | 'haiku'> = {
-    audit: 'opus',
+    audit: 'sonnet',
     jarvis_deep: 'opus',
     builder: 'sonnet',
     assistant: 'sonnet',
@@ -76,6 +82,31 @@ test('agent roles map to the intended tiers', () => {
   for (const [role, tier] of Object.entries(expected) as Array<[AgentRole, 'opus' | 'sonnet' | 'haiku']>) {
     assert.equal(tierForAgent(role), tier, role);
   }
+}
+
+test('the free audit runs on Sonnet unless FREE_AUDIT_MODEL_TIER says otherwise, and only the audit reads it', async () => {
+  await withCleanModelEnv(() => {
+    assert.equal(freeAuditTier({}), 'sonnet');
+    assert.equal(freeAuditTier({ FREE_AUDIT_MODEL_TIER: '' }), 'sonnet');
+    assert.equal(freeAuditTier({ FREE_AUDIT_MODEL_TIER: 'nonsense' }), 'sonnet');
+    assert.equal(freeAuditTier({ FREE_AUDIT_MODEL_TIER: ' OPUS ' }), 'opus');
+    assert.equal(freeAuditTier({ FREE_AUDIT_MODEL_TIER: 'haiku' }), 'haiku');
+    assert.equal(getModelForAgent('audit'), 'claude-sonnet-5-5');
+
+    process.env.FREE_AUDIT_MODEL_TIER = 'opus';
+    assert.equal(tierForAgent('audit'), 'opus');
+    assert.equal(getModelForAgent('audit'), 'claude-opus-5-5');
+    assert.equal(modelCandidatesForAgent('audit')[0], 'claude-opus-5-5');
+    // Every other role keeps its tier, whatever the override says.
+    assert.equal(tierForAgent('jarvis_deep'), 'opus');
+    assert.equal(tierForAgent('jarvis'), 'sonnet');
+    assert.equal(tierForAgent('assistant'), 'sonnet');
+    assert.equal(tierForAgent('jarvis_fast'), 'haiku');
+
+    process.env.FREE_AUDIT_MODEL_TIER = 'sonnet';
+    assert.equal(tierForAgent('audit'), 'sonnet');
+    assert.equal(tierForAgent('jarvis_deep'), 'opus');
+  });
 });
 
 test('hard fallback model ids are the 5.5 generation', async () => {
@@ -87,7 +118,7 @@ test('hard fallback model ids are the 5.5 generation', async () => {
     assert.equal(getModelForAgent('jarvis_fast'), 'claude-haiku-5-5');
     assert.equal(getModelForAgent('jarvis_deep'), 'claude-opus-5-5');
     assert.equal(getModelForAgent('assistant'), 'claude-sonnet-5-5');
-    assert.equal(getModelForAgent('audit'), 'claude-opus-5-5');
+    assert.equal(getModelForAgent('audit'), 'claude-sonnet-5-5');
     assert.equal(getModelForAgent('builder'), 'claude-sonnet-5-5');
   });
 });
@@ -107,7 +138,7 @@ test('compatibility lists put 5.5 ids first and keep the older ids after them', 
       'claude-haiku-4-5-20251001',
       'claude-sonnet-5-5',
     ]);
-    const opus = modelCandidatesForAgent('audit');
+    const opus = modelCandidatesForAgent('jarvis_deep');
     assert.equal(opus[0], 'claude-opus-5-5');
     assert.ok(opus.indexOf('claude-opus-5-5') < opus.indexOf('claude-opus-5'));
     assert.ok(opus.includes('claude-opus-4-1-20250805'));

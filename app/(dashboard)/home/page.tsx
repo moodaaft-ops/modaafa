@@ -1,21 +1,27 @@
-import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { ChevronLeft } from 'lucide-react';
-import { getAccountWorkspace } from '@/lib/accounts/selection';
+import { getAccountWorkspace, normalizeCustomerId } from '@/lib/accounts/selection';
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import { getRequestAuthContext, createAdminClient } from '@/lib/supabase/server';
 import { getSubscriptionAccess } from '@/lib/billing/entitlements';
+import { hasProductAccess } from '@/lib/billing/access-gate';
+import { getBillingCheckoutContext } from '@/lib/billing/checkout-policy';
+import { readFreeAuditView } from '@/lib/chat-first/free-audit-view';
+import { toPlanRecommendations } from '@/lib/plan/load';
+import { buildPlan, paywallCtaFromCheckout } from '@/lib/plan/plan';
 import { buildExecutableAction } from '@/lib/ai/executable-action';
 import { readVoiceConfig } from '@/lib/ai/voice-session';
 import { TikTokPixel } from '@/lib/analytics/tiktok-pixel';
 import { impactLabel, monthlyImpact } from '@/lib/onboarding/first-opportunities';
 import { isSimpleExperience } from '@/lib/setup/mode';
 import { readLedger } from '@/lib/setup/load';
+import { loadRecentChanges } from '@/lib/home/recent-changes';
 import { keysAnsweredByProfile, missingCoreKeys, type SetupKey } from '@/lib/setup/questions';
 import { firstNameFrom, healthWord } from '@/lib/setup/stage';
 import {
   SEVERITY_WORD,
   greetingFor,
+  lockedNoticeFrom,
   noticeFrom,
   orderDecisions,
   summaryLine,
@@ -26,6 +32,8 @@ import { operationLabelAr } from '@/lib/ai/operation-labels';
 import { AskAssistant } from './ask-assistant';
 import { ApproveInline } from './approve-inline';
 import { HomeThread } from './home-thread';
+import { LockedHome } from './locked-home';
+import { RecentChanges } from './recent-changes';
 import type { ChatQuickAction } from '@/lib/chat-first/contracts';
 
 export const metadata = { title: 'الرئيسية' };
@@ -66,7 +74,7 @@ export default async function HomePage({
     admin = null;
   }
 
-  const [campaignsRes, auditRes, recsRes, actionsRes, access, ledger] = await Promise.all([
+  const [campaignsRes, auditRes, recsRes, actionsRes, access, ledger, recentChanges] = await Promise.all([
     supabase.from('campaigns_cache').select('status, metrics_7d').eq('account_id', selectedAccount.id).limit(500),
     supabase
       .from('audits')
@@ -91,9 +99,73 @@ export default async function HomePage({
       .limit(3),
     getSubscriptionAccess(supabase, user.id, user.email),
     readLedger(admin, business.id),
+    // The undo is never gated: it renders below for someone with a plan and for someone without.
+    loadRecentChanges(supabase, { accountId: selectedAccount.id, customerId: selectedAccount.customer_id }),
   ]);
 
   const currency = (selectedAccount.currency_code ?? 'SAR').toUpperCase();
+  const hasRecentChanges = recentChanges.items.length > 0;
+  const recentChangesSection = hasRecentChanges ? (
+    <RecentChanges
+      className="pt-1"
+      items={recentChanges.items.map((item) => ({ id: item.id, text: item.text, when: timeAgoAr(item.createdAt) }))}
+      more={recentChanges.more}
+    />
+  ) : null;
+
+  // No subscription, no live trial, no operator free plan: «خطتك جاهزة» instead
+  // of the conversation. This branch renders no chat client at all, so the page
+  // cannot call /api/chat/start or a voice route; those answer 402 anyway.
+  if (!hasProductAccess(access)) {
+    const lockedAudit = auditRes.error ? null : auditRes.data;
+    const [checkout, freeAudit] = await Promise.all([
+      access.suspended
+        ? Promise.resolve(null)
+        : getBillingCheckoutContext(supabase, user.id, user.email).catch(() => null),
+      lockedAudit
+        ? Promise.resolve('unknown' as const)
+        : readFreeAuditView(normalizeCustomerId(selectedAccount.customer_id), admin ?? undefined),
+    ]);
+    const plan = buildPlan({
+      audit: lockedAudit,
+      recommendations: toPlanRecommendations(recsRes.error ? [] : recsRes.data ?? []),
+      currency,
+    });
+    const lockedName = googleAdsAccountDisplayName(selectedAccount);
+    const lockedNotice = lockedNoticeFrom(params);
+    const lockedFirstName = firstNameFrom(user.user_metadata ?? null);
+    return (
+      <div className="h-full">
+        <LockedHome
+          // A new token (sidebar's «محادثة جديدة») remounts a clean page.
+          key={params.new ?? 'home'}
+          plan={plan}
+          trialEligible={Boolean(checkout?.trialEligible)}
+          cta={paywallCtaFromCheckout(checkout)}
+          suspended={Boolean(access.suspended)}
+          greeting={`${greetingFor()}${lockedFirstName ? ` ${lockedFirstName}` : ''}`}
+          voiceEnabled={readVoiceConfig().enabled}
+          auditHref={!lockedAudit && freeAudit !== 'exhausted' ? '/onboarding' : null}
+          accountLine={lockedName}
+          notice={
+            lockedNotice ? (
+              <p
+                role="status"
+                className={cn(
+                  'rounded-[14px] px-4 py-2.5 text-[14px] font-semibold leading-7',
+                  lockedNotice.tone === 'ok' ? 'bg-success-soft text-foreground' : 'bg-danger-soft text-danger'
+                )}
+              >
+                {lockedNotice.text}
+              </p>
+            ) : null
+          }
+          recentChanges={recentChangesSection}
+        />
+      </div>
+    );
+  }
+
   const money = (amount: number) => formatCurrency(Math.round(amount), currency);
   const week = weekNumbers(campaignsRes.error ? [] : campaignsRes.data ?? []);
   const audit = auditRes.error ? null : auditRes.data;
@@ -147,6 +219,8 @@ export default async function HomePage({
           {notice.text}
         </p>
       )}
+      {/* Right after applying a change the undo is the first thing under the confirmation. */}
+      {params.executed && recentChangesSection}
       <p className="text-[14px] text-muted-foreground">
         {greetingFor()}
         {firstName ? ` ${firstName}` : ''}
@@ -168,7 +242,7 @@ export default async function HomePage({
           </h2>
           <ol className="space-y-3">
             {decisions.slice(0, VISIBLE_DECISIONS).map((decision) => (
-              <DecisionCard key={decision.id} decision={decision} currency={currency} subscribed={access.active} />
+              <DecisionCard key={decision.id} decision={decision} currency={currency} />
             ))}
           </ol>
           {decisions.length > VISIBLE_DECISIONS && (
@@ -179,7 +253,7 @@ export default async function HomePage({
               </summary>
               <ol className="mt-3 space-y-3">
                 {decisions.slice(VISIBLE_DECISIONS).map((decision) => (
-                  <DecisionCard key={decision.id} decision={decision} currency={currency} subscribed={access.active} />
+                  <DecisionCard key={decision.id} decision={decision} currency={currency} />
                 ))}
               </ol>
             </details>
@@ -187,11 +261,14 @@ export default async function HomePage({
         </section>
       )}
 
+      {!params.executed && recentChangesSection}
+
       <p className="text-[14.5px] leading-8 text-muted-foreground">
         {audit
           ? `صحة حسابك ${audit.health_score ?? '؟'} من 100${healthWord(audit.health_score) ? `، ${healthWord(audit.health_score)}` : ''}، وآخر فحص ${timeAgoAr(audit.ran_at)}.`
           : 'ما فحصت حسابك للحين.'}
-        {lastChange
+        {/* With undoable changes listed above, the list says it; the sentence stays for changes that can no longer be undone. */}
+        {lastChange && !hasRecentChanges
           ? ` آخر شي غيّرته: ${String(lastChange.description_ar ?? '').slice(0, 90)}${lastChange.reverted_at ? ' (رجّعته)' : ` (${timeAgoAr(lastChange.created_at)})`}.`
           : ''}
       </p>
@@ -215,6 +292,7 @@ export default async function HomePage({
         restoreSessionId={openChat}
         intro={openChat ? null : intro}
         introActions={openChat ? undefined : introActions}
+        currency={currency}
       />
     </div>
   );
@@ -229,15 +307,7 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function DecisionCard({
-  decision,
-  currency,
-  subscribed,
-}: {
-  decision: Decision;
-  currency: string;
-  subscribed: boolean;
-}) {
+function DecisionCard({ decision, currency }: { decision: Decision; currency: string }) {
   const impact = monthlyImpact(decision);
   const label = impactLabel(decision);
   const tone =
@@ -261,22 +331,14 @@ function DecisionCard({
         )}
       </div>
       <div className="flex flex-wrap items-center gap-2 px-3 pb-3 pt-1">
+        {/* This page only renders for an account with access; without it /home is the locked plan. */}
         {decision.executable ? (
-          subscribed ? (
-            <ApproveInline
-              id={decision.id}
-              intent={approved ? 'execute' : 'approve_execute'}
-              label={approved ? 'نفّذ الحين' : 'اعتمد'}
-              change={decision.change}
-            />
-          ) : (
-            <Link
-              href="/onboarding/trial"
-              className="inline-flex h-9 items-center rounded-full bg-primary px-4 text-[13.5px] font-bold text-primary-foreground"
-            >
-              فعّل اشتراكك وأنفذها
-            </Link>
-          )
+          <ApproveInline
+            id={decision.id}
+            intent={approved ? 'execute' : 'approve_execute'}
+            label={approved ? 'نفّذ الحين' : 'اعتمد'}
+            change={decision.change}
+          />
         ) : null}
         {!approved && (
           <DecisionForm id={decision.id} intent="dismiss">

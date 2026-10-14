@@ -5,6 +5,11 @@
 //   questions  one account linked and synced, an audit on record, no setup answers yet
 //   home       set up and subscribed, with open decisions, a week of numbers and two past chats
 //   quiet      set up, but nothing spent in 7 days, no audit and no decisions
+//   unpaid     like questions (audit on record, decisions pending) but with NO subscription: the paywall
+//   unpaid_home  set up, audit and decisions on record, NO subscription: /home shows «خطتك جاهزة»
+//   active     like home, but an active (paid) subscription instead of a trial
+//   suspended  like home, but an operator suspended the account
+// questions and home represent a customer WITH access (a live trial), so the older specs keep their flow.
 // POST /__scenario?name=… switches scenario and clears stored answers, so one server serves the whole spec.
 import http from 'node:http';
 
@@ -77,6 +82,13 @@ const recs = [
   },
 ];
 
+// A live Stripe trial: the customer has access. Used by every scenario that is not about the paywall.
+const trialingSubscription = () => ({
+  id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', user_id: UID, plan: 'growth', billing_period: 'monthly', status: 'trialing',
+  trial_ends_at: new Date(Date.now() + 10 * 864e5).toISOString(), current_period_start: hoursAgo(96),
+  current_period_end: new Date(Date.now() + 10 * 864e5).toISOString(), created_at: hoursAgo(96), canceled_at: null,
+});
+
 const SCENARIOS = {
   connect: () => ({
     businesses: [{ id: BID, user_id: UID, name: 'Ayman Amin', sector: null, website: null, monthly_budget: null, primary_goal: 'leads', target_regions: [], selected_google_ads_customer_id: null }],
@@ -86,8 +98,10 @@ const SCENARIOS = {
     businesses: [{ id: BID, user_id: UID, name: 'Ayman Amin', sector: null, website: null, monthly_budget: null, primary_goal: 'leads', target_regions: [], selected_google_ads_customer_id: null }],
     google_ads_accounts: [account],
     job_runs: [{ id: 'job1', job_name: `google_ads_connect:${UID}`, status: 'success', started_at: hoursAgo(1), finished_at: hoursAgo(1), details: { stage: 'done', spend: { '1234567890': 4320 } } }],
-    audits: [audit], recommendations: recs, campaigns_cache: [camp(0, 620, 9), camp(1, 480, 7), camp(2, 140, 2)], subscriptions: [], ai_actions: [],
+    audits: [audit], recommendations: recs, campaigns_cache: [camp(0, 620, 9), camp(1, 480, 7), camp(2, 140, 2)], subscriptions: [trialingSubscription()], ai_actions: [],
   }),
+  // The same journey for someone with no subscription at all: the questions end on «خطتك جاهزة».
+  unpaid: () => ({ ...SCENARIOS.questions(), subscriptions: [] }),
   home: () => ({
     businesses: [{ id: BID, user_id: UID, name: 'متجر الريم للعطور', sector: 'متجر إلكتروني', website: 'https://alreem.example', monthly_budget: 4300, primary_goal: 'conversions', target_regions: ['الرياض', 'جدة'], selected_google_ads_customer_id: '1234567890' }],
     google_ads_accounts: [account],
@@ -118,6 +132,15 @@ const SCENARIOS = {
     audits: [], recommendations: [], ai_actions: [], chat_sessions: [], chat_messages: [],
     campaigns_cache: [camp(0, 0, 0), camp(1, 0, 0)],
   }),
+  unpaid_home: () => ({ ...SCENARIOS.home(), subscriptions: [], chat_sessions: [], chat_messages: [] }),
+  active: () => ({
+    ...SCENARIOS.home(),
+    subscriptions: [{ ...trialingSubscription(), status: 'active', trial_ends_at: null, current_period_end: new Date(Date.now() + 25 * 864e5).toISOString() }],
+  }),
+  suspended: () => ({
+    ...SCENARIOS.home(),
+    account_access_overrides: [{ id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', user_id: UID, kind: 'suspension', plan: null, expires_at: null, created_at: hoursAgo(1), revoked_at: null }],
+  }),
 };
 
 let scenario = process.env.SCENARIO || 'questions';
@@ -141,6 +164,17 @@ function readBody(req) {
       try { resolve(raw ? JSON.parse(raw) : null); } catch { resolve(null); }
     });
   });
+}
+
+// PostgREST-style `?id=eq.…&user_id=eq.…` filters and `?select=a,b` for the chat_sessions PATCH/DELETE below.
+function matching(rows, params) {
+  const skip = new Set(['select', 'order', 'limit', 'offset']);
+  return rows.filter((row) => [...params].every(([key, value]) => skip.has(key) || !value.startsWith('eq.') || String(row[key]) === value.slice(3)));
+}
+function columns(rows, select) {
+  if (!select || select === '*') return rows;
+  const wanted = select.split(',');
+  return rows.map((row) => Object.fromEntries(wanted.map((key) => [key, row[key]])));
 }
 
 http.createServer(async (req, res) => {
@@ -176,7 +210,19 @@ http.createServer(async (req, res) => {
     if (req.method === 'PATCH') {
       const body = await readBody(req);
       if (name === 'businesses' && body && tables.businesses[0]) Object.assign(tables.businesses[0], body);
+      if (name === 'chat_sessions' && body) {
+        const hit = matching(rows, u.searchParams);
+        for (const row of hit) Object.assign(row, body, { updated_at: new Date().toISOString() });
+        return send(200, columns(hit, u.searchParams.get('select')));
+      }
       return send(200, []);
+    }
+    if (req.method === 'DELETE' && name === 'chat_sessions') {
+      const hit = matching(rows, u.searchParams);
+      tables.chat_sessions = rows.filter((row) => !hit.includes(row));
+      // The real table cascades to the messages.
+      tables.chat_messages = (tables.chat_messages ?? []).filter((m) => !hit.some((row) => row.id === m.session_id));
+      return send(200, columns(hit, u.searchParams.get('select')));
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(204, []);
     let out = rows;
@@ -193,3 +239,137 @@ http.createServer(async (req, res) => {
   }
   send(404, { message: 'mock: ' + u.pathname });
 }).listen(54321, '127.0.0.1', () => console.log(`mock supabase (simple, ${scenario}) on 54321`));
+
+// ===== BEGIN restyle-pages block =====
+// Synthetic data for /campaigns, /reports, /billing and /settings. Additive only: it adds scenarios, it changes none.
+//   pages      set up, live Stripe subscription, six campaigns, reports, three invoices
+//   pages-new  set up, nothing paid yet (plan picker), no campaigns, reports or invoices
+const pageCamp = (i, name, type, status, budget, cost30, conv30) => ({
+  id: `88888888-8888-4888-8888-8888888809${String(i).padStart(2, '0')}`, account_id: A1, google_campaign_id: 2000 + i,
+  name, type, status, daily_budget: budget, bidding_strategy: 'MAXIMIZE_CONVERSIONS',
+  metrics_7d: { cost: Math.round(cost30 / 4), clicks: 120, impressions: 4000, conversions: Math.round(conv30 / 4) },
+  metrics_30d: { cost: cost30, clicks: 520, impressions: 17000, conversions: conv30 },
+  last_synced_at: hoursAgo(3),
+});
+const pageCampaigns = [
+  pageCamp(0, 'بحث العطور', 'SEARCH', 'ENABLED', 150, 2480, 36),
+  pageCamp(1, 'الأداء الأقصى للمتجر', 'PERFORMANCE_MAX', 'ENABLED', 200, 1920, 28),
+  pageCamp(2, 'حماية اسم العلامة', 'SEARCH', 'ENABLED', 40, 560, 11),
+  pageCamp(3, 'تسوق منتجات العود', 'SHOPPING', 'ENABLED', 90, 410, 4),
+  pageCamp(4, 'إعادة الاستهداف للزوار', 'DISPLAY', 'PAUSED', 60, 130, 1),
+  pageCamp(5, 'حملة رمضان الماضي', 'SEARCH', 'PAUSED', 120, 0, 0),
+];
+const pageReports = [
+  {
+    id: 'aaaaaaaa-0000-4000-8000-000000000001', account_id: A1, period_type: 'weekly', generated_at: hoursAgo(20),
+    summary_ar: 'صرفت هالأسبوع أكثر من اللي قبله بشوي، بس الطلبات زادت أكثر من الصرف. أغلب الزيادة جات من حملة «بحث العطور» بعد ما أوقفت عبارة «عطور رخيصة».',
+    metrics: {
+      kind: 'weekly_performance', currency_code: 'SAR',
+      totals: { this_week: { cost: 1240, conversions: 18 }, prior_week: { cost: 1105, conversions: 13 }, delta: { cost: 135, conversions: 5, cpa_this: 68.9, cpa_prior: 85 } },
+      highlights_ar: ['حملة «بحث العطور» جابت 9 طلبات بتكلفة أقل من الأسبوع اللي قبله', 'حملة «الأداء الأقصى للمتجر» ميزانيتها تخلص قبل العصر'],
+      next_week_ar: 'وزّع ميزانية «الأداء الأقصى للمتجر» على ساعات اليوم كلها عشان تلحق طلبات المساء',
+    },
+  },
+  {
+    id: 'aaaaaaaa-0000-4000-8000-000000000002', account_id: A1, period_type: 'custom', generated_at: hoursAgo(26),
+    summary_ar: 'فحصت حسابك ولقيت 4 نقاط تحتاج قرار، أهمها عبارة صرفت عليها بدون ولا طلب.',
+    metrics: { kind: 'audit_summary', health_score: 58, recommendations_count: 4, estimated_monthly_waste_sar: 1840, currency_code: 'SAR' },
+  },
+  {
+    id: 'aaaaaaaa-0000-4000-8000-000000000003', account_id: A1, period_type: 'weekly', generated_at: hoursAgo(190),
+    summary_ar: 'الأسبوع كان هادي، الصرف ثابت تقريباً والطلبات نزلت شوي في الويكند.',
+    metrics: {
+      kind: 'weekly_performance', currency_code: 'SAR',
+      totals: { this_week: { cost: 1105, conversions: 13 }, prior_week: { cost: 1150, conversions: 15 }, delta: { cost: -45, conversions: -2, cpa_this: 85, cpa_prior: 76.7 } },
+      highlights_ar: ['الطلبات نزلت يوم الجمعة والسبت'],
+      next_week_ar: null,
+    },
+  },
+  {
+    id: 'aaaaaaaa-0000-4000-8000-000000000004', account_id: A1, period_type: 'monthly', generated_at: hoursAgo(700),
+    summary_ar: 'ملخص الشهر الماضي محفوظ.',
+    metrics: { kind: 'audit_summary', health_score: 64, recommendations_count: 6, estimated_monthly_waste_sar: 0, currency_code: 'SAR' },
+  },
+];
+const pageInvoices = [
+  { invoice_number: 'INV-0003', amount_sar: 1200, currency: 'SAR', status: 'paid', invoice_url: 'https://example.com/invoice/3', created_at: hoursAgo(120) },
+  { invoice_number: 'INV-0002', amount_sar: 1200, currency: 'SAR', status: 'paid', invoice_url: 'https://example.com/invoice/2', created_at: hoursAgo(120 + 720) },
+  { invoice_number: 'INV-0001', amount_sar: 500, currency: 'SAR', status: 'paid', invoice_url: null, created_at: hoursAgo(120 + 1440) },
+];
+SCENARIOS.pages = () => ({
+  ...SCENARIOS.home(),
+  campaigns_cache: pageCampaigns,
+  reports: pageReports,
+  invoices: pageInvoices,
+  subscriptions: [{
+    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab', user_id: UID, plan: 'growth', billing_period: 'monthly', status: 'active',
+    stripe_subscription_id: 'sub_mock_123', stripe_customer_id: 'cus_mock_123', trial_ends_at: null,
+    current_period_start: hoursAgo(120), current_period_end: new Date(Date.now() + 25 * 864e5).toISOString(), created_at: hoursAgo(1500), canceled_at: null,
+  }],
+});
+SCENARIOS['pages-new'] = () => ({
+  ...SCENARIOS.home(),
+  campaigns_cache: [], reports: [], invoices: [], subscriptions: [],
+});
+// ===== END restyle-pages block =====
+
+// ===== BEGIN review-fixes block =====
+// Synthetic data for the undo list, the stopped-subscription paywall and the locked /audit and /optimizer.
+// Additive only: it adds scenarios, it changes none. The reversible rows carry the resource of THIS account
+// (customers/1234567890/…), the way the rollback route and the list both require.
+//   undo          like home, plus changes that can still be undone, and some that cannot (not reversible,
+//                 already undone, older than 30 days, another account's)
+//   undo_many     like undo, but with seven undoable changes (the list shows five and links to the rest)
+//   undo_unpaid   like unpaid_home plus the same changes: the undo is never behind the paywall
+//   past_due      like unpaid_home, but the subscription's last payment failed and its grace is over
+//   paused        like unpaid_home, but the subscription is paused
+//   unpaid_audit  like unpaid_home, with an audit from the current engine and an AI narrative on record
+const reversible = (n, text, type, hours) => ({
+  id: `77777777-7777-4777-8777-7777777777${String(n).padStart(2, '0')}`, account_id: A1, action_type: type,
+  description_ar: text, created_at: hoursAgo(hours), reverted_at: null, rollback_status: null,
+  rollback_payload: { reversible: true, resource_name: `customers/1234567890/campaignCriteria/1000~${2000 + n}` },
+});
+const undoable = [
+  reversible(11, 'منعت إعلانك يطلع لعبارة «عطور رخيصة»', 'add_negative_keyword', 5),
+  reversible(12, 'أوقفت كلمة «عود مجاني» لأنها صرفت بدون طلبات', 'pause_keyword', 30),
+];
+const notUndoable = [
+  { ...reversible(21, 'غيّرت ميزانية حملة العلامة', 'adjust_budget', 8), rollback_payload: { reversible: false, resource_name: 'customers/1234567890/campaigns/1002' } },
+  { ...reversible(22, 'أوقفت إعلان قديم', 'pause_ad', 9), reverted_at: hoursAgo(2) },
+  reversible(23, 'منعت عبارة من أكثر من شهر', 'add_negative_keyword', 24 * 40),
+  { ...reversible(24, 'تغيير على حساب ثاني', 'pause_campaign', 4), account_id: '33333333-3333-4333-8333-3333333333ff' },
+];
+const manyUndoable = [
+  ...undoable,
+  reversible(13, 'أوقفت حملة «حماية اسم العلامة» ليومين', 'pause_campaign', 52),
+  reversible(14, 'منعت عبارة «عطور مقلدة»', 'add_negative_keyword', 70),
+  reversible(15, 'أوقفت كلمة «بخور رخيص»', 'pause_keyword', 90),
+  reversible(16, 'منعت عبارة «تقليد عود»', 'add_negative_keyword', 110),
+  reversible(17, 'أوقفت إعلان «خصم 90 بالمية»', 'pause_ad', 130),
+];
+SCENARIOS.undo = () => ({ ...SCENARIOS.home(), ai_actions: [...undoable, ...notUndoable] });
+SCENARIOS.undo_many = () => ({ ...SCENARIOS.home(), ai_actions: [...manyUndoable, ...notUndoable] });
+SCENARIOS.undo_unpaid = () => ({ ...SCENARIOS.unpaid_home(), ai_actions: [...undoable, ...notUndoable] });
+const stoppedSubscription = (status) => ({
+  id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaac', user_id: UID, plan: 'growth', billing_period: 'monthly', status,
+  stripe_subscription_id: 'sub_mock_stopped', stripe_customer_id: 'cus_mock_stopped', trial_ends_at: null,
+  current_period_start: new Date(Date.now() - 10 * 864e5).toISOString(), current_period_end: new Date(Date.now() + 20 * 864e5).toISOString(),
+  created_at: hoursAgo(24 * 40), canceled_at: null,
+});
+SCENARIOS.past_due = () => ({ ...SCENARIOS.unpaid_home(), subscriptions: [stoppedSubscription('past_due')] });
+SCENARIOS.paused = () => ({ ...SCENARIOS.unpaid_home(), subscriptions: [stoppedSubscription('paused')] });
+SCENARIOS.unpaid_audit = () => ({
+  ...SCENARIOS.unpaid_home(),
+  audits: [{
+    ...audit,
+    metrics_snapshot: {
+      audit_engine_version: 2,
+      ai_narrative: {
+        headline_ar: 'العنوان السري للقراءة الذكية', executive_summary_ar: 'ملخص سري للقراءة الذكية',
+        priorities_ar: ['أولوية سرية للقراءة الذكية'], risks_ar: [], growth_ar: [],
+      },
+    },
+  }],
+});
+reset(scenario);
+// ===== END review-fixes block =====

@@ -16,9 +16,12 @@ import { cn } from '@/lib/utils';
 export function DateRangePicker({
   selection,
   className,
+  variant = 'default',
 }: {
   selection: DateRangeSelection;
   className?: string;
+  /** `chat` is the simple shell's look: a row of round chips, no box. Behaviour is identical. */
+  variant?: 'default' | 'chat';
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -73,6 +76,87 @@ export function DateRangePicker({
   }
 
   const displayedError = clientError ?? selection.error;
+
+  if (variant === 'chat') {
+    const chip = (active: boolean) =>
+      cn(
+        'inline-flex h-9 items-center rounded-full border px-3 text-[13px] font-medium transition-colors disabled:opacity-50 sm:px-4 sm:text-[13.5px]',
+        active
+          ? 'border-foreground bg-foreground text-background'
+          : 'border-border bg-card text-foreground hover:bg-muted'
+      );
+    const dateField = cn(inputClasses, 'rounded-full px-5');
+    return (
+      <section aria-label="اختيار فترة التقرير" className={className}>
+        <h2 className="sr-only">فترة التقرير</h2>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap gap-1.5 sm:gap-2" role="group" aria-label="الفترات السريعة">
+            {DATE_RANGE_PRESETS.map((preset) => (
+              <button
+                key={preset.key}
+                type="button"
+                disabled={isPending}
+                aria-pressed={!customOpen && selection.key === preset.key}
+                onClick={() => choosePreset(preset.key)}
+                className={chip(!customOpen && selection.key === preset.key)}
+              >
+                {preset.label}
+              </button>
+            ))}
+            <button
+              type="button"
+              disabled={isPending}
+              aria-pressed={customOpen}
+              onClick={() => {
+                setClientError(null);
+                setCustomOpen(true);
+              }}
+              className={chip(customOpen)}
+            >
+              فترة مخصصة
+            </button>
+          </div>
+          {selection.key === 'custom' && (
+            <span className="text-[13px] text-muted-foreground">{selection.label}</span>
+          )}
+          {isPending && (
+            <span className="inline-flex items-center gap-1.5 text-[13px] font-medium text-muted-foreground" role="status">
+              <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden />
+              جاري تحميل الفترة...
+            </span>
+          )}
+        </div>
+
+        {customOpen && (
+          <div className="mt-3 flex flex-wrap items-end gap-3">
+            <label className="min-w-[150px] flex-1 sm:max-w-[220px]">
+              <span className="mb-1.5 block text-[13px] font-medium text-foreground">من تاريخ</span>
+              <input dir="ltr" type="date" value={from} onChange={(event) => setFrom(event.target.value)} className={dateField} />
+            </label>
+            <label className="min-w-[150px] flex-1 sm:max-w-[220px]">
+              <span className="mb-1.5 block text-[13px] font-medium text-foreground">إلى تاريخ</span>
+              <input dir="ltr" type="date" value={to} onChange={(event) => setTo(event.target.value)} className={dateField} />
+            </label>
+            <button
+              type="button"
+              disabled={isPending}
+              onClick={applyCustomRange}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-primary px-5 text-[14px] font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60"
+            >
+              {isPending && <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden />}
+              تطبيق الفترة
+            </button>
+          </div>
+        )}
+
+        {displayedError && (
+          <p className="mt-2.5 text-[13px] font-medium text-danger" role="alert">
+            {displayedError}
+          </p>
+        )}
+      </section>
+    );
+  }
 
   return (
     <section

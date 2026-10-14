@@ -1,18 +1,13 @@
-import { Link2, Megaphone } from 'lucide-react';
 import { redirect } from 'next/navigation';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import { getRequestAuthContext } from '@/lib/supabase/server';
 import { assertSupabaseRead } from '@/lib/supabase/query-errors';
-import { formatCurrency, formatNumberAr } from '@/lib/utils';
+import { cn, formatCurrency, formatNumberAr } from '@/lib/utils';
 import { moneyMetric } from '@/lib/google-ads/metrics';
 import { campaignStatusLabel, campaignTypeLabel } from '@/lib/ui/labels';
 import { PendingSubmitButton } from '@/lib/ui/pending-submit-button';
-import { PageHeader } from '@/lib/ui/page-header';
-import { EmptyState } from '@/lib/ui/empty-state';
-import { StatusBadge, campaignStatusTone } from '@/lib/ui/status-badge';
-import { buttonClasses } from '@/lib/ui/button';
-import { Alert } from '@/lib/ui/alert';
+import { campaignStatusTone } from '@/lib/ui/status-badge';
 import { syncErrorMessage } from '@/lib/ui/sync-errors';
 import {
   dateRangeHref,
@@ -21,6 +16,7 @@ import {
 } from '@/lib/analytics/date-range';
 import { loadCampaignsForDateRange } from '@/lib/analytics/campaign-performance';
 import { DateRangePicker } from '@/lib/ui/date-range-picker';
+import { CARD, CalmEmpty, CalmNote, CalmPage, CalmTitle, StatusWord, pill, type DotTone } from '../calm-page';
 
 export const metadata = {
   title: 'الحملات',
@@ -88,147 +84,137 @@ export default async function CampaignsPage({
 
   const accountName = selectedAccount ? googleAdsAccountDisplayName(selectedAccount) : 'الحساب المختار';
 
+  const syncForm = (label: string, className: string) =>
+    selectedAccount && (
+      <form action="/api/accounts/sync" method="post">
+        <input type="hidden" name="customerId" value={selectedAccount.customer_id} />
+        <input type="hidden" name="next" value={dateRangeHref('/campaigns', requestedRange)} />
+        <PendingSubmitButton pendingLabel="جاري التحديث..." className={className}>
+          {label}
+        </PendingSubmitButton>
+      </form>
+    );
+
   return (
-    <>
-      <PageHeader
-        icon={Megaphone}
+    <CalmPage wide>
+      <CalmTitle
         title="الحملات"
         description={`مرتبة حسب الحالة والصرف خلال ${effectiveRange.label}.`}
         account={selectedAccount ? { name: accountName, customerId: selectedAccount.customer_id } : null}
-        actions={
-          selectedAccount && (
-            <form action="/api/accounts/sync" method="post">
-              <input type="hidden" name="customerId" value={selectedAccount.customer_id} />
-              <input type="hidden" name="next" value={dateRangeHref('/campaigns', requestedRange)} />
-              <PendingSubmitButton pendingLabel="جاري التحديث..." className={buttonClasses({ variant: 'primary' })}>
-                تحديث الآن
-              </PendingSubmitButton>
-            </form>
-          )
-        }
+        actions={syncForm('تحديث الآن', pill.quiet)}
       />
-      <div className="space-y-6 p-4 sm:p-6 lg:p-8">
-        {params?.synced && <Alert tone="success">تم تحديث بيانات الحساب المختار.</Alert>}
-        {params?.sync_error && <Alert tone="danger">{syncErrorMessage(params.sync_error)}</Alert>}
-        {rangeLoadError && <Alert tone="warning">{rangeLoadError}</Alert>}
-        {accounts.length > 0 && <DateRangePicker selection={effectiveRange} />}
-        {accounts.length === 0 ? (
-          <EmptyState
-            icon={Link2}
-            title="لم تربط حساباً إعلانياً بعد"
-            description="اربط إعلانات Google لجلب الحملات وعرض أدائها هنا."
-            action={
-              <a href="/onboarding/connect" className={buttonClasses({ variant: 'primary', size: 'lg' })}>
-                ربط إعلانات Google
-              </a>
-            }
-          />
-        ) : campaigns.length === 0 ? (
-          <EmptyState
-            icon={Megaphone}
-            title="لا توجد حملات محفوظة للحساب المختار"
-            description="حدّث بيانات الحساب أو شغّل الفحص لجلب الحملات من إعلانات Google."
-            action={
-              <>
-                {selectedAccount && (
-                  <form action="/api/accounts/sync" method="post">
-                    <input type="hidden" name="customerId" value={selectedAccount.customer_id} />
-                    <input type="hidden" name="next" value={dateRangeHref('/campaigns', requestedRange)} />
-                    <PendingSubmitButton pendingLabel="جاري التحديث..." className={buttonClasses({ variant: 'primary' })}>
-                      تحديث البيانات الآن
-                    </PendingSubmitButton>
-                  </form>
-                )}
-                <a href="/audit" className={buttonClasses({ variant: 'outline' })}>
-                  تشغيل الفحص
-                </a>
-              </>
-            }
-          />
-        ) : (
-          <section className="surface-card overflow-hidden">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
-              <div>
-                <h2 className="text-[14px] font-semibold">قائمة الحملات</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {formatNumberAr(sortedCampaigns.filter((c) => c.status === 'ENABLED').length)} مفعلة من أصل{' '}
-                  {formatNumberAr(campaigns.length)} خلال {effectiveRange.label}
-                </p>
-              </div>
-              <div className="flex gap-2">
-                <a href="/audit" className={buttonClasses({ variant: 'outline', size: 'sm' })}>
-                  تحديث بالفحص
-                </a>
-                <a href="/assistant" className={buttonClasses({ variant: 'primary', size: 'sm' })}>
-                  اسأل المساعد
-                </a>
-              </div>
-            </div>
-            {/* Phones get one card per campaign. The 720px table forced a hidden
-                sideways scroll that pushed spend and conversions off-screen. */}
-            <ul className="divide-y divide-border md:hidden">
+
+      <div className="mt-6 space-y-4">
+        {params?.synced && <CalmNote tone="success">تم تحديث بيانات الحساب المختار.</CalmNote>}
+        {params?.sync_error && <CalmNote tone="danger">{syncErrorMessage(params.sync_error)}</CalmNote>}
+        {rangeLoadError && <CalmNote tone="warning">{rangeLoadError}</CalmNote>}
+        {accounts.length > 0 && <DateRangePicker selection={effectiveRange} variant="chat" />}
+      </div>
+
+      {accounts.length === 0 ? (
+        <CalmEmpty
+          title="لم تربط حساباً إعلانياً بعد"
+          description="اربط إعلانات Google لجلب الحملات وعرض أدائها هنا."
+        >
+          <a href="/onboarding/connect" className={pill.primary}>
+            ربط إعلانات Google
+          </a>
+        </CalmEmpty>
+      ) : campaigns.length === 0 ? (
+        <CalmEmpty
+          title="لا توجد حملات محفوظة للحساب المختار"
+          description="حدّث بيانات الحساب أو شغّل الفحص لجلب الحملات من إعلانات Google."
+        >
+          {syncForm('تحديث البيانات الآن', pill.primary)}
+          <a href="/audit" className={pill.quiet}>
+            تشغيل الفحص
+          </a>
+        </CalmEmpty>
+      ) : (
+        <section className="mt-8" aria-labelledby="campaigns-list-title">
+          <h2 id="campaigns-list-title" className="sr-only">
+            قائمة الحملات
+          </h2>
+          <p className="mb-3 text-[14.5px] leading-7 text-muted-foreground">
+            {formatNumberAr(sortedCampaigns.filter((c) => c.status === 'ENABLED').length)} مفعلة من أصل{' '}
+            {formatNumberAr(campaigns.length)} خلال {effectiveRange.label}
+          </p>
+
+          <div className={cn(CARD, 'overflow-hidden')}>
+            {/* Phones get one row per campaign. A wide table forces a hidden
+                sideways scroll that pushes spend and conversions off-screen. */}
+            <ul className="divide-y divide-border/70 md:hidden">
               {sortedCampaigns.map((campaign: any) => (
                 <li key={campaign.id} className="px-4 py-4">
                   <div className="flex items-start justify-between gap-3">
-                    <p className="min-w-0 break-words text-sm font-medium leading-6 text-foreground">{campaign.name}</p>
-                    <StatusBadge tone={campaignStatusTone(campaign.status)}>
-                      {campaignStatusLabel(campaign.status)}
-                    </StatusBadge>
+                    <p className="min-w-0 break-words text-[15px] font-semibold leading-7 text-foreground">{campaign.name}</p>
+                    <StatusWord tone={dotTone(campaign.status)}>{campaignStatusLabel(campaign.status)}</StatusWord>
                   </div>
-                  <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2.5 text-[13px]">
+                  <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-[14px]">
                     <div>
-                      <dt className="text-[11px] text-muted-foreground">النوع</dt>
+                      <dt className="text-[12.5px] text-muted-foreground">النوع</dt>
                       <dd className="mt-0.5 text-foreground">{campaignTypeLabel(campaign.type)}</dd>
                     </div>
                     <div>
-                      <dt className="text-[11px] text-muted-foreground">الميزانية</dt>
+                      <dt className="text-[12.5px] text-muted-foreground">الميزانية</dt>
                       <dd className="mt-0.5 numeric text-foreground">{formatCurrency(campaign.daily_budget ?? 0, selectedAccount?.currency_code)}</dd>
                     </div>
                     <div>
-                      <dt className="text-[11px] text-muted-foreground">الصرف · {effectiveRange.label}</dt>
+                      <dt className="text-[12.5px] text-muted-foreground">الصرف · {effectiveRange.label}</dt>
                       <dd className="mt-0.5 numeric text-foreground">{formatCurrency(moneyMetric(campaign.range_metrics, 'cost'), selectedAccount?.currency_code)}</dd>
                     </div>
                     <div>
-                      <dt className="text-[11px] text-muted-foreground">التحويلات</dt>
+                      <dt className="text-[12.5px] text-muted-foreground">التحويلات</dt>
                       <dd className="mt-0.5 numeric text-foreground">{formatNumberAr(campaign.range_metrics?.conversions ?? 0)}</dd>
                     </div>
                   </dl>
                 </li>
               ))}
             </ul>
-            <div className="hidden overflow-x-auto scrollbar-thin md:block">
-              <table className="w-full min-w-[720px] text-sm">
-                <thead className="border-b border-border bg-background-elevated text-[11px] uppercase text-muted-foreground">
-                  <tr>
-                    <th className="px-5 py-2.5 text-start font-medium">الحملة</th>
-                    <th className="px-3 py-2.5 text-start font-medium">الحالة</th>
-                    <th className="px-3 py-2.5 text-start font-medium">النوع</th>
-                    <th className="px-3 py-2.5 text-start font-medium">الميزانية</th>
-                    <th className="px-3 py-2.5 text-start font-medium">الصرف · {effectiveRange.label}</th>
-                    <th className="px-5 py-2.5 text-start font-medium">التحويلات</th>
+            <table className="hidden w-full text-[14.5px] md:table">
+              <thead>
+                <tr className="text-[13px] text-muted-foreground">
+                  <th scope="col" className="px-6 py-3.5 text-start font-medium">الحملة</th>
+                  <th scope="col" className="px-3 py-3.5 text-start font-medium">الحالة</th>
+                  <th scope="col" className="px-3 py-3.5 text-start font-medium">النوع</th>
+                  <th scope="col" className="px-3 py-3.5 text-start font-medium">الميزانية</th>
+                  <th scope="col" className="px-3 py-3.5 text-start font-medium">الصرف · {effectiveRange.label}</th>
+                  <th scope="col" className="px-6 py-3.5 text-start font-medium">التحويلات</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedCampaigns.map((campaign: any) => (
+                  <tr key={campaign.id} className="border-t border-border/70 transition-colors duration-150 hover:bg-muted/50">
+                    <td className="px-6 py-4 font-semibold text-foreground">{campaign.name}</td>
+                    <td className="px-3 py-4">
+                      <StatusWord tone={dotTone(campaign.status)}>{campaignStatusLabel(campaign.status)}</StatusWord>
+                    </td>
+                    <td className="px-3 py-4 text-muted-foreground">{campaignTypeLabel(campaign.type)}</td>
+                    <td className="px-3 py-4 numeric">{formatCurrency(campaign.daily_budget ?? 0, selectedAccount?.currency_code)}</td>
+                    <td className="px-3 py-4 numeric">{formatCurrency(moneyMetric(campaign.range_metrics, 'cost'), selectedAccount?.currency_code)}</td>
+                    <td className="px-6 py-4 numeric">{formatNumberAr(campaign.range_metrics?.conversions ?? 0)}</td>
                   </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {sortedCampaigns.map((campaign: any) => (
-                    <tr key={campaign.id} className="transition-colors duration-150 hover:bg-muted/50">
-                      <td className="px-5 py-3.5 font-medium text-foreground">{campaign.name}</td>
-                      <td className="px-3 py-3.5">
-                        <StatusBadge tone={campaignStatusTone(campaign.status)}>
-                          {campaignStatusLabel(campaign.status)}
-                        </StatusBadge>
-                      </td>
-                      <td className="px-3 py-3.5 text-muted-foreground">{campaignTypeLabel(campaign.type)}</td>
-                      <td className="px-3 py-3.5 numeric">{formatCurrency(campaign.daily_budget ?? 0, selectedAccount?.currency_code)}</td>
-                      <td className="px-3 py-3.5 numeric">{formatCurrency(moneyMetric(campaign.range_metrics, 'cost'), selectedAccount?.currency_code)}</td>
-                      <td className="px-5 py-3.5 numeric">{formatNumberAr(campaign.range_metrics?.conversions ?? 0)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        )}
-      </div>
-    </>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="mt-5 flex flex-wrap gap-2">
+            <a href="/assistant" className={pill.primarySm}>
+              اسأل المساعد
+            </a>
+            <a href="/audit" className={pill.quietSm}>
+              تحديث بالفحص
+            </a>
+          </div>
+        </section>
+      )}
+    </CalmPage>
   );
+}
+
+/** The status colour for the dot; the word beside it says the same thing. */
+function dotTone(status?: string | null): DotTone {
+  const tone = campaignStatusTone(status);
+  return tone === 'success' || tone === 'danger' ? tone : 'neutral';
 }

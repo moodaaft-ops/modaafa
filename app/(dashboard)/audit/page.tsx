@@ -26,6 +26,9 @@ import { StatusBadge, recommendationStatusTone, severityTone } from '@/lib/ui/st
 import { buttonClasses } from '@/lib/ui/button';
 import { cn } from '@/lib/utils';
 import { getSubscriptionAccess, featureAccessMessage } from '@/lib/billing/entitlements';
+import { hasProductAccess } from '@/lib/billing/access-gate';
+import { loadPlanLock } from '@/lib/plan/load';
+import { PlanLock } from '@/lib/plan/plan-lock';
 import { auditAccessMessage, freeAuditView, getFreeAuditStatus } from '@/lib/billing/free-audit';
 import { SubscriptionGate } from '@/lib/ui/subscription-gate';
 import { isCurrentAuditEngine } from '@/lib/audit/version';
@@ -163,6 +166,68 @@ export default async function AuditPage({
     );
   }
 
+  const freeAuditNotice =
+    !subscription.active && selectedAccount ? (
+      <Alert tone="info">
+        {freeView === 'exhausted'
+          ? 'استخدمت الفحصين المجانيين لهذا الحساب. الاشتراك يلزم لفحص جديد أو لتنفيذ التوصيات.'
+          : freeView === 'unknown'
+            ? 'ما قدرنا نقرأ عدد فحوصاتك المجانية الآن. تقدر تشغّل الفحص، ونتحقق من حصتك عند التشغيل.'
+            : freeView === 'in_progress'
+              ? `فيه فحص شغّال لهذا الحساب الآن. باقي لك ${freeAudit!.remaining} من ${freeAudit!.limit} بعد ما يخلص.`
+              : `الفحص مجاني لهذا الحساب: باقي لك ${freeAudit!.remaining} من ${freeAudit!.limit}. والقرارات كلها تنفتح مع تجربتك.`}
+      </Alert>
+    ) : null;
+
+  const auditHeader = (
+    <PageHeader
+      icon={ShieldCheck}
+      title="فحص الحساب"
+      description={`آخر فحص ${timeAgoAr(audit.ran_at)}`}
+      account={selectedAccount ? { name: accountName, customerId: selectedAccount.customer_id } : null}
+      actions={
+        canRunAudit ? (
+          <RunAuditForm accounts={accounts} selectedCustomerId={selectedCustomerId} label="إعادة الفحص" />
+        ) : (
+          <a href="/billing" className={buttonClasses({ variant: 'primary' })}>تفعيل الفحص</a>
+        )
+      }
+    />
+  );
+
+  // No subscription, live trial or operator plan: the same «خطتك جاهزة» lock
+  // /home shows. The summary and the first decision stay open, the other
+  // decisions are titles only, and this branch returns BEFORE the recommendations
+  // and the AI narrative are read, so their reasons, evidence and amounts never
+  // reach a person without access.
+  if (!hasProductAccess(subscription) && selectedAccount) {
+    const lock = await loadPlanLock(supabase, {
+      accountId: selectedAccount.id,
+      currency: selectedAccount.currency_code,
+      userId: user.id,
+      userEmail: user.email,
+      suspended: Boolean(subscription.suspended),
+    });
+    return (
+      <>
+        {auditHeader}
+        <div className="space-y-6 p-4 sm:p-6 lg:p-8">
+          {params?.ran && <Alert tone="success">تم تشغيل الفحص وتحديث التوصيات.</Alert>}
+          {freeAuditNotice}
+          {params?.error && <Alert tone="danger">{auditErrorMessage(params.error)}</Alert>}
+          <div className="mx-auto w-full max-w-3xl">
+            <PlanLock
+              plan={lock.plan}
+              trialEligible={lock.trialEligible}
+              cta={lock.cta}
+              suspended={Boolean(subscription.suspended)}
+            />
+          </div>
+        </div>
+      </>
+    );
+  }
+
   const [recommendationsResult, latestReportResult] = await Promise.all([
     supabase
       .from('recommendations')
@@ -192,37 +257,13 @@ export default async function AuditPage({
 
   return (
     <>
-      <PageHeader
-        icon={ShieldCheck}
-        title="فحص الحساب"
-        description={`آخر فحص ${timeAgoAr(audit.ran_at)}`}
-        account={selectedAccount ? { name: accountName, customerId: selectedAccount.customer_id } : null}
-        actions={
-          canRunAudit ? (
-            <RunAuditForm accounts={accounts} selectedCustomerId={selectedCustomerId} label="إعادة الفحص" />
-          ) : (
-            <a href="/billing" className={buttonClasses({ variant: 'primary' })}>تفعيل الفحص</a>
-          )
-        }
-      />
+      {auditHeader}
 
       <div className="space-y-6 p-4 sm:p-6 lg:p-8">
         {params?.ran && <Alert tone="success">تم تشغيل الفحص وتحديث التوصيات.</Alert>}
         {params?.approved && (
           <Alert tone="success">تم تجهيز التوصية للمراجعة. لم ننفذ أي تعديل على حسابك، وتقدر تراجع الأرقام قبل التنفيذ في مركز الموافقات.</Alert>
         )}
-        {!subscription.active && selectedAccount && (
-          <Alert tone="info">
-            {freeView === 'exhausted'
-              ? 'استخدمت الفحصين المجانيين لهذا الحساب. تقاريرك وتوصياتك تبقى مفتوحة للقراءة، والاشتراك يلزم لفحص جديد أو لتنفيذ التوصيات.'
-              : freeView === 'unknown'
-                ? 'ما قدرنا نقرأ عدد فحوصاتك المجانية الآن. تقدر تشغّل الفحص، ونتحقق من حصتك عند التشغيل.'
-                : freeView === 'in_progress'
-                  ? `فيه فحص شغّال لهذا الحساب الآن. باقي لك ${freeAudit!.remaining} من ${freeAudit!.limit} بعد ما يخلص.`
-                  : `الفحص مجاني لهذا الحساب: باقي لك ${freeAudit!.remaining} من ${freeAudit!.limit}. الاشتراك يلزم فقط عند تنفيذ التوصيات أو تفعيل التحسين الآلي.`}
-          </Alert>
-        )}
-        {!subscription.active && <SubscriptionGate compact />}
         {params?.error && <Alert tone="danger">{auditErrorMessage(params.error)}</Alert>}
 
         {liveCoverage && Number(liveCoverage.coverage_pct ?? 0) < 100 && (

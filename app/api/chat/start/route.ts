@@ -1,5 +1,6 @@
 import { readAccessOverrides } from '@/lib/billing/access-overrides';
 import { ACCOUNT_SUSPENDED_MESSAGE } from '@/lib/billing/entitlements';
+import { checkProductAccess } from '@/lib/billing/access-gate';
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase/server';
 import { SELECTED_ADS_ACCOUNT_COOKIE } from '@/lib/accounts/selection';
@@ -84,6 +85,15 @@ export async function POST(req: NextRequest) {
   const a = await authed(req);
   if (a.res) return a.res;
   const { supabase, user } = a as { supabase: any; user: any };
+
+  // Every turn here can cost model money (the brain, the language layer, the
+  // memory extractor) and every spoken turn can cost voice money, so this
+  // route is closed until the account has a subscription or a live trial. It is
+  // the first thing after sign-in and the rate limit: nothing below runs for
+  // someone without access, and the browser is never the thing that decides.
+  // 402 { error: 'subscription_required' }; a suspension is the 403 above.
+  const gate = await checkProductAccess({ supabase, userId: user.id, userEmail: user.email });
+  if (!gate.ok) return NextResponse.json(gate.body, { status: gate.status });
 
   const body = (await req.json().catch(() => ({}))) as Record<string, any>;
   const message = typeof body.message === 'string' ? body.message.trim().slice(0, MAX_MESSAGE) : '';

@@ -1,21 +1,19 @@
-import { Skeleton, SkeletonRows } from '@/lib/ui/skeleton';
+import { Skeleton } from '@/lib/ui/skeleton';
+import { CalmPage } from '../calm-page';
 
 export default function CampaignsLoading() {
   return (
     <div dir="rtl">
-      <div className="border-b border-border bg-background px-4 py-4 sm:px-6 lg:px-8">
-        <Skeleton className="h-6 w-40" />
-        <Skeleton className="mt-2 h-4 w-72" />
-      </div>
-      <div className="p-4 sm:p-6 lg:p-8">
-        <div className="surface-card overflow-hidden">
-          <div className="flex items-center justify-between border-b border-border p-5">
-            <Skeleton className="h-5 w-44" />
-            <Skeleton className="h-9 w-32 rounded-lg" />
-          </div>
-          <SkeletonRows rows={8} />
+      <CalmPage wide>
+        <Skeleton className="h-9 w-40 rounded-full" />
+        <Skeleton className="mt-3 h-4 w-72 max-w-full rounded-full" />
+        <div className="mt-6 flex flex-wrap gap-2">
+          {[0, 1, 2, 3].map((item) => (
+            <Skeleton key={item} className="h-9 w-28 rounded-full" />
+          ))}
         </div>
-      </div>
+        <Skeleton className="mt-8 h-[360px] rounded-[18px]" />
+      </CalmPage>
     </div>
   );
 }

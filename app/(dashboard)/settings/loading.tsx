@@ -1,17 +1,17 @@
-import { Skeleton, SkeletonCard } from '@/lib/ui/skeleton';
+import { Skeleton } from '@/lib/ui/skeleton';
+import { CalmPage } from '../calm-page';
 
 export default function SettingsLoading() {
   return (
     <div dir="rtl">
-      <div className="border-b border-border bg-background px-4 py-4 sm:px-6 lg:px-8">
-        <Skeleton className="h-6 w-40" />
-        <Skeleton className="mt-2 h-4 w-72" />
-      </div>
-      <div className="space-y-6 p-4 sm:p-6 lg:p-8">
-        <SkeletonCard className="h-40" />
-        <SkeletonCard className="h-64" />
-        <SkeletonCard className="h-40" />
-      </div>
+      <CalmPage>
+        <Skeleton className="h-9 w-40 rounded-full" />
+        <Skeleton className="mt-3 h-4 w-72 max-w-full rounded-full" />
+        <Skeleton className="mt-8 h-5 w-44 rounded-full" />
+        <Skeleton className="mt-3 h-[190px] rounded-[18px]" />
+        <Skeleton className="mt-10 h-5 w-24 rounded-full" />
+        <Skeleton className="mt-3 h-[200px] rounded-[18px]" />
+      </CalmPage>
     </div>
   );
 }
