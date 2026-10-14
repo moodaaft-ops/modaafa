@@ -15,7 +15,13 @@
  */
 
 import { ADAPTIVE_KEYS, type AdaptiveAnswer, type AdaptiveKey } from './adaptive/types';
-import { adaptiveEffects, adaptiveLabel, adaptiveReaction, parseAdaptiveAnswer } from './adaptive/answers';
+import {
+  adaptiveEffects,
+  adaptiveLabel,
+  adaptiveReaction,
+  parseAdaptiveAnswer,
+  type AdaptiveReactionContext,
+} from './adaptive/answers';
 
 /** The ten fixed questions. The adaptive tree adds ADAPTIVE_KEYS on top (lib/setup/adaptive). */
 export const SETUP_KEYS = [
@@ -164,6 +170,252 @@ export const PAIN_OPTIONS: SetupOption[] = [
   { id: 'unsure', label: 'ما أدري، شوف أنت', icon: 'search' },
 ];
 
+// ---------------------------------------------------------------------------
+// Per-kind wording for goal and pain (adaptive onboarding)
+//
+// The lists above are what the old dock shows and they never change. The
+// adaptive tree asks `goal` and `pain` in the words of the customer's kind of
+// business, with ids of their own. Every id here is accepted by parseAnswer for
+// any kind (the server cannot know which kind the screen asked), writes the
+// same columns and the same fact shape as the legacy ids, and carries its own
+// label and reaction.
+// ---------------------------------------------------------------------------
+
+/** Kinds that have their own goal and pain wording. «general» keeps the legacy lists. */
+export type KindWordingKey = 'ecommerce' | 'clinic' | 'services' | 'local';
+
+type GoalColumnValue = (typeof GOAL_COLUMN)[keyof typeof GOAL_COLUMN];
+
+type KindGoalDef = SetupOption & { column: GoalColumnValue; fact: string; reaction: string | null };
+type KindPainDef = SetupOption & { fact: string; reaction: string | null };
+
+const KIND_GOAL_DEFS: Record<KindWordingKey, KindGoalDef[]> = {
+  ecommerce: [
+    {
+      id: 'shop_orders',
+      label: 'طلبات شراء من المتجر',
+      icon: 'cart',
+      column: 'conversions',
+      fact: 'أهم نتيجة يبيها من الإعلانات: طلبات شراء من متجره',
+      reaction: 'تمام، بحكم على كل حملة بالطلبات اللي تجيبها مو بالضغطات.',
+    },
+    {
+      id: 'shop_whatsapp',
+      label: 'طلبات تجي على الواتساب',
+      icon: 'phone',
+      column: 'leads',
+      fact: 'أهم نتيجة يبيها من الإعلانات: طلبات على الواتساب',
+      reaction: 'تمام، كل ريال بحسبه على الطلبات والرسائل اللي يجيبها.',
+    },
+    {
+      id: 'shop_traffic',
+      label: 'زيارات للمتجر',
+      icon: 'globe',
+      column: 'traffic',
+      fact: 'أهم نتيجة يبيها من الإعلانات: زيارات لمتجره',
+      reaction: null,
+    },
+  ],
+  clinic: [
+    {
+      id: 'clinic_calls',
+      label: 'اتصالات من ناس يبون يحجزون',
+      icon: 'phone',
+      column: 'leads',
+      fact: 'أهم نتيجة يبيها من الإعلانات: اتصالات من ناس يبون يحجزون',
+      reaction: 'تمام، كل ريال بحسبه على الاتصالات اللي يجيبها.',
+    },
+    {
+      id: 'clinic_whatsapp',
+      label: 'رسائل واتساب للحجز',
+      icon: 'phone',
+      column: 'leads',
+      fact: 'أهم نتيجة يبيها من الإعلانات: رسائل واتساب للحجز',
+      reaction: 'تمام، كل ريال بحسبه على الرسائل اللي يجيبها.',
+    },
+    {
+      id: 'clinic_bookings',
+      label: 'حجوزات من الموقع أو رابط الحجز',
+      icon: 'check',
+      column: 'leads',
+      fact: 'أهم نتيجة يبيها من الإعلانات: حجوزات من موقعه أو رابط الحجز',
+      reaction: null,
+    },
+  ],
+  services: [
+    {
+      id: 'svc_calls',
+      label: 'اتصالات من عملاء يبون الخدمة',
+      icon: 'phone',
+      column: 'leads',
+      fact: 'أهم نتيجة يبيها من الإعلانات: اتصالات من عملاء يبون الخدمة',
+      reaction: 'تمام، كل ريال بحسبه على الاتصالات اللي يجيبها.',
+    },
+    {
+      id: 'svc_forms',
+      label: 'طلبات عرض سعر من الموقع',
+      icon: 'globe',
+      column: 'leads',
+      fact: 'أهم نتيجة يبيها من الإعلانات: طلبات عرض سعر من موقعه',
+      reaction: null,
+    },
+    {
+      id: 'svc_whatsapp',
+      label: 'رسائل واتساب',
+      icon: 'phone',
+      column: 'leads',
+      fact: 'أهم نتيجة يبيها من الإعلانات: رسائل واتساب من عملاء',
+      reaction: 'تمام، كل ريال بحسبه على الرسائل اللي يجيبها.',
+    },
+  ],
+  local: [
+    {
+      id: 'local_visits',
+      label: 'زيارات للفرع',
+      icon: 'pin',
+      column: 'leads',
+      fact: 'أهم نتيجة يبيها من الإعلانات: زيارات للفرع',
+      reaction: 'تمام، بركز على الناس اللي قريبين منك.',
+    },
+    {
+      id: 'local_delivery',
+      label: 'طلبات من تطبيقات التوصيل',
+      icon: 'cart',
+      column: 'conversions',
+      fact: 'أهم نتيجة يبيها من الإعلانات: طلبات من تطبيقات التوصيل',
+      reaction: null,
+    },
+    {
+      id: 'local_bookings',
+      label: 'حجوزات',
+      icon: 'check',
+      column: 'leads',
+      fact: 'أهم نتيجة يبيها من الإعلانات: حجوزات',
+      reaction: null,
+    },
+    {
+      id: 'local_calls',
+      label: 'اتصالات',
+      icon: 'phone',
+      column: 'leads',
+      fact: 'أهم نتيجة يبيها من الإعلانات: اتصالات',
+      reaction: 'تمام، كل ريال بحسبه على الاتصالات اللي يجيبها.',
+    },
+  ],
+};
+
+const LEGACY_UNSURE: SetupOption = { id: 'unsure', label: 'ما أدري، شوف أنت', icon: 'search' };
+
+const KIND_PAIN_DEFS: Record<Exclude<KindWordingKey, 'local'>, KindPainDef[]> = {
+  ecommerce: [
+    {
+      id: 'shop_few_orders',
+      label: 'الطلبات قليلة',
+      icon: 'trend-down',
+      fact: 'أكثر شي مضايقه: الطلبات قليلة',
+      reaction: 'هذا أول شي بدوّر عليه في حسابك.',
+    },
+    {
+      id: 'shop_profit_eaten',
+      label: 'فيه طلبات بس الإعلان ياكل الربح',
+      icon: 'coins',
+      fact: 'أكثر شي مضايقه: فيه طلبات بس الإعلان ياكل الربح',
+      reaction: 'تمام، أقارن تكلفة الطلب بربحك مو بعدد الطلبات بس.',
+    },
+    {
+      id: 'shop_abandoned_carts',
+      label: 'السلة تنترك كثير',
+      icon: 'cart',
+      fact: 'أكثر شي مضايقه: السلة تنترك كثير',
+      reaction: 'تمام، وأقول لك بصراحة لو المشكلة في الإعلان أو في المتجر نفسه.',
+    },
+  ],
+  clinic: [
+    {
+      id: 'clinic_few_calls',
+      label: 'الاتصالات قليلة',
+      icon: 'trend-down',
+      fact: 'أكثر شي مضايقه: الاتصالات قليلة',
+      reaction: 'هذا أول شي بدوّر عليه في حسابك.',
+    },
+    {
+      id: 'clinic_price_shoppers',
+      label: 'يتصلون يسألون عن السعر وما يحجزون',
+      icon: 'phone',
+      fact: 'أكثر شي مضايقه: يتصلون يسألون عن السعر وما يحجزون',
+      reaction: 'تمام، أشوف أي عبارات بحث تجيب ناس تسأل وما تحجز.',
+    },
+    {
+      id: 'clinic_costly_booking',
+      label: 'الحجز يجي بس غالي',
+      icon: 'coins',
+      fact: 'أكثر شي مضايقه: الحجز يجي بس تكلفته عالية',
+      reaction: 'هذا أول شي بدوّر عليه في حسابك.',
+    },
+  ],
+  services: [
+    {
+      id: 'svc_wrong_calls',
+      label: 'يتصلون ناس ما يبون الخدمة',
+      icon: 'phone',
+      fact: 'أكثر شي مضايقه: يتصلون ناس ما يبون الخدمة',
+      reaction: 'تمام، أشوف أي عبارات بحث تجيب ناس ما تبي خدمتك.',
+    },
+    {
+      id: 'svc_price_ghosts',
+      label: 'يسألون عن السعر ويختفون',
+      icon: 'coins',
+      fact: 'أكثر شي مضايقه: يسألون عن السعر ويختفون',
+      reaction: 'تمام، أدوّر على العبارات اللي تجيب ناس تسأل عن السعر وبس.',
+    },
+    {
+      id: 'svc_few_calls',
+      label: 'الاتصالات قليلة',
+      icon: 'trend-down',
+      fact: 'أكثر شي مضايقه: الاتصالات قليلة',
+      reaction: 'هذا أول شي بدوّر عليه في حسابك.',
+    },
+  ],
+};
+
+const toOption = ({ id, label, hint, icon }: SetupOption): SetupOption => ({ id, label, ...(hint ? { hint } : {}), ...(icon ? { icon } : {}) });
+
+/** The goal choices in a kind's own words. Ids are distinct from the legacy ones. */
+export const KIND_GOAL_OPTIONS: Record<KindWordingKey, SetupOption[]> = {
+  ecommerce: KIND_GOAL_DEFS.ecommerce.map(toOption),
+  clinic: KIND_GOAL_DEFS.clinic.map(toOption),
+  services: KIND_GOAL_DEFS.services.map(toOption),
+  local: KIND_GOAL_DEFS.local.map(toOption),
+};
+
+/** The pain choices in a kind's own words (local has none: its tree does not ask). The last one is the legacy «unsure». */
+export const KIND_PAIN_OPTIONS: Record<Exclude<KindWordingKey, 'local'>, SetupOption[]> = {
+  ecommerce: [...KIND_PAIN_DEFS.ecommerce.map(toOption), LEGACY_UNSURE],
+  clinic: [...KIND_PAIN_DEFS.clinic.map(toOption), LEGACY_UNSURE],
+  services: [...KIND_PAIN_DEFS.services.map(toOption), LEGACY_UNSURE],
+};
+
+const KIND_GOAL_BY_ID = new Map<string, KindGoalDef>(
+  Object.values(KIND_GOAL_DEFS)
+    .flat()
+    .map((def) => [def.id, def])
+);
+const KIND_PAIN_BY_ID = new Map<string, KindPainDef>(
+  Object.values(KIND_PAIN_DEFS)
+    .flat()
+    .map((def) => [def.id, def])
+);
+
+const hasOwn = (object: object, key: string) => Object.prototype.hasOwnProperty.call(object, key);
+
+export function isGoalChoice(choice: string): boolean {
+  return hasOwn(GOAL_COLUMN, choice) || KIND_GOAL_BY_ID.has(choice);
+}
+
+export function isPainChoice(choice: string): boolean {
+  return PAIN_OPTIONS.some((option) => option.id === choice) || KIND_PAIN_BY_ID.has(choice);
+}
+
 export const CONSENT_OPTIONS: SetupOption[] = [
   { id: 'auto_small', label: 'سوّها وبلغني', icon: 'check' },
   { id: 'always_ask', label: 'استأذني في كل شي', icon: 'shield' },
@@ -177,11 +429,13 @@ export type SetupAnswer =
   | AdaptiveAnswer
   | { key: 'type'; choice: string; text?: string }
   | { key: 'name'; text: string }
-  | { key: 'goal'; choice: keyof typeof GOAL_COLUMN }
+  /** A legacy id (GOAL_OPTIONS) or one of the per-kind ids (KIND_GOAL_OPTIONS). */
+  | { key: 'goal'; choice: string }
   | { key: 'value'; choice: string }
   | { key: 'budget'; amount: number | null }
   | { key: 'regions'; choice: 'saudi' | 'gulf' | 'cities'; cities: string[] }
   | { key: 'manager'; choice: string }
+  /** A legacy id (PAIN_OPTIONS) or one of the per-kind ids (KIND_PAIN_OPTIONS). */
   | { key: 'pain'; choice: string }
   | { key: 'website'; choice: 'url' | 'none' | 'later'; url?: string };
 
@@ -266,8 +520,8 @@ export function parseAnswer(key: unknown, raw: unknown): ParseResult {
       return { ok: true, answer: { key, text } };
     }
     case 'goal':
-      if (!(choice in GOAL_COLUMN)) return { ok: false, error: 'invalid_choice' };
-      return { ok: true, answer: { key, choice: choice as keyof typeof GOAL_COLUMN } };
+      if (!isGoalChoice(choice)) return { ok: false, error: 'invalid_choice' };
+      return { ok: true, answer: { key, choice } };
     case 'value':
       if (!(choice in VALUE_RANGES)) return { ok: false, error: 'invalid_choice' };
       return { ok: true, answer: { key, choice } };
@@ -299,7 +553,7 @@ export function parseAnswer(key: unknown, raw: unknown): ParseResult {
       if (!ids(MANAGER_OPTIONS).includes(choice)) return { ok: false, error: 'invalid_choice' };
       return { ok: true, answer: { key, choice } };
     case 'pain':
-      if (!ids(PAIN_OPTIONS).includes(choice)) return { ok: false, error: 'invalid_choice' };
+      if (!isPainChoice(choice)) return { ok: false, error: 'invalid_choice' };
       return { ok: true, answer: { key, choice } };
     case 'website': {
       if (choice === 'none' || choice === 'later') return { ok: true, answer: { key, choice } };
@@ -390,11 +644,20 @@ export function answerEffects(answer: SetupAnswer): AnswerEffects {
         business: { name: answer.text },
         fact: { kind: 'other', fact_ar: `اسم النشاط: ${answer.text}`, data: data() },
       };
-    case 'goal':
+    case 'goal': {
+      const kindGoal = KIND_GOAL_BY_ID.get(answer.choice);
+      if (kindGoal) {
+        return {
+          business: { primary_goal: kindGoal.column },
+          fact: { kind: 'goal', fact_ar: kindGoal.fact, data: data({ choice: answer.choice }) },
+        };
+      }
+      const legacy = answer.choice as keyof typeof GOAL_COLUMN;
       return {
-        business: { primary_goal: GOAL_COLUMN[answer.choice] },
-        fact: { kind: 'goal', fact_ar: GOAL_FACT[answer.choice], data: data({ choice: answer.choice }) },
+        business: { primary_goal: GOAL_COLUMN[legacy] },
+        fact: { kind: 'goal', fact_ar: GOAL_FACT[legacy], data: data({ choice: answer.choice }) },
       };
+    }
     case 'value': {
       const range = VALUE_RANGES[answer.choice];
       const fact_ar =
@@ -437,7 +700,11 @@ export function answerEffects(answer: SetupAnswer): AnswerEffects {
     case 'pain':
       return {
         business: {},
-        fact: { kind: 'goal', fact_ar: PAIN_FACT[answer.choice], data: data({ choice: answer.choice }) },
+        fact: {
+          kind: 'goal',
+          fact_ar: KIND_PAIN_BY_ID.get(answer.choice)?.fact ?? PAIN_FACT[answer.choice],
+          data: data({ choice: answer.choice }),
+        },
       };
     case 'website':
       if (answer.choice === 'url' && answer.url) {
@@ -466,7 +733,7 @@ export function answerLabel(answer: SetupAnswer): string {
     case 'name':
       return answer.text;
     case 'goal':
-      return optionLabel(GOAL_OPTIONS, answer.choice);
+      return KIND_GOAL_BY_ID.get(answer.choice)?.label ?? optionLabel(GOAL_OPTIONS, answer.choice);
     case 'value':
       return optionLabel(VALUE_OPTIONS, answer.choice);
     case 'budget':
@@ -476,7 +743,7 @@ export function answerLabel(answer: SetupAnswer): string {
     case 'manager':
       return optionLabel(MANAGER_OPTIONS, answer.choice);
     case 'pain':
-      return optionLabel(PAIN_OPTIONS, answer.choice);
+      return KIND_PAIN_BY_ID.get(answer.choice)?.label ?? optionLabel(PAIN_OPTIONS, answer.choice);
     case 'website':
       return answer.choice === 'url' && answer.url
         ? answer.url.replace(/^https?:\/\//, '')
@@ -490,10 +757,11 @@ export function answerLabel(answer: SetupAnswer): string {
  * A short line «مُضاعِف» says back after some answers, so the chat answers you
  * instead of only asking. Most answers get none on purpose.
  */
-export function reactionTo(answer: SetupAnswer): string | null {
-  if (isAdaptiveAnswer(answer)) return adaptiveReaction(answer);
+export function reactionTo(answer: SetupAnswer, context?: AdaptiveReactionContext): string | null {
+  if (isAdaptiveAnswer(answer)) return adaptiveReaction(answer, context);
   switch (answer.key) {
     case 'goal':
+      if (KIND_GOAL_BY_ID.has(answer.choice)) return KIND_GOAL_BY_ID.get(answer.choice)?.reaction ?? null;
       if (answer.choice === 'calls') return 'تمام، كل ريال بحسبه على الاتصالات والواتساب اللي يجيبها.';
       if (answer.choice === 'online_sales') return 'تمام، بحكم على كل حملة بالطلبات اللي تجيبها مو بالضغطات.';
       if (answer.choice === 'store_visits') return 'تمام، بركز على الناس اللي قريبين منك.';
@@ -507,6 +775,7 @@ export function reactionTo(answer: SetupAnswer): string | null {
       if (answer.choice === 'nobody') return 'من اليوم أنا أتابعها معك كل يوم.';
       return null;
     case 'pain':
+      if (KIND_PAIN_BY_ID.has(answer.choice)) return KIND_PAIN_BY_ID.get(answer.choice)?.reaction ?? null;
       if (answer.choice === 'few_leads' || answer.choice === 'expensive') return 'هذا أول شي بدوّر عليه في حسابك.';
       if (answer.choice === 'confusing') return 'ولا يهمك، بكلمك بالعربي بدون مصطلحات.';
       return null;
