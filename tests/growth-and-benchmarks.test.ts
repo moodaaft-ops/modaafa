@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  MIN_CLUSTER_CONVERSIONS_FOR_NEW_CAMPAIGN,
   detectCampaignOpportunity,
   mapConvertingTermRows,
+  opportunityMode,
   type ConvertingTermRow,
 } from '../lib/ai/opportunity';
 import {
@@ -41,7 +43,58 @@ test('a real cluster of winners produces an opportunity with an honest brief', (
   assert.equal(opportunity!.totals.cost, 400);
   // The brief must carry the actual terms, not a paraphrase.
   assert.match(opportunity!.brief_ar, /عطر رجالي فاخر/);
-  assert.match(opportunity!.brief_ar, /13 تحويلاً/);
+  // Titan 3.5: the brief now says "13 تحويل" (no tanween) and asks for Exact keywords, not a new campaign.
+  assert.match(opportunity!.brief_ar, /13 تحويل/);
+});
+
+// Titan 3.5, 20.3: consolidate. A campaign under ~30 conversions a month swings and relearns, so
+// winning terms are promoted to EXACT keywords where they already convert; a separate campaign is
+// suggested only when the cluster itself reached 30 conversions in 30 days.
+test('under 30 conversions the suggestion is Exact keywords inside the existing ad group, never a new campaign', () => {
+  const opportunity = detectCampaignOpportunity(
+    [
+      term({ term: 'عطر رجالي فاخر', conversions: 6, cost: 180 }),
+      term({ term: 'عطر عود اصلي', conversions: 4, cost: 120 }),
+      term({ term: 'أفضل عطر هدية', conversions: 3, cost: 100 }),
+    ],
+    'SAR'
+  );
+  assert.ok(opportunity);
+  assert.equal(opportunity!.mode, 'exact_keywords');
+  assert.equal(opportunityMode(opportunity!.totals.conversions), 'exact_keywords');
+  assert.match(opportunity!.title_ar, /مطابقة تامة/);
+  assert.match(opportunity!.description_ar, /Exact/);
+  assert.match(opportunity!.description_ar, /نفس المجموعة الإعلانية/);
+  assert.match(opportunity!.description_ar, /30 تحويل في الشهر/);
+  assert.match(opportunity!.brief_ar, /بدون حملة جديدة/);
+  assert.match(opportunity!.brief_ar, /Exact/);
+  for (const text of [opportunity!.title_ar, opportunity!.description_ar, opportunity!.brief_ar]) {
+    assert.doesNotMatch(text, /حملة مخصصة|عادةً بتكلفة تحويل أقل|تستحق حملة/, 'the old new-campaign pitch is gone');
+    assert.doesNotMatch(text, /[—–]/, 'no long dashes in user-facing Arabic');
+  }
+});
+
+test('a new campaign is suggested only from 30 conversions in 30 days, and only behind an economic reason', () => {
+  const justBelow = detectCampaignOpportunity(
+    [term({ term: 'أ', conversions: 10 }), term({ term: 'ب', conversions: 10 }), term({ term: 'ج', conversions: 9 })],
+    'SAR'
+  );
+  assert.equal(justBelow!.totals.conversions, 29);
+  assert.equal(justBelow!.mode, 'exact_keywords');
+
+  const atThirty = detectCampaignOpportunity(
+    [term({ term: 'أ', conversions: 10 }), term({ term: 'ب', conversions: 10 }), term({ term: 'ج', conversions: 10 })],
+    'SAR'
+  );
+  assert.equal(atThirty!.totals.conversions, 30);
+  assert.equal(atThirty!.mode, 'new_campaign');
+  assert.equal(MIN_CLUSTER_CONVERSIONS_FOR_NEW_CAMPAIGN, 30);
+  assert.match(atThirty!.description_ar, /اقتصاد مختلف/);
+  assert.match(atThirty!.brief_ar, /سبب اقتصادي للفصل/);
+  assert.match(atThirty!.brief_ar, /بدون أي توقع/);
+  for (const text of [atThirty!.title_ar, atThirty!.description_ar, atThirty!.brief_ar]) {
+    assert.doesNotMatch(text, /[—–]/, 'no long dashes in user-facing Arabic');
+  }
 });
 
 test('too few terms or too few conversions produce NO opportunity', () => {

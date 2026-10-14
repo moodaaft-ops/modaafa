@@ -408,7 +408,7 @@ export function AssistantClient({
             <div className="mb-3 rounded-lg border border-primary/25 bg-primary/[0.06] p-3.5">
               <div className="flex items-center gap-2 text-[12.5px] font-semibold text-primary">
                 <Sparkles className="h-3.5 w-3.5" />
-                طلب بناء حملة من مركز الموافقات
+                اقتراح من مركز الموافقات
               </div>
               <p className="mt-2 max-h-28 overflow-y-auto text-[12.5px] leading-6 text-foreground-subtle scrollbar-thin">
                 {pendingBrief}
@@ -424,7 +424,7 @@ export function AssistantClient({
                   }}
                   className={buttonClasses({ variant: 'primary', size: 'sm' })}
                 >
-                  ابنِ الحملة الآن
+                  أرسل للمساعد
                 </button>
                 <button
                   type="button"
