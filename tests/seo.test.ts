@@ -8,7 +8,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import robots from '../app/robots';
 import sitemap from '../app/sitemap';
 import { JsonLd, siteGraph } from '../lib/seo/json-ld';
-import { ENTITY_IDS, OG_IMAGE, PAGE_DATES, SITE_URL, pageMetadata } from '../lib/seo/site';
+import { AGENCY_URL, BRAND, ENTITY_IDS, OG_IMAGE, PAGE_DATES, SITE_URL, pageMetadata } from '../lib/seo/site';
 
 // The components are written for Next's automatic JSX runtime; tsx compiles them with the classic one.
 (globalThis as unknown as { React: unknown }).React = React;
@@ -100,7 +100,16 @@ test('siteGraph round-trips through JSON and every node has an id from ENTITY_ID
 
   const org = nodes.find((node) => node['@id'] === ENTITY_IDS.org);
   assert.ok(org);
-  assert.equal('sameAs' in org, false, 'the agency url is the Organization url, not a sameAs');
+  assert.equal(org.url, AGENCY_URL, 'the agency site is the Organization url');
+  assert.deepEqual(org.sameAs, [...BRAND.agencySameAs], 'the agency sameAs holds only its own social profiles');
+  const orgSameAs = org.sameAs as string[];
+  assert.ok(!orgSameAs.some((u) => u.includes('modaafa.com')), 'the agency url is not repeated inside sameAs');
+  assert.ok(orgSameAs.every((u) => u.startsWith('https://')), 'sameAs entries are absolute https urls');
+  assert.equal(new Set(orgSameAs).size, orgSameAs.length, 'no duplicate sameAs entries');
+
+  const founder = nodes.find((node) => node['@id'] === ENTITY_IDS.founder);
+  assert.ok(founder);
+  assert.deepEqual(founder.sameAs, [...BRAND.founderSameAs]);
 });
 
 test('JsonLd never emits a raw "<" inside the JSON and keeps Arabic unescaped', () => {

@@ -48,6 +48,7 @@ export function siteGraph(): Record<string, unknown> {
         founder: { '@id': ENTITY_IDS.founder },
         areaServed: { '@type': 'Country', name: 'السعودية' },
         address: { '@type': 'PostalAddress', addressCountry: 'SA' },
+        sameAs: [...BRAND.agencySameAs],
         email: BRAND.email,
         contactPoint: [
           {
