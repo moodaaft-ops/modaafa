@@ -16,6 +16,7 @@ export function toPlanRecommendations(rows: unknown): PlanRecommendation[] {
     status: row.status ?? null,
     created_at: row.created_at ?? null,
     expected_impact: row.expected_impact ?? null,
+    category: typeof row.category === 'string' ? row.category : null,
     executable: Boolean(row.action_payload && buildExecutableAction(row.action_payload, row)),
   }));
 }
@@ -27,7 +28,12 @@ export function toPlanRecommendations(rows: unknown): PlanRecommendation[] {
  */
 export async function loadPlan(
   supabase: any,
-  args: { accountId: string; currency?: string | null }
+  args: {
+    accountId: string;
+    currency?: string | null;
+    /** Keep each decision's audit category on the plan (the adaptive onboarding rules read it on the server and strip it before the browser). */
+    includeCategory?: boolean;
+  }
 ): Promise<Plan> {
   const [auditRes, recsRes] = await Promise.all([
     supabase
@@ -39,7 +45,7 @@ export async function loadPlan(
       .maybeSingle(),
     supabase
       .from('recommendations')
-      .select('id, title, description, severity, status, expected_impact, action_payload, created_at')
+      .select('id, title, description, severity, status, category, expected_impact, action_payload, created_at')
       .eq('account_id', args.accountId)
       .in('status', ['pending', 'approved'])
       .order('created_at', { ascending: false })
@@ -49,6 +55,7 @@ export async function loadPlan(
     audit: auditRes?.error ? null : auditRes?.data ?? null,
     recommendations: toPlanRecommendations(recsRes?.error ? [] : recsRes?.data ?? []),
     currency: args.currency,
+    includeCategory: args.includeCategory === true,
   });
 }
 

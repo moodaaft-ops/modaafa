@@ -24,6 +24,8 @@ export type PlanRecommendation = {
   expected_impact?: { metric?: string | null; delta_sar_per_month?: number | string | null } | null;
   /** Whether the stored payload is something Modaafa can apply itself (decided by the caller, from the payload). */
   executable?: boolean;
+  /** The audit's category (bidding, keywords, ads, structure, budget, targeting, extensions). */
+  category?: string | null;
 };
 
 export type PlanAuditRow = {
@@ -42,9 +44,21 @@ export type PlanDecision = {
   impactAmount: number;
   /** True when «اعتمد» can apply it; false when it is a change to make by hand. */
   executable: boolean;
+  /**
+   * The audit category. Present only when the caller asked for it
+   * (`includeCategory`), for rules that run on the server; stripped before the
+   * plan goes to the browser.
+   */
+  category?: string | null;
 };
 
-export type PlanLockedDecision = { id: string; title: string; severity: string | null };
+export type PlanLockedDecision = {
+  id: string;
+  title: string;
+  severity: string | null;
+  /** Same as PlanDecision.category: server-side only, stripped before the browser. */
+  category?: string | null;
+};
 
 /**
  * - ready: an audit on record and at least one decision.
@@ -76,6 +90,8 @@ export function buildPlan(input: {
   audit: PlanAuditRow | null | undefined;
   recommendations: PlanRecommendation[] | null | undefined;
   currency?: string | null;
+  /** Carry each decision's audit category (server-side rules only). Off by default, so a plan for the browser never has one. */
+  includeCategory?: boolean;
 }): Plan {
   const audit = input.audit ?? null;
   const currency = String(input.currency ?? 'SAR').toUpperCase();
@@ -98,6 +114,7 @@ export function buildPlan(input: {
         impactLabel: impactLabel({ id: firstRow.id, title: String(firstRow.title), expected_impact: firstRow.expected_impact }),
         impactAmount: monthlyImpact({ id: firstRow.id, title: String(firstRow.title), expected_impact: firstRow.expected_impact }),
         executable: firstRow.executable === true,
+        ...(input.includeCategory ? { category: firstRow.category ?? null } : {}),
       }
     : null;
 
@@ -116,7 +133,37 @@ export function buildPlan(input: {
       id: row.id,
       title: String(row.title).trim(),
       severity: row.severity ?? null,
+      ...(input.includeCategory ? { category: row.category ?? null } : {}),
     })),
+  };
+}
+
+/**
+ * A rules decision (lib/setup/adaptive/decisions.ts) takes the one open slot of
+ * «خطتك جاهزة». The audit's first decision moves to the top of the locked list
+ * as id, title and severity only, so its reason and amounts never reach the
+ * browser, and the count of decisions stays what the audit found. A plan with
+ * no first decision comes back unchanged.
+ */
+export function withScenarioLead(plan: Plan): Plan {
+  if (!plan.first) return plan;
+  const { id, title, severity } = plan.first;
+  return { ...plan, first: null, locked: [{ id, title, severity }, ...plan.locked] };
+}
+
+function withoutCategory<T extends { category?: string | null }>(row: T): T {
+  if (!('category' in row)) return row;
+  const copy = { ...row };
+  delete copy.category;
+  return copy;
+}
+
+/** The plan as the browser may see it: no audit category on any decision. */
+export function stripPlanCategories(plan: Plan): Plan {
+  return {
+    ...plan,
+    first: plan.first ? withoutCategory(plan.first) : null,
+    locked: plan.locked.map(withoutCategory),
   };
 }
 

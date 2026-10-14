@@ -18,13 +18,17 @@ import { paywallCta, paywallCtaFromCheckout, type PaywallCta, type Plan } from '
 import { createAdminClient } from '@/lib/supabase/server';
 import {
   TYPE_OPTIONS,
+  cleanUserText,
   isSetupKey,
   keysAnsweredByProfile,
   pendingKeys,
   type SetupKey,
 } from './questions';
 import { firstNameFrom, resolveSetupStage, type SetupStage } from './stage';
-import type { AdaptiveView } from './adaptive/types';
+import { isAdaptiveOnboarding } from './adaptive/flag';
+import { loadStoredSignals } from './adaptive/signals-store';
+import type { AccountSignals, AdaptiveView } from './adaptive/types';
+import { adaptiveAnswered, buildAdaptiveView } from './adaptive/view';
 
 export type SetupAccount = {
   customerId: string;
@@ -100,6 +104,7 @@ type User = { id: string; email?: string | null; user_metadata?: Record<string, 
  */
 export async function loadSetupState(supabase: any, user: User, opts: { edit?: boolean } = {}): Promise<SetupState> {
   const edit = Boolean(opts.edit);
+  const adaptiveOn = isAdaptiveOnboarding(process.env, user.email);
   const { business, accounts, revokedAccounts, selectedAccount } = await getAccountWorkspace(user.id);
 
   let admin: any = null;
@@ -109,11 +114,12 @@ export async function loadSetupState(supabase: any, user: User, opts: { edit?: b
     admin = null;
   }
 
-  const [job, ledger, access] = await Promise.all([
+  const [job, ledgerEntries, access] = await Promise.all([
     readConnectJob(admin, user.id),
-    business ? readLedger(admin, business.id) : Promise.resolve(new Map<SetupKey, string | null>()),
+    business ? readLedgerEntries(admin, business.id) : Promise.resolve(emptyLedger()),
     getSubscriptionAccess(supabase, user.id, user.email),
   ]);
+  const ledger = ledgerEntries.choices;
 
   const spend = job?.details?.spend ?? {};
   const ranked = sortAccountsBySpend(
@@ -147,8 +153,9 @@ export async function loadSetupState(supabase: any, user: User, opts: { edit?: b
   let audit: SetupState['audit'] = null;
   let findings: SetupFinding[] = [];
   let findingsTotal = 0;
+  let storedSignals: AccountSignals | null = null;
   if (selectedAccount && !needsChoice) {
-    const [consentRes, auditRes] = await Promise.all([
+    const [consentRes, auditRes, signalsRes] = await Promise.all([
       supabase.from('autopilot_settings').select('consent').eq('account_id', selectedAccount.id).maybeSingle(),
       supabase
         .from('audits')
@@ -157,7 +164,10 @@ export async function loadSetupState(supabase: any, user: User, opts: { edit?: b
         .order('ran_at', { ascending: false })
         .limit(1)
         .maybeSingle(),
+      // The adaptive tree's stored read of this account (never throws). Not read at all while the flag is off.
+      adaptiveOn && admin ? loadStoredSignals(admin, selectedAccount.id) : Promise.resolve(null),
     ]);
+    storedSignals = signalsRes;
     // A read error is "not answered": asking again is harmless, skipping is not.
     consentAnswered = Boolean(!consentRes?.error && consentRes?.data?.consent?.answer);
     const row = auditRes?.error ? null : auditRes?.data;
@@ -189,12 +199,12 @@ export async function loadSetupState(supabase: any, user: User, opts: { edit?: b
   if (typeFromSector) answered.type = typeFromSector;
   for (const [key, choice] of ledger) answered[key] = choice;
 
-  const pending =
+  let pending =
     selectedAccount && !needsChoice
       ? pendingKeys({ answered: Object.keys(answered) as SetupKey[], consentAnswered, edit })
       : [];
 
-  const stage = resolveSetupStage({
+  let stage = resolveSetupStage({
     linkedAccounts: accounts.length,
     connectRunning,
     needsChoice,
@@ -219,9 +229,52 @@ export async function loadSetupState(supabase: any, user: User, opts: { edit?: b
   let plan: Plan | null = null;
   if (!access.active && !edit && selectedAccount && !needsChoice) {
     try {
-      plan = await loadPlan(supabase, { accountId: selectedAccount.id, currency: selectedAccount.currency_code });
+      plan = await loadPlan(supabase, {
+        accountId: selectedAccount.id,
+        currency: selectedAccount.currency_code,
+        // The adaptive rules read each decision's category on the server; view.ts strips it before the browser.
+        includeCategory: adaptiveOn,
+      });
     } catch {
       plan = null;
+    }
+  }
+
+  // The adaptive tree takes over pending, stage and plan; with the flag off none of this runs.
+  let adaptive: AdaptiveView | null = null;
+  if (adaptiveOn) {
+    const built = buildAdaptiveView({
+      signals: storedSignals,
+      linkedAccounts: accounts.length,
+      accountChosen: Boolean(selectedAccount && !needsChoice),
+      needsChoice,
+      connectRunning,
+      connectError: connectView.error,
+      answered: adaptiveAnswered({ answered, ledger }),
+      labels: ledgerEntries.labels,
+      business: business
+        ? {
+            name: business.name ?? null,
+            monthlyBudget: business.monthly_budget ?? null,
+            targetRegions: business.target_regions ?? [],
+            website: business.website ?? null,
+          }
+        : null,
+      consentAnswered,
+      edit,
+      firstName: firstNameFrom(user.user_metadata ?? null),
+      auditExists: Boolean(audit),
+      subscriptionActive: access.active,
+      plan,
+      currency: selectedAccount?.currency_code ?? null,
+    });
+    adaptive = built.view;
+    pending = built.pending;
+    stage = built.stage;
+    plan = built.plan;
+    // No tracking means the waste estimate says nothing: the number is not sent in any form.
+    if (audit && (built.view.scenario.state === 'no_tracking' || built.view.scenario.state === 'tracking_suspect')) {
+      audit = { ...audit, estimatedMonthlyWaste: null };
     }
   }
 
@@ -266,7 +319,7 @@ export async function loadSetupState(supabase: any, user: User, opts: { edit?: b
     cta,
     freeAudit,
     plan,
-    adaptive: null,
+    adaptive,
   };
 }
 
@@ -287,13 +340,27 @@ async function readConnectJob(admin: any, userId: string): Promise<(ConnectJobSn
   }
 }
 
+export type LedgerEntries = {
+  /** The newest active choice id per setup key (null when the answer has none, like a budget). */
+  choices: Map<SetupKey, string | null>;
+  /** The words the customer saw when they answered (`data.label`, at most 120 characters), where the fact kept them. */
+  labels: Partial<Record<SetupKey, string>>;
+};
+
+export const LEDGER_LABEL_MAX = 120;
+
+function emptyLedger(): LedgerEntries {
+  return { choices: new Map<SetupKey, string | null>(), labels: {} };
+}
+
 /**
- * Onboarding answers on record: the newest active fact per setup key. Any
- * failure (table not migrated, service key missing) reads as "nothing on
- * record", which only means a question may be asked again.
+ * Onboarding answers on record: the newest active fact per setup key, with the
+ * label it was shown under. Any failure (table not migrated, service key
+ * missing) reads as "nothing on record", which only means a question may be
+ * asked again.
  */
-export async function readLedger(admin: any, businessId: string): Promise<Map<SetupKey, string | null>> {
-  const out = new Map<SetupKey, string | null>();
+export async function readLedgerEntries(admin: any, businessId: string): Promise<LedgerEntries> {
+  const out = emptyLedger();
   if (!admin) return out;
   try {
     const { data, error } = await admin
@@ -307,9 +374,11 @@ export async function readLedger(admin: any, businessId: string): Promise<Map<Se
     if (error || !Array.isArray(data)) return out;
     for (const row of data) {
       const key = row?.data?.setup_key;
-      if (!isSetupKey(key) || out.has(key)) continue;
+      if (!isSetupKey(key) || out.choices.has(key)) continue;
       const choice = typeof row.data.choice === 'string' ? row.data.choice : null;
-      out.set(key, choice);
+      out.choices.set(key, choice);
+      const label = typeof row.data.label === 'string' ? cleanUserText(row.data.label, LEDGER_LABEL_MAX) : '';
+      if (label) out.labels[key] = label;
     }
     return out;
   } catch {
@@ -317,3 +386,7 @@ export async function readLedger(admin: any, businessId: string): Promise<Map<Se
   }
 }
 
+/** Same read as `readLedgerEntries`, choices only: what /home uses. */
+export async function readLedger(admin: any, businessId: string): Promise<Map<SetupKey, string | null>> {
+  return (await readLedgerEntries(admin, businessId)).choices;
+}
