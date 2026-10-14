@@ -4,6 +4,7 @@ on:
   schedule:
     - cron: '17 * * * *'
     - cron: '47 * * * *'
+    - cron: '7,27 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -43,3 +44,32 @@ jobs:
             --retry 2 --retry-all-errors --max-time 290 \
             -H "Authorization: Bearer $CRON_SECRET" \
             https://ai.modaafa.com/api/cron/optimize
+
+  email-lifecycle:
+    # Lifecycle emails (docs/email-lifecycle/CONTRACT.md). Harmless while the
+    # feature is off: the route answers 503 {"skipped":"disabled"} and sends
+    # nothing until EMAIL_LIFECYCLE_ENABLED=true, an activation time is set in
+    # config/email-journeys.ts and each text is approved in lib/lifecycle/copy.ts.
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '7,27 * * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Run email lifecycle (journeys, weekly report, broadcasts)
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          test -n "$CRON_SECRET"
+          code=$(curl --silent --show-error --max-time 150 -o body.json -w '%{http_code}' \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            https://ai.modaafa.com/api/cron/email-lifecycle)
+          cat body.json; echo
+          if [ "$code" = "200" ] || [ "$code" = "409" ]; then exit 0; fi
+          if [ "$code" = "503" ] && grep -q '"skipped":"disabled"' body.json; then exit 0; fi
+          exit 1
+      - name: Welcome email safety net
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          curl --fail-with-body --silent --show-error --max-time 60 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            https://ai.modaafa.com/api/cron/welcome-email

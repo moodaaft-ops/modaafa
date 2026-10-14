@@ -22,10 +22,17 @@
 --      activation moment (ISO, with offset). A step due BEFORE it is never
 --      sent, so the existing user base is not mailed retroactively.
 --   6. set EMAIL_LIFECYCLE_ENABLED=true in Vercel and redeploy
---   7. run this file, and db/proposals/20261012_welcome_email_cron.sql (the
+--   7. nothing to run: the GitHub schedule starts sending on its next run.
+--      Optional, only with pg_cron: this file, and db/proposals/20261012_welcome_email_cron.sql (the
 --      every-minute safety net for the welcome mail; both are proposals, not
 --      migrations, so nothing in db/migrations schedules a job. The welcome
 --      sweep obeys steps 3, 5 and 6 as well)
+--
+-- NOTE (14 Oct 2026): pg_cron is not installed on production (claude/97), so
+-- the lifecycle already runs from .github/workflows/scheduled-jobs.yml (job
+-- email-lifecycle, twice an hour, harmless while switched off). Use this file
+-- only if pg_cron is installed later and you want a steadier schedule; then
+-- remove the GitHub job so the two do not both run (it is safe, just wasteful).
 --
 -- Needs the same Vault secret as 20261005_pg_cron_scheduler.sql
 -- ("modaafa_cron_secret"). If you never ran that file, use a GitHub Actions
