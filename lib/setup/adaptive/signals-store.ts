@@ -74,8 +74,25 @@ export function canReuseStoredSignals(signals: AccountSignals | null, now: Date 
   return age < SIGNALS_RETRY_AFTER_MINUTES * 60_000;
 }
 
-/** The newest stored read for one linked account row, or null. Never throws. */
-export async function loadStoredSignals(admin: any, accountId: string, now: Date = new Date()): Promise<AccountSignals | null> {
+/**
+ * How old a stored read may be and still describe the account for the plan
+ * lock on /home, /optimizer and /audit (and for hiding the waste number in edit
+ * mode). Much longer than the onboarding TTL on purpose: nobody is asked to read
+ * the account again there, and a tracking state does not stop being true
+ * overnight.
+ */
+export const LATEST_SIGNALS_MAX_AGE_HOURS = 30 * 24;
+
+/**
+ * The newest stored read for one linked account row that is at most
+ * `maxAgeHours` old, or null. Never throws. Reads one row; the age is judged
+ * on the read's own `readAt`.
+ */
+export async function loadLatestSignals(
+  admin: any,
+  accountId: string,
+  opts: { maxAgeHours: number; now?: Date }
+): Promise<AccountSignals | null> {
   try {
     const { data, error } = await admin
       .from('job_runs')
@@ -88,11 +105,21 @@ export async function loadStoredSignals(admin: any, accountId: string, now: Date
     if (error || !data) return null;
     const signals = parseStored((data as { details?: { signals?: unknown } }).details?.signals);
     if (!signals) return null;
-    if (ageMs(signals, now) > SIGNALS_TTL_HOURS * 3_600_000) return null;
+    if (ageMs(signals, opts.now ?? new Date()) > opts.maxAgeHours * 3_600_000) return null;
     return signals;
   } catch {
     return null;
   }
+}
+
+/** True when a read is still inside the onboarding TTL (the read the screen's opener and questions stand on). */
+export function isInsideSignalsTtl(signals: AccountSignals | null, now: Date = new Date()) {
+  return Boolean(signals) && ageMs(signals as AccountSignals, now) <= SIGNALS_TTL_HOURS * 3_600_000;
+}
+
+/** The newest stored read for one linked account row inside the onboarding TTL (24 hours), or null. Never throws. */
+export async function loadStoredSignals(admin: any, accountId: string, now: Date = new Date()): Promise<AccountSignals | null> {
+  return loadLatestSignals(admin, accountId, { maxAgeHours: SIGNALS_TTL_HOURS, now });
 }
 
 /** Stores one read as a `job_runs` row (status success, or partial when any signal failed). Never throws. */
