@@ -132,8 +132,12 @@ function renderTransactional(
  * tx_payment_failed from lib/lifecycle/copy.ts. They are transactional: no
  * stop link, and the approved flag of the copy does not gate them.
  */
-export function subscriptionWelcomeEmail(recipient: TransactionalRecipient) {
-  return renderTransactional('tx_subscription_welcome', recipient, null);
+export function subscriptionWelcomeEmail(recipient: TransactionalRecipient, trialEndsAt?: string | null) {
+  return renderTransactional(
+    'tx_subscription_welcome',
+    recipient,
+    trialEndsAt ? { planName: null, trialEndsAt } : null
+  );
 }
 
 /**

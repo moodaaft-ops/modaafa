@@ -186,7 +186,10 @@ export function createStripeWebhookHandler(
           }
           if (dependencies.subscriptionEventWasApplied(writeResult) && !trialBlocked) {
             await safeUserEmail(dependencies, supabase, userId, (recipient) =>
-              dependencies.subscriptionWelcomeEmail(recipient),
+              dependencies.subscriptionWelcomeEmail(
+                recipient,
+                stripeSubscription.trial_end ? stripeTimestamp(stripeSubscription.trial_end) : null,
+              ),
             );
           }
           break;

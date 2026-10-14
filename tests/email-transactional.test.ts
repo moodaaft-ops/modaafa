@@ -67,7 +67,7 @@ test('without a signing key a billing mail still goes out, with a plain UTM link
     const mail = paymentFailedEmail(recipient);
     assert.ok(mail);
     assert.doesNotMatch(mail.html, /\/m\/c\?/);
-    assert.match(mail.html, /https:\/\/ai\.modaafa\.com\/home\?utm_source=email/);
+    assert.match(mail.html, /https:\/\/ai\.modaafa\.com\/billing\?utm_source=email/);
   }));
 
 test('the recipient name becomes the greeting and the date of the trial reaches the copy', () =>
