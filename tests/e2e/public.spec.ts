@@ -30,6 +30,26 @@ test.describe('public launch surface', () => {
     });
   }
 
+  // The two content pages exist for search engines and AI answer engines to
+  // read, so their basics are asserted on the raw HTML, not the hydrated DOM:
+  // one h1 and a JSON-LD block must be in the server response itself.
+  for (const contentPath of ['/about', '/google-ads-audit']) {
+    test(`${contentPath} is a crawlable content page`, async ({ page, request }) => {
+      const response = await page.goto(contentPath, { waitUntil: 'domcontentloaded' });
+
+      expect(response?.status()).toBe(200);
+      await expect(page.locator('h1')).toHaveCount(1);
+      expect(await page.locator('script[type="application/ld+json"]').count()).toBeGreaterThan(0);
+
+      const html = await (await request.get(contentPath)).text();
+      expect(html.match(/<h1[\s>]/g) ?? []).toHaveLength(1);
+      expect(html).toContain('application/ld+json');
+      // Metadata is rendered in <head> for every user agent, not streamed into <body>.
+      expect(html.indexOf('<title>')).toBeGreaterThan(-1);
+      expect(html.indexOf('<title>')).toBeLessThan(html.indexOf('</head>'));
+    });
+  }
+
   test('landing page exposes a clear path to sign in', async ({ page }) => {
     await page.goto('/');
 
