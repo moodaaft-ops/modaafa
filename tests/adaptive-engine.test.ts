@@ -1518,3 +1518,15 @@ test('copy: the engine source files carry no long dash either, so a branch the t
     assert.doesNotMatch(source, /[–—]/, `${file}.ts`);
   }
 });
+
+test('classify: pool, door and aluminium contractors read as services (trades seen on real accounts)', () => {
+  for (const name of ['مسابح فايبر جلاس - الرياض', 'تركيب أبواب WPC', 'واجهات ألمنيوم']) {
+    const signals = account({
+      campaigns: { ok: true, value: [campaign({ id: '1', name, cost30: 900, impressions30: 4000, clicks30: 300, conversions30: 12 })] },
+      enabledConversionActions: { ok: true, value: 2 },
+    });
+    const scenario = classify(signals);
+    assert.equal(scenario.kind, 'services', name);
+    assert.equal(scenario.kindConfidence, 'confident', name);
+  }
+});

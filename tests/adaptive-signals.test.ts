@@ -1027,6 +1027,44 @@ test('readAndStoreSignals: our manager ids are not an outside agency', async () 
   if (result.ok) assert.deepEqual(valueOf(result.signals.externalManager), { linked: true, managerIds: ['5550001111'] });
 });
 
+test('readAndStoreSignals: the manager the account was connected through is not an outside agency', async () => {
+  const link = (manager: string) => ({ customerManagerLink: { managerCustomer: `customers/${manager}`, status: 'ACTIVE' } });
+  const answers = healthy();
+  answers.customer_manager_link = [link('1140035066')];
+  const through = await readAndStoreSignals(
+    { admin: fakeAdmin(), account: { ...account, manager_id: '114-003-5066' }, connectedEmail: null },
+    { decrypt: () => 't', getCustomer: () => fakeCustomer(answers), managerIds: () => [] }
+  );
+  assert.equal(through.ok, true);
+  if (through.ok) assert.deepEqual(valueOf(through.signals.externalManager), { linked: false, managerIds: [] });
+  // Connected directly: the same link is somebody else's manager.
+  const direct = await readAndStoreSignals(
+    { admin: fakeAdmin(), account: { ...account, manager_id: null }, connectedEmail: null },
+    { decrypt: () => 't', getCustomer: () => fakeCustomer(answers), managerIds: () => [] }
+  );
+  if (direct.ok) assert.deepEqual(valueOf(direct.signals.externalManager), { linked: true, managerIds: ['1140035066'] });
+});
+
+test('GAQL: a WHERE filter on another resource\'s field is also selected (EXPECTED_REFERENCED_FIELD_IN_SELECT_CLAUSE)', () => {
+  const texts = Object.entries(SIGNAL_GAQL).map(([key, query]) => {
+    if (key === 'geoNames') return SIGNAL_GAQL.geoNames(['geoTargetConstants/1']);
+    if (key === 'changeEvents') return SIGNAL_GAQL.changeEvents(new Date('2026-10-14T00:00:00Z'));
+    return query as string;
+  });
+  const dateSegments = new Set(['segments.date', 'segments.week', 'segments.month', 'segments.quarter', 'segments.year']);
+  for (const text of texts) {
+    const flat = text.replace(/\s+/g, ' ');
+    const select = flat.match(/SELECT (.*?) FROM /i)?.[1] ?? '';
+    const from = flat.match(/ FROM (\w+)/i)?.[1] ?? '';
+    const where = flat.match(/ WHERE (.*?)( ORDER BY | LIMIT |$)/i)?.[1] ?? '';
+    const selected = new Set(select.split(',').map((field) => field.trim()));
+    for (const field of where.match(/\b[a-z_]+\.[a-z_.]+/g) ?? []) {
+      if (field.startsWith(`${from}.`) || dateSegments.has(field)) continue;
+      assert.ok(selected.has(field), `${from}: ${field} is filtered but not selected`);
+    }
+  }
+});
+
 test('readAndStoreSignals: no token or a token that cannot be opened is client_unavailable, not a throw', async () => {
   const warnings = silenceWarnings();
   try {
