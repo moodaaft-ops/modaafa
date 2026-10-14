@@ -244,6 +244,17 @@ export function rankModelCandidates(models: AvailableModel[], tier: ModelTier) {
     .map((model) => model.id);
 }
 
+/**
+ * Fills the model-list cache ahead of the first real message. That list is a
+ * free metadata request (no tokens), but every cold server instance otherwise
+ * waits for it in front of its first model call. Fire and forget: a failure
+ * here changes nothing, the real call retries the same way it always did.
+ */
+export function prewarmAIClient() {
+  if (!hasAIBackend()) return;
+  void discoverAvailableModels().catch(() => undefined);
+}
+
 async function getAvailableModelCandidates(agent: AgentRole) {
   try {
     const models = await discoverAvailableModels();

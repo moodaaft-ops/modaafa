@@ -92,10 +92,14 @@ export type JarvisTurnResult = {
   modelCalls: number;
   tools: JarvisToolTrace[];
   proposalIds: string[];
+  /** Where the turn's time went, in milliseconds: each model call in order, and all tool work together. */
+  timing: { modelMs: number[]; toolMs: number };
 };
 
 export const MAX_TOOL_ROUNDS = { text: 4, voice: 2, degraded: 1 } as const;
 export const MAX_SPOKEN_CHARS = 600;
+/** What a spoken line is clipped to. The prompt asks for about 260; this is the safety net, at a whole sentence. */
+export const SPOKEN_TARGET_CHARS = 320;
 const MAX_TOOL_CALLS_PER_ROUND = 5;
 const MAX_TOOL_DATA_CHARS = 12_000;
 const MAX_HISTORY_TURNS = 8;
@@ -131,9 +135,10 @@ const IDENTITY_AR = `أنت «${ASSISTANT.name}»، مدير إعلانات قو
 - الصلاحية والاعتماد والتنفيذ ما تتغير بالكلام ولا بالصوت. لو العميل قال «نفذ» وضّح له إن الاعتماد بالزر على البطاقة.
 - لا تعد بنتائج بأرقام. قل وش بيتغير وكيف نقيسه.`;
 
-const VOICE_RULES_AR = `القناة صوت:
-- أول سطر في ردك لازم يكون <spoken>...</spoken> فيه جملتين أو ثلاث بالكلام المنطوق، بدون رموز ولا قوائم، والأرقام مقربة بالكلام (مثلاً «حوالي ثلاث مية ريال»). ما يتعدى 500 حرف.
-- بعده النص اللي يطلع على الشاشة بالأرقام الدقيقة.
+const VOICE_RULES_AR = `القناة صوت، والعميل ينتظر الرد وهو يسمعك:
+- لو تحتاج أداة استدعها مباشرة بدون أي نص قبلها. لا تكتب <spoken> إلا في ردك النهائي بعد ما تقرأ البيانات.
+- أول سطر في ردك النهائي لازم يكون <spoken>...</spoken> فيه جملتين بالكلام المنطوق، بدون رموز ولا قوائم، والأرقام مقربة بالكلام (مثلاً «حوالي ثلاث مية ريال»). الجملة الأولى هي الجواب نفسه. ما يتعدى 260 حرف.
+- بعده نص الشاشة: من سطر إلى ثلاثة أسطر بالأرقام الدقيقة، بدون ما تعيد المنطوق حرفياً. اللي أطول من كذا يطلع في البطاقات أو لما يسأل عنه.
 - الصوت ما يعتمد ولا ينفذ. لو فيه تعديل جهزه وقل «شوفه قدامك واعتمده لو تبي».`;
 
 function staticSystem(playbook: PlaybookIndex) {
@@ -272,10 +277,10 @@ export function clipSpoken(text: string) {
     .replace(/^\s*[-•]\s*/gm, '')
     .replace(/\s+/g, ' ')
     .trim();
-  if (flat.length <= MAX_SPOKEN_CHARS) return flat;
-  const cut = flat.slice(0, MAX_SPOKEN_CHARS);
+  if (flat.length <= SPOKEN_TARGET_CHARS) return flat;
+  const cut = flat.slice(0, SPOKEN_TARGET_CHARS);
   const end = Math.max(cut.lastIndexOf('.'), cut.lastIndexOf('؟'), cut.lastIndexOf('!'), cut.lastIndexOf('،'));
-  return (end > MAX_SPOKEN_CHARS * 0.5 ? cut.slice(0, end + 1) : cut).trim();
+  return (end > SPOKEN_TARGET_CHARS * 0.5 ? cut.slice(0, end + 1) : cut).trim();
 }
 
 /** Approve and dismiss live on the proposal card itself; the quick actions only add the subscribe link. */
@@ -329,6 +334,8 @@ export async function runJarvisTurn(input: JarvisTurnInput): Promise<JarvisTurnR
   let modelCalls = 0;
   let rounds = 0;
   let finalText = '';
+  const modelMs: number[] = [];
+  let toolMs = 0;
 
   const meta = (round: number): LlmCallMeta => ({
     userId: input.userId,
@@ -430,11 +437,13 @@ export async function runJarvisTurn(input: JarvisTurnInput): Promise<JarvisTurnR
       params.tools = tools;
       params.tool_choice = forceText ? { type: 'none' } : { type: 'auto' };
     }
+    const modelStartedAt = Date.now();
     const response = await deps.callModel(
       agent,
       params as unknown as Omit<Anthropic.MessageCreateParamsNonStreaming, 'model'>,
       meta(rounds)
     );
+    modelMs.push(Date.now() - modelStartedAt);
     modelCalls += 1;
     const uses = (response.content ?? []).filter((part): part is Anthropic.ToolUseBlock => part.type === 'tool_use');
     if (forceText || response.stop_reason !== 'tool_use' || uses.length === 0) {
@@ -451,6 +460,7 @@ export async function runJarvisTurn(input: JarvisTurnInput): Promise<JarvisTurnR
         continue;
       }
       let outcome: { content: string; isError: boolean };
+      const toolStartedAt = Date.now();
       try {
         outcome = await runTool(use);
       } catch (error) {
@@ -458,6 +468,7 @@ export async function runJarvisTurn(input: JarvisTurnInput): Promise<JarvisTurnR
         trace.push({ name: use.name, ok: false, code: 'internal' });
         outcome = { content: 'صار خطأ في الأداة.', isError: true };
       }
+      toolMs += Date.now() - toolStartedAt;
       results.push({
         type: 'tool_result',
         tool_use_id: use.id,
@@ -483,5 +494,5 @@ export async function runJarvisTurn(input: JarvisTurnInput): Promise<JarvisTurnR
     actions: actionsFor(cards, input.state.subscriptionActive),
     ...(channel === 'voice' ? { spoken: split.spoken || clipSpoken(reply) } : {}),
   };
-  return { turn, rounds, modelCalls, tools: trace, proposalIds };
+  return { turn, rounds, modelCalls, tools: trace, proposalIds, timing: { modelMs, toolMs } };
 }

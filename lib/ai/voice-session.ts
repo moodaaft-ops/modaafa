@@ -55,6 +55,14 @@ export function nextVoiceCallState(state: VoiceCallState, event: VoiceCallEvent)
 export const VOICE_LIMITS = {
   /** One TTS request. Longer answers are shortened for speech, never cut mid-word. */
   maxSpokenChars: 600,
+  /**
+   * What a reply is trimmed to before it is granted for speech: whole sentences
+   * up to this many characters. A spoken answer is a headline, the screen keeps
+   * the rest. Shorter speech starts sooner, ends sooner and costs less, since
+   * text-to-speech is billed by the character. The hard ceiling above stays for
+   * the speak route's own validation.
+   */
+  briefSpokenChars: 320,
   /** A call that outlives this ends itself so a forgotten tab stops costing. */
   maxCallMs: 10 * 60_000,
   /** No turn for this long and the call ends. */

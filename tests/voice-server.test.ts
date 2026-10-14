@@ -16,7 +16,7 @@ import {
   type VoiceDeps,
   type VoiceProvider,
 } from '../lib/ai/voice-server';
-import { readVoiceConfig } from '../lib/ai/voice-session';
+import { readVoiceConfig, VOICE_LIMITS } from '../lib/ai/voice-session';
 
 const SECRET = 's'.repeat(40);
 const NOW = 1_800_000_000_000;
@@ -780,4 +780,33 @@ test('merge: a spoken ask with free audits used up gets a speakable subscribe of
     assert.ok(!types.includes('approve') && !types.includes('execute'), `${said}: ${types.join(',')}`);
     assert.ok(prepareSpokenText(turn.reply).length > 0, 'the reply can be spoken');
   }
+});
+
+// ---------------------------------------------------------------------------
+// Brief spoken replies (voice latency, phase 1)
+// ---------------------------------------------------------------------------
+
+test('a long reply is spoken in brief: whole sentences up to the cap, and the shortened text still plays with its ticket', async () => {
+  const { deps, counters } = makeDeps();
+  const token = await openSession(deps);
+  const heard = (await transcribeVoiceTurn(deps, upload(token))) as unknown as { json: { ticket: string } };
+  const sentence = 'صرف الحملة هذا الأسبوع قريب من اللي قبله وما تغير شي مهم.';
+  const reply = Array.from({ length: 14 }, () => sentence).join(' ');
+  assert.ok(reply.length > VOICE_LIMITS.maxSpokenChars, 'the fixture is longer than even the old hard cap');
+  const grant = await chatGrant(deps, heard.json.ticket, 'حلل الصرف', reply);
+  assert.ok(grant.spoken_text.length <= VOICE_LIMITS.briefSpokenChars, `${grant.spoken_text.length} chars`);
+  assert.ok(grant.spoken_text.length > sentence.length * 3, 'several sentences survive, not one');
+  assert.ok(grant.spoken_text.endsWith('.'), 'it stops at the end of a sentence');
+  const played = await speakT(deps, { ticket: grant.speak_ticket, text: grant.spoken_text });
+  assert.equal(played.status, 200);
+  assert.equal(counters.tts, 1);
+});
+
+test('a short reply is spoken exactly as written, and the brief cap stays under the hard cap', async () => {
+  assert.ok(VOICE_LIMITS.briefSpokenChars < VOICE_LIMITS.maxSpokenChars);
+  const { deps } = makeDeps();
+  const token = await openSession(deps);
+  const heard = (await transcribeVoiceTurn(deps, upload(token))) as unknown as { json: { ticket: string } };
+  const grant = await chatGrant(deps, heard.json.ticket, 'حلل الصرف', 'الصرف ثابت اليوم، وما فيه شي يستاهل تتدخل فيه.');
+  assert.equal(grant.spoken_text, 'الصرف ثابت اليوم، وما فيه شي يستاهل تتدخل فيه.');
 });

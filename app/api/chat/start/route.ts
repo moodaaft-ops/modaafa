@@ -13,10 +13,11 @@ import { LANGUAGE_ALLOWANCE, type ChatLanguageMeta, type ChatTurn } from '@/lib/
 import { resolveLanguage } from '@/lib/chat-first/language';
 import { loadScopedHistory, sessionBelongsTo } from '@/lib/chat-first/sessions';
 import type { ModelCall } from '@/lib/chat-first/understand';
-import { createMessageForAgent, hasAIBackend } from '@/lib/ai/client';
+import { createMessageForAgent, hasAIBackend, prewarmAIClient } from '@/lib/ai/client';
 import { readVoiceConfig } from '@/lib/ai/voice-session';
 import { grantSpeech, verifyChatVoiceTicket } from '@/lib/ai/voice-server';
 import { voiceLimiter, voiceSessionStore } from '@/lib/ai/voice-route-deps';
+import { createStageTimer, logVoiceTiming, takeColdStart } from '@/lib/ai/voice-timing';
 import { isJarvisBrainEnabled } from '@/lib/jarvis/flag';
 import { answerWithJarvis } from '@/lib/jarvis/turn';
 import { annotateProposalStatuses } from '@/lib/jarvis/history';
@@ -82,7 +83,9 @@ async function authed(req: NextRequest): Promise<{ res?: NextResponse; supabase?
 
 export async function POST(req: NextRequest) {
   if (!isSameOriginRequest(req)) return NextResponse.json({ error: 'invalid_origin' }, { status: 403 });
-  const a = await authed(req);
+  const timer = createStageTimer();
+  const cold = takeColdStart();
+  const a = await timer.time('auth', () => authed(req));
   if (a.res) return a.res;
   const { supabase, user } = a as { supabase: any; user: any };
 
@@ -92,7 +95,7 @@ export async function POST(req: NextRequest) {
   // the first thing after sign-in and the rate limit: nothing below runs for
   // someone without access, and the browser is never the thing that decides.
   // 402 { error: 'subscription_required' }; a suspension is the 403 above.
-  const gate = await checkProductAccess({ supabase, userId: user.id, userEmail: user.email });
+  const gate = await timer.time('gate', () => checkProductAccess({ supabase, userId: user.id, userEmail: user.email }));
   if (!gate.ok) return NextResponse.json(gate.body, { status: gate.status });
 
   const body = (await req.json().catch(() => ({}))) as Record<string, any>;
@@ -102,13 +105,15 @@ export async function POST(req: NextRequest) {
   if (!message && !action) return NextResponse.json({ error: 'message_required' }, { status: 400 });
   if (sessionId && !UUID.test(sessionId)) return NextResponse.json({ error: 'session_not_found' }, { status: 404 });
 
-  const loaded = await loadChatState({
-    supabase,
-    userId: user.id,
-    userEmail: user.email,
-    requestedCustomerId: typeof body.customerId === 'string' ? body.customerId : null,
-    cookieCustomerId: req.cookies.get(SELECTED_ADS_ACCOUNT_COOKIE)?.value ?? null,
-  });
+  const loaded = await timer.time('state', () =>
+    loadChatState({
+      supabase,
+      userId: user.id,
+      userEmail: user.email,
+      requestedCustomerId: typeof body.customerId === 'string' ? body.customerId : null,
+      cookieCustomerId: req.cookies.get(SELECTED_ADS_ACCOUNT_COOKIE)?.value ?? null,
+    })
+  );
   if (!loaded.ok) {
     return NextResponse.json({ error: loaded.error }, { status: loaded.error === 'account_not_found' ? 404 : 503 });
   }
@@ -130,12 +135,14 @@ export async function POST(req: NextRequest) {
   let voiceCheck: Awaited<ReturnType<typeof verifyChatVoiceTicket>> | null = null;
   if (voiceTicket) {
     if (action || !message) return NextResponse.json({ error: 'ticket_invalid' }, { status: 403 });
-    voiceCheck = await verifyChatVoiceTicket(
-      { config: voiceConfig, nowMs: () => Date.now(), limit: voiceLimiter(req), sessions: voiceSessionStore(req, voiceConfig) },
-      user.id,
-      voiceTicket,
-      message,
-      accountId ?? '-'
+    voiceCheck = await timer.time('ticket', () =>
+      verifyChatVoiceTicket(
+        { config: voiceConfig, nowMs: () => Date.now(), limit: voiceLimiter(req), sessions: voiceSessionStore(req, voiceConfig) },
+        user.id,
+        voiceTicket,
+        message,
+        accountId ?? '-'
+      )
     );
     if (!voiceCheck.ok) return NextResponse.json({ error: voiceCheck.error }, { status: voiceCheck.status });
   }
@@ -145,6 +152,8 @@ export async function POST(req: NextRequest) {
   let toolTrace: JarvisToolTrace[] | null = null;
   let userText = message;
   let language: ChatLanguageMeta = { source: 'rules' };
+  // Which path answered and how many model calls it took; numbers and labels only, never content.
+  const timingExtra: Record<string, unknown> = { path: 'rules' };
   if (action?.type === 'request_apply' || action?.type === 'show_recommendation') {
     // Recommendation ids are only resolved inside the caller's own loaded
     // state, so another account's recommendation id is simply not found.
@@ -162,15 +171,26 @@ export async function POST(req: NextRequest) {
     // back to the conversation it came from.
     if (!sid) sid = await createSession(supabase, user.id, accountId, userText).catch(() => null);
     try {
-      const answer = await answerWithJarvis({
-        supabase,
-        user,
-        accountId,
-        state,
-        message,
-        channel: voiceCheck ? 'voice' : 'text',
-        sessionId: sid,
-      });
+      const answer = await timer.time('brain', () =>
+        answerWithJarvis({
+          supabase,
+          user,
+          accountId,
+          state,
+          message,
+          channel: voiceCheck ? 'voice' : 'text',
+          sessionId: sid,
+        })
+      );
+      timingExtra.path = answer.kind === 'answered' ? 'jarvis' : 'budget';
+      if (answer.kind === 'answered') {
+        // Parts of `brain`: database reads before the model, the model calls themselves, and tool runs between them.
+        timer.add('load', answer.loadMs);
+        timer.add('model', answer.result.timing.modelMs.reduce((sum, ms) => sum + ms, 0));
+        timer.add('tools', answer.result.timing.toolMs);
+        timingExtra.model_calls = answer.result.timing.modelMs;
+        timingExtra.tool_calls = answer.result.tools.length;
+      }
       if (answer.kind === 'budget_exhausted') {
         turn = planTurn(message, state);
         turn = {
@@ -186,26 +206,29 @@ export async function POST(req: NextRequest) {
       }
     } catch (error) {
       console.error('jarvis brain failed, answering with rules', { name: error instanceof Error ? error.name : 'unknown' });
+      timingExtra.path = 'jarvis_failed';
       turn = planTurn(message, state);
       language = { source: 'rules', engine: 'jarvis', degraded: true };
     }
   } else {
-    const resolved = await resolveLanguage({
-      message,
-      state,
-      hasBackend: hasAIBackend(),
-      call: callAssistantModel(user.id, accountId ?? null, voiceCheck ? 'voice' : 'text'),
-      checkAllowance: async (scope) => {
-        const r = await checkRateLimit({
-          req,
-          scope: `chat_start_language_${scope}`,
-          limit: LANGUAGE_ALLOWANCE[scope],
-          windowSeconds: LANGUAGE_ALLOWANCE.windowSeconds,
-          identifier: user.id,
-        });
-        return { allowed: r.allowed, resetsAt: r.resetAt };
-      },
-    });
+    const resolved = await timer.time('language', () =>
+      resolveLanguage({
+        message,
+        state,
+        hasBackend: hasAIBackend(),
+        call: callAssistantModel(user.id, accountId ?? null, voiceCheck ? 'voice' : 'text'),
+        checkAllowance: async (scope) => {
+          const r = await checkRateLimit({
+            req,
+            scope: `chat_start_language_${scope}`,
+            limit: LANGUAGE_ALLOWANCE[scope],
+            windowSeconds: LANGUAGE_ALLOWANCE.windowSeconds,
+            identifier: user.id,
+          });
+          return { allowed: r.allowed, resetsAt: r.resetAt };
+        },
+      })
+    );
     language = resolved.meta;
     turn = planTurn(message, state, resolved.understood);
     if (resolved.meta.limited) {
@@ -223,25 +246,39 @@ export async function POST(req: NextRequest) {
       ? { voice: grantSpeech({ config: voiceConfig, nowMs: () => Date.now() }, user.id, voiceCheck, turn.spoken ?? turn.reply) }
       : {};
 
+  // The one response path: a spoken turn also gets its timing line and Server-Timing header.
+  const respond = (payload: { sessionId: string | null; saved: boolean }) => {
+    const grant = voiceGrant();
+    if (voiceCheck?.ok) timingExtra.spoken_chars = grant.voice?.spoken_text.length ?? 0;
+    const response = NextResponse.json({ sessionId: payload.sessionId, turn, saved: payload.saved, language, ...grant });
+    if (voiceCheck?.ok) {
+      logVoiceTiming('chat', { status: 200, cold, totalMs: timer.totalMs, stages: timer.snapshot(), extra: timingExtra });
+      response.headers.set('Server-Timing', timer.serverTiming());
+    }
+    return response;
+  };
+
   try {
-    if (!sid) sid = await createSession(supabase, user.id, accountId, userText);
-    const { error: msgError } = await supabase.from('chat_messages').insert([
-      { session_id: sid, role: 'user', content: userText },
-      {
-        session_id: sid,
-        role: 'assistant',
-        content: turn.reply,
-        ...(toolTrace ? { tool_calls: toolTrace } : {}),
-        tool_results: { cards: turn.cards, actions: turn.actions, intent: turn.intent },
-      },
-    ]);
-    if (msgError) throw msgError;
+    await timer.time('persist', async () => {
+      if (!sid) sid = await createSession(supabase, user.id, accountId, userText);
+      const { error: msgError } = await supabase.from('chat_messages').insert([
+        { session_id: sid, role: 'user', content: userText },
+        {
+          session_id: sid,
+          role: 'assistant',
+          content: turn.reply,
+          ...(toolTrace ? { tool_calls: toolTrace } : {}),
+          tool_results: { cards: turn.cards, actions: turn.actions, intent: turn.intent },
+        },
+      ]);
+      if (msgError) throw msgError;
+    });
   } catch (err) {
     console.error('chat-first persistence failed', err);
     // The answer is still correct; history just did not save.
-    return NextResponse.json({ sessionId: sid, turn, saved: false, language, ...voiceGrant() });
+    return respond({ sessionId: sid, saved: false });
   }
-  return NextResponse.json({ sessionId: sid, turn, saved: true, language, ...voiceGrant() });
+  return respond({ sessionId: sid, saved: true });
 }
 
 /**
@@ -269,6 +306,16 @@ async function createSession(supabase: any, userId: string, accountId: string | 
 }
 
 export async function GET(req: NextRequest) {
+  // Wake-up call from the voice panel when a call starts: no sign-in, no data,
+  // no model call. It only starts this function and fills the model-list cache
+  // so the first spoken question does not pay for both.
+  if (req.nextUrl.searchParams.get('warm') === '1') {
+    if (isSameOriginRequest(req)) {
+      takeColdStart();
+      prewarmAIClient();
+    }
+    return new NextResponse(null, { status: 204, headers: { 'Cache-Control': 'no-store' } });
+  }
   const a = await authed(req);
   if (a.res) return a.res;
   const { supabase, user } = a as { supabase: any; user: any };

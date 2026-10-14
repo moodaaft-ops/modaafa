@@ -764,3 +764,24 @@ test('replayed consent cards show the stored answer and proposal cards refresh c
   assert.equal(proposal.canApprove, true);
   assert.equal(consent.answered, 'always_ask');
 });
+
+test('every turn reports how long each model call and the tool runs took, for the voice timing log', async () => {
+  const model = scriptedModel([{ tools: [{ name: 'get_campaigns', input: {} }] }, { text: '<spoken>صرفك ثابت.</spoken>\nالتفاصيل في البطاقة.' }]);
+  const result = await runJarvisTurn(turnInput({ callModel: model.callModel, channel: 'voice' }));
+  assert.equal(result.timing.modelMs.length, result.modelCalls);
+  assert.ok(result.timing.modelMs.every((ms) => Number.isInteger(ms) && ms >= 0));
+  assert.ok(Number.isInteger(result.timing.toolMs) && result.timing.toolMs >= 0);
+});
+
+test('the voice channel asks for a two-sentence spoken line first and a short screen text after it', async () => {
+  const model = scriptedModel([{ text: '<spoken>صرفك ثابت.</spoken>\nالتفاصيل في البطاقة.' }]);
+  await runJarvisTurn(turnInput({ callModel: model.callModel, channel: 'voice' }));
+  const system = JSON.stringify(model.calls[0].params.system);
+  assert.match(system, /<spoken>/);
+  assert.match(system, /جملتين/);
+  assert.match(system, /260/);
+  // The text channel gets none of the voice rules.
+  const text = scriptedModel([{ text: 'جاهز.' }]);
+  await runJarvisTurn(turnInput({ callModel: text.callModel, channel: 'text' }));
+  assert.doesNotMatch(JSON.stringify(text.calls[0].params.system), /القناة صوت/);
+});

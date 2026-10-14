@@ -14,7 +14,10 @@ import {
   type VoiceCallState,
 } from '@/lib/ai/voice-session';
 import { runCallStart } from '@/lib/ai/voice-call-start';
+import { createFiller, type Filler } from '@/lib/ai/voice-filler';
 import { PcmCapture } from '@/lib/ai/voice-pcm';
+import { CLIENT_TIMING_HEADER, formatClientTimings } from '@/lib/ai/voice-timing';
+import { warmVoiceRoutes } from '@/lib/ai/voice-warm';
 import { BARGE_VAD, createVad, LISTEN_VAD } from '@/lib/ai/voice-vad';
 import { ASSISTANT } from '@/lib/assistant/persona';
 import { cn } from '@/lib/utils';
@@ -77,6 +80,9 @@ export const VoiceCallPanel = forwardRef<
   mutedRef.current = muted;
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const fillerRef = useRef<Filler | null>(null);
+  /** How long the previous turn took from asking for the voice to hearing it; sent with the next turn. */
+  const prevAudioMsRef = useRef<number | null>(null);
   const audioUrlRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -111,9 +117,21 @@ export const VoiceCallPanel = forwardRef<
     idleTimerRef.current = null;
   };
 
+  /** The one audio element of the call: unlocked inside the tap, reused for the wait clip and the reply. */
+  const ensureAudio = useCallback(() => {
+    if (!audioRef.current) {
+      const created = new Audio();
+      created.setAttribute('playsinline', 'true');
+      audioRef.current = created;
+    }
+    return audioRef.current;
+  }, []);
+
   const stopPlayback = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
+    fillerRef.current?.cancel();
+    fillerRef.current = null;
     const audio = audioRef.current;
     if (audio) {
       audio.onended = null;
@@ -262,20 +280,37 @@ export const VoiceCallPanel = forwardRef<
   );
 
   const playReply = useCallback(
-    async (speech: { spokenText: string; speakTicket: string }, turn: number) => {
+    async (
+      speech: { spokenText: string; speakTicket: string },
+      turn: number,
+      filler: Filler,
+      waited: { sttMs: number; chatMs: number; startedAt: number }
+    ) => {
       const controller = new AbortController();
       abortRef.current = controller;
+      const requestedAt = performance.now();
+      // The voice request goes out now, in parallel with the end of the wait
+      // clip, so letting the clip finish costs almost nothing.
+      const request = fetch('/api/voice/speak', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          [CLIENT_TIMING_HEADER]: formatClientTimings({
+            stt: waited.sttMs,
+            chat: waited.chatMs,
+            prev_audio: prevAudioMsRef.current ?? undefined,
+          }),
+          ...(customerRef.current ? { 'x-voice-customer': customerRef.current } : {}),
+        },
+        body: JSON.stringify({ text: speech.spokenText, ticket: speech.speakTicket }),
+        signal: controller.signal,
+      });
+      request.catch(() => undefined);
+      const tailMs = await filler.finish();
+      if (turn !== turnRef.current) return;
       dispatch('reply_ready');
       try {
-        const response = await fetch('/api/voice/speak', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(customerRef.current ? { 'x-voice-customer': customerRef.current } : {}),
-          },
-          body: JSON.stringify({ text: speech.spokenText, ticket: speech.speakTicket }),
-          signal: controller.signal,
-        });
+        const response = await request;
         if (!response.ok) {
           const data = await response.json().catch(() => ({}));
           // The answer is already written in the chat. A failed voice leg does not end the call.
@@ -294,8 +329,7 @@ export const VoiceCallPanel = forwardRef<
         if (turn !== turnRef.current) return;
         const url = URL.createObjectURL(blob);
         audioUrlRef.current = url;
-        const audio = audioRef.current ?? new Audio();
-        audioRef.current = audio;
+        const audio = ensureAudio();
         audio.src = url;
         audio.onended = () => {
           if (turn !== turnRef.current) return;
@@ -312,7 +346,19 @@ export const VoiceCallPanel = forwardRef<
         };
         bargeVadRef.current.reset();
         await audio.play();
-        if (turn === turnRef.current) dispatch('audio_started');
+        if (turn === turnRef.current) {
+          dispatch('audio_started');
+          const now = performance.now();
+          prevAudioMsRef.current = Math.max(0, Math.round(now - requestedAt));
+          // Numbers only, never text: this is what to read after a test call to see where the time went.
+          console.info('[voice] turn', {
+            stt_ms: Math.round(waited.sttMs),
+            chat_ms: Math.round(waited.chatMs),
+            wait_clip_tail_ms: tailMs,
+            speak_to_audio_ms: prevAudioMsRef.current,
+            since_speech_end_ms: Math.round(now - waited.startedAt),
+          });
+        }
       } catch (err) {
         if ((err as Error)?.name === 'AbortError' || turn !== turnRef.current) return;
         stopPlayback();
@@ -321,7 +367,7 @@ export const VoiceCallPanel = forwardRef<
         beginListening();
       }
     },
-    [beginListening, failWith, stopPlayback]
+    [beginListening, ensureAudio, failWith, stopPlayback]
   );
 
   const handleRecording = useCallback(
@@ -334,6 +380,7 @@ export const VoiceCallPanel = forwardRef<
       abortRef.current = controller;
       let transcript = '';
       let ticket = '';
+      const startedAt = performance.now();
       try {
         const response = await fetch('/api/voice/transcribe', {
           method: 'POST',
@@ -357,17 +404,32 @@ export const VoiceCallPanel = forwardRef<
         failWith(undefined, null, turn);
         return;
       }
+      const sttMs = performance.now() - startedAt;
       if (turn !== turnRef.current) return;
       // A spoken "yes" is only ever a message to the assistant. It never
       // reaches the approval path, and the person is told where the real
       // confirm button lives.
       if (looksLikeVoiceApproval(transcript)) setApprovalNotice(true);
-      // A short pre-recorded "one moment" while the answer is prepared. The
-      // clips are static files; a missing file is simply silent.
-      const filler = startFiller();
-      const result = await onUtteranceRef.current(transcript, ticket).finally(() => filler.stop());
-      if (turn !== turnRef.current) return;
+      // A short pre-recorded "one moment" while the answer is prepared. It
+      // starts after a beat (a fast reply plays none), is never cut mid-word,
+      // and a missing file is simply silent. See lib/ai/voice-filler.ts.
+      const filler = createFiller({ getAudio: ensureAudio });
+      fillerRef.current = filler;
+      filler.start();
+      const chatStartedAt = performance.now();
+      let result: VoiceTurnResult = null;
+      try {
+        result = await onUtteranceRef.current(transcript, ticket);
+      } catch {
+        result = null;
+      }
+      const chatMs = performance.now() - chatStartedAt;
+      if (turn !== turnRef.current) {
+        filler.cancel();
+        return;
+      }
       if (!result) {
+        filler.cancel();
         setError('تعذر الحصول على رد. الخطأ ظاهر في المحادثة.');
         dispatch('stop_listening');
         window.setTimeout(() => {
@@ -377,6 +439,7 @@ export const VoiceCallPanel = forwardRef<
       }
       if (result.fatal) {
         // The server refused the ticket for this account or session. Nothing was spoken.
+        filler.cancel();
         endOnServer();
         sessionRef.current = null;
         setError(voiceErrorMessage(result.fatal, 409));
@@ -389,13 +452,14 @@ export const VoiceCallPanel = forwardRef<
       if (result.hasDraft) setApprovalNotice(true);
       if (!result.speech) {
         // No speech granted (flag off for this reply, or empty reply): text only, keep listening.
+        filler.cancel();
         dispatch('stop_listening');
         beginListening();
         return;
       }
-      await playReply(result.speech, turn);
+      await playReply(result.speech, turn, filler, { sttMs, chatMs, startedAt });
     },
-    [beginListening, endOnServer, failWith, playReply, releaseMic]
+    [beginListening, endOnServer, ensureAudio, failWith, playReply, releaseMic]
   );
 
   /** The person stopped talking: close this recording and send it. */
@@ -483,6 +547,8 @@ export const VoiceCallPanel = forwardRef<
     setApprovalNotice(false);
     setStarting(true);
     unlockAudio();
+    // The microphone prompt and the first sentence take seconds; wake the three routes meanwhile.
+    warmVoiceRoutes();
     const AudioCtx = (window as any).AudioContext || (window as any).webkitAudioContext;
     if (!navigator.mediaDevices?.getUserMedia || !AudioCtx || !AudioCtx.prototype?.createScriptProcessor) {
       setError('متصفحك ما يدعم المكالمة الصوتية. حدّثه أو كمّل كتابة.');
@@ -755,24 +821,4 @@ function silentWav(): ArrayBuffer {
   str(36, 'data');
   v.setUint32(40, samples * 2, true);
   return buffer;
-}
-
-/** Static «لحظة أشوف حسابك» clips in public/voice/, rotated per turn (spec 83, section 2). */
-const FILLER_CLIPS = ['/voice/wait-1.mp3', '/voice/wait-2.mp3', '/voice/wait-3.mp3'];
-let fillerIndex = 0;
-
-function startFiller(): { stop: () => void } {
-  if (typeof window === 'undefined' || typeof window.Audio === 'undefined') return { stop: () => undefined };
-  const audio = new window.Audio(FILLER_CLIPS[fillerIndex++ % FILLER_CLIPS.length]);
-  audio.volume = 0.9;
-  void audio.play().catch(() => undefined);
-  return {
-    stop: () => {
-      try {
-        audio.pause();
-      } catch {
-        // already stopped
-      }
-    },
-  };
 }

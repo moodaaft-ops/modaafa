@@ -15,6 +15,7 @@ import {
   type VoiceSessions,
 } from '@/lib/ai/voice-server';
 import type { VoiceConfig } from '@/lib/ai/voice-session';
+import type { StageTimer } from '@/lib/ai/voice-timing';
 import { NextResponse } from 'next/server';
 
 /**
@@ -89,17 +90,34 @@ export function voiceLimiter(req: NextRequest): VoiceDeps['limit'] {
   };
 }
 
-export function voiceJson(result: VoiceResult) {
+/**
+ * `extraHeaders` carries `Server-Timing` only; nothing a caller can influence
+ * goes in here.
+ */
+export function voiceJson(result: VoiceResult, extraHeaders: Record<string, string> = {}) {
   if ('json' in result) {
     return NextResponse.json(result.json, {
       status: result.status,
-      headers: { 'Cache-Control': 'no-store' },
+      headers: { 'Cache-Control': 'no-store', ...extraHeaders },
     });
   }
   return new Response(result.audio.body as BodyInit, {
     status: 200,
-    headers: { 'Content-Type': result.audio.contentType, 'Cache-Control': 'no-store' },
+    headers: { 'Content-Type': result.audio.contentType, 'Cache-Control': 'no-store', ...extraHeaders },
   });
+}
+
+/**
+ * Same provider, with the wait on it written into the stage timer: `stt` for
+ * the transcription call, `tts_ttfb` for the time until the speech provider
+ * starts answering (the audio itself streams after that). Only durations are
+ * recorded, never the audio or the text.
+ */
+export function withProviderTiming(provider: VoiceDeps['provider'], timer: StageTimer): VoiceDeps['provider'] {
+  return {
+    transcribe: (audio, mime) => timer.time('stt', () => provider.transcribe(audio, mime)),
+    speak: (text, signal) => timer.time('tts_ttfb', () => provider.speak(text, signal)),
+  };
 }
 
 /**
