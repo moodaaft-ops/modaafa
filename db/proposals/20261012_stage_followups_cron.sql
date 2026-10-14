@@ -1,4 +1,7 @@
 -- =====================================================================
+-- SUPERSEDED by 20261014_email_lifecycle_cron.sql. The route this file calls
+-- (/api/cron/stage-followups) no longer exists. Do not run this file.
+-- =====================================================================
 -- Scheduler for the stage follow-up emails, 2026-10-12
 --
 -- DO NOT RUN until you are ready to switch the feature on. Order of

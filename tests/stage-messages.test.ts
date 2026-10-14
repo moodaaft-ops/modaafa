@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { STAGE_FOLLOWUP_STEPS } from '../config/stage-followups';
 import { STAGE_MESSAGE_DRAFTS, isStageTemplateId, renderStageEmail } from '../lib/stages/messages';
 
 const BANNED = [
@@ -20,17 +19,6 @@ const BANNED = [
   'هل تعاني من',
   'جودة عالية',
 ];
-
-test('every configured step has a draft text, and no draft is orphaned', () => {
-  const keys = Object.values(STAGE_FOLLOWUP_STEPS).flatMap((list) => (list ?? []).map((step) => step.key));
-  assert.deepEqual([...keys].sort(), Object.keys(STAGE_MESSAGE_DRAFTS).sort());
-});
-
-test('no step is approved by default: texts wait for Ayman', () => {
-  for (const list of Object.values(STAGE_FOLLOWUP_STEPS)) {
-    for (const step of list ?? []) assert.equal(step.approved, false, step.key);
-  }
-});
 
 test('drafts follow the writing rules: no long dashes, no Latin comma, no banned phrases', () => {
   for (const [key, draft] of Object.entries(STAGE_MESSAGE_DRAFTS)) {

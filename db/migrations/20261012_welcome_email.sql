@@ -5,12 +5,12 @@
 --   * public.message_log   one row per message attempt, unique per
 --                          (user, channel, template) so nobody gets it twice
 --   * public.users.messages_opt_out   set by the unsubscribe link
---   * trigger on auth.users   writes registration_completed the moment an
---                          address is confirmed (email link or Google sign-in)
 --   * public.claim_message()  atomic "may I send this?" check used by the app
 --
--- Existing users are NOT back-filled: only sign-ups after this file runs get a
--- registration_completed event, so nobody already registered receives a
+-- registration_completed is written by public.finalize_registration()
+-- (20261012_registration_tracking.sql) when a registration completes, not by a
+-- trigger on auth.users. Existing users are NOT back-filled: only sign-ups
+-- after that point get the event, so nobody already registered receives a
 -- "welcome" mail.
 --
 -- Privileges follow 20261009_free_audit_quota.sql: everything is revoked from
@@ -109,38 +109,7 @@ begin
 end;
 $$;
 
--- 5. registration_completed trigger --------------------------------------
--- Fires when an auth user is created already confirmed (Google) or when the
--- address is confirmed later (email link). Never blocks sign-up: any error is
--- downgraded to a warning. Trigger name sorts after on_auth_user_created so the
--- public.users row already exists.
-create or replace function public.record_registration_completed()
-returns trigger
-language plpgsql
-security definer
-set search_path = public, pg_temp
-as $$
-begin
-  if new.email_confirmed_at is not null
-     and (tg_op = 'INSERT' or old.email_confirmed_at is null) then
-    insert into public.user_events (user_id, event, stage)
-    select new.id, 'registration_completed', 'registered'
-    where exists (select 1 from public.users u where u.id = new.id)
-    on conflict do nothing;
-  end if;
-  return new;
-exception when others then
-  raise warning 'record_registration_completed failed for %: %', new.id, sqlerrm;
-  return new;
-end;
-$$;
-
-drop trigger if exists on_auth_user_registered on auth.users;
-create trigger on_auth_user_registered
-  after insert or update of email_confirmed_at on auth.users
-  for each row execute function public.record_registration_completed();
-
--- 6. Privileges -----------------------------------------------------------
+-- 5. Privileges -----------------------------------------------------------
 alter table public.user_events enable row level security;
 alter table public.message_log enable row level security;
 
@@ -151,10 +120,8 @@ grant select, insert, update on table public.message_log to service_role;
 
 revoke all on function public.claim_message(uuid, text, text) from public, anon, authenticated, service_role;
 grant execute on function public.claim_message(uuid, text, text) to service_role;
-revoke all on function public.record_registration_completed() from public, anon, authenticated, service_role;
 
 commit;
 
 -- Verification (run manually after applying):
---   select tgname from pg_trigger where tgname = 'on_auth_user_registered';
 --   select count(*) from public.user_events;   -- 0 until the next sign-up
