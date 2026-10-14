@@ -499,15 +499,54 @@ test('the weekly report is only looked for while its slot is open', async () => 
   assert.equal(sun.summary.considered, 1);
 });
 
-test('a missing weekly fact skips the report for that week only', async () => {
+test('a missing weekly fact leaves the report unclaimed while the slot is open, and a later run sends it once the report exists', async () => {
   const admin = createFakeAdmin({ users: [user('act', 'subscribed')], subscriptions: [subscription('act', 'active')] });
   const none: LoadEmailFactsFn = async () => ({ ...EMPTY_FACTS });
+
+  // The optimize cron has not written this account's report yet: not a final answer.
   const sunday = await go(admin, { now: SUNDAY, facts: none });
-  assert.deepEqual(sunday.summary.results.map((r) => r.result), ['skipped:missing_facts']);
-  assert.equal(logRow(admin, 'act', 'weekly_report_2026-W42')!.status, 'skipped');
+  assert.deepEqual(sunday.summary.results.map((r) => r.result), ['skipped:weekly_pending']);
+  assert.equal(sunday.calls.length, 0);
+  assert.equal(logRow(admin, 'act', 'weekly_report_2026-W42'), undefined, 'no permanent skip is written');
+
+  // Still missing an hour later: still unclaimed.
+  const hourLater = await go(admin, { now: new Date(SUNDAY.getTime() + 60 * 60 * 1000), facts: none });
+  assert.deepEqual(hourLater.summary.results.map((r) => r.result), ['skipped:weekly_pending']);
+  assert.equal(logRow(admin, 'act', 'weekly_report_2026-W42'), undefined);
+
+  // The report lands: the next run sends it, once.
+  const sent = await go(admin, { now: new Date(SUNDAY.getTime() + 2 * 60 * 60 * 1000) });
+  assert.deepEqual(sent.calls.map((c) => c.templateKey), ['weekly_report_2026-W42']);
+  assert.equal(logRow(admin, 'act', 'weekly_report_2026-W42')!.status, 'sent');
+  const again = await go(admin, { now: new Date(SUNDAY.getTime() + 3 * 60 * 60 * 1000) });
+  assert.equal(again.summary.sent, 0);
 
   const nextSunday = await go(admin, { now: riyadh('2026-10-25T10:00') });
   assert.deepEqual(nextSunday.calls.map((c) => c.templateKey), ['weekly_report_2026-W43']);
+});
+
+test('a weekly report that never appears is dropped when the slot closes, still without a skip row', async () => {
+  const admin = createFakeAdmin({ users: [user('act', 'subscribed')], subscriptions: [subscription('act', 'active')] });
+  const none: LoadEmailFactsFn = async () => ({ ...EMPTY_FACTS });
+  const lastOpen = await go(admin, { now: riyadh('2026-10-20T20:59'), facts: none });
+  assert.deepEqual(lastOpen.summary.results.map((r) => r.result), ['skipped:weekly_pending']);
+
+  // 60 hours after Sunday 09:00 is Tuesday 21:00 Riyadh: nothing is planned any more.
+  const closed = await go(admin, { now: riyadh('2026-10-20T21:00'), facts: none });
+  assert.equal(closed.summary.planned.total, 0);
+  assert.deepEqual(closed.summary.results, []);
+  assert.deepEqual(admin.tables.message_log ?? [], []);
+});
+
+test('a missing journey fact is still a final skip (only the weekly report waits for its data)', async () => {
+  const admin = createFakeAdmin({
+    users: [user('p', 'analysis_viewed')],
+    user_events: [event('p', 'first_analysis_viewed', '2026-10-13T10:00')],
+  });
+  const facts: LoadEmailFactsFn = async () => ({ ...EMPTY_FACTS });
+  const result = await go(admin, { facts });
+  assert.deepEqual(result.summary.results.map((r) => r.result), ['skipped:missing_facts']);
+  assert.equal(logRow(admin, 'p', 'plan_ready_1d')!.reason, 'missing_facts:plan');
 });
 
 // ---------------------------------------------------------------------------

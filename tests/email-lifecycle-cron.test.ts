@@ -2,9 +2,12 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import test from 'node:test';
 import { NextRequest } from 'next/server';
+import { createOAuthCallbackHandler } from '../lib/auth/oauth-callback-handler';
 import { handleEmailLifecycleCron, type CronDeps } from '../lib/lifecycle/cron';
 import { emptyIgnored } from '../lib/lifecycle/plan';
 import type { LifecycleRunOptions, LifecycleRunSummary } from '../lib/lifecycle/run';
+import type { RegistrationDb } from '../lib/registration/finalize';
+import { finalizeForRequest } from '../lib/registration/service';
 
 const SECRET = 'lifecycle-test-secret';
 
@@ -343,11 +346,122 @@ test('the replaced #84 stage-followups code is gone, the shared stage files rema
   }
 });
 
-test('the auth callback no longer sends the welcome mail, and the #81 trigger is gone from both migrations', () => {
-  const callback = readFileSync(new URL('../app/auth/callback/route.ts', import.meta.url), 'utf8');
-  assert.doesNotMatch(callback, /sendDueWelcomeEmails/);
-  assert.doesNotMatch(callback, /createAdminClient/);
+test('the auth callback sends no mail and makes no outbound call, even with the lifecycle on and Resend configured', async () => {
+  const outbound: string[] = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: unknown) => {
+    outbound.push(String(input));
+    return new Response('{}', { status: 200 });
+  }) as typeof fetch;
+  const previous = { ...process.env };
+  Object.assign(process.env, {
+    EMAIL_LIFECYCLE_ENABLED: 'true',
+    RESEND_API_KEY: 're_test_key',
+    NEXT_PUBLIC_SUPABASE_URL: 'https://example.supabase.test',
+    SUPABASE_SERVICE_ROLE_KEY: 'service-role-test-key',
+    UNSUBSCRIBE_SECRET: 'test-secret-value',
+  });
+  try {
+    const exchanged: string[] = [];
+    const GET = createOAuthCallbackHandler({
+      createSupabase: async () => ({
+        auth: {
+          exchangeCodeForSession: async (code: string) => {
+            exchanged.push(code);
+            return { error: null };
+          },
+        },
+      }),
+    });
 
+    const ok = await GET(new NextRequest('https://ai.modaafa.com/auth/callback?code=abc&next=/welcome'));
+    assert.equal(ok.status, 303);
+    assert.equal(ok.headers.get('location'), 'https://ai.modaafa.com/welcome');
+    assert.deepEqual(exchanged, ['abc']);
+
+    // A failed exchange and a missing code go to the login page, still without any mail.
+    const failing = createOAuthCallbackHandler({
+      createSupabase: async () => ({ auth: { exchangeCodeForSession: async () => ({ error: { message: 'bad code' } }) } }),
+    });
+    assert.equal((await failing(new NextRequest('https://ai.modaafa.com/auth/callback?code=bad'))).headers.get('location'), 'https://ai.modaafa.com/login?error=auth_callback_failed');
+    assert.equal((await GET(new NextRequest('https://ai.modaafa.com/auth/callback'))).headers.get('location'), 'https://ai.modaafa.com/login?error=auth_callback_failed');
+
+    // An off-site `next` is not followed.
+    const offsite = await GET(new NextRequest('https://ai.modaafa.com/auth/callback?code=abc&next=//evil.example'));
+    assert.equal(new URL(offsite.headers.get('location')!).origin, 'https://ai.modaafa.com');
+
+    assert.deepEqual(outbound, [], 'no request to Resend, Supabase or anything else');
+  } finally {
+    globalThis.fetch = realFetch;
+    for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key];
+    Object.assign(process.env, previous);
+  }
+});
+
+const REG_USER = {
+  id: '0b3a1d2e-1111-4222-8333-444455556666',
+  email: 'a@b.co',
+  user_metadata: { full_name: 'أيمن أمين', reg: { phone: '0501234567' } },
+};
+
+function registrationDb(resultStatus: string): RegistrationDb {
+  return {
+    rpc: async (fn) =>
+      fn === 'finalize_registration'
+        ? { data: [{ result_status: resultStatus, result_registered_at: null }], error: null }
+        : { data: null, error: null },
+  };
+}
+
+async function finishRegistration(resultStatus: string, details?: { name?: string | null; phone?: string | null }, user = REG_USER) {
+  const welcomed: string[] = [];
+  const outcome = await finalizeForRequest(
+    new NextRequest('https://ai.modaafa.com/api/register/complete', { method: 'POST' }),
+    user,
+    details,
+    {
+      db: registrationDb(resultStatus),
+      sendServerEvent: async () => ({ status: 'sent', testMode: false }),
+      sendWelcome: (userId) => welcomed.push(userId),
+    }
+  );
+  return { outcome, welcomed };
+}
+
+test('the registration service starts the welcome mail exactly once, only for a completed registration', async () => {
+  const completed = await finishRegistration('completed');
+  assert.equal(completed.outcome.status, 'completed');
+  assert.deepEqual(completed.welcomed, [REG_USER.id]);
+
+  for (const status of ['already', 'phone_taken', 'something_else']) {
+    const result = await finishRegistration(status);
+    assert.notEqual(result.outcome.status, 'completed', status);
+    assert.deepEqual(result.welcomed, [], `${status}: no welcome mail`);
+  }
+
+  // Details that do not validate never reach the database and send nothing.
+  const needsDetails = await finishRegistration('completed', { phone: 'not a phone' });
+  assert.equal(needsDetails.outcome.status, 'needs_details');
+  assert.deepEqual(needsDetails.welcomed, []);
+
+  // A database that errors is a failed registration, not a mailed one.
+  const welcomed: string[] = [];
+  const failed = await finalizeForRequest(
+    new NextRequest('https://ai.modaafa.com/api/register/complete', { method: 'POST' }),
+    REG_USER,
+    undefined,
+    {
+      db: { rpc: async () => ({ data: null, error: { message: 'boom' } }) },
+      sendServerEvent: async () => ({ status: 'sent', testMode: false }),
+      sendWelcome: (userId) => welcomed.push(userId),
+    }
+  );
+  assert.equal(failed.status, 'failed');
+  assert.deepEqual(welcomed, []);
+});
+
+test('the #81 auth trigger is dropped by the lifecycle migration and was never created by the welcome migration', () => {
+  // SQL cannot be run here, so this stays a check of the files themselves.
   const welcome = readFileSync(new URL('../db/migrations/20261012_welcome_email.sql', import.meta.url), 'utf8');
   assert.doesNotMatch(welcome, /CREATE\s+TRIGGER\s+on_auth_user_registered/i);
   assert.doesNotMatch(welcome, /CREATE\s+(OR\s+REPLACE\s+)?FUNCTION\s+public\.record_registration_completed/i);
@@ -355,11 +469,6 @@ test('the auth callback no longer sends the welcome mail, and the #81 trigger is
   const lifecycle = readFileSync(new URL('../db/migrations/20261014_email_lifecycle.sql', import.meta.url), 'utf8');
   assert.match(lifecycle, /DROP TRIGGER IF EXISTS on_auth_user_registered ON auth\.users/);
   assert.match(lifecycle, /DROP FUNCTION IF EXISTS public\.record_registration_completed\(\)/);
-});
-
-test('the registration service starts the welcome mail only for a completed registration', () => {
-  const service = readFileSync(new URL('../lib/registration/service.ts', import.meta.url), 'utf8');
-  assert.match(service, /if \(outcome\.status === 'completed'\) sendWelcomeInBackground\(user\.id\)/);
 });
 
 test('the new migration is additive, idempotent and keeps the scheduler out of the migration folder', () => {

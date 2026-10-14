@@ -430,14 +430,14 @@ function trialTables(): Rows {
 
 test('trial: dates, whole days left, approvals since the trial started and decisions waiting now', async () => {
   const facts = await load(admin(trialTables()), ['trial']);
-  // Hand count: ends 24 Oct 08:00 UTC, now 14 Oct 10:00 UTC: 9 days 22 hours -> 9.
+  // Hand count: ends 24 Oct 08:00 UTC, now 14 Oct 10:00 UTC: 9 days 22 hours left -> 10 (rounded up, the last partial day counts).
   // Approved since 10 Oct 08:00: r1 (11 Oct, again on 13 Oct, one recommendation) and r2 = 2.
   //   Not counted: r3 approved on 9 Oct (before the trial), another account, another action type.
   // Waiting now on acc1: r1, r2, r3 pending = 3 (dismissed r4 and the other account's r9 are not).
   assert.deepEqual(facts.trial, {
     startedAt: '2026-10-10T08:00:00Z',
     endsAt: '2026-10-24T08:00:00Z',
-    daysLeft: 9,
+    daysLeft: 10,
     approvedCount: 2,
     pendingCount: 3,
   });
@@ -450,18 +450,34 @@ test('trial: the trial of another user and the plan fact are not mixed in', asyn
   assert.equal(facts.trial?.startedAt, '2026-10-10T08:00:00Z');
 });
 
-test('trial: daysLeft rounds down, never goes negative, and is null without an end date', async () => {
+test('trial: daysLeft is whole days remaining rounded up, never negative, and null without an end date', async () => {
   const daysLeft = async (endsAt: string | null) => {
     const tables = trialTables();
     (tables.subscriptions[0] as any).trial_ends_at = endsAt;
     return (await load(admin(tables), ['trial'])).trial;
   };
-  assert.equal((await daysLeft('2026-10-15T09:59:59Z'))?.daysLeft, 0, '23h59m left is 0 whole days');
-  assert.equal((await daysLeft('2026-10-15T10:00:00Z'))?.daysLeft, 1);
-  assert.equal((await daysLeft('2026-10-13T10:00:00Z'))?.daysLeft, 0, 'already over');
+  assert.equal((await daysLeft('2026-10-15T09:59:59Z'))?.daysLeft, 1, '23h59m left is 1 day, not "0 days left"');
+  assert.equal((await daysLeft('2026-10-15T10:00:00Z'))?.daysLeft, 1, 'exactly 24h left');
+  assert.equal((await daysLeft('2026-10-15T10:00:01Z'))?.daysLeft, 2, 'a second over one day');
+  assert.equal((await daysLeft('2026-10-14T10:30:00Z'))?.daysLeft, 1, '30 minutes left still shows the last day');
+  assert.equal((await daysLeft('2026-10-14T10:00:00Z'))?.daysLeft, 0, 'ends right now');
+  assert.equal((await daysLeft('2026-10-13T10:00:00Z'))?.daysLeft, 0, 'already over, never negative');
   const open = await daysLeft(null);
   assert.equal(open?.daysLeft, null);
   assert.equal(open?.endsAt, null);
+});
+
+test('trial: decisions waiting now include approved ones that are not executed yet, as /home lists them', async () => {
+  const tables = trialTables();
+  tables.recommendations.push(
+    { id: 'r5', account_id: 'acc1', status: 'approved', severity: 'medium', title: 'وافقت عليه', category: 'ads', created_at: '2026-10-13T12:00:00Z' },
+    { id: 'r6', account_id: 'acc1', status: 'applied', severity: 'medium', title: 'نُفّذ', category: 'ads', created_at: '2026-10-13T12:00:00Z' },
+    { id: 'r7', account_id: 'acc1', status: 'executing', severity: 'medium', title: 'يُنفّذ', category: 'ads', created_at: '2026-10-13T12:00:00Z' },
+    { id: 'r8', account_id: 'acc9', status: 'approved', severity: 'medium', title: 'حساب ثاني', category: 'ads', created_at: '2026-10-13T12:00:00Z' }
+  );
+  const facts = await load(admin(tables), ['trial']);
+  // r1, r2, r3 pending + r5 approved. Applied, executing and another account's rows are not waiting for the user.
+  assert.equal(facts.trial?.pendingCount, 4);
 });
 
 test('trial: no trialing subscription is null (a canceled or active one is not a trial)', async () => {
@@ -490,7 +506,7 @@ test('trial: a trialing user with no linked account has nothing to approve, whic
   const facts = await load(admin(tables), ['trial']);
   assert.equal(facts.trial?.approvedCount, 0);
   assert.equal(facts.trial?.pendingCount, 0);
-  assert.equal(facts.trial?.daysLeft, 9);
+  assert.equal(facts.trial?.daysLeft, 10);
 });
 
 test('trial: any failed read makes the trial null and is logged once', async () => {
@@ -539,8 +555,9 @@ function weeklyTables(): Rows {
 test('weekly: the latest weekly_performance report of the selected account, its numbers, three clean highlights and the waiting decisions', async () => {
   const facts = await load(admin(weeklyTables()), ['weekly']);
   assert.deepEqual(facts.weekly, {
+    // Generated 14 Oct 03:00 UTC = 06:00 Riyadh: the data is the 7 days that ended on 13 Oct, whatever period_end says.
     periodStart: '2026-10-07',
-    periodEnd: '2026-10-14',
+    periodEnd: '2026-10-13',
     currency: 'SAR',
     spend: 3200.5,
     conversions: 41,
@@ -556,7 +573,7 @@ test('weekly: the latest weekly_performance report of the selected account, its 
   });
 });
 
-test('weekly: a report older than 8 days, another kind or another account is not this week\'s report', async () => {
+test('weekly: another kind, another account or no account is not this week\'s report', async () => {
   const tables = weeklyTables();
   tables.reports = tables.reports.filter((row) => row.id !== 'w1');
   assert.equal((await load(admin(tables), ['weekly'])).weekly, null);
@@ -567,6 +584,40 @@ test('weekly: a report older than 8 days, another kind or another account is not
   const noAccount = weeklyTables();
   noAccount.google_ads_accounts = [];
   assert.equal((await load(admin(noAccount), ['weekly'])).weekly, null);
+});
+
+test('weekly: only a report generated in the current Saudi week counts, not last week\'s even when it is under 8 days old', async () => {
+  // NOW is Wednesday 14 Oct 10:00 UTC; the Saudi week began on Saturday 10 Oct 00:00 UTC.
+  const only = (generatedAt: string, summary = 'تقرير') => {
+    const tables = weeklyTables();
+    tables.reports = [
+      { id: 'x', account_id: 'acc1', period_type: 'weekly', period_start: '2026-10-03', period_end: '2026-10-10', generated_at: generatedAt, summary_ar: summary, metrics: weeklyMetrics() },
+    ];
+    return load(admin(tables), ['weekly']);
+  };
+  assert.equal((await only('2026-10-09T23:59:59Z')).weekly, null, 'Friday night: last week\'s report, 4 days old');
+  assert.equal((await only('2026-10-06T03:00:00Z')).weekly, null, '8 days old and previous week');
+  assert.ok((await only('2026-10-10T00:00:00Z')).weekly, 'Saturday 00:00 UTC is the first instant of this week');
+  assert.ok((await only('2026-10-10T03:47:00Z')).weekly, 'the normal case: written Saturday morning, mailed Sunday 09:00 Riyadh');
+
+  // A fresh and a stale report side by side: the fresh one is used.
+  const both = weeklyTables();
+  both.reports = [
+    { id: 'old', account_id: 'acc1', period_type: 'weekly', period_start: '2026-10-03', period_end: '2026-10-10', generated_at: '2026-10-09T20:00:00Z', summary_ar: 'قديم', metrics: { ...weeklyMetrics(), totals: { this_week: { cost: 1, conversions: 1 }, prior_week: { cost: 1, conversions: 1 } } } },
+    { id: 'new', account_id: 'acc1', period_type: 'weekly', period_start: '2026-10-07', period_end: '2026-10-14', generated_at: '2026-10-11T03:00:00Z', summary_ar: 'جديد', metrics: weeklyMetrics() },
+  ];
+  assert.equal((await load(admin(both), ['weekly'])).weekly?.spend, 3200.5);
+});
+
+test('weekly: on the Sunday slot the report written the day before is this week\'s, last week\'s is not', async () => {
+  const sunday = new Date('2026-10-18T06:00:00Z'); // Sunday 09:00 Riyadh
+  const run = (generatedAt: string) => {
+    const tables = weeklyTables();
+    tables.reports = [{ id: 'x', account_id: 'acc1', period_type: 'weekly', generated_at: generatedAt, summary_ar: 'تقرير', metrics: weeklyMetrics() }];
+    return loadEmailFacts(admin(tables), USER, ['weekly'], { now: sunday, env: NO_ADAPTIVE });
+  };
+  assert.ok((await run('2026-10-17T00:47:00Z')).weekly, 'Saturday 00:47 UTC');
+  assert.equal((await run('2026-10-16T23:59:00Z')).weekly, null, 'Friday 23:59 UTC is the previous week');
 });
 
 test('weekly: a number the stored report does not have is null, and the cost per conversion is computed only from real figures', async () => {
@@ -605,15 +656,55 @@ test('weekly: highlights fall back to the summary sentences when the narrative h
   assert.deepEqual(weekly?.highlights, ['ارتفع الإنفاق إلى 3,200 ر.س.', 'التحويلات 41.']);
 });
 
-test('weekly: a missing period falls back to the generation date, the currency to the report\'s own', async () => {
+test('weekly: the period is the 7 days the data covers: ending the day before generation, on the Riyadh calendar', async () => {
+  const periodOf = async (generatedAt: string, stored: { period_start?: string | null; period_end?: string | null } = {}) => {
+    const tables = weeklyTables();
+    tables.reports = [{ id: 'x', account_id: 'acc1', period_type: 'weekly', generated_at: generatedAt, summary_ar: 'تقرير', metrics: weeklyMetrics(), ...stored }];
+    const weekly = (await load(admin(tables), ['weekly'])).weekly;
+    return weekly && { start: weekly.periodStart, end: weekly.periodEnd };
+  };
+  // Saturday 10 Oct 03:47 UTC (06:47 Riyadh): LAST_7_DAYS is 3..9 Oct.
+  assert.deepEqual(await periodOf('2026-10-10T03:47:00Z'), { start: '2026-10-03', end: '2026-10-09' });
+  // The stored columns say period_end = the generation day (the cron's labelling); they are not what the data covers.
+  assert.deepEqual(
+    await periodOf('2026-10-10T03:47:00Z', { period_start: '2026-10-03', period_end: '2026-10-10' }),
+    { start: '2026-10-03', end: '2026-10-09' }
+  );
+  // 13 Oct 21:30 UTC is already 14 Oct 00:30 in Riyadh: the day before is 13 Oct, not 12 Oct.
+  assert.deepEqual(await periodOf('2026-10-13T21:30:00Z'), { start: '2026-10-07', end: '2026-10-13' });
+});
+
+test('weekly: the period crosses a month and a year boundary correctly', async () => {
+  const periodOf = async (generatedAt: string, now: string) => {
+    const tables = weeklyTables();
+    tables.reports = [{ id: 'x', account_id: 'acc1', period_type: 'weekly', generated_at: generatedAt, summary_ar: 'تقرير', metrics: weeklyMetrics() }];
+    const weekly = (await loadEmailFacts(admin(tables), USER, ['weekly'], { now: new Date(now), env: NO_ADAPTIVE })).weekly;
+    return weekly && { start: weekly.periodStart, end: weekly.periodEnd };
+  };
+  // Saturday 2 Jan 2027 03:47 UTC -> covers 26 Dec .. 1 Jan.
+  assert.deepEqual(await periodOf('2027-01-02T03:47:00Z', '2027-01-03T06:00:00Z'), { start: '2026-12-26', end: '2027-01-01' });
+  // Saturday 3 Oct 2026 -> 26 Sep .. 2 Oct.
+  assert.deepEqual(await periodOf('2026-10-03T03:47:00Z', '2026-10-04T06:00:00Z'), { start: '2026-09-26', end: '2026-10-02' });
+});
+
+test('weekly: the currency comes from the report, falling back to the account', async () => {
   const tables = weeklyTables();
-  (tables.reports[0] as any).period_start = null;
-  (tables.reports[0] as any).period_end = null;
   (tables.reports[0] as any).metrics = { ...weeklyMetrics(), currency_code: 'usd' };
-  const weekly = (await load(admin(tables), ['weekly'])).weekly;
-  assert.equal(weekly?.periodEnd, '2026-10-14');
-  assert.equal(weekly?.periodStart, '2026-10-07');
-  assert.equal(weekly?.currency, 'USD');
+  assert.equal((await load(admin(tables), ['weekly'])).weekly?.currency, 'USD');
+});
+
+test('weekly: decisions waiting include approved ones that are not executed yet, same as /home', async () => {
+  const tables = weeklyTables();
+  tables.recommendations.push(
+    { id: 'r5', account_id: 'acc1', status: 'approved', severity: 'medium', title: 'وافقت عليه', category: 'ads', created_at: '2026-10-13T12:00:00Z' },
+    { id: 'r6', account_id: 'acc1', status: 'applied', severity: 'medium', title: 'نُفّذ', category: 'ads', created_at: '2026-10-13T12:00:00Z' },
+    { id: 'r8', account_id: 'acc9', status: 'approved', severity: 'medium', title: 'حساب ثاني', category: 'ads', created_at: '2026-10-13T12:00:00Z' }
+  );
+  assert.equal((await load(admin(tables), ['weekly'])).weekly?.pendingCount, 4, 'r1, r2, r3 pending + r5 approved');
+
+  const onlyApproved = weeklyTables();
+  onlyApproved.recommendations = [{ id: 'r5', account_id: 'acc1', status: 'approved', severity: 'medium', title: 'وافقت عليه', category: 'ads', created_at: '2026-10-13T12:00:00Z' }];
+  assert.equal((await load(admin(onlyApproved), ['weekly'])).weekly?.pendingCount, 1, 'an approved-only list is not "nothing waiting"');
 });
 
 test('weekly: a failed reports or decisions read makes weekly null and is logged once', async () => {

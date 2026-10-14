@@ -26,7 +26,6 @@ const FILES = [
   'lib/messaging/render.ts',
   'lib/messaging/prefs.ts',
   'lib/messaging/links.ts',
-  'lib/messaging/templates.ts',
   'lib/messaging/welcome.ts',
   'lib/messaging/opt-out.ts',
   'lib/messaging/send.ts',

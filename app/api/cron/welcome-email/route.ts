@@ -7,8 +7,14 @@ import { sendDueWelcomeEmails } from '@/lib/messaging/welcome';
 export const maxDuration = 60;
 
 /**
- * Called every minute by pg_cron (db/migrations/20261012_welcome_email_cron.sql).
- * Idempotent: message_log's unique row means a repeat call never mails twice.
+ * Safety net for the welcome mail that normally goes out right after sign-up.
+ * Meant to be called every minute (proposal: db/proposals/20261012_welcome_email_cron.sql,
+ * not part of the migrations folder; nothing is scheduled by default).
+ *
+ * Does nothing (no reads, no writes) unless EMAIL_LIFECYCLE_ENABLED=true and
+ * EMAIL_LIFECYCLE_ACTIVATED_AT has passed, and only looks at registrations from
+ * the activation moment on. Idempotent: message_log's unique row means a repeat
+ * call never mails twice.
  */
 export async function GET(req: NextRequest) {
   if (!hasValidCronAuthorization(req)) {

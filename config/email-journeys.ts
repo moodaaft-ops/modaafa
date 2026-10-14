@@ -22,6 +22,7 @@ import type { CopyKey, JourneyId } from '@/lib/lifecycle/types';
  *      time is before it is never sent, so the existing user base is not
  *      mailed retroactively; null means nobody)
  *   3. the copy is `approved: true` in lib/lifecycle/copy.ts
+ * The welcome sweep (lib/messaging/welcome.ts) obeys the same three switches.
  */
 export type Step = {
   copyKey: CopyKey;
@@ -62,7 +63,16 @@ export const JOURNEY_STEPS: Record<JourneyId, Step[]> = {
     { copyKey: 'canceled_1d', afterMinutes: 1440 },
     { copyKey: 'canceled_30d', afterMinutes: 43200, expiresAfterMinutes: day(7) },
   ],
-  past_due: [{ copyKey: 'past_due_3d', afterMinutes: 4320 }],
+  /**
+   * past_due is entered at the start of the unpaid period (current_period_start).
+   * Access to the product stays on for PAST_DUE_GRACE_MS (7 days, lib/billing/entitlements.ts)
+   * from that moment, and this mail says the subscription is stopped, so it goes out one day
+   * after the grace ends: 8 days = 11520 minutes. Before that the customer still has full
+   * access and Stripe is still retrying the card. The copy key keeps its old name
+   * (`past_due_3d`) because it is stored in message_log; tests/email-lifecycle-current-journey.test.ts
+   * pins this number to PAST_DUE_GRACE_MS.
+   */
+  past_due: [{ copyKey: 'past_due_3d', afterMinutes: 11520 }],
 };
 
 /**

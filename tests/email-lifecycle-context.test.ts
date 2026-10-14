@@ -79,7 +79,7 @@ test('loadContexts maps users, picks the newest subscription and keeps only funn
       { user_id: 'a', status: 'trialing', created_at: iso('2026-10-12T10:00'), trial_ends_at: iso('2026-10-26T10:00'), canceled_at: null, last_event_at: iso('2026-10-12T10:00') },
       // Same created_at: the later last_event_at wins.
       { user_id: 'b', status: 'trialing', created_at: iso('2026-10-12T10:00'), trial_ends_at: null, canceled_at: null, last_event_at: iso('2026-10-12T10:00') },
-      { user_id: 'b', status: 'past_due', created_at: iso('2026-10-12T10:00'), trial_ends_at: null, canceled_at: null, last_event_at: iso('2026-10-13T10:00') },
+      { user_id: 'b', status: 'past_due', created_at: iso('2026-10-12T10:00'), trial_ends_at: null, canceled_at: null, last_event_at: iso('2026-10-13T10:00'), current_period_start: iso('2026-10-11T10:00') },
     ],
   });
   const contexts = await loadContexts(admin, ['a', 'b', 'c'], NOW, { relevantTemplates: [] });
@@ -102,6 +102,9 @@ test('loadContexts maps users, picks the newest subscription and keeps only funn
   assert.equal(b.user.messagesOptOut, false, 'only a literal true opts out');
   assert.equal(b.user.emailPrefs, null, 'a non-object preference blob is ignored');
   assert.equal(b.subscription!.status, 'past_due');
+  assert.equal(b.subscription!.currentPeriodStart, iso('2026-10-11T10:00'), 'the unpaid period start is what anchors past_due');
+  assert.equal(b.subscription!.lastEventAt, iso('2026-10-13T10:00'));
+  assert.equal(a.subscription!.currentPeriodStart, null, 'a row without the column value maps to null');
 
   const c = byId.get('c')!;
   assert.equal(c.subscription, null);
@@ -251,6 +254,28 @@ test('journey candidates: only people who could still have a step due', async ()
     'trial_new',
     'trial_old',
   ]);
+});
+
+test('journey candidates: a cancel requested long ago that ended recently is still found (the anchor is the event time)', async () => {
+  const sub = (userId: string, extra: Record<string, unknown>) => ({
+    user_id: userId,
+    status: 'canceled',
+    created_at: iso('2025-10-01T10:00'),
+    trial_ends_at: null,
+    canceled_at: null,
+    last_event_at: null,
+    ...extra,
+  });
+  const admin = createFakeAdmin({
+    subscriptions: [
+      // A yearly plan: the customer asked to cancel in February and it ended three days ago.
+      sub('yearly_ended_now', { canceled_at: iso('2026-02-10T10:00'), last_event_at: iso('2026-10-11T10:00') }),
+      sub('ended_long_ago', { canceled_at: iso('2026-02-10T10:00'), last_event_at: iso('2026-03-01T10:00') }),
+    ],
+  });
+  const config = { steps: JOURNEY_STEPS, maxAttempts: MAX_SEND_ATTEMPTS };
+  const found = await findJourneyCandidateIds(admin, { now: NOW, activatedAt: ACTIVATED_AT, config, weeklyKey: null });
+  assert.deepEqual(found.sort(), ['yearly_ended_now']);
 });
 
 test('journey candidates: people who already have this week\'s report are not loaded again', async () => {

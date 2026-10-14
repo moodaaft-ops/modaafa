@@ -13,6 +13,7 @@ import {
   SEND_WINDOW,
   WEEKLY_REPORT,
 } from '../config/email-journeys';
+import { PAST_DUE_GRACE_MS } from '../lib/billing/entitlements';
 import { EMAIL_COPY } from '../lib/lifecycle/copy';
 import {
   currentJourney,
@@ -30,8 +31,11 @@ const T = {
   paid: '2026-10-09T10:00:00.000Z',
   subCreated: '2026-10-04T10:00:00.000Z',
   trialEnds: '2026-10-18T10:00:00.000Z',
+  /** Stripe's canceled_at: when the cancel was REQUESTED (cancel_at_period_end). */
   canceled: '2026-10-20T10:00:00.000Z',
+  /** The event that wrote status canceled: when the subscription really ended. */
   lastEvent: '2026-10-22T10:00:00.000Z',
+  periodStart: '2026-10-15T10:00:00.000Z',
 };
 
 const sub = (overrides: Partial<JourneySubscription>): JourneySubscription => ({
@@ -40,6 +44,7 @@ const sub = (overrides: Partial<JourneySubscription>): JourneySubscription => ({
   trialEndsAt: T.trialEnds,
   canceledAt: null,
   lastEventAt: null,
+  currentPeriodStart: null,
   ...overrides,
 });
 
@@ -61,12 +66,22 @@ const cases: Case[] = [
   { name: 'trialing wins over the stage, entered at the subscription creation', input: { stage: 'analysis_viewed', subscription: sub({ status: 'trialing' }), events }, expected: { journey: 'trial', enteredAt: T.subCreated } },
   { name: 'active has no journey (the weekly report covers them)', input: { stage: 'subscribed', subscription: sub({ status: 'active' }), events: { ...events, subscription_paid: T.paid } }, expected: null },
   { name: 'paused has no journey', input: { stage: 'subscribed', subscription: sub({ status: 'paused' }), events: { ...events, subscription_paid: T.paid } }, expected: null },
-  { name: 'past_due is entered at last_event_at', input: { stage: 'subscribed', subscription: sub({ status: 'past_due', lastEventAt: T.lastEvent }), events: { ...events, subscription_paid: T.paid } }, expected: { journey: 'past_due', enteredAt: T.lastEvent } },
-  { name: 'past_due without last_event_at falls back to created_at', input: { stage: 'subscribed', subscription: sub({ status: 'past_due', lastEventAt: null }), events: { ...events, subscription_paid: T.paid } }, expected: { journey: 'past_due', enteredAt: T.subCreated } },
-  { name: 'canceled after paying is the canceled journey, entered at canceled_at', input: { stage: 'subscribed', subscription: sub({ status: 'canceled', canceledAt: T.canceled }), events: { ...events, subscription_paid: T.paid } }, expected: { journey: 'canceled', enteredAt: T.canceled } },
-  { name: 'canceled without ever paying is trial_lapsed, entered at canceled_at', input: { stage: 'analysis_viewed', subscription: sub({ status: 'canceled', canceledAt: T.canceled }), events }, expected: { journey: 'trial_lapsed', enteredAt: T.canceled } },
+  { name: 'past_due is entered at current_period_start, not at the last Stripe event', input: { stage: 'subscribed', subscription: sub({ status: 'past_due', currentPeriodStart: T.periodStart, lastEventAt: T.lastEvent }), events: { ...events, subscription_paid: T.paid } }, expected: { journey: 'past_due', enteredAt: T.periodStart } },
+  { name: 'past_due without current_period_start falls back to last_event_at', input: { stage: 'subscribed', subscription: sub({ status: 'past_due', lastEventAt: T.lastEvent }), events: { ...events, subscription_paid: T.paid } }, expected: { journey: 'past_due', enteredAt: T.lastEvent } },
+  { name: 'past_due with neither falls back to created_at', input: { stage: 'subscribed', subscription: sub({ status: 'past_due', lastEventAt: null }), events: { ...events, subscription_paid: T.paid } }, expected: { journey: 'past_due', enteredAt: T.subCreated } },
+  { name: 'canceled after paying is entered when it became canceled (last_event_at), not when the cancel was requested', input: { stage: 'subscribed', subscription: sub({ status: 'canceled', canceledAt: T.canceled, lastEventAt: T.lastEvent }), events: { ...events, subscription_paid: T.paid } }, expected: { journey: 'canceled', enteredAt: T.lastEvent } },
+  { name: 'canceled after paying without last_event_at falls back to canceled_at', input: { stage: 'subscribed', subscription: sub({ status: 'canceled', canceledAt: T.canceled }), events: { ...events, subscription_paid: T.paid } }, expected: { journey: 'canceled', enteredAt: T.canceled } },
+  { name: 'canceled without ever paying is trial_lapsed, entered at last_event_at, not at the cancel request', input: { stage: 'analysis_viewed', subscription: sub({ status: 'canceled', canceledAt: T.canceled, lastEventAt: T.lastEvent }), events }, expected: { journey: 'trial_lapsed', enteredAt: T.lastEvent } },
+  { name: 'trial_lapsed without last_event_at: a cancel requested after the trial end is entered at canceled_at', input: { stage: 'analysis_viewed', subscription: sub({ status: 'canceled', canceledAt: T.canceled }), events }, expected: { journey: 'trial_lapsed', enteredAt: T.canceled } },
+  { name: 'trial_lapsed without last_event_at: a cancel requested during the trial is entered at trial_ends_at', input: { stage: 'analysis_viewed', subscription: sub({ status: 'canceled', canceledAt: '2026-10-10T10:00:00.000Z' }), events }, expected: { journey: 'trial_lapsed', enteredAt: T.trialEnds } },
   { name: 'trial_lapsed without canceled_at uses trial_ends_at', input: { stage: 'analysis_viewed', subscription: sub({ status: 'canceled', canceledAt: null }), events }, expected: { journey: 'trial_lapsed', enteredAt: T.trialEnds } },
   { name: 'canceled after paying but with no canceled_at has no journey (no anchor)', input: { stage: 'subscribed', subscription: sub({ status: 'canceled', canceledAt: null }), events: { ...events, subscription_paid: T.paid } }, expected: null },
+  { name: 'a lapse written right after the trial end is a trial_lapsed', input: { stage: 'analysis_viewed', subscription: sub({ status: 'canceled', canceledAt: T.subCreated, lastEventAt: '2026-10-18T10:05:00.000Z' }), events }, expected: { journey: 'trial_lapsed', enteredAt: '2026-10-18T10:05:00.000Z' } },
+  { name: 'an event stamped a few minutes before the trial end (clock skew) is still a trial_lapsed', input: { stage: 'analysis_viewed', subscription: sub({ status: 'canceled', canceledAt: T.subCreated, lastEventAt: '2026-10-18T09:50:00.000Z' }), events }, expected: { journey: 'trial_lapsed', enteredAt: '2026-10-18T09:50:00.000Z' } },
+  { name: 'a trial refused at its start (written canceled days before its trial end) has no journey', input: { stage: 'analysis_viewed', subscription: sub({ status: 'canceled', canceledAt: T.subCreated, lastEventAt: '2026-10-04T10:01:00.000Z' }), events }, expected: null },
+  { name: 'a refused trial that also got a later cancel event stays out (the event is still before the trial end)', input: { stage: 'analysis_viewed', subscription: sub({ status: 'canceled', canceledAt: '2026-10-04T10:02:00.000Z', lastEventAt: '2026-10-04T10:03:00.000Z' }), events }, expected: null },
+  { name: 'a refused trial is judged the same when only the stage says connected', input: { stage: 'connected', subscription: sub({ status: 'canceled', canceledAt: T.subCreated, lastEventAt: '2026-10-04T10:01:00.000Z' }), events }, expected: null },
+  { name: 'a paying customer who cancelled before the old trial end date is still the canceled journey', input: { stage: 'subscribed', subscription: sub({ status: 'canceled', canceledAt: T.subCreated, lastEventAt: '2026-10-10T10:00:00.000Z' }), events: { ...events, subscription_paid: T.paid } }, expected: { journey: 'canceled', enteredAt: '2026-10-10T10:00:00.000Z' } },
   { name: 'an unknown subscription status gives silence, not a stage-based guess', input: { stage: 'registered', subscription: sub({ status: 'incomplete' }), events }, expected: null },
   { name: 'a null subscription status gives silence', input: { stage: 'registered', subscription: sub({ status: null }), events }, expected: null },
   { name: 'trialing with no created_at has no journey', input: { stage: 'connected', subscription: sub({ status: 'trialing', createdAt: null }), events }, expected: null },
@@ -99,9 +114,16 @@ test('journey steps match the contract table exactly', () => {
     trial: [['trial_d1', 1440, null], ['trial_d4', 5760, null], ['trial_d9', 12960, null]],
     trial_lapsed: [['trial_lapsed_2d', 2880, null], ['trial_lapsed_14d', 20160, 7 * 1440]],
     canceled: [['canceled_1d', 1440, null], ['canceled_30d', 43200, 7 * 1440]],
-    past_due: [['past_due_3d', 4320, null]],
+    past_due: [['past_due_3d', 11520, null]],
   });
   assert.equal(DEFAULT_STEP_EXPIRY_MINUTES, 48 * 60);
+});
+
+test('past_due_3d is due the day after the access grace ends (copy key kept, the key is stored)', () => {
+  const [step] = JOURNEY_STEPS.past_due;
+  assert.equal(step!.copyKey, 'past_due_3d');
+  assert.equal(step!.afterMinutes, PAST_DUE_GRACE_MS / 60_000 + 24 * 60);
+  assert.equal(step!.afterMinutes, 8 * 24 * 60);
 });
 
 test('limits and switches match the contract, and the shipped state sends nothing', () => {

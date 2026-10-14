@@ -96,6 +96,7 @@ type SubscriptionRowRaw = {
   trial_ends_at: string | null;
   canceled_at: string | null;
   last_event_at: string | null;
+  current_period_start: string | null;
 };
 
 function toSubscription(row: SubscriptionRowRaw): JourneySubscription {
@@ -105,6 +106,7 @@ function toSubscription(row: SubscriptionRowRaw): JourneySubscription {
     trialEndsAt: row.trial_ends_at,
     canceledAt: row.canceled_at,
     lastEventAt: row.last_event_at,
+    currentPeriodStart: row.current_period_start ?? null,
   };
 }
 
@@ -163,7 +165,7 @@ export async function loadContexts(
       fetchAll<SubscriptionRowRaw>('subscriptions', (from, to) =>
         admin
           .from('subscriptions')
-          .select('user_id, status, created_at, trial_ends_at, canceled_at, last_event_at')
+          .select('user_id, status, created_at, trial_ends_at, canceled_at, last_event_at, current_period_start')
           .in('user_id', part)
           .order('id', { ascending: true })
           .range(from, to)
@@ -288,7 +290,7 @@ export async function findJourneyCandidateIds(
     Math.min(Date.parse(bound('canceled')), Date.parse(bound('trial_lapsed')))
   ).toISOString();
 
-  const [registered, connected, planReady, trialing, pastDue, canceled, canceledNoDate, weeklyAll, weeklyHandled] = await Promise.all([
+  const [registered, connected, planReady, trialing, pastDue, canceled, canceledNoDate, canceledByEvent, weeklyAll, weeklyHandled] = await Promise.all([
     eventIds('registration_completed', bound('registered')),
     eventIds('ads_account_connected', bound('connected')),
     eventIds('first_analysis_viewed', bound('plan_ready')),
@@ -297,6 +299,9 @@ export async function findJourneyCandidateIds(
     subscriptionIds('canceled subscriptions', (q) => q.eq('status', 'canceled').gte('canceled_at', canceledSince)),
     // A cancelled trial whose canceled_at was never written is dated by its trial end.
     subscriptionIds('canceled subscriptions (trial end)', (q) => q.eq('status', 'canceled').gte('trial_ends_at', canceledSince)),
+    // The journey is anchored at the event that wrote `canceled`, and canceled_at is only when the cancel was
+    // requested (a yearly plan can have asked months before it ended), so the event time is read as well.
+    subscriptionIds('canceled subscriptions (event time)', (q) => q.eq('status', 'canceled').gte('last_event_at', canceledSince)),
     args.weeklyKey
       ? subscriptionIds('subscribers', (q) => q.in('status', ['trialing', 'active']))
       : Promise.resolve([] as Array<{ user_id: string }>),
@@ -304,7 +309,7 @@ export async function findJourneyCandidateIds(
   ]);
 
   const ids = new Set<string>();
-  for (const list of [registered, connected, planReady, trialing, pastDue, canceled, canceledNoDate]) {
+  for (const list of [registered, connected, planReady, trialing, pastDue, canceled, canceledNoDate, canceledByEvent]) {
     for (const row of list) ids.add(row.user_id);
   }
   for (const row of weeklyAll) {

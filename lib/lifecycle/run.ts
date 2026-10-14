@@ -262,7 +262,17 @@ export async function runEmailLifecycle(options: LifecycleRunOptions): Promise<L
     }
     const ctx = freshByUser.get(planned.userId);
     const result = ctx
-      ? await deliver({ admin, planned, ctx, copy: copy[planned.copyKey], now, sendTemplate, loadFacts, sendTemplateDeps: options.deps?.sendTemplateDeps })
+      ? await deliver({
+          admin,
+          planned,
+          ctx,
+          copy: copy[planned.copyKey],
+          now,
+          sendTemplate,
+          loadFacts,
+          sendTemplateDeps: options.deps?.sendTemplateDeps,
+          weeklyWindowOpen: slot !== null,
+        })
       : 'skipped:user_gone';
     summary.results.push({ userId: planned.userId, templateKey: planned.templateKey, result });
     if (result === 'not_configured') {
@@ -395,6 +405,8 @@ async function deliver(args: {
   sendTemplate: SendTemplateFn;
   loadFacts: LoadEmailFactsFn;
   sendTemplateDeps?: object;
+  /** True while the weekly report slot is open (the report may still be written by the optimize cron). */
+  weeklyWindowOpen: boolean;
 }): Promise<string> {
   const { admin, planned, ctx, copy, now } = args;
   const user = ctx.user;
@@ -409,6 +421,11 @@ async function deliver(args: {
   }
 
   const missing = needs.filter((need) => facts[need] == null);
+  // The weekly report is written by a different job (the hourly optimize cron, once per account per Saudi week),
+  // so "no report yet" is "not yet", not "never". Recording missing_facts here would settle the week's message
+  // for good before the report exists. Leave it unclaimed (no message_log row) and let the next run try again;
+  // the planner stops offering it when the slot's window closes.
+  if (planned.kind === 'weekly' && missing.includes('weekly') && args.weeklyWindowOpen) return 'skipped:weekly_pending';
   if (missing.length > 0) return recordSkip(admin, planned, copy, `missing_facts:${missing.join(',')}`, now);
 
   // The copy may decide the facts make the message pointless; that is final too.

@@ -1,13 +1,10 @@
 import { createAdminClient } from '@/lib/supabase/server';
 import { isEmailConfigured, sendEmail, type EmailTag } from '@/lib/notifications/email';
 import type { EmailCopy, EmailFacts } from '@/lib/lifecycle/types';
-import { TEMPLATES, type TemplateId } from './templates';
 import { isValidTemplateKey } from './links';
 import { signingConfigured } from './opt-out';
 import { isCategoryOn, loadPrefsRow, normalizePrefs } from './prefs';
 import { renderTemplate } from './render';
-
-export type Channel = 'email' | 'whatsapp';
 
 export type SendUser = {
   id: string;
@@ -16,16 +13,12 @@ export type SendUser = {
   messages_opt_out?: boolean | null;
 };
 
-export type SendResult =
+export type SendTemplateResult =
   | { status: 'sent'; providerId?: string }
   | { status: 'duplicate' }
   | { status: 'skipped'; reason: string }
   | { status: 'failed'; reason: string }
-  | { status: 'not_configured' }
-  | { status: 'channel_unsupported' };
-
-/** Every outcome except the one that only `send` can produce. */
-export type SendTemplateResult = Exclude<SendResult, { status: 'channel_unsupported' }>;
+  | { status: 'not_configured' };
 
 export type SendDeps = {
   supabase?: any;
@@ -130,8 +123,10 @@ async function recordSentEvent(supabase: any, userId: string, template: string, 
 }
 
 /**
- * Sends a claimed message and records the outcome. Shared by `send` (the
- * welcome mail of PR #81) and `sendTemplate` (everything in the lifecycle).
+ * Sends a claimed message and records the outcome. The one delivery step
+ * behind `sendTemplate`, which every mail goes through: the welcome, the
+ * lifecycle journeys, the weekly report, broadcasts and the Stripe mail.
+ * There is no second send path that could skip the switches.
  */
 async function deliverClaimed(args: {
   supabase: any;
@@ -175,68 +170,6 @@ async function deliverClaimed(args: {
   await finish({ status: 'sent', sent_at: now, provider_id: providerId ?? null, reason: null });
   if (sentEvent) await recordSentEvent(supabase, user.id, template, providerId);
   return { status: 'sent', providerId };
-}
-
-/**
- * The welcome mail of PR #81, rendered by lib/messaging/templates.ts.
- *
- * Adding WhatsApp later means adding a branch for the channel in this function;
- * claiming, opt-out, logging and the funnel event all stay as they are. The
- * lifecycle mail does not come through here: it uses `sendTemplate`.
- */
-export async function send(
-  channel: Channel,
-  template: TemplateId,
-  user: SendUser,
-  deps: SendDeps = {}
-): Promise<SendResult> {
-  const def = TEMPLATES[template];
-  if (!def) return { status: 'failed', reason: 'unknown_template' };
-  if (channel !== 'email') return { status: 'channel_unsupported' };
-
-  const emailConfigured = deps.emailConfigured ?? isEmailConfigured;
-  if (!emailConfigured()) return { status: 'not_configured' };
-
-  const supabase = deps.supabase ?? createAdminClient();
-  const now = (deps.now ?? (() => new Date()))().toISOString();
-
-  const rendered = def.renderEmail(user);
-  if (!rendered) return { status: 'failed', reason: 'unsubscribe_secret_missing' };
-
-  if (def.dailyLimit) {
-    const since = new Date(new Date(now).getTime() - GAP_MS).toISOString();
-    const { data: recent, error: recentError } = await supabase
-      .from('message_log')
-      .select('id')
-      .eq('user_id', user.id)
-      .eq('status', 'sent')
-      .gte('sent_at', since)
-      .limit(1)
-      .maybeSingle();
-    // If the log cannot be read the limit cannot be proven, so nothing goes
-    // out. A missed follow-up costs less than a double one.
-    if (recentError) return { status: 'failed', reason: 'daily_limit_lookup_failed' };
-    if (recent) return { status: 'skipped', reason: 'daily_limit' };
-  }
-
-  const claimed = await claim(supabase, user.id, template);
-  if (!claimed.ok) return claimed.result;
-
-  if (user.messages_opt_out) {
-    await outcomeWriter(supabase, now, user.id, template, null)({ status: 'skipped', reason: 'opted_out' });
-    return { status: 'skipped', reason: 'opted_out' };
-  }
-
-  return deliverClaimed({
-    supabase,
-    now,
-    user,
-    template,
-    outgoing: { subject: rendered.subject, html: rendered.html, footer: rendered.footer, headers: rendered.headers },
-    sender: deps.sendEmail ?? sendEmail,
-    columns: null,
-    sentEvent: def.sentEvent,
-  });
 }
 
 export type SendTemplateInput = {

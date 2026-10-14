@@ -6,8 +6,10 @@ import { isHoldout } from '../lib/lifecycle/holdout';
 import {
   isInSendWindow,
   isoWeekOf,
+  riyadhDay,
   riyadhHour,
   riyadhWeekday,
+  saudiWeekStart,
   weeklyReportSlot,
 } from '../lib/lifecycle/riyadh';
 import { riyadh } from './support/lifecycle';
@@ -109,4 +111,30 @@ test('holdout is stable and close to the configured share', () => {
   }
   const share = held / total;
   assert.ok(share > 0.08 && share < 0.12, `held-out share ${share}`);
+});
+
+test('riyadhDay is the calendar day on a Riyadh clock', () => {
+  assert.equal(riyadhDay(new Date('2026-10-13T20:59:59Z')), '2026-10-13');
+  assert.equal(riyadhDay(new Date('2026-10-13T21:00:00Z')), '2026-10-14', '21:00 UTC is midnight in Riyadh');
+  assert.equal(riyadhDay(new Date('2026-12-31T21:00:00Z')), '2027-01-01');
+});
+
+test('saudiWeekStart is the Saturday 00:00 UTC the optimize cron dedupes its weekly report on', () => {
+  const cases: Array<[string, string]> = [
+    ['2026-10-10T00:00:00Z', '2026-10-10T00:00:00.000Z'], // Saturday, first instant
+    ['2026-10-09T23:59:59Z', '2026-10-03T00:00:00.000Z'], // Friday night is still the previous week
+    ['2026-10-11T06:00:00Z', '2026-10-10T00:00:00.000Z'], // Sunday: the weekly slot is 06:00 UTC
+    ['2026-10-14T10:00:00Z', '2026-10-10T00:00:00.000Z'], // Wednesday
+    ['2026-10-16T12:00:00Z', '2026-10-10T00:00:00.000Z'], // Friday
+    ['2027-01-01T05:00:00Z', '2026-12-26T00:00:00.000Z'], // across the year
+  ];
+  for (const [instant, expected] of cases) assert.equal(saudiWeekStart(new Date(instant)).toISOString(), expected, instant);
+});
+
+test('the whole open weekly window sits inside one Saudi week, so one report cut-off fits every run in it', () => {
+  const slotStart = riyadh('2026-10-18T09:00');
+  const slot = weeklyReportSlot(slotStart)!;
+  const weekStart = saudiWeekStart(slotStart).getTime();
+  assert.equal(saudiWeekStart(new Date(slot.expiresAt.getTime() - 1)).getTime(), weekStart);
+  assert.ok(weekStart < slot.dueAt.getTime(), 'the report is normally written before the slot opens');
 });

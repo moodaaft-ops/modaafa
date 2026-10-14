@@ -1,7 +1,8 @@
 import { NextRequest } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/server';
-import { verifyTrackedLink } from '@/lib/messaging/links';
+import { absoluteClickTarget, verifyTrackedLink } from '@/lib/messaging/links';
 import { recordClick } from '@/lib/messaging/click';
+import { appBaseUrl } from '@/lib/messaging/opt-out';
 
 /**
  * Click tracking for the buttons in our emails.
@@ -10,8 +11,10 @@ import { recordClick } from '@/lib/messaging/click';
  *
  * The signature covers all three values, so the only paths this can send
  * anyone to are ones one of our own emails carried, and always on our own
- * origin (the Location header is a relative path, never a host). Anything that
- * does not verify goes to the home page.
+ * origin: the Location is the absolute app address built with
+ * new URL(target, appBaseUrl()), and it is used only if its origin is exactly
+ * the app's origin. Anything that does not verify, or does not resolve to our
+ * origin, goes to the home page.
  *
  * The first click stamps message_log.clicked_at and every click bumps
  * click_count. Recording is best effort: the redirect never waits on it
@@ -31,6 +34,11 @@ function resolve(req: NextRequest) {
   return verifyTrackedLink({ u: q.get('u'), k: q.get('k'), p: q.get('p'), s: q.get('s') });
 }
 
+/** Where a verified click goes: the target on the app's own origin, or "/" when that cannot be proven. */
+function destination(target: string) {
+  return absoluteClickTarget(target, appBaseUrl()) ?? '/';
+}
+
 export async function GET(req: NextRequest) {
   const click = resolve(req);
   if (!click) return redirectTo('/');
@@ -40,10 +48,10 @@ export async function GET(req: NextRequest) {
   } catch (error) {
     console.error('email click not recorded', { template: click.templateKey, error });
   }
-  return redirectTo(click.target);
+  return redirectTo(destination(click.target));
 }
 
 export function HEAD(req: NextRequest) {
   const click = resolve(req);
-  return redirectTo(click ? click.target : '/');
+  return redirectTo(click ? destination(click.target) : '/');
 }

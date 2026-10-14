@@ -209,12 +209,71 @@ test('each journey sends its own steps: plan_ready, trial, trial_lapsed, cancele
     ['trial', makeCtx({ user: { stage: 'analysis_viewed' }, subscription: sub('trialing', { createdAt: riyadh('2026-10-13T10:00').toISOString() }) }), riyadh('2026-10-14T12:00'), 'trial_d1'],
     ['trial_lapsed', makeCtx({ user: { stage: 'analysis_viewed' }, subscription: sub('canceled', { canceledAt: riyadh('2026-10-10T10:00').toISOString() }) }), riyadh('2026-10-12T12:00'), 'trial_lapsed_2d'],
     ['canceled', makeCtx({ user: { stage: 'subscribed' }, subscription: sub('canceled', { canceledAt: riyadh('2026-10-10T10:00').toISOString() }), events: { subscription_paid: riyadh('2026-10-05T10:00').toISOString() } }), riyadh('2026-10-11T12:00'), 'canceled_1d'],
-    ['past_due', makeCtx({ user: { stage: 'subscribed' }, subscription: sub('past_due', { lastEventAt: riyadh('2026-10-10T10:00').toISOString() }), events: { subscription_paid: riyadh('2026-10-05T10:00').toISOString() } }), riyadh('2026-10-13T12:00'), 'past_due_3d'],
+    // The unpaid period started Mon 5 Oct; access ends after 7 days and the mail is due a day later (Tue 13 Oct 10:00).
+    ['past_due', makeCtx({ user: { stage: 'subscribed' }, subscription: sub('past_due', { currentPeriodStart: riyadh('2026-10-05T10:00').toISOString(), lastEventAt: riyadh('2026-10-12T10:00').toISOString() }), events: { subscription_paid: riyadh('2026-10-01T10:00').toISOString() } }), riyadh('2026-10-13T12:00'), 'past_due_3d'],
   ];
   for (const [journey, ctx, now, expected] of cases) {
     const result = plan([ctx], now);
     assert.deepEqual(keys(result), [`u1:${expected}`], journey);
     assert.equal(result.sends[0]!.journey, journey);
+  }
+});
+
+test('past_due_3d is due 8 days after the unpaid period started, and a later Stripe retry never moves it', () => {
+  const periodStart = riyadh('2026-10-05T10:00');
+  const pastDue = (lastEventAt: string) =>
+    makeCtx({
+      user: { stage: 'subscribed' },
+      subscription: { status: 'past_due', createdAt: riyadh('2026-09-01T10:00').toISOString(), currentPeriodStart: periodStart.toISOString(), lastEventAt },
+      events: { subscription_paid: riyadh('2026-09-02T10:00').toISOString() },
+    });
+  // Each retry of the card bumps last_event_at. The mail time must not follow it.
+  for (const retryAt of ['2026-10-05T10:05', '2026-10-08T10:00', '2026-10-11T10:00', '2026-10-12T10:00']) {
+    const ctx = pastDue(riyadh(retryAt).toISOString());
+    // The access grace (7 days) is still running on Mon 12 Oct 12:00: nothing yet.
+    assert.deepEqual(keys(plan([ctx], riyadh('2026-10-12T12:00'))), [], retryAt);
+    // Due exactly 8 days after the period start.
+    assert.deepEqual(keys(plan([ctx], riyadh('2026-10-13T09:59'))), [], retryAt);
+    const result = plan([ctx], riyadh('2026-10-13T10:00'));
+    assert.deepEqual(keys(result), ['u1:past_due_3d'], retryAt);
+    assert.equal(result.sends[0]!.dueAt, new Date(periodStart.getTime() + 8 * 24 * 60 * 60 * 1000).toISOString());
+  }
+});
+
+test('trial_lapsed and canceled are due after the subscription ended, not after the cancel request', () => {
+  const requested = riyadh('2026-10-02T10:00').toISOString();
+  const ended = riyadh('2026-10-10T10:00').toISOString();
+  const lapsed = makeCtx({
+    user: { stage: 'analysis_viewed' },
+    subscription: { status: 'canceled', createdAt: riyadh('2026-09-26T10:00').toISOString(), trialEndsAt: ended, canceledAt: requested, lastEventAt: ended },
+  });
+  const canceled = makeCtx({
+    user: { id: 'u2', stage: 'subscribed' },
+    subscription: { status: 'canceled', createdAt: riyadh('2026-08-01T10:00').toISOString(), canceledAt: requested, lastEventAt: ended },
+    events: { subscription_paid: riyadh('2026-08-02T10:00').toISOString() },
+  });
+  // Two days after the request, one after: the old anchor would already have sent both.
+  assert.deepEqual(keys(plan([lapsed, canceled], riyadh('2026-10-11T09:00'))), []);
+  assert.deepEqual(keys(plan([lapsed, canceled], riyadh('2026-10-11T10:00'))), ['u2:canceled_1d']);
+  assert.deepEqual(keys(plan([lapsed, canceled], riyadh('2026-10-12T10:00'))), ['u2:canceled_1d', 'u1:trial_lapsed_2d']);
+});
+
+test('a trial refused at its start (card or ads account already used) gets no trial_lapsed mail', () => {
+  const refused = makeCtx({
+    user: { stage: 'analysis_viewed' },
+    subscription: {
+      status: 'canceled',
+      createdAt: riyadh('2026-10-01T10:00').toISOString(),
+      trialEndsAt: riyadh('2026-10-15T10:00').toISOString(),
+      canceledAt: riyadh('2026-10-01T10:00').toISOString(),
+      lastEventAt: riyadh('2026-10-01T10:01').toISOString(),
+    },
+  });
+  for (const now of ['2026-10-04T12:00', '2026-10-10T12:00', '2026-10-16T12:00']) {
+    const result = plan([refused], riyadh(now));
+    assert.deepEqual(result.sends, [], now);
+    assert.deepEqual(result.skips, [], 'nothing is recorded for them either');
+    assert.equal(result.ignored.no_journey, 1);
   }
 });
 
@@ -385,7 +444,7 @@ test('holdout: held-out users get no journey mail and nothing is recorded for th
 test('holdout does not apply to past_due', () => {
   const ctx = makeCtx({
     user: { id: 'held', stage: 'subscribed' },
-    subscription: { status: 'past_due', createdAt: riyadh('2026-10-01T10:00').toISOString(), lastEventAt: riyadh('2026-10-10T10:00').toISOString() },
+    subscription: { status: 'past_due', createdAt: riyadh('2026-10-01T10:00').toISOString(), currentPeriodStart: riyadh('2026-10-05T10:00').toISOString() },
     events: { subscription_paid: riyadh('2026-10-02T10:00').toISOString() },
   });
   assert.deepEqual(keys(plan([ctx], riyadh('2026-10-13T12:00'), { isHeldOut: () => true })), ['held:past_due_3d']);

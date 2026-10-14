@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import test from 'node:test';
 import { NextRequest } from 'next/server';
-import { isSafeInternalPath, trackedUrl, verifyTrackedLink, withUtm } from '../lib/messaging/links';
+import { absoluteClickTarget, isSafeInternalPath, trackedUrl, verifyTrackedLink, withUtm } from '../lib/messaging/links';
 import { buildOptOutUrl, verifyOptOutToken } from '../lib/messaging/opt-out';
 import { buildPreferencesUrl, verifyPreferencesToken } from '../lib/messaging/prefs';
 import { recordClick } from '../lib/messaging/click';
@@ -131,8 +131,24 @@ const UNSAFE_PATHS = [
   '/%0a/evil.com',
   '/%E0%A4%A',
   '/home\\..\\evil',
+  // The URL parser removes dot segments, which leaves "//evil.com" behind.
+  '/.//evil.com',
+  '/./\\/evil.com',
+  '/a/..//evil.com',
+  '/a/b/../..//evil.com',
+  '/%2e//evil.com',
+  '/%2E//evil.com',
+  '/.%2e//evil.com',
+  '/a/%2e%2e//evil.com',
+  '/%252e//evil.com',
+  '/%5c%5cevil.com',
+  '/%5C%5Cevil.com',
+  '/..%2f..%2f/evil.com',
   '/a'.padEnd(700, 'a'),
 ];
+
+/** The payloads a signed link could be minted for if the secret ever leaked, or the path rule were bypassed. */
+const REDIRECT_PAYLOADS = UNSAFE_PATHS.filter((path) => path.length > 0 && path.length < 100);
 
 test('isSafeInternalPath refuses every shape of off-site or malformed target', () => {
   for (const path of UNSAFE_PATHS) {
@@ -171,7 +187,7 @@ function clickRequest(query: Record<string, string>, method = 'GET') {
   return new NextRequest(url, { method });
 }
 
-test('/m/c redirects a valid link to the relative target with utm and never to another host', () =>
+test('/m/c redirects a valid link to the absolute app address with utm and never to another host', () =>
   withEnv(env, async () => {
     const p = paramsOf(trackedUrl(USER_ID, 'registered_1d', '/onboarding/connect')!);
     const log = console.error;
@@ -181,7 +197,7 @@ test('/m/c redirects a valid link to the relative target with utm and never to a
       assert.equal(res.status, 302);
       assert.equal(
         res.headers.get('location'),
-        '/onboarding/connect?utm_source=email&utm_medium=lifecycle&utm_campaign=registered_1d'
+        'https://ai.modaafa.com/onboarding/connect?utm_source=email&utm_medium=lifecycle&utm_campaign=registered_1d'
       );
       assert.equal(res.headers.get('cache-control'), 'no-store');
     } finally {
@@ -220,12 +236,65 @@ test('/m/c: even a signature made by us for an off-site path is refused at verif
     }
   }));
 
+function forgedSignature(path: string) {
+  return createHmac('sha256', 'test-secret-value').update(`email_click:${USER_ID}:registered_1d:${path}`).digest('base64url');
+}
+
+test('dot-segment payloads that normalise to //evil.com are refused even with a valid signature', () =>
+  withEnv(env, () => {
+    for (const path of ['/.//evil.com', '/a/..//evil.com', '/%2e//evil.com']) {
+      assert.equal(isSafeInternalPath(path), false, path);
+      assert.equal(withUtm(path, 'registered_1d'), null, path);
+      assert.equal(trackedUrl(USER_ID, 'registered_1d', path), null, path);
+      assert.equal(
+        verifyTrackedLink({ u: USER_ID, k: 'registered_1d', p: path, s: forgedSignature(path) }),
+        null,
+        path
+      );
+    }
+  }));
+
+test('/m/c never sends a validly signed dot-segment, encoded-slash or tab payload off our origin', () =>
+  withEnv(env, async () => {
+    const payloads = [
+      '/.//evil.com',
+      '/a/..//evil.com',
+      '/%2e//evil.com',
+      '/%5c%5cevil.com',
+      '/\t/evil.com',
+      '/..%2f..%2f/evil.com',
+      ...REDIRECT_PAYLOADS,
+    ];
+    for (const path of payloads) {
+      for (const method of ['GET', 'HEAD']) {
+        const query = { u: USER_ID, k: 'registered_1d', p: path, s: forgedSignature(path) };
+        const res = method === 'GET' ? await clickGet(clickRequest(query)) : await clickHead(clickRequest(query, 'HEAD'));
+        assert.equal(res.status, 302);
+        const location = res.headers.get('location')!;
+        assert.equal(location, '/', `${method} ${JSON.stringify(path)}`);
+        assert.doesNotMatch(location, /evil/);
+        // Whatever the browser does with it, it stays on the app's own origin.
+        assert.equal(new URL(location, 'https://ai.modaafa.com').origin, 'https://ai.modaafa.com');
+      }
+    }
+  }));
+
+test('absoluteClickTarget keeps the app origin and refuses anything that resolves elsewhere', () => {
+  const base = 'https://ai.modaafa.com';
+  assert.equal(absoluteClickTarget('/home?utm_source=email', base), 'https://ai.modaafa.com/home?utm_source=email');
+  assert.equal(absoluteClickTarget('/home', 'https://ai.modaafa.com/ignored/path'), 'https://ai.modaafa.com/home');
+  for (const target of ['//evil.com?x=1', '/\\evil.com', 'https://evil.com/x', '/.//evil.com', 'javascript:alert(1)']) {
+    assert.equal(absoluteClickTarget(target, base), null, target);
+  }
+  assert.equal(absoluteClickTarget('/home', 'not a url'), null);
+});
+
 test('/m/c answers HEAD with the same redirect and records nothing', () =>
   withEnv(env, async () => {
     const p = paramsOf(trackedUrl(USER_ID, 'registered_1d', '/home')!);
     const res = await clickHead(clickRequest({ u: p.u!, k: p.k!, p: p.p!, s: p.s! }, 'HEAD'));
     assert.equal(res.status, 302);
-    assert.match(res.headers.get('location')!, /^\/home\?utm_source=email/);
+    assert.match(res.headers.get('location')!, /^https:\/\/ai\.modaafa\.com\/home\?utm_source=email/);
   }));
 
 test('recordClick stamps the first click, counts every click and ignores unlogged mail', async () => {

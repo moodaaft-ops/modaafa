@@ -38,7 +38,7 @@ export function makeCtx(args: {
   const subscription =
     args.subscription === null || args.subscription === undefined
       ? null
-      : { status: 'trialing', createdAt: null, trialEndsAt: null, canceledAt: null, lastEventAt: null, ...args.subscription };
+      : { status: 'trialing', createdAt: null, trialEndsAt: null, canceledAt: null, lastEventAt: null, currentPeriodStart: null, ...args.subscription };
   return {
     user: makeUser(args.user),
     subscription,

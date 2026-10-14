@@ -89,13 +89,13 @@ test('migrations that call production or schedule jobs are detected', () => {
   assert.equal(productionCallReason(`create table t(id int);`), null);
 });
 
-test('the real migrations skip exactly the two pg_cron scheduler files today', () => {
+test('the real migrations skip exactly the pg_cron scheduler today', () => {
   const dir = resolve(process.cwd(), 'db/migrations');
   const files = readdirSync(dir)
     .filter((name) => name.endsWith('.sql'))
     .map((name) => ({ name, sql: readFileSync(resolve(dir, name), 'utf8') }));
   const skipped = selectSkippedMigrations(files).map((item) => item.name);
-  assert.deepEqual(skipped, ['20261005_pg_cron_scheduler.sql', '20261012_welcome_email_cron.sql']);
+  assert.deepEqual(skipped, ['20261005_pg_cron_scheduler.sql']);
 });
 
 test('db/schema.sql itself does not call production', () => {

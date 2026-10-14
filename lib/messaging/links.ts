@@ -32,10 +32,39 @@ function looksLikeAuthority(value: string) {
   return /^[/\\]{2}/.test(value) || value.startsWith('/\\');
 }
 
+const PARSE_BASE = 'https://local.modaafa.invalid';
+
+/**
+ * The pathname the URL parser ends up with, or null when it leaves our origin.
+ * The parser removes dot segments (also "%2e"), so "/.//evil.com",
+ * "/a/..//evil.com" and "/%2e//evil.com" all come out as "//evil.com", which a
+ * browser reads as another host. A path is only safe if the FINAL pathname is
+ * still a plain path on our own origin.
+ */
+function normalisedPathname(path: string): string | null {
+  try {
+    const parsed = new URL(path, PARSE_BASE);
+    if (parsed.origin !== PARSE_BASE) return null;
+    return parsed.pathname;
+  } catch {
+    return null;
+  }
+}
+
+function pathnameStaysOnOrigin(pathname: string | null): pathname is string {
+  if (pathname === null) return false;
+  if (!pathname.startsWith('/')) return false;
+  if (pathname.startsWith('//') || pathname.startsWith('/\\')) return false;
+  return !pathname.includes('\\');
+}
+
 /**
  * A path that stays on our own origin: starts with one "/", no scheme, no host,
  * no backslash, no control characters, also after one round of percent
- * decoding (so "/%2F/evil.com" and "/%5Cevil.com" are refused too).
+ * decoding (so "/%2F/evil.com" and "/%5Cevil.com" are refused too), and still a
+ * plain path after the URL parser has normalised it (so "/.//evil.com",
+ * "/a/..//evil.com" and "/%2e//evil.com" are refused, as is any of them
+ * hidden behind one more layer of encoding).
  */
 export function isSafeInternalPath(path: unknown): path is string {
   if (typeof path !== 'string') return false;
@@ -52,13 +81,7 @@ export function isSafeInternalPath(path: unknown): path is string {
     if (hasControlOrSpace(form)) return false;
     if (form.includes('\\')) return false;
     if (looksLikeAuthority(form)) return false;
-  }
-
-  try {
-    const parsed = new URL(path, 'https://local.modaafa.invalid');
-    if (parsed.origin !== 'https://local.modaafa.invalid') return false;
-  } catch {
-    return false;
+    if (!pathnameStaysOnOrigin(normalisedPathname(form))) return false;
   }
   return true;
 }
@@ -66,11 +89,31 @@ export function isSafeInternalPath(path: unknown): path is string {
 /** The path with the tracking parameters set (existing utm_* on the path are replaced). */
 export function withUtm(path: string, templateKey: string): string | null {
   if (!isSafeInternalPath(path) || !isValidTemplateKey(templateKey)) return null;
-  const parsed = new URL(path, 'https://local.modaafa.invalid');
+  const parsed = new URL(path, PARSE_BASE);
   parsed.searchParams.set('utm_source', TRACKING_UTM.source);
   parsed.searchParams.set('utm_medium', TRACKING_UTM.medium);
   parsed.searchParams.set('utm_campaign', templateKey);
-  return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  const target = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  // The last word is the finished string, the one that goes into the Location header.
+  if (!pathnameStaysOnOrigin(normalisedPathname(target))) return null;
+  return target;
+}
+
+/**
+ * The absolute address a verified click redirects to: the app's own origin plus
+ * the internal target. Null unless the result is on exactly that origin, so a
+ * target that somehow carried a host can never become a redirect to it.
+ */
+export function absoluteClickTarget(target: string, base: string): string | null {
+  try {
+    const baseUrl = new URL(base);
+    const resolved = new URL(target, baseUrl);
+    if (resolved.origin !== baseUrl.origin) return null;
+    if (!pathnameStaysOnOrigin(resolved.pathname)) return null;
+    return resolved.href;
+  } catch {
+    return null;
+  }
 }
 
 function clickPayload(userId: string, templateKey: string, path: string) {

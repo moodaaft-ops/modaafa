@@ -1,15 +1,28 @@
 -- Every-minute trigger for the welcome email sweep - 2026-10-12
 --
--- Run AFTER 20261012_welcome_email.sql and ONLY if the Vault secret
+-- PROPOSAL, NOT A MIGRATION. It schedules a job that calls production, so it
+-- lives in db/proposals/ and is never run by the migrations folder. Run it by
+-- hand, once, at the same moment as db/proposals/20261014_email_lifecycle_cron.sql
+-- (step 7 of the activation order in that file), and only if the Vault secret
 -- "modaafa_cron_secret" already exists (same prerequisite as
--- 20261005_pg_cron_scheduler.sql). The GitHub schedule cannot fire every
--- minute, so without this job the email still goes out through the Google
--- sign-in hook but a plain email sign-up would wait for a manual call.
+-- 20261005_pg_cron_scheduler.sql). Run AFTER 20261012_welcome_email.sql.
+--
+-- The sweep is only the safety net: the welcome email normally goes out right
+-- after a registration completes (lib/lifecycle/welcome.ts). The GitHub
+-- schedule cannot fire every minute, so without this job a welcome that failed
+-- to send in that moment would wait for a manual call.
+--
+-- Scheduling it does not switch anything on. The endpoint does nothing (no
+-- read, no write) until EMAIL_LIFECYCLE_ENABLED=true, EMAIL_LIFECYCLE_ACTIVATED_AT
+-- (config/email-journeys.ts) has passed and the welcome copy is approved, and it
+-- only ever looks at registrations from the activation moment on.
 --
 -- The endpoint is safe to call as often as you like: message_log has a unique
 -- (user, channel, template) row, so a repeat call never sends twice.
 --
 -- Idempotent: the job is unscheduled first, then recreated.
+--
+-- Stop it any time:  select cron.unschedule('modaafa-welcome-email');
 
 do $$
 begin

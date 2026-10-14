@@ -1,6 +1,6 @@
 import { partitionGoogleAdsAccounts, pickSelectedAdsAccount, type AdsAccountSummary } from '@/lib/accounts/selection';
 import { googleAdsAccountNameMissing } from '@/lib/accounts/display';
-import { PLAN_DECISION_LIMIT, toPlanRecommendations } from '@/lib/plan/load';
+import { OPEN_DECISION_STATUSES, PLAN_DECISION_LIMIT, toPlanRecommendations } from '@/lib/plan/load';
 import { buildPlan, type PlanAuditRow } from '@/lib/plan/plan';
 import { isAdaptiveOnboarding } from '@/lib/setup/adaptive/flag';
 import { adaptiveLockedPlan } from '@/lib/setup/adaptive/locked-plan';
@@ -15,6 +15,7 @@ import {
   type WeeklyFacts,
 } from './types';
 import { firstNameOf, highlightsFrom } from './facts/text';
+import { riyadhDay, saudiWeekStart } from './riyadh';
 
 /**
  * The data an email is allowed to say, read fresh at send time.
@@ -39,9 +40,11 @@ import { firstNameOf, highlightsFrom } from './facts/text';
  *   google_ads_accounts   id, customer_id, customer_name, currency_code, status, is_manager
  *   audits, recommendations   the same two reads lib/plan/load.loadPlan makes
  *   subscriptions         plan, status, trial_ends_at, created_at   -> trial, billing
- *   recommendations       status = 'pending'                        -> pendingCount
+ *   recommendations       status in OPEN_DECISION_STATUSES          -> pendingCount (pending + approved-not-executed,
+ *                                                                          the rows /home lists as waiting)
  *   ai_actions            action_type = 'approval_queued'           -> approvedCount
- *   reports               metrics.kind = 'weekly_performance'       -> weekly
+ *   reports               metrics.kind = 'weekly_performance'       -> weekly (only one generated in the current Saudi
+ *                                                                          week, see saudiWeekStart)
  *   users                 email (only when the adaptive onboarding may be on)
  */
 export type LoadFactsOptions = {
@@ -52,8 +55,6 @@ export type LoadFactsOptions = {
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-/** A weekly report is "this week's" while it is at most this old. */
-export const WEEKLY_REPORT_MAX_AGE_DAYS = 8;
 const BUSINESS_NAME_MAX = 120;
 const LIST_LIMIT = 1000;
 
@@ -95,8 +96,6 @@ type ReportMetrics = {
 };
 
 type ReportRow = {
-  period_start?: string | null;
-  period_end?: string | null;
   summary_ar?: string | null;
   generated_at?: string | null;
   metrics?: ReportMetrics | null;
@@ -248,8 +247,14 @@ async function load(
     if (!account) return Promise.resolve<Read<number>>({ ok: true, data: 0 });
     if (!pendingPromise) {
       const accountId = account.id;
+      // Same statuses /home lists as waiting: undecided AND approved-but-not-executed ones.
       pendingPromise = read<IdRow[]>('recommendations_pending', () =>
-        admin.from('recommendations').select('id').eq('account_id', accountId).eq('status', 'pending').limit(LIST_LIMIT)
+        admin
+          .from('recommendations')
+          .select('id')
+          .eq('account_id', accountId)
+          .in('status', [...OPEN_DECISION_STATUSES])
+          .limit(LIST_LIMIT)
       ).then((res): Read<number> => (res.ok ? { ok: true, data: (res.data ?? []).length } : { ok: false }));
     }
     return pendingPromise;
@@ -338,20 +343,23 @@ async function load(
     }
 
     const endsAt = validIso(trialRow.trial_ends_at);
-    // Whole days left, rounded down. Riyadh is a fixed UTC+3 with no daylight saving, so elapsed time is exact.
-    const daysLeft = endsAt ? Math.max(0, Math.floor((Date.parse(endsAt) - now.getTime()) / DAY_MS)) : null;
+    // Whole days remaining, rounded UP: 9 days 22 hours left is "10 days", the last partial day still counts, and
+    // an ended trial is 0 (never negative). Riyadh is a fixed UTC+3 with no daylight saving, so elapsed time is exact.
+    const daysLeft = endsAt ? Math.max(0, Math.ceil((Date.parse(endsAt) - now.getTime()) / DAY_MS)) : null;
     return { startedAt, endsAt, daysLeft, approvedCount, pendingCount: pending };
   };
 
   const weeklyTask = async (): Promise<WeeklyFacts | null> => {
     if (!wantWeekly || !account) return null;
     const accountId = account.id;
-    const since = new Date(now.getTime() - WEEKLY_REPORT_MAX_AGE_DAYS * DAY_MS).toISOString();
+    // Only this Saudi week's report: the optimize cron writes one per account per week (Saturday 00:00 UTC
+    // onward), so an older one is last week's numbers and must not go out under this week's subject.
+    const since = saudiWeekStart(now).toISOString();
     const [reportsRead, pendingRead] = await Promise.all([
       read<ReportRow[]>('reports', () =>
         admin
           .from('reports')
-          .select('period_start, period_end, summary_ar, metrics, generated_at')
+          .select('summary_ar, metrics, generated_at')
           .eq('account_id', accountId)
           .eq('period_type', 'weekly')
           .gte('generated_at', since)
@@ -373,11 +381,15 @@ async function load(
     const costPerConversion =
       storedCpa !== null ? storedCpa : spend !== null && conversions !== null && conversions > 0 ? round2(spend / conversions) : null;
 
+    // The days the numbers really cover. The optimize cron queries LAST_7_DAYS (the seven days that ended
+    // YESTERDAY) but stores period_end = the generation day and period_start = 7 days before it, so the stored
+    // columns would label the week one day late. Derive the range from the generation time instead, on the
+    // Riyadh calendar: end = the day before generation, start = end - 6 days (seven days inclusive).
     const generatedAt = validIso(report.generated_at);
-    const periodEnd = text(report.period_end) ?? generatedAt?.slice(0, 10) ?? null;
-    if (!periodEnd) return null;
-    const periodStart =
-      text(report.period_start) ?? new Date(Date.parse(periodEnd) - 7 * DAY_MS).toISOString().slice(0, 10);
+    if (!generatedAt) return null;
+    const generatedMs = Date.parse(generatedAt);
+    const periodEnd = riyadhDay(new Date(generatedMs - DAY_MS));
+    const periodStart = riyadhDay(new Date(generatedMs - 7 * DAY_MS));
 
     return {
       periodStart,

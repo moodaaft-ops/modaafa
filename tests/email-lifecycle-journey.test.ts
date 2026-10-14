@@ -57,7 +57,7 @@ const patchSubscription = (userId: string, patch: Row, tables: Record<string, Ro
   Object.assign(tables.subscriptions!.find((s) => s.user_id === userId)!, patch);
 };
 
-const USERS = ['r1', 'r2', 'r3', 'c1', 'p1', 't1', 't2', 'l1', 'x1', 'd1', 'o1', 's1', 'h1'];
+const USERS = ['r1', 'r2', 'r3', 'c1', 'p1', 't1', 't2', 'l1', 'x1', 'd1', 'b1', 'o1', 's1', 'h1'];
 
 // r1: registers Monday morning, never connects. Has the welcome mail from minute five.
 on(at(0, '10:00'), (t) => event('r1', 'registration_completed', at(0, '10:00'), t));
@@ -98,27 +98,43 @@ on(at(4, '09:00'), (t) => {
   stage('t2', 'analysis_viewed', t);
   subscribe('t2', 'trialing', at(4, '09:00'), t);
 });
-// l1: trial that is cancelled on day 5.
+// l1: trial that asks to cancel on day 3 (cancel_at_period_end) and really ends on day 5. Stripe stamps canceled_at
+// with the REQUEST (day 3); the event that writes status canceled, and last_event_at, is the end (day 5).
 on(at(1, '10:00'), (t) => {
   event('l1', 'first_analysis_viewed', at(1, '09:00'), t);
   stage('l1', 'analysis_viewed', t);
-  subscribe('l1', 'trialing', at(1, '10:00'), t);
+  subscribe('l1', 'trialing', at(1, '10:00'), t, { trial_ends_at: at(5, '12:00').toISOString() });
 });
-on(at(5, '12:00'), (t) => patchSubscription('l1', { status: 'canceled', canceled_at: at(5, '12:00').toISOString() }, t));
-// x1: pays on day 1, cancels on day 8.
+on(at(5, '12:00'), (t) =>
+  patchSubscription('l1', { status: 'canceled', canceled_at: at(3, '12:00').toISOString(), last_event_at: at(5, '12:00').toISOString() }, t)
+);
+// x1: pays on day 1, asks to cancel on day 6 and the subscription ends on day 8.
 on(at(1, '08:00'), (t) => {
   event('x1', 'subscription_paid', at(1, '08:00'), t);
   stage('x1', 'subscribed', t);
   subscribe('x1', 'active', at(1, '08:00'), t);
 });
-on(at(8, '12:00'), (t) => patchSubscription('x1', { status: 'canceled', canceled_at: at(8, '12:00').toISOString() }, t));
-// d1: a paying customer whose card fails on day 10.
+on(at(8, '12:00'), (t) =>
+  patchSubscription('x1', { status: 'canceled', canceled_at: at(6, '12:00').toISOString(), last_event_at: at(8, '12:00').toISOString() }, t)
+);
+// d1: a paying customer whose renewal card fails on day 10. Stripe retries the card and every retry bumps
+// last_event_at; the unpaid period (current_period_start) stays at day 10.
 on(at(0, '08:00'), (t) => {
   event('d1', 'subscription_paid', at(0, '08:00'), t);
   stage('d1', 'subscribed', t);
   subscribe('d1', 'active', at(0, '08:00'), t);
 });
-on(at(10, '12:00'), (t) => patchSubscription('d1', { status: 'past_due', last_event_at: at(10, '12:00').toISOString() }, t));
+on(at(10, '12:00'), (t) =>
+  patchSubscription('d1', { status: 'past_due', current_period_start: at(10, '12:00').toISOString(), last_event_at: at(10, '12:00').toISOString() }, t)
+);
+for (const retry of [12, 14, 17]) on(at(retry, '12:00'), (t) => patchSubscription('d1', { last_event_at: at(retry, '12:00').toISOString() }, t));
+// b1: a trial refused at its start (card already used): written canceled at once, trial end still days away.
+// It never was a trial, so there is no "your trial ended" mail.
+on(at(3, '10:00'), (t) => {
+  event('b1', 'first_analysis_viewed', at(3, '09:00'), t);
+  stage('b1', 'analysis_viewed', t);
+  subscribe('b1', 'canceled', at(3, '10:00'), t, { trial_ends_at: at(17, '10:00').toISOString(), canceled_at: at(3, '10:00').toISOString() });
+});
 // o1 opted out, s1 is suppressed, h1 is in the holdout group: all registered on day 0.
 for (const id of ['o1', 's1', 'h1']) on(at(0, '10:00'), (t) => event(id, 'registration_completed', at(0, '10:00'), t));
 
@@ -269,6 +285,12 @@ test('30 days: opted-out, suppressed and held-out people get nothing', async () 
   for (const id of ['o1', 's1', 'h1']) assert.deepEqual(mails.get(id) ?? [], [], id);
 });
 
+test('30 days: a trial that was refused at its start gets no trial_lapsed mail and no log row', async () => {
+  const { admin, mails } = await simulate();
+  assert.deepEqual(mails.get('b1') ?? [], []);
+  assert.deepEqual(admin.tables.message_log!.filter((row) => row.user_id === 'b1'), []);
+});
+
 // ---------------------------------------------------------------------------
 // The exact stories (read these as documentation of how the engine behaves)
 // ---------------------------------------------------------------------------
@@ -341,8 +363,53 @@ test('30 days, trial cancelled: lapsed mails follow the cancellation, the cap de
 
 test('30 days, paying then cancelled and paying then failing: the right journey for each', async () => {
   const { mails } = await simulate();
+  // The cancel was requested on d6 but the subscription ended on d8 12:00, so the mail is due d9 12:00, not d7.
   assert.deepEqual(sequence(mails, 'x1'), ['weekly_report_2026-W41 d1 09:00', 'weekly_report_2026-W42 d6 09:00', 'canceled_1d d9 12:00']);
-  assert.deepEqual(sequence(mails, 'd1'), ['weekly_report_2026-W41 d0 09:00', 'weekly_report_2026-W42 d6 09:00', 'past_due_3d d13 12:00']);
+  // The unpaid period started d10 12:00: access runs out after 7 days (d17 12:00) and the mail follows a day later,
+  // whatever the Stripe retries on d12, d14 and d17 did to last_event_at.
+  assert.deepEqual(sequence(mails, 'd1'), ['weekly_report_2026-W41 d0 09:00', 'weekly_report_2026-W42 d6 09:00', 'past_due_3d d18 12:00']);
+});
+
+test('30 days, trial cancelled: trial_lapsed_14d is due 14 days after the trial really ended, not after the request', async () => {
+  const { admin } = await simulate();
+  const lapsed = admin.tables.message_log!.find((row) => row.user_id === 'l1' && row.template === 'trial_lapsed_14d');
+  assert.equal(local(lapsed!.sent_at), 'd19 12:00');
+});
+
+// ---------------------------------------------------------------------------
+// Anchored at the moment the subscription really ended
+// ---------------------------------------------------------------------------
+
+test('trial_lapsed_2d and canceled_1d go out 2 and 1 days after the subscription ended, not after the cancel request', async () => {
+  const k1Flip = at(4, '10:00');
+  const k2Flip = at(2, '10:00');
+  const admin = createFakeAdmin({
+    users: [userRow('k1', { stage: 'analysis_viewed' }), userRow('k2', { stage: 'subscribed' })],
+    user_events: [
+      { id: 'ev-1', user_id: 'k1', event: 'first_analysis_viewed', created_at: at(2, '09:00').toISOString() },
+      { id: 'ev-2', user_id: 'k2', event: 'subscription_paid', created_at: at(0, '08:00').toISOString() },
+    ],
+    subscriptions: [
+      // k2 pays on d0, asks to cancel d1 12:00 and the subscription ends d2 10:00.
+      { id: 'sub-k2', user_id: 'k2', status: 'active', created_at: at(0, '08:00').toISOString(), trial_ends_at: null, canceled_at: null, last_event_at: at(0, '08:00').toISOString() },
+    ],
+  });
+  const pending: Change[] = [
+    // k1 starts a trial d2 10:00, asks to cancel d3 12:00 (Stripe's canceled_at), and it ends d4 10:00.
+    { when: at(2, '10:00'), apply: (t) => subscribe('k1', 'trialing', at(2, '10:00'), t, { trial_ends_at: k1Flip.toISOString() }) },
+    { when: k1Flip, apply: (t) => patchSubscription('k1', { status: 'canceled', canceled_at: at(3, '12:00').toISOString(), last_event_at: k1Flip.toISOString() }, t) },
+    { when: k2Flip, apply: (t) => patchSubscription('k2', { status: 'canceled', canceled_at: at(1, '12:00').toISOString(), last_event_at: k2Flip.toISOString() }, t) },
+  ];
+  await drive(admin, { from: D0, to: at(20, '00:00'), pending });
+  const mails = mailsOf(admin);
+
+  const offsetDays = (userId: string, template: string, flip: Date) =>
+    (Date.parse(mails.get(userId)!.find((m) => m.template === template)!.sentAt) - flip.getTime()) / DAY;
+  assert.equal(offsetDays('k1', 'trial_lapsed_2d', k1Flip), 2);
+  assert.equal(offsetDays('k1', 'trial_lapsed_14d', k1Flip), 14);
+  assert.equal(offsetDays('k2', 'canceled_1d', k2Flip), 1);
+  assert.deepEqual(sequence(mails, 'k1'), ['trial_d1 d3 10:00', 'trial_lapsed_2d d6 10:00', 'trial_lapsed_14d d18 10:00']);
+  assert.deepEqual(sequence(mails, 'k2'), ['weekly_report_2026-W41 d0 09:00', 'canceled_1d d3 10:00']);
 });
 
 // ---------------------------------------------------------------------------
