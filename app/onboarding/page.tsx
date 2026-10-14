@@ -31,7 +31,8 @@ export default async function OnboardingPage({
     // «إضافة حساب» from inside the app opens the chat on the connect step.
     const adding = params?.connect === '1' && state.stage !== 'connecting';
     if (state.stage === 'done' && !edit && !adding) redirect('/home');
-    return <SetupChat initial={state} errorCode={params?.error ?? null} adding={adding} />;
+    // A new key when «عدّل شي» opens the same page in edit mode, so the chat starts over instead of keeping its state.
+    return <SetupChat key={edit ? 'edit' : 'setup'} initial={state} errorCode={params?.error ?? null} adding={adding} />;
   }
 
   const { accounts, business } = await getAccountWorkspace(user.id);

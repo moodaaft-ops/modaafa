@@ -6,6 +6,7 @@ import { Loader2, Lock, ShieldCheck, X } from 'lucide-react';
 import { SEVERITY_WORD } from '@/lib/home/briefing';
 import { trapTabKey } from '@/lib/ui/focus-trap';
 import { cn, formatCurrency } from '@/lib/utils';
+import type { ScenarioDecision } from '@/lib/setup/adaptive/types';
 import {
   PLAN_COPY,
   cancelLine,
@@ -35,6 +36,27 @@ import {
 const SEVERITY_DOT: Record<string, string> = { critical: 'bg-danger', medium: 'bg-signal' };
 const MAX_LOCKED_ROWS = 6;
 
+/**
+ * The adaptive onboarding adds one first decision found by rules (a
+ * ScenarioDecision), in place of the audit's own. Its words: a short label per
+ * decision, the line saying why it comes first, and the manual steps.
+ */
+const LEAD_WORD: Record<ScenarioDecision['id'], string> = {
+  call_hours: 'تسريب واضح',
+  idle_products: 'تسريب واضح',
+  tracking_setup: 'التتبع ناقص',
+};
+const LEAD_COPY = { why: 'ليش أول شي', how: 'كيف أسويه؟' } as const;
+
+/** «ليش أول شي: …», tied to what the customer said. */
+function WhyLine({ why }: { why: string }) {
+  return (
+    <p className="mt-3 rounded-[10px] border-s-[3px] border-signal bg-signal/10 px-3 py-2.5 text-[13.5px] leading-7 text-foreground">
+      <span className="font-bold">{LEAD_COPY.why}:</span> {why}
+    </p>
+  );
+}
+
 // ------------------------------------------------------------------ the card
 
 export function PlanCard({
@@ -43,6 +65,9 @@ export function PlanCard({
   id,
   onApprove,
   onAsk,
+  lead,
+  firstWhy,
+  subtitle,
   children,
 }: {
   plan: Plan;
@@ -52,21 +77,35 @@ export function PlanCard({
   onApprove?: () => void;
   /** Present on /home: «اشرح لي هذا القرار», which opens the paywall. */
   onAsk?: () => void;
+  /**
+   * Adaptive onboarding only: a decision found by rules, shown open in place of
+   * the audit's first one (the server has already moved that one into the
+   * locked list). Its steps are manual: there is no «اعتمد» for it.
+   */
+  lead?: ScenarioDecision | null;
+  /** Adaptive onboarding only: «ليش أول شي» under the audit's own first decision. */
+  firstWhy?: string | null;
+  /** Adaptive onboarding only: replaces the sentence under the title. */
+  subtitle?: string | null;
   children?: React.ReactNode;
 }) {
   const uid = useId();
   const titleId = `${uid}-title`;
   const shownLocked = plan.locked.slice(0, MAX_LOCKED_ROWS);
   const hiddenLocked = plan.locked.length - shownLocked.length;
+  // With a lead the plan is ready whatever the audit found, and the lead is one more decision beside the locked ones.
+  const head: Pick<Plan, 'kind' | 'decisionsCount'> = lead
+    ? { kind: 'ready', decisionsCount: plan.locked.length + 1 }
+    : { kind: plan.kind, decisionsCount: plan.decisionsCount };
 
   return (
     <section id={id} aria-labelledby={titleId} className="scroll-mt-4 overflow-hidden rounded-[18px] border border-border/80 bg-card">
       <div className="flex items-start gap-4 px-4 pb-4 pt-5 sm:px-6">
         <div className="min-w-0 flex-1">
           <h2 id={titleId} className="text-[24px] font-bold leading-10 sm:text-[27px]">
-            {planTitle(plan.kind)}
+            {planTitle(head.kind)}
           </h2>
-          <p className="mt-1 text-[14.5px] leading-7 text-muted-foreground">{planSubtitle(plan, trialEligible)}</p>
+          <p className="mt-1 text-[14.5px] leading-7 text-muted-foreground">{subtitle || planSubtitle(head, trialEligible)}</p>
         </div>
         {plan.healthScore !== null && <ScoreRing score={plan.healthScore} word={plan.healthWord} />}
       </div>
@@ -86,7 +125,37 @@ export function PlanCard({
         </div>
       )}
 
-      {plan.first && (
+      {lead && (
+        <div className="border-t border-border/70 px-4 py-4 sm:px-6">
+          <p className="text-[12px] font-semibold text-muted-foreground">{PLAN_COPY.firstLabel}</p>
+          <p className="mt-2 flex items-center gap-2 text-[12.5px] font-semibold text-muted-foreground">
+            <span className="h-2 w-2 rounded-full bg-danger" aria-hidden />
+            {LEAD_WORD[lead.id]}
+          </p>
+          <p className="mt-1 text-[16px] font-semibold leading-8">{lead.title}</p>
+          {lead.reason && <p className="mt-1 text-[14px] leading-7 text-muted-foreground">{lead.reason}</p>}
+          {lead.why && <WhyLine why={lead.why} />}
+          {lead.steps.length > 0 && (
+            <details className="mt-3">
+              <summary className="inline-flex min-h-9 cursor-pointer list-none items-center rounded-full px-3 text-[13.5px] font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground [&::-webkit-details-marker]:hidden">
+                {LEAD_COPY.how}
+              </summary>
+              <ol className="mt-2 space-y-2">
+                {lead.steps.map((step, index) => (
+                  <li key={index} className="flex items-start gap-2.5 text-[14px] leading-7">
+                    <span className="numeric mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-muted text-[12px] font-bold">
+                      {index + 1}
+                    </span>
+                    <span className="min-w-0">{step}</span>
+                  </li>
+                ))}
+              </ol>
+            </details>
+          )}
+        </div>
+      )}
+
+      {!lead && plan.first && (
         <div className="border-t border-border/70 px-4 py-4 sm:px-6">
           <p className="text-[12px] font-semibold text-muted-foreground">{PLAN_COPY.firstLabel}</p>
           <p className="mt-2 flex items-center gap-2 text-[12.5px] font-semibold text-muted-foreground">
@@ -106,6 +175,7 @@ export function PlanCard({
               </span>
             </p>
           )}
+          {firstWhy && <WhyLine why={firstWhy} />}
           {(onApprove || onAsk) && (
             <div className="mt-3 flex flex-wrap items-center gap-2">
               {onApprove && plan.first.executable && (
@@ -268,13 +338,24 @@ export function PlanCtaReason({ cta, className }: { cta: PaywallCta | undefined;
  * cancel promise and the trust line, in that order. A stopped subscription has
  * nothing to cancel, so it gets no cancel promise.
  */
-export function PlanCta({ trialEligible, cta, className }: { trialEligible: boolean; cta?: PaywallCta; className?: string }) {
+export function PlanCta({
+  trialEligible,
+  cta,
+  className,
+  hideTrust = false,
+}: {
+  trialEligible: boolean;
+  cta?: PaywallCta;
+  className?: string;
+  /** Adaptive onboarding's agency ending only: the trust line talks about what «مُضاعِف» executes, and that ending executes nothing. */
+  hideTrust?: boolean;
+}) {
   return (
     <div className={cn('space-y-2', className)}>
       <PlanCtaReason cta={cta} />
       <PlanCtaButton trialEligible={trialEligible} cta={cta} />
       {cta?.kind !== 'billing' && <PlanCancelLine trialEligible={trialEligible} />}
-      <PlanTrust />
+      {!hideTrust && <PlanTrust />}
     </div>
   );
 }

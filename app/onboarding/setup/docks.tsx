@@ -2,7 +2,9 @@
 
 import { useMemo, useState } from 'react';
 import {
+  ArrowDown,
   ArrowRight,
+  ArrowUp,
   Briefcase,
   Building2,
   Check,
@@ -54,7 +56,12 @@ import {
 import type { SetupAccount, SetupState } from '@/lib/setup/load';
 import { foldArabicSearch, toAsciiDigits } from '@/lib/accounts/search';
 
-const ICONS: Record<IconKey, React.ComponentType<{ className?: string }>> = {
+/** The question bank's icons, plus the two arrows the adaptive docks use for «أقل» and «أكثر». */
+export type TileIcon = IconKey | 'arrow-up' | 'arrow-down';
+
+const ICONS: Record<TileIcon, React.ComponentType<{ className?: string }>> = {
+  'arrow-up': ArrowUp,
+  'arrow-down': ArrowDown,
   bag: ShoppingBag,
   briefcase: Briefcase,
   store: Store,
@@ -85,10 +92,15 @@ const ICONS: Record<IconKey, React.ComponentType<{ className?: string }>> = {
   flag: Flag,
 };
 
+/** An icon name from the adaptive bank (a plain string) when it is one the docks know, else none. */
+export function iconFor(name: string | undefined): TileIcon | undefined {
+  return name && Object.prototype.hasOwnProperty.call(ICONS, name) ? (name as TileIcon) : undefined;
+}
+
 /** What a dock hands back: the payload for the API and the words for the customer's bubble. */
 export type AnswerPayload = { answer: Record<string, any> & { choice?: string }; label: string };
 
-const inputClass =
+export const inputClass =
   'h-14 w-full min-w-0 rounded-full border border-border bg-card px-5 text-[16px] text-foreground placeholder:text-muted-foreground focus:border-border-strong focus:outline-none';
 
 export function AnswerTile({
@@ -102,7 +114,7 @@ export function AnswerTile({
 }: {
   label: string;
   hint?: string;
-  icon?: IconKey;
+  icon?: TileIcon;
   current?: boolean;
   disabled?: boolean;
   compact?: boolean;
@@ -138,7 +150,7 @@ export function AnswerTile({
   );
 }
 
-function OptionList({
+export function OptionList({
   options,
   current,
   columns = 1,
@@ -169,7 +181,7 @@ function OptionList({
   );
 }
 
-function TextAnswer({
+export function TextAnswer({
   placeholder,
   initial = '',
   inputMode,
@@ -234,7 +246,7 @@ function TextAnswer({
   );
 }
 
-function BackLink({ onBack }: { onBack: () => void }) {
+export function BackLink({ onBack }: { onBack: () => void }) {
   return (
     <button
       type="button"

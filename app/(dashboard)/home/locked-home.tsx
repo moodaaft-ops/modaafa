@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useCallback, useRef, useState } from 'react';
 import { AudioLines, Lock } from 'lucide-react';
 import { PLAN_COPY, lockedBarLine, type PaywallCta, type Plan, type PlanSheetReason } from '@/lib/plan/plan';
+import type { ScenarioDecision } from '@/lib/setup/adaptive/types';
 import {
   PlanCancelLine,
   PlanCard,
@@ -23,6 +24,8 @@ import { cn } from '@/lib/utils';
  */
 export function LockedHome({
   plan,
+  lead,
+  firstWhy,
   trialEligible,
   cta,
   suspended,
@@ -34,6 +37,10 @@ export function LockedHome({
   recentChanges,
 }: {
   plan: Plan;
+  /** Adaptive onboarding only: the rules decision shown open in place of the audit's first one. */
+  lead?: ScenarioDecision | null;
+  /** Adaptive onboarding only: «ليش أول شي» under the audit's own first decision. */
+  firstWhy?: string | null;
   trialEligible: boolean;
   /** Where the button goes. A stopped subscription points to /billing; absent means the trial checkout. */
   cta?: PaywallCta;
@@ -66,6 +73,8 @@ export function LockedHome({
               <p className="text-[14px] text-muted-foreground">{greeting}</p>
               <PlanCard
                 plan={plan}
+                lead={lead}
+                firstWhy={firstWhy}
                 trialEligible={trialEligible}
                 onApprove={suspended ? undefined : () => open('approve')}
                 onAsk={suspended ? undefined : () => open('chat')}

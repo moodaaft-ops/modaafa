@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient, createServerClient } from '@/lib/supabase/server';
-import { getLinkedGoogleAdsAccount, getUserBusinessWithClient } from '@/lib/accounts/selection';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 import { isSameOriginRequest } from '@/lib/security/origin';
 import { isSimpleExperience } from '@/lib/setup/mode';
-import { parseAnswer } from '@/lib/setup/questions';
-import { saveSetupAnswer } from '@/lib/setup/save';
+import { checkSetupAnswer, recordSetupAnswer, resolveAnswerTarget } from '@/lib/setup/answer-flow';
+import { isAdaptiveOnboarding } from '@/lib/setup/adaptive/flag';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,7 +12,7 @@ export const dynamic = 'force-dynamic';
  * One answer from the setup chat. The key and the value are both checked
  * against the same rules the screen uses (lib/setup/questions.ts); nothing the
  * browser sends is written as-is except the few free-text fields, which are
- * cleaned and capped there.
+ * cleaned and capped there. The decisions live in lib/setup/answer-flow.ts.
  */
 export async function POST(req: NextRequest) {
   if (!isSameOriginRequest(req)) return NextResponse.json({ error: 'invalid_origin' }, { status: 403 });
@@ -35,18 +34,15 @@ export async function POST(req: NextRequest) {
   }
 
   const body = (await req.json().catch(() => null)) as Record<string, unknown> | null;
-  const parsed = parseAnswer(body?.key, body?.answer);
-  if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
 
-  const business = await getUserBusinessWithClient(supabase, user.id).catch(() => null);
+  // The adaptive keys, and the per-kind goal and pain ids, exist only for someone the tree is switched on for.
+  const adaptiveOn = isAdaptiveOnboarding(process.env, user.email);
+  const checked = checkSetupAnswer(body, adaptiveOn);
+  if (!checked.ok) return NextResponse.json({ error: checked.error }, { status: checked.status });
+  const answer = checked.answer;
+
+  const { business, account } = await resolveAnswerTarget({ supabase, user, adaptiveOn, answer });
   if (!business) return NextResponse.json({ error: 'no_business' }, { status: 409 });
-
-  const linked = await getLinkedGoogleAdsAccount({
-    supabase,
-    userId: user.id,
-    customerId: business.selected_google_ads_customer_id ?? '',
-    select: 'id',
-  }).catch(() => null);
 
   let admin: any = null;
   try {
@@ -55,14 +51,7 @@ export async function POST(req: NextRequest) {
     admin = null;
   }
 
-  const outcome = await saveSetupAnswer({
-    supabase,
-    admin,
-    userId: user.id,
-    businessId: business.id,
-    accountId: linked?.account?.id ?? null,
-    answer: parsed.answer,
-  });
+  const outcome = await recordSetupAnswer({ supabase, admin, user, adaptiveOn, business, account, answer });
   if (!outcome.ok) return NextResponse.json({ error: outcome.error }, { status: 500 });
   return NextResponse.json(outcome);
 }

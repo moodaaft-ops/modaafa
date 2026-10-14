@@ -220,6 +220,8 @@ export default async function AuditPage({
               plan={lock.plan}
               trialEligible={lock.trialEligible}
               cta={lock.cta}
+              lead={lock.lead}
+              firstWhy={lock.firstWhy}
               suspended={Boolean(subscription.suspended)}
             />
           </div>

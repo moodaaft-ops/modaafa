@@ -230,6 +230,8 @@ http.createServer(async (req, res) => {
     if (name === 'business_memory' && u.searchParams.get('source') === 'eq.onboarding') {
       out = rows.filter((r) => r.source === 'onboarding' && r.status === 'active').reverse();
     }
+    // Adaptive scenarios keep two kinds of job_runs rows (the connect job and the stored account read): filter like PostgREST.
+    if (name === 'job_runs' && scenario.startsWith('adaptive_')) out = adaptiveJobRuns(rows, u.searchParams);
     const lim = Number(u.searchParams.get('limit') || out.length);
     out = out.slice(0, lim);
     if (accept.includes('vnd.pgrst.object')) {
@@ -373,3 +375,176 @@ SCENARIOS.unpaid_audit = () => ({
 });
 reset(scenario);
 // ===== END review-fixes block =====
+
+// ===== BEGIN adaptive-onboarding block =====
+// Synthetic data for tests/e2e/adaptive-onboarding.spec.ts (run with ADAPTIVE_ONBOARDING=true). Additive only: it adds
+// scenarios and one guarded filter for job_runs, it changes none of the earlier ones. Each linked scenario carries a fresh
+// stored account read (`job_runs` row `onboarding_signals:<account id>`, readAt = now), so no Google call ever happens.
+//   adaptive_clinic      dental clinic in Jeddah, two search campaigns, calls first, an audit on record, no subscription
+//   adaptive_store       Salla perfume store, orders worth 186 on average, seven products (four idle), an audit on record
+//   adaptive_new         linked, zero campaigns, no audit: the first-campaign plan, and /api/audit/run is never called
+//   adaptive_no_account  signed up, a business, nothing linked
+//   adaptive_agency      like the clinic, but the account is linked to an outside manager (an agency answers «وكالة»)
+const READ_FAILED = { ok: false, error: 'not_read' };
+const read = (value) => ({ ok: true, value });
+const adaptiveCampaign = (id, name, kind, cost30, impressions30, clicks30, conversions30, value30 = 0) => ({
+  id, name, kind, status: 'ENABLED', cost30, impressions30, clicks30, conversions30, value30,
+});
+const conversionGroups = (...rows) => read(rows.map(([group, conversions]) => ({ group, conversions })));
+const adaptiveSignals = (overrides) => ({
+  version: 1, readAt: new Date().toISOString(), customerId: '1234567890', currency: 'SAR',
+  campaigns: READ_FAILED, enabledConversionActions: READ_FAILED, conversionsByGroup: READ_FAILED, autoTagging: READ_FAILED,
+  landingHosts: READ_FAILED, merchantCenterLinked: READ_FAILED, assets: READ_FAILED, targetedPlaces: READ_FAILED,
+  externalManager: READ_FAILED, otherEditors14d: READ_FAILED, hours: READ_FAILED, products: READ_FAILED, ...overrides,
+});
+// Expensive while the phone is answered (9 to 13 and 16 to 22), cheap and mostly unanswered outside those hours.
+const clinicHours = () => Array.from({ length: 24 }, (_, hour) => {
+  const open = (hour >= 9 && hour < 13) || (hour >= 16 && hour < 22);
+  return { hour, cost: open ? 120 : 30, clicks: 10, conversions: 1, phoneCalls: open ? 5 : hour < 9 ? 1 : 0 };
+});
+const clinicSignals = () => adaptiveSignals({
+  campaigns: read([
+    adaptiveCampaign('1', 'بحث - زراعة الأسنان', 'SEARCH', 1100, 30000, 900, 40),
+    adaptiveCampaign('2', 'بحث - تقويم الأسنان', 'SEARCH', 900, 20000, 600, 33),
+  ]),
+  enabledConversionActions: read(3),
+  conversionsByGroup: conversionGroups(['call', 64], ['lead_form', 9]),
+  autoTagging: read(true),
+  landingHosts: read(['smile-clinic.example.sa']),
+  merchantCenterLinked: read(false),
+  assets: read({ call: true, locations: 0 }),
+  targetedPlaces: read(['Jeddah']),
+  externalManager: read({ linked: false, managerIds: [] }),
+  otherEditors14d: read(0),
+  hours: read(clinicHours()),
+});
+const storeProducts = [
+  { id: 'a', title: 'عطر العود الملكي', cost30: 520, conversions30: 9, value30: 2000 },
+  { id: 'b', title: 'عطر الورد', cost30: 410, conversions30: 7, value30: 1500 },
+  { id: 'c', title: 'بخور فاخر', cost30: 90, conversions30: 0, value30: 0 },
+  { id: 'd', title: 'مجموعة هدايا', cost30: 80, conversions30: 0, value30: 0 },
+  { id: 'e', title: 'عطر صيفي', cost30: 70, conversions30: 0, value30: 0 },
+  { id: 'f', title: 'دهن عود', cost30: 60, conversions30: 0, value30: 0 },
+  { id: 'g', title: 'منتج جديد', cost30: 20, conversions30: 0, value30: 0 },
+];
+const storeSignals = () => adaptiveSignals({
+  campaigns: read([
+    adaptiveCampaign('1', 'أداء أقصى - عطور', 'PMAX', 2000, 50000, 1500, 30, 5580),
+    adaptiveCampaign('2', 'بحث - عطور', 'SEARCH', 1200, 12000, 700, 11, 2046),
+  ]),
+  enabledConversionActions: read(1),
+  conversionsByGroup: conversionGroups(['purchase', 41]),
+  autoTagging: read(true),
+  landingHosts: read(['myperfume.salla.sa']),
+  merchantCenterLinked: read(true),
+  assets: read({ call: false, locations: 0 }),
+  targetedPlaces: read(['Saudi Arabia']),
+  externalManager: read({ linked: false, managerIds: [] }),
+  otherEditors14d: read(0),
+  products: read(storeProducts),
+});
+const newSignals = () => adaptiveSignals({
+  campaigns: read([]),
+  enabledConversionActions: read(0),
+  conversionsByGroup: conversionGroups(),
+  autoTagging: read(false),
+  landingHosts: read([]),
+  merchantCenterLinked: read(false),
+  assets: read({ call: false, locations: 0 }),
+  targetedPlaces: read([]),
+  externalManager: read({ linked: false, managerIds: [] }),
+  otherEditors14d: read(0),
+  hours: read([]),
+  products: read([]),
+});
+
+const storedRead = (accountId, signals) => ({
+  id: 'job-signals', job_name: `onboarding_signals:${accountId}`, status: 'success',
+  started_at: hoursAgo(0.02), finished_at: hoursAgo(0.02), processed: 12, error_count: 0, error_message: null, details: { signals },
+});
+const connectJob = (spend) => ({
+  id: 'job1', job_name: `google_ads_connect:${UID}`, status: 'success', started_at: hoursAgo(1), finished_at: hoursAgo(1),
+  details: { stage: 'done', spend: { '1234567890': spend } },
+});
+// A business made by the Google callback: a name from the login and nothing else, so every profile question is open.
+const callbackBusiness = () => [{
+  id: BID, user_id: UID, name: 'Ayman Amin', sector: null, website: null, monthly_budget: null, primary_goal: 'leads',
+  target_regions: [], selected_google_ads_customer_id: null,
+}];
+
+const clinicRecs = [
+  {
+    id: '66666666-6666-4666-8666-666666666700', audit_id: AUD, account_id: A1, severity: 'critical', status: 'pending',
+    title: 'أوقف عبارة «تقويم أسنان رخيص»: صرفت 380 ريال بدون ولا حجز',
+    description: 'العبارة جابت 80 ضغطة في 30 يوم وما سجلت أي اتصال أو نموذج.',
+    expected_impact: { metric: 'cost', delta_sar_per_month: 380 },
+    action_payload: { operation: 'add_negative_keyword', target_id: 'customers/1234567890/campaigns/1000', params: { campaign_resource: 'customers/1234567890/campaigns/1000', keyword_text: 'تقويم أسنان رخيص', match_type: 'PHRASE' } },
+    created_at: hoursAgo(1),
+  },
+  {
+    id: '66666666-6666-4666-8666-666666666701', audit_id: AUD, account_id: A1, severity: 'medium', status: 'pending',
+    title: 'حملة «زراعة الأسنان» تتوقف قبل الظهر لأن ميزانيتها تخلص',
+    description: 'آخر 7 أيام خلصت الميزانية قبل الساعة 12 في 5 أيام.',
+    expected_impact: null, action_payload: { operation: 'review_budget_pacing' }, created_at: hoursAgo(2),
+  },
+  {
+    id: '66666666-6666-4666-8666-666666666702', audit_id: AUD, account_id: A1, severity: 'growth', status: 'pending',
+    title: 'أضف أسعار الخدمات الأساسية في نص الإعلان',
+    description: 'الإعلان بدون سعر يجيب اتصالات من ناس ما يقدرون على التكلفة.',
+    expected_impact: null, action_payload: { operation: 'review_ads' }, created_at: hoursAgo(3),
+  },
+];
+const clinicAccount = { ...account, customer_name: 'عيادة الابتسامة لطب الأسنان' };
+
+SCENARIOS.adaptive_clinic = () => ({
+  businesses: callbackBusiness(),
+  google_ads_accounts: [clinicAccount],
+  job_runs: [connectJob(2000), storedRead(A1, clinicSignals())],
+  audits: [{ ...audit, health_score: 61, estimated_monthly_waste: 1100 }],
+  recommendations: clinicRecs,
+  campaigns_cache: [camp(0, 1100, 40), camp(1, 900, 33)],
+  subscriptions: [], ai_actions: [],
+});
+// The audit decisions carry a category: the agency ending turns each one into a question for the agency.
+const agencyRecs = clinicRecs.map((rec, index) => ({ ...rec, category: ['keywords', 'budget', 'ads'][index] }));
+SCENARIOS.adaptive_agency = () => ({
+  ...SCENARIOS.adaptive_clinic(),
+  job_runs: [
+    connectJob(2000),
+    storedRead(A1, { ...clinicSignals(), externalManager: read({ linked: true, managerIds: ['9876543210'] }) }),
+  ],
+  recommendations: agencyRecs,
+});
+SCENARIOS.adaptive_store = () => ({
+  businesses: callbackBusiness(),
+  google_ads_accounts: [account],
+  job_runs: [connectJob(3200), storedRead(A1, storeSignals())],
+  audits: [audit], recommendations: recs, campaigns_cache: [camp(0, 2000, 30), camp(1, 1200, 11)],
+  subscriptions: [], ai_actions: [],
+});
+SCENARIOS.adaptive_new = () => ({
+  businesses: callbackBusiness(),
+  google_ads_accounts: [{ ...account, customer_name: 'مشروع جديد' }],
+  job_runs: [connectJob(0), storedRead(A1, newSignals())],
+  audits: [], recommendations: [], campaigns_cache: [],
+  subscriptions: [], ai_actions: [],
+});
+SCENARIOS.adaptive_no_account = () => ({ ...SCENARIOS.connect() });
+
+/** PostgREST-style `job_name=eq.…`, `status=in.(a,b)` and newest first, for the adaptive scenarios only. */
+function adaptiveJobRuns(rows, params) {
+  let out = rows;
+  const jobName = params.get('job_name');
+  if (jobName?.startsWith('eq.')) out = out.filter((row) => row.job_name === jobName.slice(3));
+  const status = params.get('status');
+  const statuses = status?.match(/^in\.\((.*)\)$/);
+  if (statuses) {
+    const allowed = statuses[1].split(',').map((item) => item.replace(/^"|"$/g, ''));
+    out = out.filter((row) => allowed.includes(row.status));
+  } else if (status?.startsWith('eq.')) {
+    out = out.filter((row) => row.status === status.slice(3));
+  }
+  return [...out].sort((a, b) => String(b.started_at).localeCompare(String(a.started_at)));
+}
+reset(scenario);
+// ===== END adaptive-onboarding block =====

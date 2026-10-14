@@ -14,7 +14,9 @@ import { readVoiceConfig } from '@/lib/ai/voice-session';
 import { TikTokPixel } from '@/lib/analytics/tiktok-pixel';
 import { impactLabel, monthlyImpact } from '@/lib/onboarding/first-opportunities';
 import { isSimpleExperience } from '@/lib/setup/mode';
-import { readLedger } from '@/lib/setup/load';
+import { isAdaptiveOnboarding } from '@/lib/setup/adaptive/flag';
+import { adaptiveLockedPlan } from '@/lib/setup/adaptive/locked-plan';
+import { readLedgerEntries } from '@/lib/setup/load';
 import { loadRecentChanges } from '@/lib/home/recent-changes';
 import { keysAnsweredByProfile, missingCoreKeys, type SetupKey } from '@/lib/setup/questions';
 import { firstNameFrom, healthWord } from '@/lib/setup/stage';
@@ -74,7 +76,10 @@ export default async function HomePage({
     admin = null;
   }
 
-  const [campaignsRes, auditRes, recsRes, actionsRes, access, ledger, recentChanges] = await Promise.all([
+  // The adaptive onboarding's plan rules (lib/setup/adaptive/locked-plan.ts) read each decision's audit category.
+  const adaptiveOn = isAdaptiveOnboarding(process.env, user.email);
+
+  const [campaignsRes, auditRes, recsRes, actionsRes, access, ledgerEntries, recentChanges] = await Promise.all([
     supabase.from('campaigns_cache').select('status, metrics_7d').eq('account_id', selectedAccount.id).limit(500),
     supabase
       .from('audits')
@@ -85,7 +90,11 @@ export default async function HomePage({
       .maybeSingle(),
     supabase
       .from('recommendations')
-      .select('id, title, description, severity, status, expected_impact, action_payload, created_at')
+      .select(
+        adaptiveOn
+          ? 'id, title, description, severity, status, category, expected_impact, action_payload, created_at'
+          : 'id, title, description, severity, status, expected_impact, action_payload, created_at'
+      )
       .eq('account_id', selectedAccount.id)
       .in('status', ['pending', 'approved'])
       .order('created_at', { ascending: false })
@@ -98,11 +107,12 @@ export default async function HomePage({
       .order('created_at', { ascending: false })
       .limit(3),
     getSubscriptionAccess(supabase, user.id, user.email),
-    readLedger(admin, business.id),
+    readLedgerEntries(admin, business.id),
     // The undo is never gated: it renders below for someone with a plan and for someone without.
     loadRecentChanges(supabase, { accountId: selectedAccount.id, customerId: selectedAccount.customer_id }),
   ]);
 
+  const ledger = ledgerEntries.choices;
   const currency = (selectedAccount.currency_code ?? 'SAR').toUpperCase();
   const hasRecentChanges = recentChanges.items.length > 0;
   const recentChangesSection = hasRecentChanges ? (
@@ -126,11 +136,18 @@ export default async function HomePage({
         ? Promise.resolve('unknown' as const)
         : readFreeAuditView(normalizeCustomerId(selectedAccount.customer_id), admin ?? undefined),
     ]);
-    const plan = buildPlan({
+    const basePlan = buildPlan({
       audit: lockedAudit,
       recommendations: toPlanRecommendations(recsRes.error ? [] : recsRes.data ?? []),
       currency,
+      includeCategory: adaptiveOn,
     });
+    // Adaptive onboarding on: the same plan the setup screen showed (a rules decision leads, no waste number
+    // for an account without tracking), not the audit rebuilt raw. Without a usable read it comes back as it was.
+    const adaptiveLock = adaptiveOn
+      ? await adaptiveLockedPlan({ admin, accountId: selectedAccount.id, business, plan: basePlan, currency, ledger: ledgerEntries })
+      : null;
+    const plan = adaptiveLock ? adaptiveLock.plan : basePlan;
     const lockedName = googleAdsAccountDisplayName(selectedAccount);
     const lockedNotice = lockedNoticeFrom(params);
     const lockedFirstName = firstNameFrom(user.user_metadata ?? null);
@@ -140,6 +157,8 @@ export default async function HomePage({
           // A new token (sidebar's «محادثة جديدة») remounts a clean page.
           key={params.new ?? 'home'}
           plan={plan}
+          lead={adaptiveLock?.lead ?? null}
+          firstWhy={adaptiveLock?.firstWhy ?? null}
           trialEligible={Boolean(checkout?.trialEligible)}
           cta={paywallCtaFromCheckout(checkout)}
           suspended={Boolean(access.suspended)}

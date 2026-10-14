@@ -1,5 +1,10 @@
+import { getUserBusinessWithClient } from '@/lib/accounts/selection';
 import { buildExecutableAction } from '@/lib/ai/executable-action';
 import { getBillingCheckoutContext } from '@/lib/billing/checkout-policy';
+import { isAdaptiveOnboarding } from '@/lib/setup/adaptive/flag';
+import { adaptiveLockedPlan } from '@/lib/setup/adaptive/locked-plan';
+import type { ScenarioDecision } from '@/lib/setup/adaptive/types';
+import { createAdminClient } from '@/lib/supabase/server';
 import { buildPlan, paywallCtaFromCheckout, type PaywallCta, type Plan, type PlanRecommendation } from './plan';
 
 /** Pending and approved decisions, newest first: the same rows /home lists as «قرارات اليوم». */
@@ -16,6 +21,7 @@ export function toPlanRecommendations(rows: unknown): PlanRecommendation[] {
     status: row.status ?? null,
     created_at: row.created_at ?? null,
     expected_impact: row.expected_impact ?? null,
+    category: typeof row.category === 'string' ? row.category : null,
     executable: Boolean(row.action_payload && buildExecutableAction(row.action_payload, row)),
   }));
 }
@@ -27,7 +33,12 @@ export function toPlanRecommendations(rows: unknown): PlanRecommendation[] {
  */
 export async function loadPlan(
   supabase: any,
-  args: { accountId: string; currency?: string | null }
+  args: {
+    accountId: string;
+    currency?: string | null;
+    /** Keep each decision's audit category on the plan (the adaptive onboarding rules read it on the server and strip it before the browser). */
+    includeCategory?: boolean;
+  }
 ): Promise<Plan> {
   const [auditRes, recsRes] = await Promise.all([
     supabase
@@ -39,7 +50,7 @@ export async function loadPlan(
       .maybeSingle(),
     supabase
       .from('recommendations')
-      .select('id, title, description, severity, status, expected_impact, action_payload, created_at')
+      .select('id, title, description, severity, status, category, expected_impact, action_payload, created_at')
       .eq('account_id', args.accountId)
       .in('status', ['pending', 'approved'])
       .order('created_at', { ascending: false })
@@ -49,27 +60,77 @@ export async function loadPlan(
     audit: auditRes?.error ? null : auditRes?.data ?? null,
     recommendations: toPlanRecommendations(recsRes?.error ? [] : recsRes?.data ?? []),
     currency: args.currency,
+    includeCategory: args.includeCategory === true,
   });
 }
 
-/** What a locked screen needs: the plan, and where its one button goes. */
-export type PlanLockData = { plan: Plan; trialEligible: boolean; cta: PaywallCta };
+/**
+ * What a locked screen needs: the plan, and where its one button goes. With
+ * the adaptive onboarding on, the plan is the one the setup screen showed: a
+ * rules decision may lead (`lead`) and the audit's own first decision may carry
+ * a «ليش أول شي» line (`firstWhy`). Both are absent otherwise.
+ */
+export type PlanLockData = {
+  plan: Plan;
+  trialEligible: boolean;
+  cta: PaywallCta;
+  lead?: ScenarioDecision | null;
+  firstWhy?: string | null;
+};
+
+/** For tests: what `loadPlanLock` otherwise takes from the environment. */
+export type PlanLockDeps = {
+  env?: Record<string, string | undefined>;
+  /** The service client the stored read and the ledger are read with; created on demand when absent. */
+  admin?: any | null;
+  now?: Date;
+};
 
 /**
  * The plan lock for a screen other than /home (the audit, the approvals
  * screen): the same plan and the same CTA /home shows, so every place a person
  * without access can open says the same thing. A suspended account gets no
  * checkout read and no button (the caller shows the suspension line).
+ *
+ * For someone the adaptive onboarding is on for, the plan is also corrected by
+ * what the onboarding found (the newest stored read of the account, up to 30
+ * days old, and the customer's answers), so this screen never contradicts the
+ * plan they were just shown: no second open decision beside the rules one, and
+ * no waste number for an account that cannot say what its ads bring.
  */
 export async function loadPlanLock(
   supabase: any,
-  args: { accountId: string; currency?: string | null; userId: string; userEmail?: string | null; suspended?: boolean }
+  args: { accountId: string; currency?: string | null; userId: string; userEmail?: string | null; suspended?: boolean },
+  deps: PlanLockDeps = {}
 ): Promise<PlanLockData> {
+  const adaptiveOn = isAdaptiveOnboarding(deps.env ?? process.env, args.userEmail);
   const [plan, checkout] = await Promise.all([
-    loadPlan(supabase, { accountId: args.accountId, currency: args.currency }),
+    loadPlan(supabase, { accountId: args.accountId, currency: args.currency, includeCategory: adaptiveOn }),
     args.suspended
       ? Promise.resolve(null)
       : getBillingCheckoutContext(supabase, args.userId, args.userEmail).catch(() => null),
   ]);
-  return { plan, trialEligible: Boolean(checkout?.trialEligible), cta: paywallCtaFromCheckout(checkout) };
+  const base = { trialEligible: Boolean(checkout?.trialEligible), cta: paywallCtaFromCheckout(checkout) };
+  if (!adaptiveOn) return { plan, ...base };
+
+  let admin: any = null;
+  if (deps.admin !== undefined) {
+    admin = deps.admin;
+  } else {
+    try {
+      admin = createAdminClient();
+    } catch {
+      admin = null;
+    }
+  }
+  const business = await getUserBusinessWithClient(supabase, args.userId).catch(() => null);
+  const locked = await adaptiveLockedPlan({
+    admin,
+    accountId: args.accountId,
+    business,
+    plan,
+    currency: args.currency,
+    now: deps.now,
+  });
+  return { plan: locked.plan, ...base, lead: locked.lead, firstWhy: locked.firstWhy };
 }

@@ -16,14 +16,16 @@ import { readFreeAuditView } from '@/lib/chat-first/free-audit-view';
 import { loadPlan } from '@/lib/plan/load';
 import { paywallCta, paywallCtaFromCheckout, type PaywallCta, type Plan } from '@/lib/plan/plan';
 import { createAdminClient } from '@/lib/supabase/server';
-import {
-  TYPE_OPTIONS,
-  isSetupKey,
-  keysAnsweredByProfile,
-  pendingKeys,
-  type SetupKey,
-} from './questions';
+import { pendingKeys, type SetupKey } from './questions';
 import { firstNameFrom, resolveSetupStage, type SetupStage } from './stage';
+import { readActivityHint, type ActivityHint } from './adaptive/activity-hint';
+import { isAdaptiveOnboarding } from './adaptive/flag';
+import { emptyLedger, readLedgerEntries } from './ledger';
+import { classifyScenario } from './adaptive/scenario';
+import { sigValue } from './adaptive/shared';
+import { LATEST_SIGNALS_MAX_AGE_HOURS, isInsideSignalsTtl, loadLatestSignals } from './adaptive/signals-store';
+import type { AccountSignals, AdaptiveView } from './adaptive/types';
+import { adaptiveAnswered, answeredOnRecord, buildAdaptiveView, isTrackingState } from './adaptive/view';
 
 export type SetupAccount = {
   customerId: string;
@@ -86,31 +88,52 @@ export type SetupState = {
    * locked. Read only for someone without access; null once they have it.
    */
   plan: Plan | null;
+  /** The adaptive tree (lib/setup/adaptive). Null while ADAPTIVE_ONBOARDING is off for this user: the screen then runs exactly as before. */
+  adaptive: AdaptiveView | null;
 };
 
 type User = { id: string; email?: string | null; user_metadata?: Record<string, unknown> | null };
+
+/** For tests: what `loadSetupState` otherwise reads from the request (the workspace, the service client, the environment). */
+export type SetupLoadDeps = {
+  workspace?: Awaited<ReturnType<typeof getAccountWorkspace>>;
+  admin?: any | null;
+  env?: Record<string, string | undefined>;
+  now?: Date;
+};
 
 /**
  * Everything the setup screen needs, read through the caller's own RLS client
  * except the two service-owned tables (the connect job row and the onboarding
  * memory ledger), which are filtered by the authenticated user's own ids.
  */
-export async function loadSetupState(supabase: any, user: User, opts: { edit?: boolean } = {}): Promise<SetupState> {
+export async function loadSetupState(
+  supabase: any,
+  user: User,
+  opts: { edit?: boolean; deps?: SetupLoadDeps } = {}
+): Promise<SetupState> {
   const edit = Boolean(opts.edit);
-  const { business, accounts, revokedAccounts, selectedAccount } = await getAccountWorkspace(user.id);
+  const deps = opts.deps ?? {};
+  const adaptiveOn = isAdaptiveOnboarding(deps.env ?? process.env, user.email);
+  const { business, accounts, revokedAccounts, selectedAccount } = deps.workspace ?? (await getAccountWorkspace(user.id));
 
   let admin: any = null;
-  try {
-    admin = createAdminClient();
-  } catch {
-    admin = null;
+  if (deps.admin !== undefined) {
+    admin = deps.admin;
+  } else {
+    try {
+      admin = createAdminClient();
+    } catch {
+      admin = null;
+    }
   }
 
-  const [job, ledger, access] = await Promise.all([
+  const [job, ledgerEntries, access] = await Promise.all([
     readConnectJob(admin, user.id),
-    business ? readLedger(admin, business.id) : Promise.resolve(new Map<SetupKey, string | null>()),
+    business ? readLedgerEntries(admin, business.id) : Promise.resolve(emptyLedger()),
     getSubscriptionAccess(supabase, user.id, user.email),
   ]);
+  const ledger = ledgerEntries.choices;
 
   const spend = job?.details?.spend ?? {};
   const ranked = sortAccountsBySpend(
@@ -144,8 +167,12 @@ export async function loadSetupState(supabase: any, user: User, opts: { edit?: b
   let audit: SetupState['audit'] = null;
   let findings: SetupFinding[] = [];
   let findingsTotal = 0;
+  let storedSignals: AccountSignals | null = null;
+  // The newest read within 30 days, however old inside that. The screen's own questions stand only on the
+  // 24-hour `storedSignals`; this one decides whether a waste number or a finding amount may be shown.
+  let latestSignals: AccountSignals | null = null;
   if (selectedAccount && !needsChoice) {
-    const [consentRes, auditRes] = await Promise.all([
+    const [consentRes, auditRes, signalsRes] = await Promise.all([
       supabase.from('autopilot_settings').select('consent').eq('account_id', selectedAccount.id).maybeSingle(),
       supabase
         .from('audits')
@@ -154,7 +181,13 @@ export async function loadSetupState(supabase: any, user: User, opts: { edit?: b
         .order('ran_at', { ascending: false })
         .limit(1)
         .maybeSingle(),
+      // The adaptive tree's stored read of this account (never throws). Not read at all while the flag is off.
+      adaptiveOn && admin
+        ? loadLatestSignals(admin, selectedAccount.id, { maxAgeHours: LATEST_SIGNALS_MAX_AGE_HOURS, now: deps.now })
+        : Promise.resolve(null),
     ]);
+    latestSignals = signalsRes;
+    storedSignals = isInsideSignalsTtl(latestSignals, deps.now) ? latestSignals : null;
     // A read error is "not answered": asking again is harmless, skipping is not.
     consentAnswered = Boolean(!consentRes?.error && consentRes?.data?.consent?.answer);
     const row = auditRes?.error ? null : auditRes?.data;
@@ -179,19 +212,14 @@ export async function loadSetupState(supabase: any, user: User, opts: { edit?: b
     }
   }
 
-  const answered: Partial<Record<SetupKey, string | null>> = {};
-  for (const key of keysAnsweredByProfile(business)) answered[key] = null;
-  // The old form stored a free sector; when it matches a type label, edit mode can mark it.
-  const typeFromSector = TYPE_OPTIONS.find((option) => option.label === business?.sector?.trim())?.id;
-  if (typeFromSector) answered.type = typeFromSector;
-  for (const [key, choice] of ledger) answered[key] = choice;
+  const answered = answeredOnRecord({ business, ledger });
 
-  const pending =
+  let pending =
     selectedAccount && !needsChoice
       ? pendingKeys({ answered: Object.keys(answered) as SetupKey[], consentAnswered, edit })
       : [];
 
-  const stage = resolveSetupStage({
+  let stage = resolveSetupStage({
     linkedAccounts: accounts.length,
     connectRunning,
     needsChoice,
@@ -216,9 +244,82 @@ export async function loadSetupState(supabase: any, user: User, opts: { edit?: b
   let plan: Plan | null = null;
   if (!access.active && !edit && selectedAccount && !needsChoice) {
     try {
-      plan = await loadPlan(supabase, { accountId: selectedAccount.id, currency: selectedAccount.currency_code });
+      plan = await loadPlan(supabase, {
+        accountId: selectedAccount.id,
+        currency: selectedAccount.currency_code,
+        // The adaptive rules read each decision's category on the server; view.ts strips it before the browser.
+        includeCategory: adaptiveOn,
+      });
     } catch {
       plan = null;
+    }
+  }
+
+  // The adaptive tree takes over pending, stage and plan; with the flag off none of this runs.
+  let adaptive: AdaptiveView | null = null;
+  if (adaptiveOn) {
+    const adaptiveAnswers = adaptiveAnswered({ answered, ledger });
+
+    // The read failed or never happened: ask what the platform already knows about the account's activity,
+    // so an empty account is not classified «active» and offered the free audit.
+    let activityHint: ActivityHint = null;
+    if (selectedAccount && !needsChoice && !sigValue(storedSignals?.campaigns)) {
+      activityHint = await readActivityHint(supabase, {
+        account: selectedAccount,
+        spend30: selected?.spend30 ?? null,
+        spendReadAt: job?.finished_at ?? job?.started_at ?? null,
+        now: deps.now,
+      });
+    }
+
+    const built = buildAdaptiveView({
+      signals: storedSignals,
+      linkedAccounts: accounts.length,
+      accountChosen: Boolean(selectedAccount && !needsChoice),
+      needsChoice,
+      connectRunning,
+      connectError: connectView.error,
+      answered: adaptiveAnswers,
+      labels: ledgerEntries.labels,
+      business: business
+        ? {
+            name: business.name ?? null,
+            monthlyBudget: business.monthly_budget ?? null,
+            targetRegions: business.target_regions ?? [],
+            website: business.website ?? null,
+            sector: business.sector ?? null,
+          }
+        : null,
+      consentAnswered,
+      edit,
+      firstName: firstNameFrom(user.user_metadata ?? null),
+      auditExists: Boolean(audit),
+      subscriptionActive: access.active,
+      plan,
+      currency: selectedAccount?.currency_code ?? null,
+      activityHint,
+      confirmed: ledgerEntries.confirmed ?? null,
+      now: deps.now,
+    });
+    adaptive = built.view;
+    pending = built.pending;
+    stage = built.stage;
+    plan = built.plan;
+
+    // No tracking means the waste estimate says nothing: the number is not sent in any form. The state is
+    // judged on the newest read within 30 days, not only the 24-hour one the questions stand on, so
+    // opening /onboarding?edit=1 a day later does not bring the number back.
+    const tracking =
+      isTrackingState(built.view.scenario.state) ||
+      (latestSignals !== null &&
+        isTrackingState(
+          classifyScenario({ signals: latestSignals, linkedAccounts: accounts.length, connectNoAccount: false, answered: adaptiveAnswers }).state
+        ));
+    if (tracking) {
+      if (audit) audit = { ...audit, estimatedMonthlyWaste: null };
+      if (plan) plan = { ...plan, waste: null };
+      // The amounts of the findings come from the same audit, so they say nothing either.
+      findings = findings.map((finding) => ({ ...finding, impactLabel: null, impactAmount: 0 }));
     }
   }
 
@@ -263,6 +364,7 @@ export async function loadSetupState(supabase: any, user: User, opts: { edit?: b
     cta,
     freeAudit,
     plan,
+    adaptive,
   };
 }
 
@@ -283,33 +385,5 @@ async function readConnectJob(admin: any, userId: string): Promise<(ConnectJobSn
   }
 }
 
-/**
- * Onboarding answers on record: the newest active fact per setup key. Any
- * failure (table not migrated, service key missing) reads as "nothing on
- * record", which only means a question may be asked again.
- */
-export async function readLedger(admin: any, businessId: string): Promise<Map<SetupKey, string | null>> {
-  const out = new Map<SetupKey, string | null>();
-  if (!admin) return out;
-  try {
-    const { data, error } = await admin
-      .from('business_memory')
-      .select('data, created_at')
-      .eq('business_id', businessId)
-      .eq('source', 'onboarding')
-      .eq('status', 'active')
-      .order('created_at', { ascending: false })
-      .limit(60);
-    if (error || !Array.isArray(data)) return out;
-    for (const row of data) {
-      const key = row?.data?.setup_key;
-      if (!isSetupKey(key) || out.has(key)) continue;
-      const choice = typeof row.data.choice === 'string' ? row.data.choice : null;
-      out.set(key, choice);
-    }
-    return out;
-  } catch {
-    return out;
-  }
-}
-
+// The onboarding ledger lives in ./ledger (so the plan lock can read it without importing this loader); these names stay importable from here.
+export { LEDGER_LABEL_MAX, readLedger, readLedgerEntries, type LedgerEntries } from './ledger';
