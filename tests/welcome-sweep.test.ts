@@ -121,7 +121,7 @@ test('welcome sweep: the shipped config (not activated) sends nothing even with 
 test('welcome sweep: unapproved copy reads nothing and sends nothing (the shipped copy state)', () =>
   withEnv(secrets, async () => {
     const { admin, sent, options, touched } = setup([{ id: uid('a'), hoursAgo: 1 }]);
-    const summary = await sendDueWelcomeEmails(admin, { ...options, copy: EMAIL_COPY.welcome_ads_connect });
+    const summary = await sendDueWelcomeEmails(admin, { ...options, copy: { ...EMAIL_COPY.welcome_ads_connect, approved: false } });
     assert.equal(summary.checked, 0);
     assert.equal(touched(), 0);
     assert.deepEqual(sent, []);
