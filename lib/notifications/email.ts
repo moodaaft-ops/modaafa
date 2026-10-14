@@ -1,16 +1,36 @@
 import { isConfiguredEnv } from '@/lib/platform/env';
+import { EMAIL_COPY } from '@/lib/lifecycle/copy';
+import { EMPTY_FACTS, type BillingFacts, type CopyKey, type RenderedMessage } from '@/lib/lifecycle/types';
+import { firstName } from '@/lib/lifecycle/format';
+import { renderTemplate } from '@/lib/messaging/render';
 
-type EmailPayload = {
+export type EmailTag = { name: string; value: string };
+
+export type EmailPayload = {
   to: string;
   subject: string;
   html: string;
+  /** Plain-text alternative. Mail clients and spam filters like a message that has one. */
+  text?: string;
   replyTo?: string;
   headers?: Record<string, string>;
   /** Resend de-duplicates two calls carrying the same key for 24 hours. */
   idempotencyKey?: string;
   /** Skip the operational footer when the caller supplies its own. */
   footer?: string;
+  /** Resend tags (shown in the dashboard and echoed back by webhooks). Names and values are cleaned to ASCII. */
+  tags?: EmailTag[];
+  /**
+   * `html` is already a complete document in the brand shell (lib/messaging/render.ts):
+   * send it exactly as given, without the old operational wrapper.
+   */
+  rawHtml?: boolean;
 };
+
+/** Resend allows only ASCII letters, digits, underscore and dash in tag names and values. */
+function cleanTag(value: string) {
+  return value.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 256) || 'unknown';
+}
 
 export function isEmailConfigured() {
   return isConfiguredEnv(process.env.RESEND_API_KEY) && isConfiguredEnv(process.env.RESEND_FROM_EMAIL);
@@ -35,9 +55,13 @@ export async function sendEmail(payload: EmailPayload) {
       from: from.trim(),
       to: [payload.to],
       subject: payload.subject,
-      html: emailShell(payload.html, payload.footer),
+      html: payload.rawHtml ? payload.html : emailShell(payload.html, payload.footer),
+      ...(payload.text ? { text: payload.text } : {}),
       ...(payload.replyTo ? { reply_to: payload.replyTo } : {}),
-      ...(payload.headers ? { headers: payload.headers } : {}),
+      ...(payload.headers && Object.keys(payload.headers).length > 0 ? { headers: payload.headers } : {}),
+      ...(payload.tags && payload.tags.length > 0
+        ? { tags: payload.tags.map((tag) => ({ name: cleanTag(tag.name), value: cleanTag(tag.value) })) }
+        : {}),
     }),
   });
 
@@ -78,11 +102,38 @@ export async function sendOpsAlert({
   });
 }
 
-export function subscriptionWelcomeEmail() {
-  return {
-    subject: 'تم تفعيل تجربة مُضاعِف',
-    html: '<h2>أهلاً بك في مُضاعِف</h2><p>تم تفعيل تجربتك. يمكنك الآن استخدام المساعد الذكي وتشغيل الفحص ومراجعة التوصيات قبل أي تنفيذ.</p><p><a href="https://ai.modaafa.com/dashboard">الانتقال إلى لوحة التحكم</a></p>',
-  };
+/** The person a transactional mail is for. Read by the Stripe webhook before it sends. */
+export type TransactionalRecipient = { id: string; email: string; name?: string | null };
+
+/** Subject, html and text, ready for `sendEmail({ to, ...mail, rawHtml: true })`. */
+export type TransactionalMail = Pick<RenderedMessage, 'subject' | 'html' | 'text' | 'headers' | 'tags'> & {
+  rawHtml: true;
+};
+
+function renderTransactional(
+  key: CopyKey,
+  recipient: TransactionalRecipient,
+  billing: BillingFacts | null
+): TransactionalMail | null {
+  const rendered = renderTemplate({
+    copy: EMAIL_COPY[key],
+    templateKey: key,
+    user: recipient,
+    facts: { ...EMPTY_FACTS, firstName: firstName(recipient.name) || null, billing },
+  });
+  if (!rendered) return null;
+  const { subject, html, text, headers, tags } = rendered;
+  return { subject, html, text, headers, tags, rawHtml: true };
+}
+
+/**
+ * The three billing mails go through the same brand shell as the lifecycle
+ * mail, with the copies tx_subscription_welcome, tx_trial_ending and
+ * tx_payment_failed from lib/lifecycle/copy.ts. They are transactional: no
+ * stop link, and the approved flag of the copy does not gate them.
+ */
+export function subscriptionWelcomeEmail(recipient: TransactionalRecipient) {
+  return renderTransactional('tx_subscription_welcome', recipient, null);
 }
 
 /**
@@ -90,30 +141,12 @@ export function subscriptionWelcomeEmail() {
  * `customer.subscription.trial_will_end` for this; the handler for it was
  * missing entirely, so users were charged with no advance notice.
  */
-export function trialEndingEmail(trialEndsAt?: string | null) {
-  const endsOn = trialEndsAt
-    ? new Intl.DateTimeFormat('ar-SA-u-ca-gregory-nu-latn', {
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-      }).format(new Date(trialEndsAt))
-    : null;
-
-  return {
-    subject: 'تجربتك المجانية في مُضاعِف تنتهي قريباً',
-    html: `<h2>تنتهي تجربتك المجانية قريباً</h2><p>${
-      endsOn
-        ? `تنتهي التجربة بتاريخ ${escapeHtml(endsOn)}، وبعدها يبدأ تجديد الاشتراك تلقائياً على الخطة المختارة.`
-        : 'تنتهي التجربة خلال أيام، وبعدها يبدأ تجديد الاشتراك تلقائياً على الخطة المختارة.'
-    }</p><p>إذا أردت تغيير الخطة أو إلغاء الاشتراك قبل التجديد، يمكنك ذلك في أي وقت من صفحة الفوترة.</p><p><a href="https://ai.modaafa.com/billing">إدارة الاشتراك</a></p>`,
-  };
+export function trialEndingEmail(trialEndsAt: string | null | undefined, recipient: TransactionalRecipient) {
+  return renderTransactional('tx_trial_ending', recipient, { planName: null, trialEndsAt: trialEndsAt ?? null });
 }
 
-export function paymentFailedEmail() {
-  return {
-    subject: 'تعذر تجديد اشتراك مُضاعِف',
-    html: '<h2>تعذر إتمام دفعة الاشتراك</h2><p>راجع وسيلة الدفع من صفحة الفوترة حتى لا تتوقف الخصائص المدفوعة.</p><p><a href="https://ai.modaafa.com/billing">إدارة الفوترة</a></p>',
-  };
+export function paymentFailedEmail(recipient: TransactionalRecipient) {
+  return renderTransactional('tx_payment_failed', recipient, null);
 }
 
 function emailShell(content: string, footer = 'هذه رسالة تشغيلية تخص حسابك في منصة مُضاعِف.') {
