@@ -85,10 +85,15 @@ const ICONS: Record<IconKey, React.ComponentType<{ className?: string }>> = {
   flag: Flag,
 };
 
+/** An icon name from the adaptive bank (a plain string) when it is one the docks know, else none. */
+export function iconFor(name: string | undefined): IconKey | undefined {
+  return name && Object.prototype.hasOwnProperty.call(ICONS, name) ? (name as IconKey) : undefined;
+}
+
 /** What a dock hands back: the payload for the API and the words for the customer's bubble. */
 export type AnswerPayload = { answer: Record<string, any> & { choice?: string }; label: string };
 
-const inputClass =
+export const inputClass =
   'h-14 w-full min-w-0 rounded-full border border-border bg-card px-5 text-[16px] text-foreground placeholder:text-muted-foreground focus:border-border-strong focus:outline-none';
 
 export function AnswerTile({
@@ -138,7 +143,7 @@ export function AnswerTile({
   );
 }
 
-function OptionList({
+export function OptionList({
   options,
   current,
   columns = 1,
@@ -169,7 +174,7 @@ function OptionList({
   );
 }
 
-function TextAnswer({
+export function TextAnswer({
   placeholder,
   initial = '',
   inputMode,
@@ -234,7 +239,7 @@ function TextAnswer({
   );
 }
 
-function BackLink({ onBack }: { onBack: () => void }) {
+export function BackLink({ onBack }: { onBack: () => void }) {
   return (
     <button
       type="button"
