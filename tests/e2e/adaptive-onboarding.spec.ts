@@ -3,9 +3,9 @@ import { expect, test, type Page } from '@playwright/test';
 
 /**
  * The adaptive onboarding end to end: the setup chat with «مُضاعِف» when the tree
- * is on (ADAPTIVE_ONBOARDING=true), on the fake backend with synthetic data. Four
- * customers, four journeys: a dental clinic, a Salla store, a new account with no
- * campaigns, and someone with no ads account at all.
+ * is on (ADAPTIVE_ONBOARDING=true), on the fake backend with synthetic data. Five
+ * customers, five journeys: a dental clinic, a Salla store, an account an agency
+ * manages, a new account with no campaigns, and someone with no ads account at all.
  *
  *   node tests/e2e/support/mock-supabase-simple.mjs &
  *   NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321 NEXT_PUBLIC_SUPABASE_ANON_KEY=anon pnpm build
@@ -19,7 +19,7 @@ import { expect, test, type Page } from '@playwright/test';
  * and simple-experience.spec.ts (the ten fixed questions) must run with the flag off. Use localhost, not
  * 127.0.0.1: the answer route checks the Origin against the host the server sees.
  *
- * Screenshots at 390 by 844 (the opener when there is one, and the ending) go to /home/claude/adaptive-shots/.
+ * Screenshots at 390 by 844 (the opener when there is one, the ending from its top and from its end) go to /home/claude/adaptive-shots/.
  */
 
 const ON = process.env.MODAAFA_E2E_ADAPTIVE === '1';
@@ -35,7 +35,8 @@ const SESSION = JSON.stringify({
   user: { id: '11111111-1111-4111-8111-111111111111', email: 'qa-tester@example.com', aud: 'authenticated', role: 'authenticated' },
 });
 
-test.describe.configure({ mode: 'serial' });
+// Each journey is ten or so answers with the assistant typing between them: a minute and a half is room enough.
+test.describe.configure({ mode: 'serial', timeout: 90_000 });
 test.skip(!ON, 'needs the fake backend and ADAPTIVE_ONBOARDING=true: see the comment at the top');
 
 async function signIn(page: Page, baseURL: string | undefined) {
@@ -64,6 +65,12 @@ async function shot(page: Page, name: string) {
   await page.screenshot({ path: `${SHOTS}/${name}.png` });
 }
 
+/** The transcript scrolls inside <main>, not the page: this shows its end, the way a customer scrolling down would. */
+async function shotEnd(page: Page, name: string) {
+  await page.locator('main').evaluate((element) => element.scrollTo(0, element.scrollHeight));
+  await shot(page, name);
+}
+
 /** The requests the adaptive flow must not make unless the state allows them. */
 function watchRequests(page: Page) {
   const auditRuns: string[] = [];
@@ -80,7 +87,10 @@ function watchRequests(page: Page) {
 
 /** What the answer dock offers, in DOM order. */
 async function dockActions(page: Page) {
-  const texts = await page.getByRole('region', { name: 'جوابك' }).locator('a, button').allInnerTexts();
+  const actions = page.getByRole('region', { name: 'جوابك' }).locator('a, button');
+  // The dock appears after the line is typed: wait for it, then read it whole.
+  await expect(actions.first()).toBeVisible({ timeout: 15_000 });
+  const texts = await actions.allInnerTexts();
   return texts.map((text) => text.trim());
 }
 
@@ -92,10 +102,11 @@ async function answerFirstCampaignQuestions(page: Page) {
   await pick(page, 'مدن معيّنة');
   await pick(page, 'الرياض');
   await pick(page, /^تم،/);
-  await expect(page.getByText('متى تقول إن الإعلان نجح؟')).toBeVisible({ timeout: 15_000 });
-  await pick(page, 'طلبات شراء من المتجر');
+  // The goal is not asked: the business type already answers it (a store wants orders).
+  await expect(page.getByText('كم تبي تصرف على إعلانات قوقل بالشهر؟')).toBeVisible({ timeout: 15_000 });
   await pick(page, 'من 3,000 إلى 10,000 ريال');
   await pick(page, 'بكتبه بعدين');
+  await expect(page.getByText('متى تقول إن الإعلان نجح؟')).toHaveCount(0);
 }
 
 // ---------------------------------------------------------------------------
@@ -125,10 +136,13 @@ test('a clinic: the opener shows what was read, the answers lead to «فهمت �
   await expect(page.getByText('وش الخدمة اللي تبي تكثر حجوزاتها؟')).toBeVisible({ timeout: 15_000 });
   await expect(page.getByPlaceholder('مثلاً: تقويم شفاف')).toBeVisible();
   await noSidewaysOverflow(page);
+  await shot(page, 'clinic-service-tiles');
   await pick(page, /^زراعة/);
   await pick(page, 'من 100 إلى 500 ريال');
   await pick(page, 'الاتصالات قليلة');
   await expect(page.getByText('متى أحد يرد على اتصالات العيادة؟')).toBeVisible({ timeout: 15_000 });
+  await noSidewaysOverflow(page);
+  await shot(page, 'clinic-call-hours');
   await pick(page, /^فترتين/);
   await pick(page, /^إي$/);
   await pick(page, /^نفسه تقريباً/);
@@ -169,6 +183,7 @@ test('a clinic: the opener shows what was read, the answers lead to «فهمت �
   await noSidewaysOverflow(page);
   await page.evaluate(() => document.getElementById('plan-card')?.scrollIntoView({ block: 'start' }));
   await shot(page, 'clinic-ending');
+  await shotEnd(page, 'clinic-ending-bottom');
 
   // An audit is on record and the read was fresh: no audit run, no new read.
   expect(seen.auditRuns).toEqual([]);
@@ -199,6 +214,7 @@ test('a store: the average order is asked with the read number, the products are
   // Not «كم متوسط طلبك؟» from zero: the number the account gave, to confirm.
   await expect(page.getByText('متوسط طلبك من قوقل طلع قرابة 186 ريال. قريب من الصح؟')).toBeVisible({ timeout: 15_000 });
   await noSidewaysOverflow(page);
+  await shot(page, 'store-aov');
   await pick(page, 'إي قريب');
   await pick(page, 'أقل من 20 ريال');
 
@@ -213,6 +229,7 @@ test('a store: the average order is asked with the read number, the products are
   await expect(done).toBeEnabled();
   await expect(page.getByRole('button', { name: 'لا، كلها سوا' })).toBeVisible();
   await noSidewaysOverflow(page);
+  await shot(page, 'store-chips');
   await done.click();
 
   await pick(page, 'لا، كلها تطلع');
@@ -238,9 +255,69 @@ test('a store: the average order is asked with the read number, the products are
   await noSidewaysOverflow(page);
   await page.evaluate(() => document.getElementById('plan-card')?.scrollIntoView({ block: 'start' }));
   await shot(page, 'store-ending');
+  await shotEnd(page, 'store-ending-bottom');
 
   expect(seen.auditRuns).toEqual([]);
   expect(seen.signalReads).toEqual([]);
+  expect(seen.errors).toEqual([]);
+});
+
+// ---------------------------------------------------------------------------
+// An account an agency manages: questions to put to the agency, and one line to the team
+// ---------------------------------------------------------------------------
+
+test('an agency-managed account: the plan comes with questions for the agency and a WhatsApp card, with nothing to execute', async ({ page, baseURL }) => {
+  await scenario('adaptive_agency');
+  await signIn(page, baseURL);
+  const seen = watchRequests(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/onboarding');
+
+  await expect(page.getByText('هلا أيمن، ربطت حسابك وقريته.')).toBeVisible({ timeout: 20_000 });
+  await pick(page, 'إي صح');
+  // The account is linked to an outside manager: «مُضاعِف» asks who it is, before anything else.
+  await expect(page.getByText('شفت إن حسابك مربوط بحساب إدارة من برا. مين يديره؟')).toBeVisible({ timeout: 15_000 });
+  await noSidewaysOverflow(page);
+  await pick(page, 'وكالة أو مسوّق');
+  await expect(page.getByText('وش الخدمة اللي تبي تكثر حجوزاتها؟')).toBeVisible({ timeout: 15_000 });
+  await pick(page, /^زراعة/);
+  await pick(page, 'من 100 إلى 500 ريال');
+  await pick(page, 'الاتصالات قليلة');
+  await pick(page, /^فترتين/);
+  await pick(page, /^إي$/);
+  await pick(page, /^نفسه تقريباً/);
+  // Somebody else runs the account: there is nothing for «مُضاعِف» to ask permission for, so no consent question.
+
+  await expect(page.getByText('خلصنا. هذا اللي فهمته عنك:')).toBeVisible({ timeout: 20_000 });
+  await noSidewaysOverflow(page);
+  await pick(page, 'صح، وريني الخطة');
+
+  const plan = page.getByRole('region', { name: 'خطتك جاهزة' });
+  await expect(plan).toBeVisible({ timeout: 20_000 });
+  const questions = page.getByRole('region', { name: 'أسئلة تسألها وكالتك' });
+  await expect(questions).toBeVisible();
+  // One question per audit category, in the order the decisions came (keywords, budget, ads).
+  await expect(questions.getByRole('listitem')).toHaveCount(3);
+  await expect(questions.getByText('كيف تراجعون الكلمات اللي تصرف بلا نتيجة', { exact: false })).toBeVisible();
+  const management = page.getByRole('region', { name: 'خل فريق مُضاعفة يديرها عنك' });
+  await expect(management).toBeVisible();
+  await expect(management.getByRole('link', { name: 'كلمنا على الواتساب' })).toHaveAttribute('href', /^https:\/\/wa\.me\/966541004029\?text=/);
+  // Nothing to execute: the lead has manual steps only, and there is no approve button.
+  await expect(page.getByRole('button', { name: 'اعتمد' })).toHaveCount(0);
+  await noSidewaysOverflow(page);
+  await page.evaluate(() => document.getElementById('plan-card')?.scrollIntoView({ block: 'start' }));
+  await shot(page, 'agency-ending');
+  await questions.scrollIntoViewIfNeeded();
+  await shot(page, 'agency-cards');
+  // At the very bottom the last card clears the dock: nothing the customer needs hides behind the trial button.
+  await page.locator('main').evaluate((element) => element.scrollTo(0, element.scrollHeight));
+  await expect(management.getByRole('link', { name: 'كلمنا على الواتساب' })).toBeInViewport({ ratio: 1 });
+  const link = await management.getByRole('link', { name: 'كلمنا على الواتساب' }).boundingBox();
+  const dock = await page.getByRole('region', { name: 'جوابك' }).boundingBox();
+  expect(link && dock && link.y + link.height <= dock.y + 1).toBeTruthy();
+  await shot(page, 'agency-bottom');
+
+  expect(seen.auditRuns).toEqual([]);
   expect(seen.errors).toEqual([]);
 });
 
@@ -280,6 +357,7 @@ test('a new account is asked about the business, never runs the audit, and ends 
   await noSidewaysOverflow(page);
   await page.evaluate(() => document.getElementById('plan-card')?.scrollIntoView({ block: 'start' }));
   await shot(page, 'new-ending');
+  await shotEnd(page, 'new-ending-bottom');
 
   // The audit belongs to accounts that already run ads: not one request to it, and no read either (the stored one was fresh).
   expect(seen.auditRuns).toEqual([]);
@@ -334,6 +412,7 @@ test('no ads account: «كمّل بدون حساب» runs the questions, and the
   await noSidewaysOverflow(page);
   await page.evaluate(() => document.getElementById('plan-card')?.scrollIntoView({ block: 'start' }));
   await shot(page, 'no-account-ending');
+  await shotEnd(page, 'no-account-ending-bottom');
 
   expect(seen.auditRuns).toEqual([]);
   expect(seen.errors).toEqual([]);

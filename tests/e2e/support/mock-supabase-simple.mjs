@@ -384,6 +384,7 @@ reset(scenario);
 //   adaptive_store       Salla perfume store, orders worth 186 on average, seven products (four idle), an audit on record
 //   adaptive_new         linked, zero campaigns, no audit: the first-campaign plan, and /api/audit/run is never called
 //   adaptive_no_account  signed up, a business, nothing linked
+//   adaptive_agency      like the clinic, but the account is linked to an outside manager (an agency answers «وكالة»)
 const READ_FAILED = { ok: false, error: 'not_read' };
 const read = (value) => ({ ok: true, value });
 const adaptiveCampaign = (id, name, kind, cost30, impressions30, clicks30, conversions30, value30 = 0) => ({
@@ -503,6 +504,16 @@ SCENARIOS.adaptive_clinic = () => ({
   recommendations: clinicRecs,
   campaigns_cache: [camp(0, 1100, 40), camp(1, 900, 33)],
   subscriptions: [], ai_actions: [],
+});
+// The audit decisions carry a category: the agency ending turns each one into a question for the agency.
+const agencyRecs = clinicRecs.map((rec, index) => ({ ...rec, category: ['keywords', 'budget', 'ads'][index] }));
+SCENARIOS.adaptive_agency = () => ({
+  ...SCENARIOS.adaptive_clinic(),
+  job_runs: [
+    connectJob(2000),
+    storedRead(A1, { ...clinicSignals(), externalManager: read({ linked: true, managerIds: ['9876543210'] }) }),
+  ],
+  recommendations: agencyRecs,
 });
 SCENARIOS.adaptive_store = () => ({
   businesses: callbackBusiness(),

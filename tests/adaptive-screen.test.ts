@@ -287,6 +287,17 @@ test('tiles go one per row, tiles2 in two columns, and the current answer is mar
   assert.ok(!dock(question({ options })).includes('الحالي'));
 });
 
+test('the snapshot icons: a clock on the answering hours, a check and the arrows on «قريب من الصح؟», none elsewhere', () => {
+  const aov = dock(question({ key: 'aov_check', options: [opt('same', 'قريب'), opt('less', 'أقل'), opt('more', 'أكثر')] }));
+  assert.ok(aov.includes('lucide-check') && aov.includes('lucide-arrow-down') && aov.includes('lucide-arrow-up'));
+  const hours = dock(question({ key: 'call_hours', options: [opt('a', 'فترتين'), opt('b', 'المسا بس')] }));
+  assert.equal(hours.split('lucide-clock').length - 1, 2, 'one clock per option');
+  assert.ok(!dock(question({ key: 'margin', options: [opt('lt20', 'أقل من 20')] })).includes('lucide'), 'no icon where the snapshot has none');
+  // An icon the bank does send wins over the fallback.
+  const sent = dock(question({ key: 'call_hours', options: [{ ...opt('a', 'فترتين'), icon: 'phone' }] }));
+  assert.ok(sent.includes('lucide-phone') && !sent.includes('lucide-clock'));
+});
+
 test('a free-text field replaces the «غير كذا» tile and keeps its placeholder and limit', () => {
   const q = question({
     key: 'focus_service',

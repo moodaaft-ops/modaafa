@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { cn } from '@/lib/utils';
 import { CONFIRM_OPTIONS } from '@/lib/setup/adaptive/answers';
 import type { AdaptiveQuestion, BusinessKind, DominantOutcome } from '@/lib/setup/adaptive/types';
-import { AnswerTile, BackLink, TextAnswer, iconFor, inputClass, type AnswerPayload } from './docks';
+import { AnswerTile, BackLink, TextAnswer, iconFor, inputClass, type AnswerPayload, type TileIcon } from './docks';
 import {
   EXCLUSIVE_OPTION_ID,
   chipsPayload,
@@ -70,6 +70,21 @@ export function AdaptiveDock({
   );
 }
 
+/**
+ * Icons the approved snapshots show on options the bank gives none to: a clock on every answering-hours choice, and a
+ * check or an arrow on «قريب من الصح؟». An icon the bank does send always wins.
+ */
+const FALLBACK_ICON: Record<string, TileIcon> = {
+  'aov_check:same': 'check',
+  'aov_check:less': 'arrow-down',
+  'aov_check:more': 'arrow-up',
+};
+
+function fallbackIcon(key: string, optionId: string): TileIcon | undefined {
+  if (key === 'call_hours') return 'clock';
+  return FALLBACK_ICON[`${key}:${optionId}`];
+}
+
 function TilesDock({
   question,
   busy,
@@ -92,7 +107,7 @@ function TilesDock({
               key={option.id}
               label={option.label}
               hint={option.hint}
-              icon={iconFor(option.icon)}
+              icon={iconFor(option.icon) ?? fallbackIcon(question.key, option.id)}
               compact={columns === 2}
               current={current === option.id}
               disabled={busy}

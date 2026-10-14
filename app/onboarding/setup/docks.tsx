@@ -2,7 +2,9 @@
 
 import { useMemo, useState } from 'react';
 import {
+  ArrowDown,
   ArrowRight,
+  ArrowUp,
   Briefcase,
   Building2,
   Check,
@@ -54,7 +56,12 @@ import {
 import type { SetupAccount, SetupState } from '@/lib/setup/load';
 import { foldArabicSearch, toAsciiDigits } from '@/lib/accounts/search';
 
-const ICONS: Record<IconKey, React.ComponentType<{ className?: string }>> = {
+/** The question bank's icons, plus the two arrows the adaptive docks use for «أقل» and «أكثر». */
+export type TileIcon = IconKey | 'arrow-up' | 'arrow-down';
+
+const ICONS: Record<TileIcon, React.ComponentType<{ className?: string }>> = {
+  'arrow-up': ArrowUp,
+  'arrow-down': ArrowDown,
   bag: ShoppingBag,
   briefcase: Briefcase,
   store: Store,
@@ -86,8 +93,8 @@ const ICONS: Record<IconKey, React.ComponentType<{ className?: string }>> = {
 };
 
 /** An icon name from the adaptive bank (a plain string) when it is one the docks know, else none. */
-export function iconFor(name: string | undefined): IconKey | undefined {
-  return name && Object.prototype.hasOwnProperty.call(ICONS, name) ? (name as IconKey) : undefined;
+export function iconFor(name: string | undefined): TileIcon | undefined {
+  return name && Object.prototype.hasOwnProperty.call(ICONS, name) ? (name as TileIcon) : undefined;
 }
 
 /** What a dock hands back: the payload for the API and the words for the customer's bubble. */
@@ -107,7 +114,7 @@ export function AnswerTile({
 }: {
   label: string;
   hint?: string;
-  icon?: IconKey;
+  icon?: TileIcon;
   current?: boolean;
   disabled?: boolean;
   compact?: boolean;
