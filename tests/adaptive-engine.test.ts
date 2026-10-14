@@ -1530,3 +1530,43 @@ test('classify: pool, door and aluminium contractors read as services (trades se
     assert.equal(scenario.kindConfidence, 'confident', name);
   }
 });
+
+test('classify: a linked Business Profile is not a shop (real reads of 14 Oct 2026)', () => {
+  // A dental clinic with its location asset linked: was a guess because the location scored «local».
+  const clinic = account({
+    campaigns: { ok: true, value: [campaign({ id: '1', name: 'زيارة - تقويم أسنان', status: 'PAUSED', cost30: 36.94, impressions30: 900, clicks30: 24, conversions30: 11 })] },
+    enabledConversionActions: { ok: true, value: 11 },
+    conversionsByGroup: groups(['contact', 11]),
+    assets: { ok: true, value: { call: true, locations: 1 } },
+  });
+  const c = classify(clinic);
+  assert.equal(c.kind, 'clinic');
+  assert.equal(c.kindConfidence, 'confident');
+  assert.ok(!c.evidence.includes('loc'));
+
+  // A pool contractor with a «فرع» campaign and its location linked: was read as a shop.
+  const pools = account({
+    campaigns: {
+      ok: true,
+      value: [
+        campaign({ id: '1', name: 'مسابح فايبر جلاس', cost30: 3000, impressions30: 40000, clicks30: 12000, conversions30: 2000 }),
+        campaign({ id: '2', name: 'فرع الرياض - بحث', cost30: 1407, impressions30: 20000, clicks30: 4337, conversions30: 991 }),
+      ],
+    },
+    enabledConversionActions: { ok: true, value: 35 },
+    conversionsByGroup: groups(['contact', 2599], ['directions', 391]),
+    assets: { ok: true, value: { call: true, locations: 1 } },
+  });
+  const p = classify(pools);
+  assert.equal(p.kind, 'services');
+  assert.equal(p.kindConfidence, 'confident');
+
+  // A Local campaign still counts for a shop.
+  const shop = account({
+    campaigns: { ok: true, value: [campaign({ id: '1', name: 'مطعم الحي', kind: 'LOCAL', cost30: 500, impressions30: 5000, clicks30: 80, conversions30: 10 })] },
+    enabledConversionActions: { ok: true, value: 1 },
+    conversionsByGroup: groups(['directions', 10]),
+    assets: { ok: true, value: { call: false, locations: 1 } },
+  });
+  assert.equal(classify(shop).kind, 'local');
+});
