@@ -65,7 +65,7 @@ function money(amount: number, currency: string) {
 const welcome_ads_connect: EmailCopy = {
   key: 'welcome_ads_connect',
   category: 'onboarding',
-  approved: false,
+  approved: true,
   build: () => ({
     // Ayman's own wording from PR #81, kept.
     subject: 'باقي خطوة وحدة على قراءة حسابك الإعلاني',
@@ -90,7 +90,7 @@ const welcome_ads_connect: EmailCopy = {
 const registered_1d: EmailCopy = {
   key: 'registered_1d',
   category: 'lifecycle',
-  approved: false,
+  approved: true,
   build: () => ({
     subject: 'الإيميل الصح في شاشة قوقل',
     preheader: 'نقطة صغيرة توقف الربط، وحلها سهل',
@@ -196,7 +196,7 @@ const connected_1d: EmailCopy = {
 const plan_ready_1d: EmailCopy = {
   key: 'plan_ready_1d',
   category: 'lifecycle',
-  approved: false,
+  approved: true,
   requires: ['plan'],
   build: (facts) => {
     const plan = facts.plan;
@@ -526,7 +526,7 @@ const past_due_3d: EmailCopy = {
 const weekly_report: EmailCopy = {
   key: 'weekly_report',
   category: 'weekly_report',
-  approved: false,
+  approved: true,
   requires: ['weekly'],
   build: (facts) => {
     const week = facts.weekly;
