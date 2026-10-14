@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { LegalPage, LegalSection } from '@/lib/ui/legal-page';
 import { pageMetadata } from '@/lib/seo/site';
+import { ownerConfig, showDrafts } from '@/lib/landing/owner-config';
 
 export const metadata = pageMetadata({
   title: 'سياسة الاسترجاع والاسترداد',
@@ -9,6 +10,9 @@ export const metadata = pageMetadata({
 });
 
 export default function RefundPage() {
+  // The guarantee shows here only once the owner approves it; a draft shows on
+  // preview deployments so it can be read in place before approval.
+  const guarantee = ownerConfig.guarantee.approved || showDrafts() ? ownerConfig.guarantee : null;
   return (
     <LegalPage
       title="سياسة الاسترجاع والاسترداد"
@@ -51,6 +55,20 @@ export default function RefundPage() {
           الخصم المكرر أو الناتج عن خطأ تقني من جانبنا يُراجَع ويُصحَّح، ولا يدخل في القاعدة أعلاه.
         </p>
       </LegalSection>
+
+      {guarantee && (
+        <div id="guarantee" className="scroll-mt-24">
+          <LegalSection title={guarantee.approved ? guarantee.title : `${guarantee.title} (مسودة للاعتماد)`}>
+            <p>{guarantee.promise}</p>
+            <ul className="list-disc space-y-2 ps-5">
+              {guarantee.terms.map((term) => (
+                <li key={term}>{term}</li>
+              ))}
+            </ul>
+            <p>هذا الضمان موافقة كتابية من مُضاعِف بالمعنى المذكور في قسم الاسترداد أعلاه.</p>
+          </LegalSection>
+        </div>
+      )}
 
       <LegalSection title="كيف تطلب مراجعة خصم">
         <p>

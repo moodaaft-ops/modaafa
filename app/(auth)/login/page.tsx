@@ -1,14 +1,14 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import Image from 'next/image';
 import Link from 'next/link';
 import { ArrowLeft, Loader2, MailCheck, ShieldCheck } from 'lucide-react';
 import { Alert } from '@/lib/ui/alert';
 import { ThemeToggle } from '@/lib/ui/theme-toggle';
 import { safeLocalPath } from '@/lib/security/redirect';
 import { authErrorFromHash } from '@/lib/auth/email-confirm';
-import { LogoLockup, LogoMark } from '@/lib/ui/logo';
+import { LogoLockup } from '@/lib/ui/logo';
+import { AuthPanel } from '@/app/landing/auth-panel';
 
 const authErrors: Record<string, string> = {
   auth_callback_failed: 'تعذر إكمال تسجيل الدخول. أعد المحاولة، وإذا تكرر جرّب رابط بريد جديد.',
@@ -105,53 +105,19 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="min-h-screen bg-background p-4 lg:p-6">
-      <div className="mx-auto grid min-h-[calc(100dvh-2rem)] max-w-6xl overflow-hidden surface-card lg:min-h-[calc(100dvh-3rem)] lg:grid-cols-[1.05fr_460px]">
-        {/* Brand panel. On the near-black canvas a flat ink fill was almost
-            indistinguishable from the card, so the split read as one dead
-            rectangle; the ambient glow and grid give it depth instead. */}
-        <section className="relative hidden flex-col justify-between overflow-hidden border-e border-border bg-background-elevated p-10 lg:flex">
-          <div className="relative">
-            <Link href="/" className="flex items-center gap-2.5">
-              <LogoLockup height={36} alt="مُضاعِف" priority />
-            </Link>
-            <h1 className="mt-14 max-w-lg text-display-sm font-bold text-balance">
-              اربط حساب إعلانات <span dir="ltr">Google</span>، وخلّي المنصة تطلع لك الفحص والتوصيات ومركز الموافقات.
-            </h1>
-            <p className="mt-4 max-w-md text-[13.5px] leading-8 text-muted-foreground">
-              كل تعديل يبقى تحت موافقتك. لا ينفّذ المساعد أي تغيير على حسابك قبل أن تعتمده.
-            </p>
-          </div>
-
-          <ul className="relative space-y-px overflow-hidden rounded-lg border border-border bg-border">
-            {[
-              'سجّل هويتك بحساب Google',
-              'امنح صلاحية Google Ads بموافقة منفصلة',
-              'راجع التوصيات واعتمدها',
-            ].map((s, i) => (
-              <li key={s} className="flex items-center gap-3 bg-card px-4 py-3 text-[13px]">
-                <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md border border-border bg-muted text-[10px] font-bold text-muted-foreground numeric">
-                  {i + 1}
-                </span>
-                <span className="text-foreground-subtle">{s}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-
+    <main className="min-h-screen bg-background lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]">
         {/* Form panel */}
-        <section className="relative flex items-center p-6 sm:p-10">
-          <div className="absolute end-4 top-4">
-            <ThemeToggle />
-          </div>
-          <div className="w-full">
-            <Link href="/" className="mb-8 flex items-center gap-3 lg:hidden">
-              <LogoMark size={40} alt="مُضاعِف" />
-              <span className="text-[15px] font-semibold">مُضاعِف</span>
+        <section className="relative flex min-h-[100dvh] items-center justify-center p-4 sm:p-8">
+          <div className="relative w-full max-w-md p-2 sm:p-4">
+            <div className="absolute end-0 top-0">
+              <ThemeToggle />
+            </div>
+            <Link href="/" className="mb-10 flex items-center gap-3">
+              <LogoLockup height={32} alt="مُضاعِف" priority />
             </Link>
 
             <div className="mb-7">
-              <h2 className="text-2xl font-bold">تسجيل الدخول</h2>
+              <h1 className="text-2xl font-bold">تسجيل الدخول</h1>
               <p className="mt-2 text-sm text-muted-foreground">
                 هذه الخطوة لتسجيل هويتك فقط، ولا تمنح المنصة صلاحية الوصول إلى إعلاناتك.
               </p>
@@ -264,7 +230,13 @@ export default function LoginPage() {
             </p>
           </div>
         </section>
-      </div>
+        <AuthPanel
+          title="كمّل من حيث وقفت."
+          lines={[
+            'تفتح المحادثة وتلقى رسالة اليوم بأرقام حسابك.',
+            'أي قرار تعتمده بيدك، وترجعه خلال 30 يوم.',
+          ]}
+        />
     </main>
   );
 }

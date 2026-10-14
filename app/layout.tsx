@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import { headers } from 'next/headers';
-import { IBM_Plex_Mono, IBM_Plex_Sans_Arabic, Reem_Kufi } from 'next/font/google';
+import { IBM_Plex_Mono, IBM_Plex_Sans_Arabic, Readex_Pro } from 'next/font/google';
 import { NONCE_HEADER } from '@/lib/security/csp';
 import './globals.css';
 import { SiteStructuredData } from '@/lib/seo/json-ld';
@@ -16,9 +16,10 @@ const arabic = IBM_Plex_Sans_Arabic({
   fallback: ['system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
 });
 
-// Display face: square-leaning Kufi for headlines, matching the wordmark's
-// geometry. Used only for headings; body and controls stay on the UI face.
-const display = Reem_Kufi({
+// Display face for marketing headlines: Readex Pro, a clean Kufi-derived sans
+// that keeps the wordmark's geometry. Reem Kufi is banned by Ayman (Oct 2026).
+// UI text stays on Plex.
+const display = Readex_Pro({
   subsets: ['arabic', 'latin'],
   weight: ['500', '600', '700'],
   variable: '--font-display',
@@ -63,7 +64,7 @@ export const metadata: Metadata = {
     // LinkedIn — every shared link rendered with no preview at all.
     images: [
       {
-        url: '/og-image.png',
+        url: '/og-image-v2.png',
         width: 1200,
         height: 630,
         alt: 'مُضاعِف - Modaafa Ads AI',
@@ -74,7 +75,7 @@ export const metadata: Metadata = {
     card: 'summary_large_image',
     title: 'مُضاعِف - الميديا باير الذكي',
     description: 'فحص وتوصيات ومساعد ذكي لإعلانات Google، مع موافقة واضحة قبل أي تعديل.',
-    images: ['/og-image.png'],
+    images: ['/og-image-v2.png'],
   },
 };
 

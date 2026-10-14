@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 const publicPages = [
-  { path: '/', heading: /مضاعف|إعلانات Google/i },
+  { path: '/', heading: /قوقل|مُضاعِف|مضاعف|Google/i },
   { path: '/login', heading: 'تسجيل الدخول' },
   { path: '/register', heading: 'أنشئ حسابك' },
   { path: '/privacy', heading: /الخصوصية/ },
@@ -110,7 +110,7 @@ test.describe('public launch surface', () => {
       '/favicon.svg',
       '/icon-192.png',
       '/icon-512.png',
-      '/og-image.png',
+      '/og-image-v2.png',
       '/manifest.webmanifest',
     ];
 
