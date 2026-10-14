@@ -7,6 +7,9 @@ import { buildSnapshotEconomics } from '../lib/ai/optimizer-snapshot';
 import { emptyEconomicsTally, tallyEconomics } from '../lib/ai/optimizer-audit-trail';
 import { economicsKindFromLedger, emptyLedger } from '../lib/setup/ledger';
 import { missingCoreKeys, missingEconomicsKeys, type SetupKey } from '../lib/setup/questions';
+import { askableEconomicsKeys, homeMissingKeys, loadEconomicsNudgeInput } from '../lib/setup/adaptive/economics-nudge';
+import { signalsJobName } from '../lib/setup/adaptive/signals-store';
+import type { AccountSignals, CampaignSignal } from '../lib/setup/adaptive/types';
 
 const CORE: SetupKey[] = ['type', 'goal', 'value', 'budget'];
 
@@ -81,8 +84,232 @@ test('the kind comes from the ledger the same way the optimizer derives it', () 
 
 test('the home screen asks for economics only where the adaptive onboarding can collect them', () => {
   const page = readFileSync(new URL('../app/(dashboard)/home/page.tsx', import.meta.url), 'utf8');
-  assert.match(page, /missingCoreKeys\(answered, adaptiveOn \? economicsKindFromLedger\(ledgerEntries, business\) : null\)/);
+  // Adaptive on: the economics keys the edit questionnaire would ask this account's scenario, nothing else.
+  assert.match(page, /adaptiveOn\s*\?\s*homeMissingKeys\(\{/);
+  assert.match(page, /kind: economicsKindFromLedger\(ledgerEntries, business\)/);
+  assert.match(page, /await loadEconomicsNudgeInput\(\{ admin, supabase, account: selectedAccount, weekSpend: week\.spend \}\)/);
+  // Adaptive off: the ten fixed questions never ask a margin, so no economics key at all.
+  assert.match(page, /: missingCoreKeys\(answered\)/);
 });
+
+test('the chip says how long the questions take honestly: edit mode replays the whole questionnaire', () => {
+  const page = readFileSync(new URL('../app/(dashboard)/home/page.tsx', import.meta.url), 'utf8');
+  assert.ok(page.includes("'كمّل تعريف نشاطك، كم دقيقة'"));
+  assert.ok(!page.includes("'كمّل تعريف نشاطك، دقيقة'"));
+});
+
+// ---------------------------------------------------------------------------
+// The chip counts only what the questionnaire asks this account (so it can clear)
+// ---------------------------------------------------------------------------
+
+const failedRead = { ok: false as const, error: 'not_read' };
+const READ_AT = '2026-10-14T08:00:00.000Z';
+const NOW = new Date('2026-10-14T09:00:00.000Z');
+
+function account(overrides: Partial<AccountSignals> = {}): AccountSignals {
+  return {
+    version: 1,
+    readAt: READ_AT,
+    customerId: '1234567890',
+    currency: 'SAR',
+    campaigns: failedRead,
+    enabledConversionActions: failedRead,
+    conversionsByGroup: failedRead,
+    autoTagging: failedRead,
+    landingHosts: failedRead,
+    merchantCenterLinked: failedRead,
+    assets: failedRead,
+    targetedPlaces: failedRead,
+    externalManager: failedRead,
+    otherEditors14d: failedRead,
+    hours: failedRead,
+    products: failedRead,
+    ...overrides,
+  };
+}
+
+function campaign(overrides: Partial<CampaignSignal> & { id: string; name: string }): CampaignSignal {
+  return {
+    kind: 'SEARCH',
+    status: 'ENABLED',
+    cost30: 0,
+    impressions30: 0,
+    clicks30: 0,
+    conversions30: 0,
+    value30: 0,
+    ...overrides,
+  };
+}
+
+const clinicRead = () =>
+  account({
+    campaigns: {
+      ok: true,
+      value: [
+        campaign({ id: '1', name: 'بحث - زراعة الأسنان', cost30: 1100, impressions30: 30000, clicks30: 900, conversions30: 40 }),
+        campaign({ id: '2', name: 'بحث - تقويم الأسنان', cost30: 900, impressions30: 20000, clicks30: 600, conversions30: 33 }),
+      ],
+    },
+    enabledConversionActions: { ok: true, value: 3 },
+    conversionsByGroup: { ok: true, value: [{ group: 'call', conversions: 64 }] },
+    landingHosts: { ok: true, value: ['smile-clinic.example.sa'] },
+    targetedPlaces: { ok: true, value: ['Jeddah'] },
+    externalManager: { ok: true, value: { linked: false, managerIds: [] } },
+    otherEditors14d: { ok: true, value: 0 },
+  });
+
+const storeRead = () =>
+  account({
+    campaigns: {
+      ok: true,
+      value: [
+        campaign({ id: '1', name: 'أداء أقصى - عطور', kind: 'PMAX', cost30: 2000, impressions30: 50000, clicks30: 1500, conversions30: 30, value30: 5580 }),
+        campaign({ id: '2', name: 'بحث - عطور', cost30: 1200, impressions30: 12000, clicks30: 700, conversions30: 11, value30: 2046 }),
+      ],
+    },
+    enabledConversionActions: { ok: true, value: 1 },
+    conversionsByGroup: { ok: true, value: [{ group: 'purchase', conversions: 41 }] },
+    landingHosts: { ok: true, value: ['myperfume.salla.sa'] },
+    merchantCenterLinked: { ok: true, value: true },
+    targetedPlaces: { ok: true, value: ['Saudi Arabia'] },
+    externalManager: { ok: true, value: { linked: false, managerIds: [] } },
+    otherEditors14d: { ok: true, value: 0 },
+  });
+
+const newRead = () => account({ campaigns: { ok: true, value: [] }, enabledConversionActions: { ok: true, value: 0 } });
+const dormantRead = () =>
+  account({
+    campaigns: { ok: true, value: [campaign({ id: '9', name: 'بحث قديم', status: 'PAUSED' })] },
+    enabledConversionActions: { ok: true, value: 0 },
+  });
+
+/** The answers on record as the setup screen reads them: the four core ones, plus whatever else the test adds. */
+const recorded = (extra: Record<string, string | null> = {}) => ({ type: null, goal: null, value: null, budget: null, ...extra });
+const keysOf = (answered: Record<string, string | null>) => Object.keys(answered) as SetupKey[];
+
+test('an active clinic is asked the profit and the close rate, and answering them clears the chip', () => {
+  const base = { signals: clinicRead(), linkedAccounts: 1, kind: 'clinic' as const };
+  const open = recorded();
+  assert.deepEqual(homeMissingKeys({ ...base, answeredKeys: keysOf(open), answered: open }), ['profit_per_deal', 'close_rate']);
+
+  const half = recorded({ profit_per_deal: '50_200' });
+  assert.deepEqual(homeMissingKeys({ ...base, answeredKeys: keysOf(half), answered: half }), ['close_rate']);
+
+  const done = recorded({ profit_per_deal: '50_200', close_rate: '2_3' });
+  assert.deepEqual(homeMissingKeys({ ...base, answeredKeys: keysOf(done), answered: done }), []);
+});
+
+test('an active store is asked the margin, and answering it clears the chip', () => {
+  const base = { signals: storeRead(), linkedAccounts: 1, kind: 'ecommerce' as const };
+  const open = recorded();
+  assert.deepEqual(homeMissingKeys({ ...base, answeredKeys: keysOf(open), answered: open }), ['margin']);
+  const done = recorded({ margin: '20_40' });
+  assert.deepEqual(homeMissingKeys({ ...base, answeredKeys: keysOf(done), answered: done }), []);
+});
+
+test('a new or dormant account is never asked for economics, even when the optimizer would call it a store', () => {
+  for (const signals of [newRead(), dormantRead()]) {
+    for (const kind of ['ecommerce', 'clinic', 'services', 'local'] as const) {
+      const open = recorded();
+      assert.deepEqual(homeMissingKeys({ signals, linkedAccounts: 1, kind, answeredKeys: keysOf(open), answered: open }), [], kind);
+    }
+  }
+});
+
+test('no read at all: a stated type still gets its economics, the unplaced account and an empty one do not', () => {
+  // The customer said «clinic» themselves: the tree asks the clinic questions without any read.
+  const stated = recorded({ type: 'clinic' });
+  assert.deepEqual(
+    homeMissingKeys({ signals: null, linkedAccounts: 1, kind: 'clinic', answeredKeys: keysOf(stated), answered: stated }),
+    ['profit_per_deal', 'close_rate']
+  );
+
+  // Nothing read and no word from the customer: the tree guesses no kind, so it asks no margin.
+  const open = recorded();
+  assert.deepEqual(homeMissingKeys({ signals: null, linkedAccounts: 1, kind: 'ecommerce', answeredKeys: keysOf(open), answered: open }), []);
+  // The platform says the account runs nothing: a new account, again no economics.
+  assert.deepEqual(
+    homeMissingKeys({ signals: null, activityHint: 'empty', linkedAccounts: 1, kind: 'ecommerce', answeredKeys: keysOf(open), answered: open }),
+    []
+  );
+});
+
+test('a business the optimizer calls a clinic but the tree could not place is not nagged for what it will not ask', () => {
+  // The read found an account with spend but nothing that says what it sells: kind general, no economics keys.
+  const unplaced = account({
+    campaigns: { ok: true, value: [campaign({ id: '1', name: 'Campaign 1', cost30: 500, impressions30: 9000, clicks30: 300, conversions30: 12 })] },
+    enabledConversionActions: { ok: true, value: 1 },
+    conversionsByGroup: { ok: true, value: [] },
+  });
+  const open = recorded();
+  assert.deepEqual(askableEconomicsKeys({ missing: ['profit_per_deal', 'close_rate'], signals: unplaced, linkedAccounts: 1, answered: open }), []);
+  assert.deepEqual(homeMissingKeys({ signals: unplaced, linkedAccounts: 1, kind: 'clinic', answeredKeys: keysOf(open), answered: open }), []);
+});
+
+test('the core keys are always counted, scenario or not', () => {
+  const none = {};
+  assert.deepEqual(homeMissingKeys({ signals: newRead(), linkedAccounts: 1, kind: 'ecommerce', answeredKeys: [], answered: none }), ['type', 'goal', 'value', 'budget']);
+});
+
+function storedAdmin(signals: AccountSignals | null) {
+  const asked: string[] = [];
+  const chain: any = {
+    select: () => chain,
+    eq: (_column: string, value: string) => {
+      asked.push(value);
+      return chain;
+    },
+    in: () => chain,
+    order: () => chain,
+    limit: () => chain,
+    maybeSingle: async () => ({ data: signals ? { details: { signals } } : null, error: null }),
+  };
+  return { admin: { from: () => chain }, asked };
+}
+
+const ACCOUNT = { id: 'acc-1', last_synced_at: null };
+
+test('the loader takes the stored read only inside the 24-hour onboarding window, as the edit screen does', async () => {
+  const fresh = storedAdmin(fullRead(clinicRead(), READ_AT));
+  const got = await loadEconomicsNudgeInput({ admin: fresh.admin, supabase: null, account: ACCOUNT, weekSpend: 0, now: NOW });
+  assert.ok(got.signals);
+  assert.equal(got.activityHint, null);
+  assert.deepEqual(fresh.asked, [signalsJobName('acc-1')]);
+
+  // Two days old: still a valid read for the plan lock (30 days), but the edit screen would not stand on it.
+  const old = storedAdmin(fullRead(clinicRead(), '2026-10-12T08:00:00.000Z'));
+  const stale = await loadEconomicsNudgeInput({ admin: old.admin, supabase: null, account: ACCOUNT, weekSpend: 0, now: NOW });
+  assert.equal(stale.signals, null);
+});
+
+test('without a usable read the loader falls back to the week spend, then to the platform hint, and never throws', async () => {
+  const none = storedAdmin(null);
+  assert.deepEqual(await loadEconomicsNudgeInput({ admin: none.admin, supabase: null, account: ACCOUNT, weekSpend: 120, now: NOW }), {
+    signals: null,
+    activityHint: 'spends',
+  });
+  // No spend this week and the account was never synced: unknown, which changes nothing.
+  assert.deepEqual(await loadEconomicsNudgeInput({ admin: none.admin, supabase: null, account: ACCOUNT, weekSpend: 0, now: NOW }), {
+    signals: null,
+    activityHint: null,
+  });
+  // A synced account with an empty campaign cache says «nothing runs».
+  const supabase = { from: () => ({ select: () => ({ eq: () => ({ limit: async () => ({ data: [], error: null }) }) }) }) };
+  const synced = { id: 'acc-1', last_synced_at: '2026-10-13T08:00:00.000Z' };
+  assert.deepEqual(await loadEconomicsNudgeInput({ admin: none.admin, supabase, account: synced, weekSpend: 0, now: NOW }), {
+    signals: null,
+    activityHint: 'empty',
+  });
+  // No service client and a throwing one are both just «no read».
+  const throwing = { from: () => { throw new Error('boom'); } };
+  assert.deepEqual(await loadEconomicsNudgeInput({ admin: null, supabase: null, account: ACCOUNT, weekSpend: 0, now: NOW }), { signals: null, activityHint: null });
+  assert.deepEqual(await loadEconomicsNudgeInput({ admin: throwing, supabase: null, account: ACCOUNT, weekSpend: 0, now: NOW }), { signals: null, activityHint: null });
+});
+
+/** A stored read has every signal as an object with `ok`; the fixtures above leave some failed, which is valid. */
+function fullRead(signals: AccountSignals, readAt: string): AccountSignals {
+  return { ...signals, readAt };
+}
 
 // ---------------------------------------------------------------------------
 // MAJOR 5: the optimize job run counts the accounts with unknown economics

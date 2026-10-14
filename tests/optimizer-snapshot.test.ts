@@ -12,9 +12,11 @@ import {
   enrichPoorAds,
 } from '../lib/ai/optimizer-snapshot';
 import {
+  DAILY_CONVERSIONS_CAMPAIGN_QUERY,
   DAILY_CONVERSIONS_LIMIT,
   DAILY_CONVERSIONS_QUERY,
   dailyConversionsLookTruncated,
+  queryDailyConversions,
   queryCampaignRows,
   riyadhToday,
 } from '../lib/ai/optimizer-queries';
@@ -293,18 +295,66 @@ test('the campaign read degrades in steps: everything, then the fields Jarvis re
   await assert.rejects(queryCampaignRows(failFirst(3), '123'), /field not accepted/);
 });
 
-test('the daily conversions read is the proven Jarvis shape: no metric filter, newest first, and a long result is flagged as cut short', () => {
+test('the daily conversions read is account-wide, the Jarvis shape otherwise: no metric filter, newest first, and a long result is flagged as cut short', () => {
   assert.doesNotMatch(DAILY_CONVERSIONS_QUERY, /all_conversions\s*>/);
   assert.match(DAILY_CONVERSIONS_QUERY, /SELECT segments\.date, segments\.conversion_action_name, metrics\.all_conversions/);
-  assert.match(DAILY_CONVERSIONS_QUERY, /FROM campaign/);
+  // One row per day per action, not per campaign: a large account does not hit the row limit.
+  assert.match(DAILY_CONVERSIONS_QUERY, /FROM customer/);
+  assert.doesNotMatch(DAILY_CONVERSIONS_QUERY, /FROM campaign/);
   assert.match(DAILY_CONVERSIONS_QUERY, /segments\.date DURING LAST_30_DAYS/);
   assert.match(DAILY_CONVERSIONS_QUERY, /ORDER BY segments\.date DESC/);
   assert.match(DAILY_CONVERSIONS_QUERY, new RegExp(`LIMIT ${DAILY_CONVERSIONS_LIMIT}`));
+
+  // The fallback is the per-campaign read the Jarvis tool runs, with the same cap and order.
+  assert.match(DAILY_CONVERSIONS_CAMPAIGN_QUERY, /SELECT segments\.date, segments\.conversion_action_name, metrics\.all_conversions/);
+  assert.match(DAILY_CONVERSIONS_CAMPAIGN_QUERY, /FROM campaign/);
+  assert.match(DAILY_CONVERSIONS_CAMPAIGN_QUERY, /ORDER BY segments\.date DESC/);
+  assert.match(DAILY_CONVERSIONS_CAMPAIGN_QUERY, new RegExp(`LIMIT ${DAILY_CONVERSIONS_LIMIT}`));
 
   const full = Array.from({ length: DAILY_CONVERSIONS_LIMIT }, () => ({}));
   assert.equal(dailyConversionsLookTruncated(full), true);
   assert.equal(dailyConversionsLookTruncated(full.slice(1)), false);
   assert.equal(dailyConversionsLookTruncated(null), false);
+});
+
+test('queryDailyConversions reads account-wide first, falls back to the per-campaign form, and gives null when neither is readable', async () => {
+  const rows = [{ segments: { date: '2026-10-13', conversion_action_name: 'Calls' }, metrics: { all_conversions: 3 } }];
+  const run = (outcomes: Array<'ok' | 'fail'>) => {
+    const seen: string[] = [];
+    const customer = {
+      query: async (gaql: string) => {
+        seen.push(gaql);
+        if (outcomes[seen.length - 1] === 'fail') throw new Error('rejected');
+        return rows;
+      },
+    };
+    return { seen, customer };
+  };
+
+  const clean = run(['ok']);
+  assert.deepEqual(await queryDailyConversions(clean.customer), rows);
+  assert.deepEqual(clean.seen, [DAILY_CONVERSIONS_QUERY], 'one call on an account Google accepts the account-wide form for');
+
+  const fallback = run(['fail', 'ok']);
+  assert.deepEqual(await queryDailyConversions(fallback.customer), rows);
+  assert.deepEqual(fallback.seen, [DAILY_CONVERSIONS_QUERY, DAILY_CONVERSIONS_CAMPAIGN_QUERY]);
+
+  const neither = run(['fail', 'fail']);
+  assert.equal(await queryDailyConversions(neither.customer), null);
+  assert.equal(neither.seen.length, 2);
+});
+
+test('a daily read cut short at the limit still reads "unknown", not "silent", whichever form produced it', () => {
+  // The verdict ignores the history when the rows hit the cap (see buildConversionTracking's dailyTruncated).
+  const cut = Array.from({ length: DAILY_CONVERSIONS_LIMIT }, () => ({
+    segments: { date: '2026-10-13', conversion_action_name: 'Calls' },
+    metrics: { all_conversions: 1 },
+  }));
+  assert.equal(dailyConversionsLookTruncated(cut), true);
+  const route = readFileSync(new URL('../app/api/cron/optimize/route.ts', import.meta.url), 'utf8');
+  assert.match(route, /queryDailyConversions\(customer\)/);
+  assert.match(route, /dailyTruncated: dailyConversionsLookTruncated\(conversionDailyRows\)/);
+  assert.doesNotMatch(route, /\.query\(DAILY_CONVERSIONS_QUERY\)/);
 });
 
 test('the tracking check dates today the way Google Ads dates its days (Riyadh), not by the UTC calendar', () => {

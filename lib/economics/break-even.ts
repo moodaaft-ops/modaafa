@@ -50,13 +50,22 @@
  *   margin       lt20 -> 10..20%   20_40 -> 20..40%   gt40 -> 40..80%
  *   deal value   lt2k -> 1,000..2,000   2k_10k -> 2,000..10,000   10k_50k -> 10,000..50,000   gt50k -> 50,000..100,000 SAR
  *   profit       lt50 -> 25..50   50_200 -> 50..200   200_1k -> 200..1,000   1k_5k -> 1,000..5,000   gt5k -> 5,000..10,000 SAR
- *   close rate   le1  -> 0.5..1 of 10   2_3 -> 2..3 of 10   ge4 -> 4..10 of 10
+ *   close rate   le1  -> 0.5..1 of 10   2_3 -> 2..3 of 10   ge4 -> 4..6 of 10
  *
  * Rules for the edges: a closed bucket keeps its two edges; a bucket that starts
  * at 0 («أقل من») has no honest low edge, so its low edge is half of its upper
  * edge; an open-ended top bucket («أكثر من») has no upper edge, so its high edge
- * is TWICE its lower edge. Margin is capped at 100% and the close rate at 10 of
- * 10.
+ * is TWICE its lower edge. Margin is capped at 100%.
+ *
+ * The close rate is capped at 6 of 10 on its high edge (CLOSE_RATE_CAP_OF_10).
+ * The bucket «4 وفوق» is stored as 4..10, and a high edge of 10 of 10 would let
+ * the CUT threshold assume that EVERY contact becomes a customer: a clinic with
+ * a profit of 200-1,000 SAR would then be cut only above 1,000 SAR a lead and a
+ * keyword paused only after 2,000 SAR with no conversion, which is waste control
+ * switched off. Six of ten is the most a lead business can honestly assume from
+ * a bucket that has no ceiling (the same conservatism the knowledge base applies
+ * to a target it cannot verify); an owner who really closes more than that is
+ * only cut a little later than necessary, never wrongly.
  *
  * "I don't know" and "never asked" are the same thing here: the value is null
  * and its name is listed in `missing`. Nothing is guessed.
@@ -194,12 +203,26 @@ function profitPerDealRange(fact: EconomicsFactData | undefined): BucketBounds |
   return fact ? bucketBounds(fact.min_sar, fact.max_sar) : null;
 }
 
-/** "How many of 10 contacts become customers" as fractions of 1 (the high edge is capped at 10 of 10). */
+/** The most contacts out of 10 the optimizer assumes become customers on the HIGH edge of any close-rate bucket. */
+export const CLOSE_RATE_CAP_OF_10 = 6;
+
+/**
+ * The edges of a close-rate bucket in «out of 10» units: the generic bucket
+ * edges with the high edge capped at CLOSE_RATE_CAP_OF_10 (and never below the
+ * low edge). Shared with the onboarding copy so the line the owner reads and
+ * the limit the optimizer holds the account to are the same numbers.
+ */
+export function closeRateBoundsOf10(lower: unknown, upper: unknown): BucketBounds | null {
+  const bounds = bucketBounds(lower, upper);
+  if (!bounds || bounds.low > 10) return null;
+  return { low: bounds.low, high: Math.max(bounds.low, Math.min(bounds.high, CLOSE_RATE_CAP_OF_10)) };
+}
+
+/** "How many of 10 contacts become customers" as fractions of 1. */
 function closeRateRange(fact: EconomicsFactData | undefined): BucketBounds | null {
   if (!fact) return null;
-  const bounds = bucketBounds(fact.min_of_10, fact.max_of_10);
-  if (!bounds || bounds.low > 10) return null;
-  return { low: bounds.low / 10, high: Math.min(bounds.high, 10) / 10 };
+  const bounds = closeRateBoundsOf10(fact.min_of_10, fact.max_of_10);
+  return bounds ? { low: bounds.low / 10, high: bounds.high / 10 } : null;
 }
 
 function aovReported(fact: EconomicsFactData | undefined): number | null {

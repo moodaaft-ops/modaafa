@@ -18,6 +18,7 @@ import {
 } from '../lib/ai/optimizer-gates';
 import {
   NEGATIVE_COST_IN_CPAS,
+  NEGATIVE_COST_IN_CPAS_FALLBACK,
   NEGATIVE_IRRELEVANT_MIN_CLICKS,
   PAUSE_AD_CPA_IN_GROUP_CPAS,
   PAUSE_AD_MAX_CTR_SHARE,
@@ -133,6 +134,7 @@ test('pause_keyword and negatives are judged against the allowable CPA', () => {
   assert.match(pause, new RegExp(`0 conversions and at least ${PAUSE_KEYWORD_MIN_CLICKS} clicks`));
   const negative = text.slice(text.indexOf('- add_negative_keyword:'), text.indexOf('- add_keyword:'));
   assert.match(negative, new RegExp(`30-day cost of at least ${NEGATIVE_COST_IN_CPAS} x allowable_cpa_cut\\.value`));
+  assert.match(negative, new RegExp(`${NEGATIVE_COST_IN_CPAS_FALLBACK} x when allowable_cpa_cut\\.source is "account_30d_cpa_fallback"`));
   assert.match(negative, new RegExp(`${NEGATIVE_IRRELEVANT_MIN_CLICKS}\\+ clicks`));
   assert.match(negative, /Never negate a term that matches an enabled keyword/);
   const add = text.slice(text.indexOf('- add_keyword:'), text.indexOf('- adjust_budget:'));
@@ -178,5 +180,5 @@ test('the output contract, the untrusted-data rule and the action cap are kept',
 test('the prompt stays inside a size budget', () => {
   // Cached after the first account of a run and read at a tenth of the input price. This
   // ceiling is a tripwire, not a target: it was ~6.8k characters before the rewrite.
-  assert.ok(promptText().length < 14000, `prompt is ${promptText().length} characters`);
+  assert.ok(promptText().length < 14200, `prompt is ${promptText().length} characters`);
 });

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
   AUTOPILOT_FAILED_RETRY_COOLDOWN_MS,
@@ -219,6 +220,21 @@ test('a card stuck in approved or executing stops reserving its target (locks mu
   assert.deepEqual(findPendingDuplicate(stuckThree, addKeyword('كلمة د'), NOW), { skip: false });
 });
 
+test('an optimizer budget or bid card pending for more than 7 days no longer blocks a fresh proposal', () => {
+  const budget = { type: 'adjust_budget', target_id: BUDGET, params: { budget_resource: BUDGET, delta_pct: 10 } };
+  const bid = { type: 'adjust_bid', target_id: AD_GROUP, params: { ad_group_resource: AD_GROUP, target_roas: 6 } };
+  const budgetCard = (age: number) => pending('b', 'adjust_budget', { budget_resource: BUDGET }, { created_at: daysAgo(age) });
+  const bidCard = (age: number) => pending('d', 'adjust_bid', { ad_group_resource: AD_GROUP }, { created_at: daysAgo(age) });
+
+  assert.equal(findPendingDuplicate([budgetCard(5)], budget, NOW).skip, true);
+  assert.deepEqual(findPendingDuplicate([budgetCard(9)], budget, NOW), { skip: false });
+  assert.equal(findPendingDuplicate([bidCard(5)], bid, NOW).skip, true);
+  assert.deepEqual(findPendingDuplicate([bidCard(9)], bid, NOW), { skip: false });
+  // A Jarvis budget card can still be executed, so it holds for the full 14 days.
+  const jarvis = pending('j', 'adjust_budget', { budget_resource: BUDGET }, { source: 'jarvis_chat', created_at: daysAgo(9) });
+  assert.equal(findPendingDuplicate([jarvis], budget, NOW).skip, true);
+});
+
 test('a negative keyword is a duplicate in the same campaign whatever the match type, and a pending batch counts', () => {
   const negative = (keyword_text: string, campaign_resource = CAMPAIGN, match_type = 'EXACT') => ({
     type: 'add_negative_keyword',
@@ -360,6 +376,24 @@ test('a pending optimizer row older than 14 days is renewed in place, still pend
   assert.equal(written[0].action_payload.renewed_from_created_at, daysAgo(30));
   assert.equal('status' in written[0], false, 'the status is never rewritten');
   assert.ok((db.calls as Array<[string, unknown[]]>).some(([m, a]) => m === 'eq' && a[0] === 'status' && a[1] === 'pending'), 'the update only touches a row that is still pending');
+});
+
+test('a pending optimizer budget card older than 7 days is renewed by the same path', async () => {
+  const db = fakeDb({
+    select: { data: { id: 'b', status: 'pending', created_at: daysAgo(9), action_payload: { operation: 'adjust_budget', source: 'optimizer_cron' } }, error: null },
+    update: { data: [{ id: 'b' }], error: null },
+  });
+  const fields = { ...FIELDS, action_payload: { operation: 'adjust_budget', params: {}, source: 'optimizer_cron' } };
+  assert.equal(await renewStalePendingRecommendation(db, 'b', fields, NOW), true);
+  // The same age on a keyword card is still a current decision (14 days).
+  const keyword = fakeDb({
+    select: { data: { id: 'k', status: 'pending', created_at: daysAgo(9), action_payload: { operation: 'add_keyword', source: 'optimizer_cron' } }, error: null },
+    update: { data: [{ id: 'k' }], error: null },
+  });
+  assert.equal(await renewStalePendingRecommendation(keyword, 'k', FIELDS, NOW), false);
+  // The cron decides whether to try a renewal with the same rule, from the held row's age and the proposal's payload.
+  const cron = readFileSync(new URL('../app/api/cron/optimize/route.ts', import.meta.url), 'utf8');
+  assert.match(cron, /isStalePendingRecommendation\(\{ \.\.\.existing, action_payload: fields\.action_payload \}\)/);
 });
 
 test('a fresh, approved or non-optimizer row is never renewed, and a lost race changes nothing', async () => {

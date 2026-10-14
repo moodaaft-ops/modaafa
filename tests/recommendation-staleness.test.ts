@@ -7,7 +7,10 @@ import {
   dropStalePending,
   isOptimizerRecommendation,
   isPastStaleLine,
+  holdsTargetLock,
+  isOptimizerMoneyMove,
   isStalePendingRecommendation,
+  pendingLineMs,
   staleCutoffIso,
 } from '../lib/recommendations/staleness';
 import { toPlanRecommendations } from '../lib/plan/load';
@@ -31,6 +34,44 @@ test('a pending optimizer recommendation is stale after 14 days, not before', ()
   assert.equal(isStalePendingRecommendation(row({ created_at: daysAgo(14.01) }), NOW), true);
   assert.equal(isStalePendingRecommendation(row({ created_at: daysAgo(14) }), NOW), false);
   assert.equal(isStalePendingRecommendation(row({ created_at: daysAgo(3) }), NOW), false);
+});
+
+test('an optimizer budget or bid card is stale after 7 days: it cannot be executed after that, so it leaves the lists', () => {
+  for (const operation of ['adjust_budget', 'adjust_bid']) {
+    const card = (age: number, extra: Record<string, unknown> = {}) =>
+      row({ created_at: daysAgo(age), action_payload: { operation, source: 'optimizer_cron' }, ...extra });
+    assert.equal(isOptimizerMoneyMove(card(1)), true, operation);
+    assert.equal(isStalePendingRecommendation(card(6.9), NOW), false, operation);
+    assert.equal(isStalePendingRecommendation(card(7.01), NOW), true, operation);
+    assert.equal(isStalePendingRecommendation(card(9), NOW), true, operation);
+    assert.deepEqual(dropStalePending([card(9), card(2)], NOW).map((r) => r.created_at), [daysAgo(2)], operation);
+    // An old row written before `source` was recorded is recognised by its operation.
+    assert.equal(isStalePendingRecommendation(card(9, { action_payload: { operation } }), NOW), true, operation);
+    // A Jarvis card of the same kind is the owner's own request: not an optimizer money move, 14 days as before.
+    const jarvis = card(9, { action_payload: { operation, source: 'jarvis_chat' } });
+    assert.equal(isOptimizerMoneyMove(jarvis), false);
+    assert.equal(isStalePendingRecommendation(jarvis, NOW), false);
+  }
+  // Other optimizer operations keep the 14 day line.
+  assert.equal(isStalePendingRecommendation(row({ created_at: daysAgo(9) }), NOW), false);
+  assert.equal(pendingLineMs(row()), 14 * DAY);
+  assert.equal(pendingLineMs(row({ action_payload: { operation: 'adjust_budget', source: 'optimizer_cron' } })), 7 * DAY);
+});
+
+test('a pending optimizer budget or bid card older than 7 days stops holding its target; other cards keep their line', () => {
+  const pending = (operation: string, age: number, source = 'optimizer_cron') => ({
+    status: 'pending',
+    created_at: daysAgo(age),
+    action_payload: { operation, source },
+  });
+  assert.equal(holdsTargetLock(pending('adjust_budget', 6), NOW), true);
+  assert.equal(holdsTargetLock(pending('adjust_budget', 8), NOW), false);
+  assert.equal(holdsTargetLock(pending('adjust_bid', 8), NOW), false);
+  assert.equal(holdsTargetLock(pending('add_keyword', 8), NOW), true);
+  assert.equal(holdsTargetLock(pending('add_keyword', 15), NOW), false);
+  // A Jarvis budget card keeps the 14 day line (it can still be executed).
+  assert.equal(holdsTargetLock(pending('adjust_budget', 8, 'jarvis_chat'), NOW), true);
+  assert.equal(holdsTargetLock(pending('adjust_budget', 15, 'jarvis_chat'), NOW), false);
 });
 
 test('every optimizer source counts, and only pending rows can be stale', () => {

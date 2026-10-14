@@ -470,7 +470,7 @@ test('one budget change per budget per 7 days: a pending or approved recommendat
   assert.equal(await checkGuardrails(other, 'account-1', db(bid), withContext()), other);
 });
 
-test('a stale pending optimizer recommendation (over 14 days) locks neither a budget nor a bid, a current one still does', async () => {
+test('a stale pending optimizer budget or bid card (over 7 days) locks nothing, a current one still does', async () => {
   const pendingRow = (operation: string, params: Record<string, unknown>, ageDays: number): Tables => ({
     ai_actions: { data: [], error: null },
     // The fake returns the row whatever the window the query asked for, as a database with a bad clock would.
@@ -482,7 +482,12 @@ test('a stale pending optimizer recommendation (over 14 days) locks neither a bu
   assert.equal(await checkGuardrails(budgetAction(), 'account-1', db(pendingRow('adjust_budget', { budget_resource: BUDGET }, 6)), withContext()), null);
   const bid = bidAction();
   assert.equal(await checkGuardrails(bid, 'account-1', db(pendingRow('adjust_bid', { ad_group_resource: AD_GROUP }, 20)), withContext()), bid);
-  assert.equal(await checkGuardrails(bidAction(), 'account-1', db(pendingRow('adjust_bid', { ad_group_resource: AD_GROUP }, 13)), withContext()), null);
+  assert.equal(await checkGuardrails(bidAction(), 'account-1', db(pendingRow('adjust_bid', { ad_group_resource: AD_GROUP }, 6)), withContext()), null);
+  // A budget or bid card that old can no longer be executed (7 days), so it stops holding its target as well.
+  const nineDaysBudget = budgetAction();
+  assert.equal(await checkGuardrails(nineDaysBudget, 'account-1', db(pendingRow('adjust_budget', { budget_resource: BUDGET }, 9)), withContext()), nineDaysBudget);
+  const nineDaysBid = bidAction();
+  assert.equal(await checkGuardrails(nineDaysBid, 'account-1', db(pendingRow('adjust_bid', { ad_group_resource: AD_GROUP }, 9)), withContext()), nineDaysBid);
 });
 
 test('a refused proposal is reported with its reason code and action type', async () => {

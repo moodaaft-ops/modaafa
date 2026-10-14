@@ -18,6 +18,12 @@
  * The free audit's findings, a Jarvis card and an assistant draft are
  * something the owner asked for, and their age says nothing about whether the
  * optimizer would still propose them.
+ *
+ * A budget or bid card has a shorter life: the approval handler refuses to
+ * execute an optimizer adjust_budget / adjust_bid older than 7 days
+ * (isExpiredOptimizerMoneyMove), so such a card is stale after 7 days, not 14.
+ * It leaves every list, stops holding its target and is renewed by the cron
+ * through the same path, instead of sitting there as a card that errors on click.
  */
 
 /** A pending optimizer recommendation older than this is no longer a current decision. */
@@ -67,16 +73,37 @@ export function isOptimizerRecommendation(row: StalenessCandidate | null | undef
   return typeof payload?.operation === 'string' && OPTIMIZER_OPERATIONS.includes(payload.operation);
 }
 
-/** True when a creation time is more than 14 days ago. An unreadable time is not past the line. */
-export function isPastStaleLine(createdAt: string | null | undefined, nowMs: number = Date.now()): boolean {
+/** True when a creation time is more than `lineMs` ago (14 days by default). An unreadable time is not past the line. */
+export function isPastStaleLine(
+  createdAt: string | null | undefined,
+  nowMs: number = Date.now(),
+  lineMs: number = STALE_PENDING_MS
+): boolean {
   const created = createdAt ? Date.parse(createdAt) : Number.NaN;
-  return Number.isFinite(created) && nowMs - created > STALE_PENDING_MS;
+  return Number.isFinite(created) && nowMs - created > lineMs;
+}
+
+/** The operation a recommendation's payload names ('' when it names none). */
+function operationOf(row: StalenessCandidate | null | undefined): string {
+  const operation = ((row?.action_payload ?? null) as { operation?: unknown } | null)?.operation;
+  return typeof operation === 'string' ? operation : '';
+}
+
+/** A budget or bid card the optimizer queued: the kind that cannot be executed after 7 days. */
+export function isOptimizerMoneyMove(row: StalenessCandidate | null | undefined): boolean {
+  return Boolean(row) && MONEY_MOVE_OPERATIONS.includes(operationOf(row)) && isOptimizerRecommendation(row);
+}
+
+/** How old a PENDING row may be and still be a current decision: 7 days for an optimizer budget or bid card, else 14. */
+export function pendingLineMs(row: StalenessCandidate | null | undefined): number {
+  return isOptimizerMoneyMove(row) ? MONEY_MOVE_EXPIRY_DAYS * DAY_MS : STALE_PENDING_MS;
 }
 
 /**
- * True for a pending optimizer recommendation created more than 14 days ago.
- * A row with no readable timestamp is NOT stale: nothing proves its age, so it
- * keeps its current behavior.
+ * True for a pending optimizer recommendation created more than 14 days ago
+ * (7 days for a budget or bid card, which can no longer be executed after
+ * that). A row with no readable timestamp is NOT stale: nothing proves its
+ * age, so it keeps its current behavior.
  */
 export function isStalePendingRecommendation(
   row: StalenessCandidate | null | undefined,
@@ -84,7 +111,7 @@ export function isStalePendingRecommendation(
 ): boolean {
   if (!row || row.status !== 'pending') return false;
   if (!isOptimizerRecommendation(row)) return false;
-  return isPastStaleLine(row.created_at, nowMs);
+  return isPastStaleLine(row.created_at, nowMs, pendingLineMs(row));
 }
 
 /** The rows that are still current decisions: everything except stale pending optimizer rows. */
@@ -133,7 +160,8 @@ function olderThan(timestamp: string | null | undefined, ms: number, nowMs: numb
  * on must not block the optimizer for good:
  *
  *   pending     a current decision for 14 days, whoever created it; after that
- *               nobody can say the numbers still hold
+ *               nobody can say the numbers still hold (an optimizer budget or
+ *               bid card, which cannot be executed after 7 days, holds for 7)
  *   approved    7 days from creation; an approval nobody executed for a week
  *   executing   24 hours from the claim (`execution_started_at`, else creation);
  *               a longer claim is a crashed run, the same condition the
@@ -146,7 +174,7 @@ export function holdsTargetLock(row: LockHoldingCandidate | null | undefined, no
   if (!row) return false;
   switch (row.status) {
     case 'pending':
-      return !isPastStaleLine(row.created_at, nowMs);
+      return !isPastStaleLine(row.created_at, nowMs, pendingLineMs(row));
     case 'approved':
       return !olderThan(row.created_at, STUCK_APPROVED_DAYS * DAY_MS, nowMs);
     case 'executing':

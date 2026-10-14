@@ -17,7 +17,7 @@ import {
   enrichPoorAds,
 } from '@/lib/ai/optimizer-snapshot';
 import { loadEconomics } from '@/lib/economics/load';
-import { isPastStaleLine } from '@/lib/recommendations/staleness';
+import { isStalePendingRecommendation } from '@/lib/recommendations/staleness';
 import type { BreakEven } from '@/lib/economics/break-even';
 import { consumeFeatureUsage } from '@/lib/billing/entitlements';
 import { executeAutopilotAction } from '@/lib/autopilot/executor';
@@ -59,7 +59,7 @@ import {
   tallyTrackingVerdict,
 } from '@/lib/ai/optimizer-audit-trail';
 import {
-  DAILY_CONVERSIONS_QUERY,
+  queryDailyConversions,
   riyadhToday,
   dailyConversionsLookTruncated,
   queryCampaignRows,
@@ -1078,10 +1078,11 @@ async function queueOptimizerRecommendation({
     fingerprint
   );
   if (existing) {
-    // The same change is still pending after more than 14 days. It is hidden
+    // The same change is still pending after more than 14 days (7 for a budget
+    // or bid card, which can no longer be executed after that). It is hidden
     // from every list as stale, and the unique fingerprint stops a new row, so
     // refresh the old one with tonight's numbers instead of losing the proposal.
-    if (existing.status === 'pending' && isPastStaleLine(existing.created_at)) {
+    if (isStalePendingRecommendation({ ...existing, action_payload: fields.action_payload })) {
       const renewed = await renewStalePendingRecommendation(supabase, existing.id, fields);
       if (renewed) return { id: existing.id, created: false, renewed: true };
     }
@@ -1326,9 +1327,7 @@ async function buildOptimizerSnapshot(
         console.warn(`Conversion tracking check failed for ${customerId}`, error);
         return null as any[] | null;
       }),
-    customer
-      .query(DAILY_CONVERSIONS_QUERY)
-      .catch(() => null as any[] | null),
+    queryDailyConversions(customer),
   ]);
 
   // Ad groups that carry an explicit target CPA / target ROAS — the only ones

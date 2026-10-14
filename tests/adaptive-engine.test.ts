@@ -968,7 +968,7 @@ test('answers: the close-rate reaction needs the deal range, and most answers ge
   assert.equal(breakEvenContactLine('lt50', 'le1'), 'يعني الربح على الاتصال الواحد ضيّق، فلازم كل اتصال يجي رخيص. بحسبها كذا.');
   // Only the low end under 10 riyals: the ceiling alone (profit 25..50 x close 2..3 of 10 = 5..15).
   assert.equal(breakEvenContactLine('lt50', '2_3'), 'يعني أقصى سعر للاتصال الواحد عشان تطلع رابح أقل من 15 ريال تقريباً. بحسبها كذا.');
-  assert.equal(breakEvenContactLine('gt5k', 'ge4'), 'يعني أقصى سعر للاتصال الواحد عشان تطلع رابح بين 2,000 و10,000 ريال تقريباً. بحسبها كذا.');
+  assert.equal(breakEvenContactLine('gt5k', 'ge4'), 'يعني أقصى سعر للاتصال الواحد عشان تطلع رابح بين 2,000 و6,000 ريال تقريباً. بحسبها كذا.');
   // No line ever carries a limit under 5 riyals.
   for (const profit of ['lt50', '50_200', '200_1k', '1k_5k', 'gt5k']) {
     for (const close of ['le1', '2_3', 'ge4']) {

@@ -24,7 +24,7 @@ import {
 } from './types';
 import { ALL_FOCUS_ENTRIES, FOCUS_ALL_ID, FOCUS_ALL_LABEL, FOCUS_OTHER_ID, FOCUS_TEXT_MAX, FOCUS_TEXT_MIN } from './focus';
 import { KIND_TYPE_ID, currencyWord, money } from './shared';
-import { bucketBounds } from '../../economics/break-even';
+import { bucketBounds, closeRateBoundsOf10 } from '../../economics/break-even';
 
 export type AdaptiveParse = { ok: true; answer: AdaptiveAnswer } | { ok: false; error: string };
 
@@ -690,7 +690,7 @@ export function breakEvenContactLine(profitChoice: string | null | undefined, cl
   const closeRange = CLOSE_RATE_RANGES[closeChoice];
   if (!profitRange || !closeRange) return null;
   const profit = bucketBounds(profitRange.min, profitRange.max);
-  const close = bucketBounds(closeRange.min, closeRange.max);
+  const close = closeRateBoundsOf10(closeRange.min, closeRange.max);
   if (!profit || !close) return null;
 
   const low = (profit.low * close.low) / 10;

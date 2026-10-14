@@ -48,8 +48,14 @@ export const PAUSE_AD_MAX_CTR_SHARE = 0.5;
 export const PAUSE_AD_MIN_OTHER_ENABLED_ADS = 2;
 export const PAUSE_AD_CPA_IN_GROUP_CPAS = 2;
 
-/** add_negative_keyword: a wasted term costs this many allowable CPAs, or is clearly irrelevant on this many clicks. */
+/**
+ * add_negative_keyword: a wasted term costs this many allowable CPAs, or is clearly irrelevant on this many clicks.
+ * With the client's own break-even the limit is a real one and 1 x is enough. With no economics the limit is the
+ * account's own 30-day CPA, a much weaker yardstick (it says what happened, not what is acceptable): there the
+ * knowledge base's rule applies, 1 x is a term to review and 2 x is a term to negate.
+ */
 export const NEGATIVE_COST_IN_CPAS = 1;
+export const NEGATIVE_COST_IN_CPAS_FALLBACK = 2;
 export const NEGATIVE_IRRELEVANT_MIN_CLICKS = 5;
 
 export type ProposalContext = {
@@ -226,8 +232,9 @@ export function evaluateAddKeyword(action: OptimizerAction, context: ProposalCon
 /**
  * The term must be a row of `wasted_search_terms` of the campaign the proposal
  * names, with 0 conversions, and either cost at least one allowable CPA (the
- * CUT end, or the account's own CPA; only while tracking is healthy, because
- * zero conversions mean nothing when tracking is broken) or be clearly
+ * CUT end; two when there are no economics and the limit is the account's own
+ * 30-day CPA; only while tracking is healthy, because zero conversions mean
+ * nothing when tracking is broken) or be clearly
  * irrelevant on at least 5 clicks. The negative must not block a converting
  * search term, and must not equal or sit inside an enabled keyword the snapshot
  * lists (Arabic-normalized, so a spelling variant does not slip through).
@@ -247,7 +254,8 @@ export function evaluateAddNegativeKeyword(action: OptimizerAction, context: Pro
 
   const trackingHealthy = context.snapshot.conversion_tracking?.status === TRACKING_HEALTHY;
   const limit = cutLimit(context.snapshot);
-  const costJustifies = trackingHealthy && limit !== null && toUnits(metrics.costMicros) >= NEGATIVE_COST_IN_CPAS * limit.value;
+  const costInCpas = limit?.source === 'account_30d_cpa_fallback' ? NEGATIVE_COST_IN_CPAS_FALLBACK : NEGATIVE_COST_IN_CPAS;
+  const costJustifies = trackingHealthy && limit !== null && toUnits(metrics.costMicros) >= costInCpas * limit.value;
   const irrelevantJustifies =
     action.evidence?.relevance === 'clearly_irrelevant' && metrics.clicks >= NEGATIVE_IRRELEVANT_MIN_CLICKS;
   if (!costJustifies && !irrelevantJustifies) return no('negative_below_waste_floor');

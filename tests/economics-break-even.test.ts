@@ -6,6 +6,8 @@ import {
   allowableCpaScale,
   breakEvenForCurrency,
   bucketBounds,
+  CLOSE_RATE_CAP_OF_10,
+  closeRateBoundsOf10,
   computeBreakEven,
   conservativeEdge,
   deriveEconomicsKind,
@@ -101,9 +103,9 @@ test('leads: SCALE CPA is the low profit x the low close rate, CUT CPA the high 
   assert.equal(result.inputs.deal_value_sar, null);
 
   // Every bucket: SCALE from its low edge (half of the upper one when it starts at 0), CUT from its high edge
-  // (twice the lower one when it is open-ended).
+  // (twice the lower one when it is open-ended; the close rate never above 6 of 10).
   const profit: Record<string, [number, number]> = { lt50: [25, 50], '50_200': [50, 200], '200_1k': [200, 1000], '1k_5k': [1000, 5000], gt5k: [5000, 10000] };
-  const close: Record<string, [number, number]> = { le1: [0.05, 0.1], '2_3': [0.2, 0.3], ge4: [0.4, 1] };
+  const close: Record<string, [number, number]> = { le1: [0.05, 0.1], '2_3': [0.2, 0.3], ge4: [0.4, 0.6] };
   for (const [profitChoice, [profitLow, profitHigh]] of Object.entries(profit)) {
     for (const [closeChoice, [closeLow, closeHigh]] of Object.entries(close)) {
       const bucketed = computeBreakEven({
@@ -118,6 +120,65 @@ test('leads: SCALE CPA is the low profit x the low close rate, CUT CPA the high 
       assert.ok((bucketed.break_even_cpa as number) <= (bucketed.break_even_cpa_cut as number), `${profitChoice}/${closeChoice}: CUT allows at least what SCALE needs`);
     }
   }
+});
+
+test('the close rate never counts for more than 6 of 10 on its high edge (waste control must not switch off)', () => {
+  assert.equal(CLOSE_RATE_CAP_OF_10, 6);
+  assert.deepEqual(closeRateBoundsOf10(4, 10), { low: 4, high: 6 }); // «4 وفوق» as the onboarding stores it
+  assert.deepEqual(closeRateBoundsOf10(4, null), { low: 4, high: 6 });
+  assert.deepEqual(closeRateBoundsOf10(2, 3), { low: 2, high: 3 }); // a closed bucket under the cap is untouched
+  assert.deepEqual(closeRateBoundsOf10(0, 1), { low: 0.5, high: 1 });
+  assert.deepEqual(closeRateBoundsOf10(8, 10), { low: 8, high: 8 }); // never a high edge under the low one
+  assert.equal(closeRateBoundsOf10(11, 12), null);
+  assert.equal(closeRateBoundsOf10(null, null), null);
+});
+
+test('clinic with profit 200-1,000 SAR and close rate «4 وفوق»: SCALE CPA 80, CUT CPA 600 (not 1,000)', () => {
+  const result = computeBreakEven({
+    facts: {
+      type: { choice: 'clinic' },
+      profit_per_deal: factData('profit_per_deal', '200_1k'),
+      close_rate: factData('close_rate', 'ge4'),
+    },
+  });
+  assert.equal(result.break_even_cpa, 80); // 200 x 0.4
+  assert.equal(result.break_even_cpa_cut, 600); // 1,000 x 0.6
+  assert.equal(result.inputs.close_rate_fraction, 0.4);
+  assert.equal(result.inputs.close_rate_fraction_high, 0.6);
+  // So a keyword is paused after 2 x 600 = 1,200 SAR without a conversion, not after 2,000.
+  assert.deepEqual(allowableCpaCut(result, null), { value: 600, source: 'break_even_cpa' });
+});
+
+test('every open-ended «أكثر من» bucket gives a sane CUT value', () => {
+  // Margin «أكثر من 40»: 40..80%, so ROAS 2.5 to win and 1.25 to lose: still above 1 (no margin makes less than 1 break even).
+  const rich = computeBreakEven({ facts: { type: { choice: 'ecommerce' }, margin: factData('margin', 'gt40') } });
+  assert.equal(rich.break_even_roas, 2.5);
+  assert.equal(rich.break_even_roas_cut, 1.25);
+  assert.ok((rich.break_even_roas_cut as number) > 1);
+
+  // Profit «أكثر من 5,000» with every close-rate bucket: the CUT CPA stays within 4 x the SCALE CPA
+  // (profit doubles at most, the close rate at most 6 of 10 against a low edge of 2).
+  for (const [closeChoice, ratio] of [['le1', 4], ['2_3', 3], ['ge4', 3]] as const) {
+    const lead = computeBreakEven({
+      facts: { type: { choice: 'clinic' }, profit_per_deal: factData('profit_per_deal', 'gt5k'), close_rate: factData('close_rate', closeChoice) },
+    });
+    const scale = lead.break_even_cpa as number;
+    const cut = lead.break_even_cpa_cut as number;
+    assert.ok(cut >= scale, closeChoice);
+    assert.ok(cut / scale <= ratio + 1e-9, `${closeChoice}: CUT ${cut} vs SCALE ${scale}`);
+  }
+
+  // Deal value «أكثر من 50,000» through the older deal x margin x close path.
+  const deal = computeBreakEven({
+    facts: {
+      type: { choice: 'services' },
+      deal_value: factData('deal_value', 'gt50k'),
+      margin: factData('margin', '20_40'),
+      close_rate: factData('close_rate', 'ge4'),
+    },
+  });
+  assert.equal(deal.break_even_cpa, 4000); // 50,000 x 20% x 0.4
+  assert.equal(deal.break_even_cpa_cut, 24000); // 100,000 x 40% x 0.6
 });
 
 test('leads: a bigger profit bucket never gives a smaller break-even CPA, at either end', () => {

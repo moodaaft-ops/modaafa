@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { NextRequest } from 'next/server';
 import {
@@ -22,7 +23,7 @@ import {
   evaluateProposalEvidence,
 } from '../lib/ai/optimizer-proposal-gates';
 import { buildSnapshotEconomics } from '../lib/ai/optimizer-snapshot';
-import { computeBreakEven } from '../lib/economics/break-even';
+import { allowableCpaCut, computeBreakEven } from '../lib/economics/break-even';
 import { createRecommendationActionHandler } from '../lib/recommendations/action-handler';
 import { holdsTargetLock, isExpiredOptimizerMoneyMove } from '../lib/recommendations/staleness';
 
@@ -468,6 +469,35 @@ test('add_negative_keyword: a wasted term of that campaign that cost one allowab
     ok: false,
     code: 'negative_below_waste_floor',
   });
+});
+
+test('add_negative_keyword: with no client CPA the account fallback needs 2 x (1 x is only a term to review); a real break-even CPA keeps 1 x', () => {
+  const check = (costSar: number, economics: OptimizerSnapshot['economics']) =>
+    evaluateAddNegativeKeyword(negative('مجاني'), {
+      snapshot: snapshot({ economics, wasted_search_terms: [wastedRow('مجاني', { cost_micros: Math.round(costSar * 1_000_000) })] }),
+    });
+  const below = { ok: false, code: 'negative_below_waste_floor' };
+
+  // Unknown economics: the limit is the account's own 30-day CPA, 3.75 SAR, so the floor is 7.5 SAR.
+  for (const economics of [unknownEconomics(), store()]) {
+    assert.equal(allowableCpaCut(economics, 3.75)?.source, 'account_30d_cpa_fallback');
+    assert.deepEqual(check(3.75, economics), below, '1 x the fallback is a term to review');
+    assert.deepEqual(check(7.4, economics), below);
+    assert.deepEqual(check(7.5, economics), { ok: true });
+    assert.deepEqual(check(20, economics), { ok: true });
+  }
+
+  // The client's own CPA (CUT end 6000 SAR) is a real limit: 1 x justifies the negative.
+  const known = leads();
+  assert.equal(allowableCpaCut(known, 3.75)?.source, 'break_even_cpa');
+  assert.deepEqual(check(5999, known), below);
+  assert.deepEqual(check(6000, known), { ok: true });
+
+  // The other way in is unchanged by either limit: a clearly irrelevant term on 5+ clicks.
+  const irrelevant = evaluateAddNegativeKeyword(negative('مجاني', 'PHRASE', 'clearly_irrelevant'), {
+    snapshot: snapshot({ economics: unknownEconomics(), wasted_search_terms: [wastedRow('مجاني', { clicks: 5, cost_micros: 1_000_000 })] }),
+  });
+  assert.deepEqual(irrelevant, { ok: true });
 });
 
 test('add_negative_keyword: never blocks a converting search term or an enabled keyword (Arabic-normalized)', () => {
@@ -966,4 +996,13 @@ test('handler: other optimizer operations keep their old shelf life (a 20-day-ol
   const result = await handler(world)();
   assert.match(result.location, /\/optimizer\?executed=1$/);
   assert.equal(world.rec.status, 'applied');
+});
+
+test('the recent-change-lock notices say the budget changed, not who changed it (it may have been the owner)', () => {
+  for (const path of ['../lib/home/briefing.ts', '../app/(dashboard)/start/start-client.tsx', '../app/(dashboard)/optimizer/page.tsx']) {
+    const source = readFileSync(new URL(path, import.meta.url), 'utf8');
+    const line = source.split('\n').find((candidate) => candidate.includes('recent_change_lock') && candidate.includes('7 أيام'));
+    assert.ok(line, `${path} keeps a recent_change_lock notice that names the 7 days`);
+    assert.ok(!source.includes('عدّلنا نفس الميزانية'), `${path} does not claim «we» made the change`);
+  }
 });
