@@ -152,6 +152,15 @@ export function adaptivePending(args: {
     keys.splice(at, 0, 'manager');
   }
 
+  // Editing asks the business type and the goal again for every kind (the kinds' own lists skip them: the
+  // type is read from the account and the goal is covered by the opener), so «عدّل شي» can change them.
+  if (edit) {
+    let at = 0;
+    while (at < keys.length && (keys[at] === 'confirm' || keys[at] === 'manager')) at += 1;
+    const missing = (['type', 'goal'] as SetupKey[]).filter((key) => !keys.includes(key));
+    keys.splice(at, 0, ...missing);
+  }
+
   return keys.filter((key, index) => {
     if (keys.indexOf(key) !== index) return false;
     if (key === 'consent') return !consentAnswered;
@@ -292,10 +301,14 @@ function managerQuestion(ctx: QuestionContext): AdaptiveQuestion | null {
   if (scenario.managed !== 'suspected') return null;
   const link = hasEvidence(scenario, 'mgr:link');
   const editors = hasEvidence(scenario, 'mgr:editors');
+  // The edits come from change_event, which names the Google login that made them. That login is compared
+  // with the email of the Modaafa account, not with the one the ads account was connected with, so the
+  // question says only what is true: someone else's email edited the account. (A link to a manager account
+  // is read straight from Google, so the link-only wording was already true and stays.)
   let text: string;
-  if (link && editors) text = 'شفت إن حسابك مربوط بحساب إدارة من برا، وإن فيه أحد يعدّل فيه آخر أسبوعين. مين هو؟';
+  if (link && editors) text = 'شفت إن حسابك مربوط بحساب إدارة من برا، وفيه تعديلات آخر أسبوعين من إيميل غير إيميلك في مُضاعِف. مين يدير الحساب؟';
   else if (link) text = 'شفت إن حسابك مربوط بحساب إدارة من برا. مين يديره؟';
-  else text = 'شفت إن فيه أحد ثاني يعدّل في حسابك آخر أسبوعين. مين هو؟';
+  else text = 'شفت تعديلات على حسابك آخر أسبوعين من إيميل غير إيميلك في مُضاعِف. مين يدير الحساب؟';
   const wanted = ['agency', 'employee', 'self'];
   return {
     key: 'manager',

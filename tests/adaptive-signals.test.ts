@@ -103,7 +103,8 @@ function healthy(): Record<string, Answer> {
     merchant: [{ campaign: { id: '1' } }],
     customer_asset: [{ customerAsset: { fieldType: 'CALL' } }],
     campaign_asset: [],
-    asset_set: [],
+    customer_asset_set: [],
+    campaign_asset_set: [],
     campaign_criterion: [{ campaignCriterion: { location: { geoTargetConstant: 'geoTargetConstants/1000072' } } }],
     geo_target_constant: [{ geoTargetConstant: { resourceName: 'geoTargetConstants/1000072', name: 'Jeddah' } }],
     customer_manager_link: [],
@@ -429,27 +430,63 @@ test('merchantCenterLinked is true when any campaign has a non-zero merchant id'
   assert.equal(valueOf((await read(answers)).signals.merchantCenterLinked), false);
 });
 
-test('assets: call from account or campaign level, locations from location rows and location sets', async () => {
+test('assets: call from account or campaign level, locations only from linked and enabled LOCATION_SYNC sets', async () => {
   const answers = healthy();
+  const set = (id: string, type = 'LOCATION_SYNC') => ({ assetSet: { id, type } });
   answers.customer_asset = [{ customerAsset: { fieldType: 'SITELINK' } }];
-  answers.campaign_asset = [{ campaignAsset: { fieldType: 'CALL' } }, { campaignAsset: { fieldType: 'LOCATION' } }];
-  answers.asset_set = [{ assetSet: { id: '1', type: 'LOCATION_SYNC' } }, { assetSet: { id: '2', type: 'BUSINESS_PROFILE_DYNAMIC_LOCATION_GROUP' } }];
-  assert.deepEqual(valueOf((await read(answers)).signals.assets), { call: true, locations: 3 });
+  answers.campaign_asset = [{ campaignAsset: { fieldType: 'CALL' } }];
+  // One set linked at account level and the same one again on a campaign, plus a second set: two locations, not three.
+  answers.customer_asset_set = [set('1')];
+  answers.campaign_asset_set = [set('1'), set('2')];
+  assert.deepEqual(valueOf((await read(answers)).signals.assets), { call: true, locations: 2 });
 
   answers.customer_asset = [{ customerAsset: { fieldType: 'CALL' } }];
   answers.campaign_asset = [];
-  answers.asset_set = [];
+  answers.customer_asset_set = [];
+  answers.campaign_asset_set = [];
   assert.deepEqual(valueOf((await read(answers)).signals.assets), { call: true, locations: 0 });
 
   answers.customer_asset = [{ customerAsset: { fieldType: 'CALLOUT' } }];
   assert.deepEqual(valueOf((await read(answers)).signals.assets), { call: false, locations: 0 });
 });
 
+test('assets: an asset field named LOCATION counts for nothing (Google has no such field type), and only LOCATION_SYNC sets count', async () => {
+  const answers = healthy();
+  answers.customer_asset = [{ customerAsset: { fieldType: 'LOCATION' } }];
+  answers.campaign_asset = [{ campaignAsset: { fieldType: 'LOCATION' } }, { campaignAsset: { fieldType: 'LOCATION' } }];
+  assert.deepEqual(valueOf((await read(answers)).signals.assets), { call: false, locations: 0 }, 'dead branches are gone');
+
+  // A set of another type that came back anyway is ignored, and a set with no id is not a location.
+  answers.customer_asset_set = [
+    { assetSet: { id: '7', type: 'BUSINESS_PROFILE_DYNAMIC_LOCATION_GROUP' } },
+    { assetSet: { id: '8', type: 'PAGE_FEED' } },
+    { assetSet: { type: 'LOCATION_SYNC' } },
+  ];
+  answers.campaign_asset_set = [{ assetSet: { id: '9', type: 'LOCATION_SYNC' } }];
+  assert.deepEqual(valueOf((await read(answers)).signals.assets), { call: false, locations: 1 });
+});
+
+test('assets: the location queries ask for LINKED, enabled LOCATION_SYNC sets, never for unlinked asset sets', async () => {
+  const { customer } = await read(healthy());
+  const sets = customer.queries.filter((entry) => entry.key === 'customer_asset_set' || entry.key === 'campaign_asset_set');
+  assert.deepEqual(sets.map((entry) => entry.key).sort(), ['campaign_asset_set', 'customer_asset_set']);
+  for (const { gaql } of sets) {
+    assert.match(gaql, /asset_set\.type = 'LOCATION_SYNC'/);
+    assert.match(gaql, /_asset_set\.status = 'ENABLED'/);
+    assert.match(gaql, /asset_set\.status = 'ENABLED'/);
+  }
+  assert.match(SIGNAL_GAQL.campaignLocationSets, /campaign\.status = 'ENABLED'/);
+  assert.ok(!customer.keys().includes('asset_set'), 'the bare asset_set query (which lists sets nobody linked) is gone');
+});
+
 test('assets: a failed location-set query only costs the sets, a failed asset query fails the signal', async () => {
   const warnings = silenceWarnings();
   try {
     const answers = healthy();
-    answers.asset_set = new Error('boom');
+    answers.customer_asset_set = new Error('boom');
+    answers.campaign_asset_set = [{ assetSet: { id: '2', type: 'LOCATION_SYNC' } }];
+    assert.deepEqual(valueOf((await read(answers)).signals.assets), { call: true, locations: 1 }, 'the other link table still counts');
+    answers.campaign_asset_set = new Error('boom');
     assert.deepEqual(valueOf((await read(answers)).signals.assets), { call: true, locations: 0 });
     answers.customer_asset = new Error('boom');
     assert.equal((await read(answers)).signals.assets.ok, false);
@@ -1028,8 +1065,11 @@ const operatorRoute = read_('app/api/operations/onboarding-signals/route.ts');
 const page = read_('app/(dashboard)/operations/onboarding-signals/page.tsx');
 const panel = read_('app/(dashboard)/operations/onboarding-signals/signals-panel.tsx');
 
-test('POST /api/setup/signals: same origin, signed in, flag, rate limit, own account, admin save', () => {
-  const order = ['isSameOriginRequest(req)', 'auth.getUser()', 'isAdaptiveOnboarding(process.env, user.email)', "scope: 'setup_signals'", 'getUserBusinessWithClient(supabase', 'getLinkedGoogleAdsAccount({', 'loadStoredSignals(admin', 'readAndStoreSignals({'];
+const signalsRequestSource = read_('lib/setup/adaptive/signals-request.ts');
+
+test('POST /api/setup/signals: same origin, signed in, flag, rate limit, then the request module (own account, admin save)', () => {
+  // The decisions after the guards are behavioral tests in tests/adaptive-answers-flow.test.ts (runSignalsRequest).
+  const order = ['isSameOriginRequest(req)', 'auth.getUser()', 'isAdaptiveOnboarding(process.env, user.email)', "scope: 'setup_signals'", 'getAccountWorkspace(user.id)', 'runSignalsRequest({'];
   let at = -1;
   for (const needle of order) {
     const next = setupRoute.indexOf(needle);
@@ -1038,10 +1078,8 @@ test('POST /api/setup/signals: same origin, signed in, flag, rate limit, own acc
   }
   assert.match(setupRoute, /limit: 10, windowSeconds: 600, identifier: user\.id/);
   assert.match(setupRoute, /status: 404/);
-  assert.match(setupRoute, /fresh: false/);
-  assert.match(setupRoute, /fresh: true, okSignals/);
-  assert.match(setupRoute, /connectedEmail: user\.email/);
   assert.doesNotMatch(setupRoute, /hasProductAccess|getSubscriptionAccess/);
+  assert.doesNotMatch(signalsRequestSource, /hasProductAccess|getSubscriptionAccess/);
 });
 
 test('POST /api/operations/onboarding-signals: operator only, own business only, fresh read', () => {

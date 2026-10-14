@@ -99,12 +99,26 @@ export const SIGNAL_GAQL = {
     FROM campaign_asset
     WHERE campaign_asset.status = 'ENABLED' AND campaign.status = 'ENABLED'
     LIMIT 2000`,
-  locationAssetSets: `
-    SELECT asset_set.id, asset_set.type
-    FROM asset_set
-    WHERE asset_set.status = 'ENABLED'
-      AND asset_set.type IN ('LOCATION_SYNC', 'BUSINESS_PROFILE_DYNAMIC_LOCATION_GROUP', 'CHAIN_DYNAMIC_LOCATION_GROUP')
+  /**
+   * A location is on the account when a LOCATION_SYNC asset set (the Google Business Profile sync) is
+   * linked to it and both the link and the set are enabled. There is no LOCATION asset field type, so
+   * customer_asset and campaign_asset never show one; the link tables are the only place to look.
+   */
+  customerLocationSets: `
+    SELECT asset_set.id, asset_set.type, customer_asset_set.status
+    FROM customer_asset_set
+    WHERE customer_asset_set.status = 'ENABLED'
+      AND asset_set.status = 'ENABLED'
+      AND asset_set.type = 'LOCATION_SYNC'
     LIMIT 50`,
+  campaignLocationSets: `
+    SELECT asset_set.id, asset_set.type, campaign_asset_set.status
+    FROM campaign_asset_set
+    WHERE campaign_asset_set.status = 'ENABLED'
+      AND asset_set.status = 'ENABLED'
+      AND asset_set.type = 'LOCATION_SYNC'
+      AND campaign.status = 'ENABLED'
+    LIMIT 200`,
   targetedLocations: `
     SELECT campaign_criterion.location.geo_target_constant
     FROM campaign_criterion
@@ -393,31 +407,40 @@ async function readMerchantCenterLinked(q: Query): Promise<boolean> {
 }
 
 async function readAssets(q: Query): Promise<{ call: boolean; locations: number }> {
-  const [customerAssets, campaignAssets, sets] = await Promise.allSettled([
+  const [customerAssets, campaignAssets, customerSets, campaignSets] = await Promise.allSettled([
     q(SIGNAL_GAQL.customerAssets),
     q(SIGNAL_GAQL.campaignAssets),
-    q(SIGNAL_GAQL.locationAssetSets),
+    q(SIGNAL_GAQL.customerLocationSets),
+    q(SIGNAL_GAQL.campaignLocationSets),
   ]);
   // The call answer needs both asset queries; the location sets are a bonus
-  // (locations are mostly linked as asset sets, which these two never show).
+  // (Google has no LOCATION asset field type: locations are linked as asset sets).
   if (customerAssets.status === 'rejected') throw customerAssets.reason;
   if (campaignAssets.status === 'rejected') throw campaignAssets.reason;
 
   let call = false;
-  let locations = 0;
   for (const row of customerAssets.value) {
-    const type = str(row, 'customer_asset.field_type');
-    if (type === 'CALL') call = true;
-    if (type === 'LOCATION') locations += 1;
+    if (str(row, 'customer_asset.field_type') === 'CALL') call = true;
   }
   for (const row of campaignAssets.value) {
-    const type = str(row, 'campaign_asset.field_type');
-    if (type === 'CALL') call = true;
-    if (type === 'LOCATION') locations += 1;
+    if (str(row, 'campaign_asset.field_type') === 'CALL') call = true;
   }
-  if (sets.status === 'fulfilled') locations += sets.value.length;
-  else console.warn('[onboarding-signals] assets location sets failed');
-  return { call, locations };
+
+  // Distinct enabled location sets linked at account level or to an enabled campaign. The same set linked
+  // to three campaigns is one location source, not three.
+  const linked = new Set<string>();
+  for (const result of [customerSets, campaignSets]) {
+    if (result.status === 'rejected') {
+      console.warn('[onboarding-signals] assets location sets failed');
+      continue;
+    }
+    for (const row of result.value) {
+      if (str(row, 'asset_set.type') !== 'LOCATION_SYNC') continue;
+      const id = str(row, 'asset_set.id');
+      if (id) linked.add(id);
+    }
+  }
+  return { call, locations: linked.size };
 }
 
 async function readTargetedPlaces(q: Query): Promise<string[]> {

@@ -1,4 +1,4 @@
-import { GOAL_OPTIONS, KIND_GOAL_OPTIONS, KIND_PAIN_OPTIONS, PAIN_OPTIONS, TYPE_OPTIONS, VALUE_OPTIONS } from '../questions';
+import { GOAL_OPTIONS, KIND_GOAL_OPTIONS, KIND_PAIN_OPTIONS, PAIN_OPTIONS, TYPE_OPTIONS, VALUE_OPTIONS, cleanUserText } from '../questions';
 import { ADAPTIVE_CATALOG, adaptiveOptionLabel } from './answers';
 import { focusLabel } from './focus';
 import { activityPhrase } from './opener';
@@ -75,14 +75,23 @@ const FOCUS_LABEL: Record<BusinessKind, string> = {
   general: 'اللي تبيعه',
 };
 
+/** The «غير كذا» tile is only the way to type a sector; the row says what they typed (stored as `businesses.sector`). */
+const OTHER_TYPE_ID = 'other';
+const SECTOR_ROW_MAX = 40;
+
 function activityRow(args: {
   scenario: Scenario;
   signals: AccountSignals | null;
   answered: Partial<Record<string, string | null>>;
   labels: Partial<Record<string, string>>;
+  sector?: string | null;
 }): UnderstoodRow | null {
   const { scenario, signals, answered, labels } = args;
   if (scenario.kindConfidence === 'stated') {
+    if (answeredChoice(answered, 'type') === OTHER_TYPE_ID) {
+      const typed = cleanUserText(args.sector ?? '', SECTOR_ROW_MAX);
+      return typed ? { label: 'النشاط', value: typed, source: 'you' } : null;
+    }
     const value = said('type', answered, labels);
     return value ? { label: 'النشاط', value, source: 'you' } : null;
   }
@@ -131,7 +140,8 @@ export function understandingRows(args: {
   /** Ledger choice ids plus labels the screen already showed. */
   answered: Partial<Record<string, string | null>>;
   labels: Partial<Record<string, string>>;
-  business: { name: string | null; monthlyBudget: number | null; targetRegions: string[] } | null;
+  /** `sector` is the free text a «غير كذا» type answer stored. */
+  business: { name: string | null; monthlyBudget: number | null; targetRegions: string[]; sector?: string | null } | null;
 }): UnderstoodRow[] {
   const { scenario, signals, answered, labels, business } = args;
   const kind = trustedKind(scenario);
@@ -147,7 +157,7 @@ export function understandingRows(args: {
     if (value) push({ label, value, source: 'you' });
   };
 
-  push(activityRow({ scenario, signals, answered, labels }));
+  push(activityRow({ scenario, signals, answered, labels, sector: business?.sector ?? null }));
 
   // Where: the account's own targeting, else what the customer said.
   const targeted = cityNames(signals);

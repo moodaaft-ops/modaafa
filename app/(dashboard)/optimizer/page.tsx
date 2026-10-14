@@ -126,6 +126,8 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
                       plan={lock.plan}
                       trialEligible={lock.trialEligible}
                       cta={lock.cta}
+                      lead={lock.lead}
+                      firstWhy={lock.firstWhy}
                       suspended={Boolean(subscription.suspended)}
                     />
                   </div>

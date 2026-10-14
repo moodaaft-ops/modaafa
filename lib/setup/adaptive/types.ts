@@ -124,12 +124,18 @@ export type AccountState =
 
 export type BusinessKind = 'ecommerce' | 'clinic' | 'services' | 'local' | 'general';
 
+/** Every BusinessKind, for validating a value read back from the database. */
+export const BUSINESS_KINDS: readonly BusinessKind[] = ['ecommerce', 'clinic', 'services', 'local', 'general'];
+
 export type StorePlatform = 'salla' | 'zid' | 'shopify';
 
 export type ClinicSpecialty = 'dental' | 'derma' | 'general';
 
 /** What the customer gets most from ads, read from conversions by group. */
 export type DominantOutcome = 'purchases' | 'calls' | 'forms' | 'bookings' | 'visits' | 'unknown';
+
+/** Every DominantOutcome, for validating a value read back from the database. */
+export const DOMINANT_OUTCOMES: readonly DominantOutcome[] = ['purchases', 'calls', 'forms', 'bookings', 'visits', 'unknown'];
 
 export type Scenario = {
   state: AccountState;
@@ -154,6 +160,20 @@ export type ClassifyInput = {
   connectNoAccount: boolean;
   /** Answers on record (ledger choice ids): has_account, type, manager, confirm. */
   answered: Partial<Record<string, string | null>>;
+  /**
+   * What the platform already knows about the account when the read itself
+   * failed (`signals?.campaigns` is not ok). Used ONLY then, and never to guess
+   * a kind: «empty» classifies the account as `new` (evidence `hint:empty`),
+   * «spends» keeps it `active` with no kind guess. Null or absent changes
+   * nothing, so a failed read with no hint behaves as it always did.
+   */
+  activityHint?: 'spends' | 'empty' | null;
+  /**
+   * The kind (and outcome) the customer agreed with on the opener, read from
+   * the ledger. Counts as the customer's own word on the kind when they did
+   * not state a type: kind = confirmed.kind, kindConfidence «confident».
+   */
+  confirmed?: { kind: BusinessKind; outcome: DominantOutcome | null } | null;
 };
 
 export const TRACKING_SUSPECT_MIN_CLICKS = 100;
@@ -207,6 +227,14 @@ export type AdaptiveAnswer = {
    * from the browser.
    */
   titles?: string[];
+  /**
+   * aov_check only: the average order the account reported when the customer
+   * answered, in the account's currency. Filled by the server from the stored
+   * read after parsing, so the fact can say the number. Never read from the browser.
+   */
+  amount?: number;
+  /** aov_check only: the currency code of `amount`. Filled by the server together with it. */
+  currency?: string;
 };
 
 export type AdaptiveOption = { id: string; label: string; hint?: string; icon?: string };

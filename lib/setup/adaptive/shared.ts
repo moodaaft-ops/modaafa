@@ -223,7 +223,6 @@ export const SERVICES_WORDS = [
   'سباكة',
   'تكييف',
   'ديكور',
-  'شركة',
 ] as const;
 
 export const LOCAL_WORDS = ['مطعم', 'مطاعم', 'كافيه', 'قهوة', 'فرع', 'فروع', 'مشويات', 'حلويات', 'restaurant', 'cafe'] as const;

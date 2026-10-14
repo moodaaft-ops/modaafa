@@ -554,6 +554,9 @@ test('pending: edit mode asks every key of the scenario again, except confirm an
   const scenario = classify(clinicAccount());
   const answered = { confirm: 'yes', focus_service: 'dental_braces', value: '100_500', pain: 'clinic_few_calls', call_hours: 'always' };
   assert.deepEqual(pending(scenario, answered, { edit: true }), [
+    // The type and the goal can be changed while editing, for every kind (the clinic's own list skips them).
+    'type',
+    'goal',
     'focus_service',
     'value',
     'pain',

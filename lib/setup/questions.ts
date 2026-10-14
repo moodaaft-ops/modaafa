@@ -870,7 +870,12 @@ export function pendingKeys(args: {
 
 export function missingCoreKeys(answered: Iterable<SetupKey>): SetupKey[] {
   const done = new Set(answered);
-  return CORE_KEYS.filter((key) => !done.has(key));
+  // The adaptive tree replaces «value» with the question that fits the kind: the average order the account
+  // reported (aov_check) for a store, the deal value (deal_value) for a services business, and for a new,
+  // dormant or no-account customer nothing but what they want to sell (focus_service). Any of them covers it.
+  // Nobody outside the tree has these answers on record, so the old flow is unchanged.
+  const valueCovered = done.has('aov_check') || done.has('deal_value') || done.has('focus_service');
+  return CORE_KEYS.filter((key) => !done.has(key) && !(key === 'value' && valueCovered));
 }
 
 export function isSetupKey(value: unknown): value is SetupKey {
