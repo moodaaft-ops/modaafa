@@ -217,10 +217,13 @@ const plan_ready_1d: EmailCopy = {
         ? `أول قرار في خطتك مفتوح لك: ${clean(plan.firstDecisionTitle)}.`
         : 'أول قرار في خطتك مفتوح لك تشوفه بسببه كامل.',
     });
+    const freeTrial = plan.trialEligible === true;
     if (plan.lockedCount > 0) {
       blocks.push({
         type: 'p',
-        text: `ومقفول فيها ${decisions(plan.lockedCount)} غيره. الخطة كلها تنفتح وتقدر تطبقها مع تجربتك المجانية 14 يوم.`,
+        text: freeTrial
+          ? `ومقفول فيها ${decisions(plan.lockedCount)} غيره. الخطة كلها تنفتح وتقدر تطبقها مع تجربتك المجانية 14 يوم.`
+          : `ومقفول فيها ${decisions(plan.lockedCount)} غيره، وتنفتح كلها مع الاشتراك.`,
       });
     }
     blocks.push({ type: 'note', text: TRUST_LINE });
@@ -230,7 +233,9 @@ const plan_ready_1d: EmailCopy = {
         : 'خطتك جاهزة، وأول قرار فيها مفتوح لك',
       preheader: 'وأول قرار فيها مفتوح لك تشوفه الحين',
       blocks,
-      cta: { label: 'ابدأ 14 يوم مجاناً', path: PLAN_CHECKOUT_PATH },
+      cta: freeTrial
+        ? { label: 'ابدأ 14 يوم مجاناً', path: PLAN_CHECKOUT_PATH }
+        : { label: 'فعّل اشتراكك', path: PLAN_CHECKOUT_PATH },
       signer: 'team',
     };
   },
@@ -240,7 +245,9 @@ const plan_ready_3d: EmailCopy = {
   key: 'plan_ready_3d',
   category: 'lifecycle',
   approved: false,
-  build: () => ({
+  requires: ['plan'],
+  // The whole text is about the free trial: skip anyone who cannot take it.
+  build: (facts) => (facts.plan?.trialEligible !== true ? null : {
     subject: 'قبل ما تقرر عن التجربة',
     preheader: 'كيف تجرب 14 يوم وأنت ماسك كل شي بيدك',
     blocks: [
@@ -315,7 +322,7 @@ const trial_d1: EmailCopy = {
       type: 'p',
       text:
         trial.pendingCount > 0
-          ? `فيه ${decisions(trial.pendingCount)} ينتظر اعتمادك الحين، وكل واحد مكتوب معه سببه من أرقام حسابك.`
+          ? `فيه ${decisions(trial.pendingCount)} ينتظرك الحين، وكل واحد مكتوب معه سببه من أرقام حسابك.`
           : 'مُضاعِف يقرأ حسابك وأول قرار يطلع لك في قراءة اليوم، مكتوب معه سببه من أرقام حسابك.',
     });
     blocks.push({ type: 'p', text: 'اعتمد اللي تقتنع فيه وارفض الباقي بدون حرج.' });
@@ -339,7 +346,7 @@ const trial_d4: EmailCopy = {
     if (!trial) return null;
     const blocks: Block[] = [
       { type: 'stat', label: 'قرارات اعتمدتها', value: formatNumber(trial.approvedCount) },
-      { type: 'stat', label: 'تنتظر قرارك', value: formatNumber(trial.pendingCount) },
+      { type: 'stat', label: 'مفتوحة في خطتك', value: formatNumber(trial.pendingCount) },
     ];
     blocks.push({
       type: 'p',
@@ -449,15 +456,15 @@ const canceled_1d: EmailCopy = {
   category: 'lifecycle',
   approved: false,
   build: () => ({
-    subject: 'وش اللي ما ضبط؟',
+    subject: 'اشتراكك في مُضاعِف توقف',
     preheader: 'سؤال واحد من أيمن، والرد يوصلني أنا',
     blocks: [
-      { type: 'p', text: 'معك أيمن. شفت إنك ألغيت اشتراكك في مُضاعِف.' },
+      { type: 'p', text: 'معك أيمن. اشتراكك في مُضاعِف توقف.' },
       {
         type: 'p',
-        text: 'ما بحاول أرجعك بخصم. بس ودي أعرف السبب بكلمتين، لأن ردك يحدد وش نصلح أول.',
+        text: 'لو كان هذا قرارك، ودي أعرف السبب بكلمتين، لأن ردك يحدد وش نصلح أول. رد على هالإيميل مباشرة، وما بحاول أرجعك بخصم.',
       },
-      { type: 'p', text: 'رد على هالإيميل مباشرة.' },
+      { type: 'p', text: 'ولو توقف بسبب البطاقة وأنت ما تدري، ترجع تفعّله من صفحة الاشتراك.' },
     ],
     ps: 'ولو حبيت ترجع يوم، حسابك وخطتك محفوظين.',
     signer: 'ayman',
@@ -556,7 +563,7 @@ const weekly_report: EmailCopy = {
       blocks.push({ type: 'list', items: highlights });
     }
     if (week.pendingCount > 0) {
-      blocks.push({ type: 'p', text: `فيه ${decisions(week.pendingCount)} ينتظر اعتمادك.` });
+      blocks.push({ type: 'p', text: `فيه ${decisions(week.pendingCount)} ينتظرك في مُضاعِف.` });
     }
     blocks.push({
       type: 'note',

@@ -6,7 +6,7 @@ import { COPY_KEYS, EMPTY_FACTS, type EmailFacts } from '../lib/lifecycle/types'
 const RICH: EmailFacts = {
   firstName: 'سارة',
   businessName: 'مشغل سارة',
-  plan: { decisionsTotal: 6, lockedCount: 5, firstDecisionTitle: 'وقّف حملة الرياض العامة', wasteEstimate: 1240.4, currency: 'SAR' },
+  plan: { decisionsTotal: 6, lockedCount: 5, firstDecisionTitle: 'وقّف حملة الرياض العامة', wasteEstimate: 1240.4, currency: 'SAR', trialEligible: true },
   trial: { startedAt: '2026-10-10T09:00:00Z', endsAt: '2026-10-24T09:00:00Z', daysLeft: 9, approvedCount: 3, pendingCount: 2 },
   weekly: {
     periodStart: '2026-10-04T00:00:00Z',
@@ -112,4 +112,22 @@ test('counting words follow Saudi usage', () => {
   assert.equal(decisions(14), '14 قرار');
   assert.equal(days(10), '10 أيام');
   assert.equal(days(11), '11 يوم');
+});
+
+test('no free trial is promised to someone who cannot take one', () => {
+  for (const trialEligible of [false, null, undefined]) {
+    const facts = { ...RICH, plan: { ...RICH.plan!, trialEligible } };
+    const email = EMAIL_COPY.plan_ready_1d.build(facts)!;
+    const text = [email.subject, email.preheader, email.cta?.label ?? '', ...email.blocks.map((b) => ('text' in b ? b.text : ''))].join(' ');
+    assert.doesNotMatch(text, /مجان|14 يوم/, String(trialEligible));
+    assert.equal(email.cta?.label, 'فعّل اشتراكك');
+    assert.equal(EMAIL_COPY.plan_ready_3d.build(facts), null);
+  }
+  assert.ok(EMAIL_COPY.plan_ready_3d.build(RICH));
+});
+
+test('the cancel mail does not assume the person chose to cancel', () => {
+  const email = EMAIL_COPY.canceled_1d.build(RICH)!;
+  const text = [email.subject, ...email.blocks.map((b) => ('text' in b ? b.text : ''))].join(' ');
+  assert.doesNotMatch(text, /ألغيت/);
 });

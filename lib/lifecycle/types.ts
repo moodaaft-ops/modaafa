@@ -75,6 +75,12 @@ export type PlanFacts = {
   /** Estimated monthly waste in the account currency, from the plan. null = no estimate. */
   wasteEstimate: number | null;
   currency: string;
+  /**
+   * Can this person still start the free trial? false = already used, ads
+   * account already trialed, or blocked email (same rule as the paywall CTA).
+   * null/undefined = unknown, copy must not promise a free trial.
+   */
+  trialEligible?: boolean | null;
 };
 
 export type TrialFacts = {
