@@ -334,10 +334,11 @@ test('the replaced #84 stage-followups code is gone, the shared stage files rema
     'config/stage-followups.ts',
     'lib/stages/plan.ts',
     'lib/stages/run-followups.ts',
+    'lib/stages/messages.ts',
   ]) {
     assert.equal(existsSync(new URL(`../${gone}`, import.meta.url)), false, gone);
   }
-  for (const kept of ['lib/stages/events.ts', 'lib/stages/types.ts', 'lib/stages/funnel.ts', 'lib/stages/load-funnel.ts', 'lib/stages/messages.ts']) {
+  for (const kept of ['lib/stages/events.ts', 'lib/stages/types.ts', 'lib/stages/funnel.ts', 'lib/stages/load-funnel.ts']) {
     assert.equal(existsSync(new URL(`../${kept}`, import.meta.url)), true, kept);
   }
 });
