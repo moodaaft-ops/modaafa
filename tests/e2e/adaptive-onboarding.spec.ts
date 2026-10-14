@@ -468,8 +468,9 @@ test('no ads account: «عدّل شي» reopens the questions with the current a
   await expect(page).toHaveURL(/\/onboarding$/, { timeout: 20_000 });
   await expect(page.getByText('خلصنا. هذا اللي فهمته عنك:')).toBeVisible({ timeout: 20_000 });
   const understood = page.getByRole('region', { name: 'فهمت عليك' });
-  // The tile «أكثر من 30,000 ريال» is booked as 40,000 a month; the first run said 6,000.
-  await expect(understood.getByText('40,000 ريال بالشهر')).toBeVisible();
+  // The tile «أكثر من 30,000 ريال» books a stand-in amount; the customer hears the range they tapped, never that number.
+  await expect(understood.getByText('أكثر من 30,000 ريال بالشهر')).toBeVisible();
+  await expect(understood.getByText('40,000', { exact: false })).toHaveCount(0);
   await noSidewaysOverflow(page);
   await shot(page, 'no-account-edit-understood');
   await pick(page, 'صح، وريني الخطة');

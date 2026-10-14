@@ -1,4 +1,4 @@
-import { GOAL_OPTIONS, KIND_GOAL_OPTIONS, KIND_PAIN_OPTIONS, PAIN_OPTIONS, TYPE_OPTIONS, VALUE_OPTIONS, cleanUserText } from '../questions';
+import { GOAL_OPTIONS, KIND_GOAL_OPTIONS, KIND_PAIN_OPTIONS, PAIN_OPTIONS, TYPE_OPTIONS, VALUE_OPTIONS, budgetRangeLabel, cleanUserText } from '../questions';
 import { ADAPTIVE_CATALOG, adaptiveOptionLabel } from './answers';
 import { focusLabel } from './focus';
 import { activityPhrase } from './opener';
@@ -206,7 +206,8 @@ export function understandingRows(args: {
   own('كيف تعرف النتيجة الحين', 'tracking_now');
 
   if (business && business.monthlyBudget !== null && business.monthlyBudget > 0) {
-    push({ label: 'الميزانية', value: `${money(business.monthlyBudget, currency)} بالشهر`, source: 'you' });
+    const range = budgetRangeLabel(business.monthlyBudget);
+    push({ label: 'الميزانية', value: `${range ?? money(business.monthlyBudget, currency)} بالشهر`, source: 'you' });
   }
 
   return rows;

@@ -1307,12 +1307,23 @@ test('first campaign: a dental clinic gets a search campaign on the service it n
   });
   assert.ok(plan);
   assert.equal(plan.campaign, 'حملة بحث على التقويم في جدة');
-  assert.equal(plan.budgetLine, '6,000 ريال بالشهر');
+  // 6,000 is what the «من 3,000 إلى 10,000 ريال» tile books: the customer hears the range, not a number they never gave.
+  assert.equal(plan.budgetLine, 'من 3,000 إلى 10,000 ريال بالشهر');
   assert.equal(plan.next, 'trial');
   assert.ok(plan.items.length >= 3 && plan.items.length <= 5);
   const byLabel = Object.fromEntries(plan.items.map((item) => [item.label, item.detail]));
   assert.equal(byLabel['أول كلمات البحث'], 'تقويم أسنان، عيادة تقويم أسنان');
-  assert.equal(byLabel['الميزانية'], '6,000 ريال بالشهر، قرابة 200 ريال باليوم.');
+  assert.equal(byLabel['الميزانية'], 'من 3,000 إلى 10,000 ريال بالشهر، وتحدد الرقم بالضبط قبل لا تشتغل الحملة.');
+  // A typed amount is the customer's own number, so the daily figure follows from it.
+  const typed = firstCampaignPlan({
+    scenario,
+    answered: { type: 'clinic', focus_service: 'dental_braces' },
+    labels: {},
+    business: { monthlyBudget: 4500, targetRegions: ['جدة'], website: null },
+    currency: 'SAR',
+  });
+  assert.equal(typed?.budgetLine, '4,500 ريال بالشهر');
+  assert.equal(Object.fromEntries((typed?.items ?? []).map((item) => [item.label, item.detail]))['الميزانية'], '4,500 ريال بالشهر، قرابة 150 ريال باليوم.');
   assert.match(byLabel['التتبع'], /الاتصال/);
 });
 

@@ -657,7 +657,9 @@ export function SetupChat({
           });
           const data = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error(String(data.error ?? 'save_failed'));
-          if (adaptiveRun && typeof data.label === 'string' && data.label.trim() && data.label.trim() !== payload.label) {
+          // Only the tree's own keys: a legacy key's bubble keeps what was tapped (the budget's range tiles book a
+          // stand-in amount the customer never said).
+          if (adaptiveRun && isAdaptiveKey(key) && typeof data.label === 'string' && data.label.trim() && data.label.trim() !== payload.label) {
             relabel(bubble, data.label.trim());
           }
           if (data.reaction) await say(String(data.reaction));

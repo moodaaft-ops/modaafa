@@ -6,6 +6,7 @@ import {
   focusGroupFor,
   focusLabel,
 } from './focus';
+import { budgetRangeLabel } from '../questions';
 import { answeredChoice, hasEvidence, joinAnd, money, trustedKind, withArticle } from './shared';
 import type { BusinessKind, FirstCampaignPlan, Scenario } from './types';
 
@@ -64,6 +65,9 @@ function budgetText(monthly: number | null | undefined, currency: string): { lin
       short: 'تحددها قبل لا تشتغل الحملة',
     };
   }
+  // A range tile: say the range, and no daily figure worked out from a number the customer never gave.
+  const range = budgetRangeLabel(monthly);
+  if (range) return { line: `${range} بالشهر، وتحدد الرقم بالضبط قبل لا تشتغل الحملة.`, short: `${range} بالشهر` };
   const daily = Math.round(monthly / 30);
   return {
     line: `${money(monthly, currency)} بالشهر، قرابة ${money(daily, currency)} باليوم.`,

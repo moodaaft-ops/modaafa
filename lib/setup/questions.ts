@@ -826,6 +826,19 @@ export function budgetChoices(spend30: number | null, currency: string | null): 
   ];
 }
 
+/**
+ * The range tiles above book a stand-in amount on `businesses.monthly_budget`
+ * (40,000 for «أكثر من 30,000 ريال»). Said back to the customer that amount is
+ * a number they never gave, so a budget equal to one of those stand-ins is said
+ * as the range they tapped. Any other amount (typed, or a spend-based tile) is
+ * their own number and is said as it is.
+ */
+export function budgetRangeLabel(monthly: number | null | undefined): string | null {
+  if (!monthly || monthly <= 0) return null;
+  const tile = budgetChoices(null, 'SAR').find((choice) => choice.amount === monthly);
+  return tile ? tile.label : null;
+}
+
 // ---------------------------------------------------------------------------
 // Which questions are left
 // ---------------------------------------------------------------------------
