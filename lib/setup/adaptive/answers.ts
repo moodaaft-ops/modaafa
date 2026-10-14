@@ -24,7 +24,7 @@ import {
 } from './types';
 import { ALL_FOCUS_ENTRIES, FOCUS_ALL_ID, FOCUS_ALL_LABEL, FOCUS_OTHER_ID, FOCUS_TEXT_MAX, FOCUS_TEXT_MIN } from './focus';
 import { KIND_TYPE_ID, currencyWord, money } from './shared';
-import { conservativeEdge } from '../../economics/break-even';
+import { bucketBounds } from '../../economics/break-even';
 
 export type AdaptiveParse = { ok: true; answer: AdaptiveAnswer } | { ok: false; error: string };
 
@@ -670,24 +670,39 @@ export function contactValueLine(dealChoice: string | null | undefined, closeCho
   return `يعني الاتصال الواحد يسوى لك من ${formatAmount(low)} إلى ${formatAmount(high)} ${word} تقريباً.`;
 }
 
+/** Under this many riyals a limit per contact is not a number worth showing: one click can cost that much. */
+export const CONTACT_LINE_FLOOR_SAR = 10;
+
 /**
- * The most one contact may cost before the ads lose money: the profit per customer times the share of
- * contacts that become customers. Same conservative edges the optimizer uses for its break-even CPA
- * (profit: lower edge, or half the upper edge for «أقل من»; close rate: the same rule), so what the customer
- * reads here is the number the optimizer will hold the account to.
+ * The most one contact may cost before the ads lose money: the profit per
+ * customer times the share of contacts that become customers. The customer
+ * answered two buckets, so the limit is a RANGE (low edges to high edges, the
+ * same ends the optimizer holds the account to: lib/economics/break-even.ts),
+ * and the line says so instead of quoting one edge as if it were exact.
+ *
+ * Small numbers are not shown. A profit under 50 riyals with a close rate of one
+ * in ten gives a limit near one riyal, which reads as an error and means only
+ * "the margin per contact is thin": the line then says that in words. When just
+ * the low end is under the floor the line gives the ceiling alone («أقل من»).
  */
 export function breakEvenContactLine(profitChoice: string | null | undefined, closeChoice: string): string | null {
-  const profit = profitChoice ? PROFIT_PER_DEAL_RANGES[profitChoice] : undefined;
-  const close = CLOSE_RATE_RANGES[closeChoice];
+  const profitRange = profitChoice ? PROFIT_PER_DEAL_RANGES[profitChoice] : undefined;
+  const closeRange = CLOSE_RATE_RANGES[closeChoice];
+  if (!profitRange || !closeRange) return null;
+  const profit = bucketBounds(profitRange.min, profitRange.max);
+  const close = bucketBounds(closeRange.min, closeRange.max);
   if (!profit || !close) return null;
-  const profitEdge = conservativeEdge(profit.min, profit.max);
-  const closeEdge = conservativeEdge(close.min, close.max);
-  if (profitEdge === null || closeEdge === null) return null;
-  const limit = (profitEdge * closeEdge) / 10;
-  // Under 10 riyals the decimal matters («1.3» is not «1»).
-  const shown = limit < 10 ? String(Math.round(limit * 10) / 10) : formatAmount(limit);
+
+  const low = (profit.low * close.low) / 10;
+  const high = (profit.high * close.high) / 10;
   // The profit buckets are in riyals whatever the account's currency, so the line says riyals.
-  return `يعني الاتصال الواحد لازم يكلفك إعلان أقل من ${shown} ريال تقريباً عشان تطلع رابح. بحسبها كذا.`;
+  if (high < CONTACT_LINE_FLOOR_SAR) {
+    return 'يعني الربح على الاتصال الواحد ضيّق، فلازم كل اتصال يجي رخيص. بحسبها كذا.';
+  }
+  if (low < CONTACT_LINE_FLOOR_SAR) {
+    return `يعني أقصى سعر للاتصال الواحد عشان تطلع رابح أقل من ${formatAmount(Math.round(high))} ريال تقريباً. بحسبها كذا.`;
+  }
+  return `يعني أقصى سعر للاتصال الواحد عشان تطلع رابح بين ${formatAmount(Math.round(low))} و${formatAmount(Math.round(high))} ريال تقريباً. بحسبها كذا.`;
 }
 
 /**

@@ -301,6 +301,8 @@ function optimizerErrorMessage(code: string) {
   const messages: Record<string, string> = {
     approve_before_execution: 'اعتمد التوصية أولاً قبل تنفيذها.',
     blocked_by_guardrails: 'أوقفت ضوابط الأمان هذه العملية قبل وصولها إلى إعلانات Google.',
+    recommendation_expired: 'مرّ على هذا الاقتراح أكثر من 7 أيام، والأرقام اللي بُني عليها تغيّرت، فلم ننفذه. راجعه يدوياً أو انتظر اقتراح الليلة إذا كان التعديل ما زال مناسباً.',
+    recent_change_lock: 'تغيّرت هذه الميزانية أو هذا الهدف خلال الأسبوع الماضي، فأوقفنا هذا الاقتراح القديم حتى لا يتكرر التعديل في نفس الأسبوع. راجعه يدوياً أو انتظر اقتراح الليلة.',
     manual_review_required: 'هذه التوصية وصفية وتحتاج مراجعة يدوية، لذلك لم ننفذها تلقائياً.',
     execution_failed: 'اجتازت العملية المراجعة الأولية لكن تعذر تنفيذها في Google Ads. لم نعتبرها مطبقة.',
     execution_recording_failed: 'تم إرسال التعديل إلى Google Ads لكن تعذر تأكيد حفظ السجل. أوقفنا إعادة التنفيذ وأبلغنا فريق التشغيل للمطابقة اليدوية.',
@@ -557,6 +559,8 @@ function actionTypeLabel(value?: string | null) {
     approval_queued: 'اعتماد توصية',
     execution_blocked: 'محجوب: يحتاج مراجعة',
     blocked_by_guardrails: 'محجوب بحواجز الأمان',
+    recommendation_expired: 'محجوب: الاقتراح تجاوز 7 أيام',
+    recent_change_lock: 'محجوب: تعديل حديث على نفس الهدف',
     preflight_failed: 'فشل التحقق قبل التنفيذ',
     resource_account_mismatch: 'محجوب: مورد خارج الحساب',
     record_failed: 'نُفّذ ولم يُسجّل',

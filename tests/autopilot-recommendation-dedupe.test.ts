@@ -180,7 +180,12 @@ test('a stale pending optimizer row neither blocks nor counts toward the cap', (
 
 test('an approved or executing row still counts as already on the table', () => {
   for (const status of ['approved', 'executing']) {
-    const row = pending('p', 'add_keyword', { ad_group_resource: AD_GROUP, keyword_text: 'عيادة اسنان', match_type: 'EXACT' }, { status, created_at: daysAgo(30) });
+    const row = pending(
+      'p',
+      'add_keyword',
+      { ad_group_resource: AD_GROUP, keyword_text: 'عيادة اسنان', match_type: 'EXACT' },
+      { status, created_at: daysAgo(3), execution_started_at: new Date(NOW - 60 * 60 * 1000).toISOString() }
+    );
     assert.equal(findPendingDuplicate([row], addKeyword('عيادة اسنان'), NOW).skip, true, status);
   }
   // Applied, dismissed and failed rows are history, not a card waiting.
@@ -188,6 +193,30 @@ test('an approved or executing row still counts as already on the table', () => 
     const row = pending('p', 'add_keyword', { ad_group_resource: AD_GROUP, keyword_text: 'عيادة اسنان', match_type: 'EXACT' }, { status });
     assert.equal(findPendingDuplicate([row], addKeyword('عيادة اسنان'), NOW).skip, false, status);
   }
+});
+
+test('a card stuck in approved or executing stops reserving its target (locks must not hold forever)', () => {
+  const keyword = { ad_group_resource: AD_GROUP, keyword_text: 'عيادة اسنان', match_type: 'EXACT' };
+  const hoursAgo = (hours: number) => new Date(NOW - hours * 60 * 60 * 1000).toISOString();
+  // Approved and never executed for more than 7 days: released.
+  const approvedOld = pending('a', 'add_keyword', keyword, { status: 'approved', created_at: daysAgo(8) });
+  assert.deepEqual(findPendingDuplicate([approvedOld], addKeyword('عيادة اسنان'), NOW), { skip: false });
+  // Executing for more than 24 hours since the claim: a crashed run, released.
+  const executingOld = pending('e', 'add_keyword', keyword, { status: 'executing', created_at: daysAgo(2), execution_started_at: hoursAgo(25) });
+  assert.deepEqual(findPendingDuplicate([executingOld], addKeyword('عيادة اسنان'), NOW), { skip: false });
+  // The claim time wins over the creation time: an old card claimed an hour ago is in flight.
+  const executingFresh = pending('f', 'add_keyword', keyword, { status: 'executing', created_at: daysAgo(30), execution_started_at: hoursAgo(1) });
+  assert.equal(findPendingDuplicate([executingFresh], addKeyword('عيادة اسنان'), NOW).skip, true);
+  // A card from Jarvis (not the optimizer) that sat pending for 14+ days is released too.
+  const jarvisOld = pending('j', 'add_keyword', keyword, { source: 'jarvis', created_at: daysAgo(20) });
+  assert.deepEqual(findPendingDuplicate([jarvisOld], addKeyword('عيادة اسنان'), NOW), { skip: false });
+  const jarvisFresh = pending('j2', 'add_keyword', keyword, { source: 'jarvis', created_at: daysAgo(5) });
+  assert.equal(findPendingDuplicate([jarvisFresh], addKeyword('عيادة اسنان'), NOW).skip, true);
+  // Released rows do not count toward the per-ad-group cap either.
+  const stuckThree = ['أ', 'ب', 'ج'].map((word, index) =>
+    pending(`s${index}`, 'add_keyword', { ad_group_resource: AD_GROUP, keyword_text: `كلمة ${word}`, match_type: 'EXACT' }, { status: 'approved', created_at: daysAgo(9) })
+  );
+  assert.deepEqual(findPendingDuplicate(stuckThree, addKeyword('كلمة د'), NOW), { skip: false });
 });
 
 test('a negative keyword is a duplicate in the same campaign whatever the match type, and a pending batch counts', () => {

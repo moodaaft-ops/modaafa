@@ -107,5 +107,6 @@ test('every list of current decisions drops the stale rows', () => {
     assert.match(read(path), /dropStalePending/, path);
   }
   // The pending locks of the guardrails ignore a stale row too.
-  assert.match(read('lib/ai/optimizer-agent.ts'), /dropStalePending\(data, nowMs\)/);
+  // (holdsTargetLock also lets a stuck approved/executing card go and a non-optimizer pending card age out).
+  assert.match(read('lib/ai/optimizer-agent.ts'), /holdsTargetLock\(/);
 });

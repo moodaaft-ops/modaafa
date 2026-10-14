@@ -109,6 +109,8 @@ export const HOME_NOTICES: Record<string, { tone: 'ok' | 'bad'; text: string }> 
   'error:manual_review_required': { tone: 'bad', text: 'هذا القرار يحتاج تسويه بنفسك. اسألني وأعطيك الخطوات.' },
   'error:approve_before_execution': { tone: 'bad', text: 'لازم توافق على التغيير قبل التنفيذ.' },
   'error:blocked_by_guardrails': { tone: 'bad', text: 'حمايات الحساب وقفت هذا التغيير عشان ما يضرك.' },
+  'error:recommendation_expired': { tone: 'bad', text: 'مر على هذا الاقتراح أكثر من 7 أيام والأرقام تغيّرت، فما نفذته. راجعه معي أو انتظر اقتراح الليلة.' },
+  'error:recent_change_lock': { tone: 'bad', text: 'عدّلنا نفس الميزانية أو الهدف هذا الأسبوع، فوقفت هذا الاقتراح القديم. راجعه معي أو انتظر اقتراح الليلة.' },
   'error:rollback_unavailable': { tone: 'bad', text: 'التراجع ما عاد متاح لهذا التغيير.' },
   'error:rollback_failed': { tone: 'bad', text: 'قوقل رفض التراجع وما تغيّر شي. اسألني وأشوف السبب.' },
   'error:rollback_recording_failed': { tone: 'bad', text: 'التراجع وصل قوقل بس ما قدرنا نأكد حفظه عندنا. لا تعيده، وفريقنا يراجعه معك.' },

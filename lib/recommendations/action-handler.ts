@@ -25,6 +25,7 @@ import { safeLocalPath } from '@/lib/security/redirect';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 import { sendOpsAlert } from '@/lib/notifications/email';
 import { isSameOriginRequest } from '@/lib/security/origin';
+import { isExpiredOptimizerMoneyMove, isOptimizerRecommendation } from '@/lib/recommendations/staleness';
 
 const defaultDependencies = {
   createServerClient,
@@ -110,7 +111,7 @@ export function createRecommendationActionHandler(
 
     const { data: recommendation, error: recError } = await supabase
       .from('recommendations')
-      .select('id, account_id, title, description, expected_impact, action_payload, status')
+      .select('id, account_id, title, description, expected_impact, action_payload, status, created_at')
       .eq('id', recommendationId)
       .single();
 
@@ -254,6 +255,22 @@ async function executeApprovedRecommendation(
     return NextResponse.redirect(new URL(`${next}?error=manual_review_required`, req.url), 303);
   }
 
+  // An optimizer budget or bid card is a snapshot of one night's numbers and of
+  // that night's one-change-per-week locks. After 7 days it is not executable:
+  // the owner gets a clear message and the card leaves the approved list, and
+  // the overnight run proposes a fresh one if the change still makes sense.
+  // Jarvis and assistant cards are the owner's own request and never expire here.
+  if (isExpiredOptimizerMoneyMove(recommendation, action.type)) {
+    await markExecutionFailed({
+      admin,
+      recommendation,
+      userId: user.id,
+      status: 'recommendation_expired',
+      message: 'This optimizer budget or bid recommendation is older than 7 days and can no longer be executed.',
+    });
+    return NextResponse.redirect(new URL(`${next}?error=recommendation_expired`, req.url), 303);
+  }
+
   const { data: account, error: accountError } = await supabase
     .from('google_ads_accounts')
     .select('id, customer_id, manager_id, currency_code, refresh_token_encrypted')
@@ -313,16 +330,37 @@ async function executeApprovedRecommendation(
     return NextResponse.redirect(new URL(`${next}?error=execution_failed`, req.url), 303);
   }
 
-  const safe = await deps.checkGuardrails(preparedAction, account.id, supabase);
+  // An optimizer card was queued days ago under that night's locks. Re-apply the
+  // executed-history locks now (minus the rows this card wrote itself), so a
+  // budget or target changed since, by Jarvis, by hand or by another card, is
+  // not changed again inside its week. Jarvis cards keep their right to change
+  // a budget again from chat and pass nothing.
+  const guardRejection: { code: string | null } = { code: null };
+  const safe = await deps.checkGuardrails(
+    preparedAction,
+    account.id,
+    supabase,
+    undefined,
+    isOptimizerRecommendation(recommendation)
+      ? { recommendationId: recommendation.id, onReject: (rejection) => { guardRejection.code = rejection.code; } }
+      : undefined
+  );
   if (!safe) {
+    const recentChange =
+      guardRejection.code === 'budget_locked_recent_change' || guardRejection.code === 'bid_locked_recent_change';
     await markExecutionFailed({
       admin,
       recommendation,
       userId: user.id,
-      status: 'blocked_by_guardrails',
-      message: 'Guardrails blocked this action before Google Ads execution.',
+      status: recentChange ? 'recent_change_lock' : 'blocked_by_guardrails',
+      message: recentChange
+        ? 'The same budget or target was changed recently, so this older recommendation was not executed.'
+        : 'Guardrails blocked this action before Google Ads execution.',
     });
-    return NextResponse.redirect(new URL(`${next}?error=blocked_by_guardrails`, req.url), 303);
+    return NextResponse.redirect(
+      new URL(`${next}?error=${recentChange ? 'recent_change_lock' : 'blocked_by_guardrails'}`, req.url),
+      303
+    );
   }
 
   const executionKey = deps.randomUUID();

@@ -1,4 +1,4 @@
-import { allowableCpa, type BreakEven } from '../economics/break-even';
+import { allowableCpaCut, allowableCpaScale, type BreakEven } from '../economics/break-even';
 import {
   conversionVerdict,
   type ConversionActionInfo,
@@ -84,6 +84,14 @@ type TrackingBlock = NonNullable<OptimizerSnapshot['conversion_tracking']>;
 export function buildConversionTracking(input: {
   actionRows: any[] | null;
   dailyRows: any[] | null;
+  /**
+   * The daily rows hit the query limit, so older days may be missing. The history
+   * is then not trusted at all: a cut-short history can look like an action that
+   * "went silent" (lib/ai/optimizer-queries.ts orders newest first, but a count
+   * of days is still wrong). Without the history no `broken_recently` verdict is
+   * possible and a healthy-looking account reads as `unknown`.
+   */
+  dailyTruncated?: boolean;
   clicks7d: number;
   conversions7d: number;
   today: string;
@@ -99,7 +107,7 @@ export function buildConversionTracking(input: {
     primaryForGoal: flag(row, 'conversion_action.primary_for_goal'),
     includeInConversionsMetric: flag(row, 'conversion_action.include_in_conversions_metric'),
   }));
-  const daily: DailyConversionPoint[] | null = input.dailyRows
+  const daily: DailyConversionPoint[] | null = input.dailyRows && !input.dailyTruncated
     ? input.dailyRows.map((row) => ({
         date: text(row, 'segments.date'),
         action: text(row, 'segments.conversion_action_name'),
@@ -129,7 +137,9 @@ export function buildConversionTracking(input: {
     return {
       status: 'unknown',
       enabled_actions: enabledActions,
-      note: 'The daily conversion history could not be read, so a silent conversion action cannot be ruled out.',
+      note: input.dailyTruncated
+        ? 'The daily conversion history was cut short by the query limit, so a silent conversion action cannot be ruled out.'
+        : 'The daily conversion history could not be read, so a silent conversion action cannot be ruled out.',
     };
   }
   return {
@@ -261,8 +271,20 @@ export function buildAccountHistory(rows7d: any[], rows30d: any[] | null): NonNu
   };
 }
 
+/**
+ * The economics the model reads. Both thresholds of the client's range travel
+ * with their names: break_even_roas / break_even_cpa are the SCALE ones (the
+ * pessimistic end), break_even_roas_cut / break_even_cpa_cut the CUT ones (the
+ * optimistic end), allowable_cpa_cut is the waste limit (with the account's
+ * own 30-day CPA as a labeled fallback) and allowable_cpa_scale the promotion
+ * limit (no fallback).
+ */
 export function buildSnapshotEconomics(economics: BreakEven, accountCpa30d: number | null): SnapshotEconomics {
-  return { ...economics, allowable_cpa: allowableCpa(economics, accountCpa30d) };
+  return {
+    ...economics,
+    allowable_cpa_cut: allowableCpaCut(economics, accountCpa30d),
+    allowable_cpa_scale: allowableCpaScale(economics),
+  };
 }
 
 /**

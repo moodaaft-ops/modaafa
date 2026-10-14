@@ -59,3 +59,36 @@ export function tallyReason(tally: ReasonTally, input: { code: string; action_ty
   bump(tally.by_reason, code);
   bump(tally.by_action, actionType);
 }
+
+/**
+ * Accounts of a run whose break-even is unknown, and which answers were
+ * missing. This is the number the owner-facing nudge is sized against: every
+ * account counted here gets NO budget or bid decision, whatever its results.
+ * Counts only: the keys are the question names the onboarding asks
+ * (`margin`, `profit_per_deal`, `close_rate`, `business_kind`, ...).
+ */
+export type EconomicsTally = {
+  /** Accounts the run read economics for. */
+  accounts: number;
+  /** Of those, accounts with neither a break-even ROAS nor a break-even CPA. */
+  unknown: number;
+  /** Per missing answer, how many of the unknown accounts lack it. */
+  missing_keys: Record<string, number>;
+};
+
+export function emptyEconomicsTally(): EconomicsTally {
+  return { accounts: 0, unknown: 0, missing_keys: {} };
+}
+
+/** Count one account's economics. Pass what `loadEconomics` returned (or null when it could not be read). */
+export function tallyEconomics(
+  tally: EconomicsTally,
+  economics: { break_even_roas?: number | null; break_even_cpa?: number | null; missing?: readonly string[] } | null | undefined
+): void {
+  tally.accounts += 1;
+  const known = Boolean(economics && (economics.break_even_roas != null || economics.break_even_cpa != null));
+  if (known) return;
+  tally.unknown += 1;
+  const missing = economics?.missing?.length ? economics.missing : ['unreadable'];
+  for (const key of missing) bump(tally.missing_keys, String(key).slice(0, 64));
+}

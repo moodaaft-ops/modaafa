@@ -237,9 +237,16 @@ test('queue time: a pause_keyword is rejected in code when tracking is not healt
     reason_en: 'test',
     expected_impact: { metric: 'cost', delta_pct: -2, delta_sar_per_month: 10 },
   };
-  const broken = withContext(snapshot({ conversion_tracking: { status: 'broken_recently', enabled_actions: 2 } }));
+  // The snapshot row the proposal points at: 30 days, 40 clicks, 20 SAR, no conversions (the account's own CPA is 3.75).
+  const keywordRow = {
+    ad_group_criterion: { resource_name: 'customers/123/adGroupCriteria/55~9', keyword: { text: 'كلمة' } },
+    metrics: { clicks: 40, impressions: 900, cost_micros: 20_000_000, conversions: 0 },
+  };
+  const broken = withContext(
+    snapshot({ underperforming_keywords: [keywordRow], conversion_tracking: { status: 'broken_recently', enabled_actions: 2 } })
+  );
   assert.equal(await checkGuardrails(action, 'account-1', db(), broken), null);
-  assert.equal(await checkGuardrails(action, 'account-1', db(), withContext()), action);
+  assert.equal(await checkGuardrails(action, 'account-1', db(), withContext(snapshot({ underperforming_keywords: [keywordRow] }))), action);
   // Without a snapshot (execution time) the gate is not applied: the optimizer's own queue is where it holds.
   assert.equal(await checkGuardrails(action, 'account-1', db()), action);
 });
@@ -355,26 +362,64 @@ test('a budget shared by several campaigns is judged on their combined 30 days',
 // Budget decrease gate
 // ---------------------------------------------------------------------------
 
-test('a budget cut needs a clear loss on enough spend', () => {
+test('a budget cut is judged at the CUT end of the owner\'s range, not the SCALE end', () => {
   const cut = budgetAction({ delta_pct: -15, new_amount_micros: 8_500_000 });
   const lead = (cost: number, conversions: number) =>
     snapshot({ economics: leads(), campaigns: [campaign({ last_30d: { cost_micros: cost * 1_000_000, conversions, conversions_value: 0 } })] });
-  // Break-even CPA 400: cut at CPA >= 600 and spend >= 800.
-  assert.equal(evaluateBudgetGate(cut, { snapshot: lead(1200, 2) }, null).ok, true); // CPA 600
-  assert.equal(evaluateBudgetGate(cut, { snapshot: lead(1180, 2) }, null).ok, false); // CPA 590
-  assert.equal(evaluateBudgetGate(cut, { snapshot: lead(900, 0) }, null).ok, true); // nothing converted on 2+ CPAs of spend
-  assert.equal(evaluateBudgetGate(cut, { snapshot: lead(700, 0) }, null).ok, false); // not enough spend yet
+  // Lead business 10k-50k x margin 20-40% x close 2-3 of 10: scale CPA 400, CUT CPA 6000, spend floor 2 x 6000.
+  assert.equal(evaluateBudgetGate(cut, { snapshot: lead(24_000, 4) }, null).ok, true); // CPA 6000, spend 24000
+  assert.equal(evaluateBudgetGate(cut, { snapshot: lead(23_600, 4) }, null).ok, false); // CPA 5900: still inside the range
+  assert.equal(evaluateBudgetGate(cut, { snapshot: lead(12_000, 0) }, null).ok, true); // nothing converted on 2+ CUT CPAs of spend
+  assert.equal(evaluateBudgetGate(cut, { snapshot: lead(11_000, 0) }, null).ok, false); // not enough spend yet
+  // The old rule would have cut this one (CPA 600 = 1.5 x the pessimistic 400): it is inside the owner's range now.
+  assert.equal(evaluateBudgetGate(cut, { snapshot: lead(1_200, 2) }, null).ok, false);
+  assert.equal(evaluateBudgetGate(cut, { snapshot: lead(900, 0) }, null).ok, false);
 
-  // A store: ROAS <= 5 / 1.5 = 3.33, and spend at least two of the account's own CPAs.
+  // A clinic: profit 50-200 SAR x close 2-3 of 10: scale CPA 10, CUT CPA 60, floor 120.
+  const clinic = buildSnapshotEconomics(
+    computeBreakEven({
+      facts: {
+        type: { choice: 'clinic' },
+        profit_per_deal: { choice: '50_200', min_sar: 50, max_sar: 200 },
+        close_rate: { choice: '2_3', min_of_10: 2, max_of_10: 3 },
+      },
+    }),
+    null
+  );
+  const clinicSnap = (cost: number, conversions: number) =>
+    snapshot({ economics: clinic, campaigns: [campaign({ last_30d: { cost_micros: cost * 1_000_000, conversions, conversions_value: 0 } })] });
+  assert.equal(evaluateBudgetGate(cut, { snapshot: clinicSnap(240, 4) }, null).ok, true); // CPA 60
+  assert.equal(evaluateBudgetGate(cut, { snapshot: clinicSnap(236, 4) }, null).ok, false); // CPA 59
+  assert.equal(evaluateBudgetGate(cut, { snapshot: clinicSnap(30, 1) }, null).ok, false); // CPA 30 is above the pessimistic 10 but well inside the range
+
+  // A store with margin 20-40%: scale ROAS 5, CUT ROAS 2.5 (a real margin of 20-40% makes ROAS 3.2 normal, not a loss).
   const storeSnap = (cost: number, value: number, conversions: number) =>
     snapshot({ campaigns: [campaign({ last_30d: { cost_micros: cost * 1_000_000, conversions, conversions_value: value } })] });
-  assert.equal(evaluateBudgetGate(cut, { snapshot: storeSnap(300, 900, 20) }, 15).ok, true); // ROAS 3.0
-  assert.equal(evaluateBudgetGate(cut, { snapshot: storeSnap(300, 1200, 20) }, 15).ok, false); // ROAS 4.0
+  assert.equal(evaluateBudgetGate(cut, { snapshot: storeSnap(300, 960, 20) }, 15).ok, false); // ROAS 3.2: NO cut
+  assert.equal(evaluateBudgetGate(cut, { snapshot: storeSnap(300, 750, 20) }, 15).ok, true); // ROAS 2.5: the optimistic break-even
+  assert.equal(evaluateBudgetGate(cut, { snapshot: storeSnap(300, 600, 20) }, 15).ok, true); // ROAS 2.0
+  assert.equal(evaluateBudgetGate(cut, { snapshot: storeSnap(300, 800, 20) }, 15).ok, false); // ROAS 2.67 is between the ends
   assert.equal(evaluateBudgetGate(cut, { snapshot: storeSnap(20, 0, 0) }, 15).ok, false); // under 2 x 15 of spend
   // Conversions with no tracked value say nothing about ROAS: never cut on a missing number.
   assert.equal(evaluateBudgetGate(cut, { snapshot: storeSnap(300, 0, 20) }, 15).ok, false);
   // A store with no account CPA to set the spend floor cannot be cut.
-  assert.equal(evaluateBudgetGate(cut, { snapshot: storeSnap(300, 900, 20) }, null).ok, false);
+  assert.equal(evaluateBudgetGate(cut, { snapshot: storeSnap(300, 600, 20) }, null).ok, false);
+  // A margin above 40% has a CUT ROAS of 1.25 and a scale ROAS of 2.5: ROAS 2.0 is not a loss.
+  const rich = buildSnapshotEconomics(
+    computeBreakEven({ facts: { type: { choice: 'ecommerce' }, margin: { choice: 'gt40', min_per_100: 40 } } }),
+    null
+  );
+  assert.equal(evaluateBudgetGate(cut, { snapshot: { ...storeSnap(300, 600, 20), economics: rich } }, 15).ok, false);
+  assert.equal(evaluateBudgetGate(cut, { snapshot: { ...storeSnap(300, 360, 20), economics: rich } }, 15).ok, true); // ROAS 1.2
+});
+
+test('between the SCALE and the CUT threshold nothing moves: no raise and no cut', () => {
+  const raise = budgetAction();
+  const cut = budgetAction({ delta_pct: -15, new_amount_micros: 8_500_000 });
+  // Margin 20-40%: ROAS 3.2 is above the CUT end (2.5) and below the SCALE end (5).
+  const mid = snapshot({ campaigns: [campaign({ last_30d: { cost_micros: 300_000_000, conversions: 80, conversions_value: 960 } })] });
+  assert.equal(evaluateBudgetGate(raise, { snapshot: mid }, 15).ok, false);
+  assert.equal(evaluateBudgetGate(cut, { snapshot: mid }, 15).ok, false);
 });
 
 // ---------------------------------------------------------------------------

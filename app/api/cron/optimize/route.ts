@@ -51,11 +51,19 @@ import {
   mapConvertingTermRows,
 } from '@/lib/ai/opportunity';
 import {
+  emptyEconomicsTally,
   emptyReasonTally,
   emptyTrackingVerdictCounts,
+  tallyEconomics,
   tallyReason,
   tallyTrackingVerdict,
 } from '@/lib/ai/optimizer-audit-trail';
+import {
+  DAILY_CONVERSIONS_QUERY,
+  riyadhToday,
+  dailyConversionsLookTruncated,
+  queryCampaignRows,
+} from '@/lib/ai/optimizer-queries';
 import {
   getSectorBenchmark,
   refreshSectorBenchmarks,
@@ -348,6 +356,8 @@ async function runOptimizerCron(req: NextRequest) {
     gate_rejections: emptyReasonTally(),
     /** Audit trail: proposals skipped as duplicates, by reason code and by action type. */
     dedupe_skips: emptyReasonTally(),
+    /** Audit trail: accounts whose break-even is unknown (no budget or bid decision for them) and which answers are missing. */
+    economics: emptyEconomicsTally(),
     /** Accounts that reached the model (the paid step). */
     model_calls: 0,
     /** Accounts with nothing to act on, so the model was not asked. */
@@ -412,6 +422,7 @@ async function runOptimizerCron(req: NextRequest) {
         primaryGoal: businessContext?.primary_goal ?? null,
         accountCurrency: account.currency_code ?? 'SAR',
       });
+      tallyEconomics(results.economics, economics);
 
       // Build a focused snapshot for the optimizer
       const snapshot = await buildOptimizerSnapshot(
@@ -919,6 +930,8 @@ async function runOptimizerCron(req: NextRequest) {
       // guardrails and gates refused (by reason and by action type), and the
       // proposals skipped as duplicates of a card that is already waiting.
       tracking_verdicts: results.tracking_verdicts,
+      // Accounts with an unknown break-even (they get no budget or bid decision) and the answers they lack.
+      economics: results.economics,
       gate_rejections: results.gate_rejections,
       duplicates_skipped: results.duplicates_skipped,
       dedupe_skips: results.dedupe_skips,
@@ -1124,48 +1137,6 @@ export async function POST(req: NextRequest) {
   return runOptimizerCron(req);
 }
 
-/**
- * The campaign list with the diagnostics a media buyer reads before touching a
- * budget: channel type, bidding strategy, Google's own status and reasons, and
- * the impression share lost to budget and to rank. If this richer query is
- * rejected (a field the account's API version does not accept), fall back to
- * the plain one so the run still happens; the rows then carry no diagnostics
- * and every gate that needs them fails closed (no budget increase).
- */
-async function queryCampaignRows(customer: any, customerId: string): Promise<any[]> {
-  try {
-    return await customer.query(`
-      SELECT
-        campaign.id, campaign.name, campaign.resource_name,
-        campaign.advertising_channel_type, campaign.bidding_strategy_type,
-        campaign.primary_status, campaign.primary_status_reasons,
-        campaign_budget.id, campaign_budget.amount_micros, campaign_budget.resource_name,
-        metrics.cost_micros, metrics.impressions, metrics.clicks,
-        metrics.conversions, metrics.conversions_value,
-        metrics.search_impression_share, metrics.search_budget_lost_impression_share,
-        metrics.search_rank_lost_impression_share
-      FROM campaign
-      WHERE segments.date DURING LAST_7_DAYS
-        AND campaign.status = 'ENABLED'
-      ORDER BY metrics.cost_micros DESC
-      LIMIT 200
-    `);
-  } catch (error) {
-    console.warn(`Campaign diagnostics query failed for ${customerId}; using the plain campaign query`, error);
-    return customer.query(`
-      SELECT
-        campaign.id, campaign.name, campaign.resource_name,
-        campaign_budget.id, campaign_budget.amount_micros, campaign_budget.resource_name,
-        metrics.cost_micros, metrics.clicks, metrics.conversions, metrics.conversions_value
-      FROM campaign
-      WHERE segments.date DURING LAST_7_DAYS
-        AND campaign.status = 'ENABLED'
-      ORDER BY metrics.cost_micros DESC
-      LIMIT 200
-    `);
-  }
-}
-
 async function buildOptimizerSnapshot(
   customer: any,
   accountId: string,
@@ -1356,13 +1327,7 @@ async function buildOptimizerSnapshot(
         return null as any[] | null;
       }),
     customer
-      .query(`
-      SELECT segments.date, segments.conversion_action_name, metrics.all_conversions
-      FROM campaign
-      WHERE segments.date DURING LAST_30_DAYS
-        AND metrics.all_conversions > 0
-      LIMIT 5000
-    `)
+      .query(DAILY_CONVERSIONS_QUERY)
       .catch(() => null as any[] | null),
   ]);
 
@@ -1386,9 +1351,10 @@ async function buildOptimizerSnapshot(
   const conversionTracking = buildConversionTracking({
     actionRows: conversionActionRows,
     dailyRows: conversionDailyRows,
+    dailyTruncated: dailyConversionsLookTruncated(conversionDailyRows),
     clicks7d: sum7.clicks,
     conversions7d: sum7.conversions,
-    today: new Date().toISOString().slice(0, 10),
+    today: riyadhToday(),
   });
 
   const budgetUtilization = campaignRows.map((row: any) => {

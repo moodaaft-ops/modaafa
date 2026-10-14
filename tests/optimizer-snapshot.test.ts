@@ -11,6 +11,13 @@ import {
   enrichCampaignRows,
   enrichPoorAds,
 } from '../lib/ai/optimizer-snapshot';
+import {
+  DAILY_CONVERSIONS_LIMIT,
+  DAILY_CONVERSIONS_QUERY,
+  dailyConversionsLookTruncated,
+  queryCampaignRows,
+  riyadhToday,
+} from '../lib/ai/optimizer-queries';
 
 const CAMPAIGN = 'customers/123/campaigns/789';
 const BUDGET = 'customers/123/campaignBudgets/456';
@@ -190,9 +197,12 @@ test('snapshot targets come from the client economics; the account history sits 
   assert.deepEqual(fields.account_history, { roas_7d: 7, cpa_7d: 10, roas_30d: 3, cpa_30d: 10 });
   assert.notEqual(fields.target_roas, fields.account_history?.roas_7d);
   assert.equal(fields.economics?.break_even_roas, 5);
+  // Both ends of the owner's range travel with their names: SCALE (margin 20%) and CUT (margin 40%).
+  assert.equal(fields.economics?.break_even_roas_cut, 2.5);
   assert.deepEqual(fields.economics?.missing, []);
-  // The store has no CPA break-even, so waste control falls back to the account CPA, labeled.
-  assert.deepEqual(fields.economics?.allowable_cpa, { value: 10, source: 'account_30d_cpa_fallback' });
+  // The store has no CPA break-even, so waste control falls back to the account CPA, labeled; scaling has no fallback.
+  assert.deepEqual(fields.economics?.allowable_cpa_cut, { value: 10, source: 'account_30d_cpa_fallback' });
+  assert.equal(fields.economics?.allowable_cpa_scale, null);
 });
 
 test('unknown economics: both targets are null, the missing answer is named, history is still reported', () => {
@@ -223,6 +233,7 @@ test('the route builds targets from the economics, not from the account totals',
 
 test('the route asks Google for the diagnostic fields, 30-day totals, 30-day keywords and ad-group context', () => {
   const route = readFileSync(new URL('../app/api/cron/optimize/route.ts', import.meta.url), 'utf8');
+  const queries = readFileSync(new URL('../lib/ai/optimizer-queries.ts', import.meta.url), 'utf8');
   for (const field of [
     'campaign.advertising_channel_type',
     'campaign.bidding_strategy_type',
@@ -233,8 +244,9 @@ test('the route asks Google for the diagnostic fields, 30-day totals, 30-day key
     'metrics.search_budget_lost_impression_share',
     'metrics.search_rank_lost_impression_share',
   ]) {
-    assert.ok(route.includes(field), field);
+    assert.ok(queries.includes(field), field);
   }
+  assert.match(route, /queryCampaignRows\(customer, customerId\)/);
   // The underperforming-keywords query is 30 days with cost, match type and ad group.
   const keywordQuery = route.slice(route.indexOf('Waste candidates over 30 days'), route.indexOf('campaign.resource_name is selected so add_negative_keyword'));
   assert.match(keywordQuery, /LAST_30_DAYS/);
@@ -242,8 +254,79 @@ test('the route asks Google for the diagnostic fields, 30-day totals, 30-day key
   for (const field of ['metrics.cost_micros', 'ad_group_criterion.keyword.match_type', 'ad_group.name']) {
     assert.ok(keywordQuery.includes(field), field);
   }
-  // The richer campaign query degrades to the plain one instead of failing the account.
-  assert.match(route, /using the plain campaign query/);
+});
+
+test('the campaign read degrades in steps: everything, then the fields Jarvis reads, then the plain list', async (t) => {
+  t.mock.method(console, 'warn', () => {});
+  const seen: string[] = [];
+  const failFirst = (failures: number) => ({
+    async query(gaql: string) {
+      seen.push(gaql);
+      if (seen.length <= failures) throw new Error('field not accepted');
+      return [{ campaign: { resourceName: CAMPAIGN } }];
+    },
+  });
+
+  // The first query is accepted: all three impression-share fields and the status fields.
+  seen.length = 0;
+  await queryCampaignRows(failFirst(0), '123');
+  assert.equal(seen.length, 1);
+  assert.match(seen[0], /campaign\.primary_status_reasons/);
+
+  // The status fields are rejected: the second query keeps the impression shares the budget gate needs.
+  seen.length = 0;
+  await queryCampaignRows(failFirst(1), '123');
+  assert.equal(seen.length, 2);
+  assert.doesNotMatch(seen[1], /primary_status/);
+  for (const field of ['metrics.search_impression_share', 'metrics.search_budget_lost_impression_share', 'metrics.search_rank_lost_impression_share', 'campaign.advertising_channel_type', 'campaign.bidding_strategy_type']) {
+    assert.ok(seen[1].includes(field), field);
+  }
+
+  // Only the plain list is accepted: no diagnostics, which closes every gate that needs them.
+  seen.length = 0;
+  await queryCampaignRows(failFirst(2), '123');
+  assert.equal(seen.length, 3);
+  assert.doesNotMatch(seen[2], /impression_share/);
+
+  // All three fail: the last error is the caller's.
+  seen.length = 0;
+  await assert.rejects(queryCampaignRows(failFirst(3), '123'), /field not accepted/);
+});
+
+test('the daily conversions read is the proven Jarvis shape: no metric filter, newest first, and a long result is flagged as cut short', () => {
+  assert.doesNotMatch(DAILY_CONVERSIONS_QUERY, /all_conversions\s*>/);
+  assert.match(DAILY_CONVERSIONS_QUERY, /SELECT segments\.date, segments\.conversion_action_name, metrics\.all_conversions/);
+  assert.match(DAILY_CONVERSIONS_QUERY, /FROM campaign/);
+  assert.match(DAILY_CONVERSIONS_QUERY, /segments\.date DURING LAST_30_DAYS/);
+  assert.match(DAILY_CONVERSIONS_QUERY, /ORDER BY segments\.date DESC/);
+  assert.match(DAILY_CONVERSIONS_QUERY, new RegExp(`LIMIT ${DAILY_CONVERSIONS_LIMIT}`));
+
+  const full = Array.from({ length: DAILY_CONVERSIONS_LIMIT }, () => ({}));
+  assert.equal(dailyConversionsLookTruncated(full), true);
+  assert.equal(dailyConversionsLookTruncated(full.slice(1)), false);
+  assert.equal(dailyConversionsLookTruncated(null), false);
+});
+
+test('the tracking check dates today the way Google Ads dates its days (Riyadh), not by the UTC calendar', () => {
+  // 22:30 UTC on the 13th is already 01:30 on the 14th in Riyadh.
+  assert.equal(riyadhToday(new Date('2026-10-13T22:30:00.000Z')), '2026-10-14');
+  assert.equal(riyadhToday(new Date('2026-10-13T20:59:59.000Z')), '2026-10-13');
+  assert.equal(riyadhToday(new Date('2026-10-14T21:00:00.000Z')), '2026-10-15');
+  assert.match(riyadhToday(), /^\d{4}-\d{2}-\d{2}$/);
+});
+
+test('a daily history cut short by the limit never produces a broken_recently verdict', () => {
+  // The action recorded on 4 earlier days and shows nothing in the last 5: exactly what a cut-short history looks like.
+  const daily = ['2026-09-20', '2026-09-22', '2026-09-24', '2026-09-26'].map((date) => ({
+    segments: { date, conversionActionName: 'Purchase' },
+    metrics: { allConversions: 3 },
+  }));
+  const base = { actionRows: [ACTION('Purchase')], clicks7d: 400, conversions7d: 9, today: '2026-10-14' };
+  assert.equal(buildConversionTracking({ ...base, dailyRows: daily }).status, 'broken_recently');
+  const truncated = buildConversionTracking({ ...base, dailyRows: daily, dailyTruncated: true });
+  assert.notEqual(truncated.status, 'broken_recently');
+  assert.equal(truncated.status, 'unknown');
+  assert.match(truncated.note ?? '', /cut short/);
 });
 
 // ---------------------------------------------------------------------------

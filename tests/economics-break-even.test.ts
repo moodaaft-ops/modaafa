@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   BREAK_EVEN_BASIS,
-  allowableCpa,
+  allowableCpaCut,
+  allowableCpaScale,
   breakEvenForCurrency,
+  bucketBounds,
   computeBreakEven,
   conservativeEdge,
   deriveEconomicsKind,
@@ -24,26 +26,42 @@ function factData(
   return effects.fact!.data as Record<string, unknown>;
 }
 
-test('the bucket edge is the one worse for the client: the lower edge, or half the upper when it starts at 0', () => {
+test('a bucket has a low and a high edge: closed buckets keep both, «أقل من» halves the upper, «أكثر من» doubles the lower', () => {
+  assert.deepEqual(bucketBounds(0, 20), { low: 10, high: 20 });
+  assert.deepEqual(bucketBounds(20, 40), { low: 20, high: 40 });
+  // Open-ended top bucket: no upper edge, so the high edge is twice the lower one (the documented convention).
+  assert.deepEqual(bucketBounds(40, null), { low: 40, high: 80 });
+  assert.deepEqual(bucketBounds(50000, undefined), { low: 50000, high: 100000 });
+  assert.deepEqual(bucketBounds(0, 1), { low: 0.5, high: 1 });
+  assert.deepEqual(bucketBounds(4, 10), { low: 4, high: 10 });
+  assert.equal(bucketBounds(null, null), null);
+  assert.equal(bucketBounds(undefined, undefined), null);
+  assert.equal(bucketBounds(0, 0), null);
+});
+
+test('the conservative edge is the low edge of the bucket', () => {
   assert.equal(conservativeEdge(0, 20), 10);
   assert.equal(conservativeEdge(20, 40), 20);
   assert.equal(conservativeEdge(40, null), 40);
   assert.equal(conservativeEdge(0, 1), 0.5);
   assert.equal(conservativeEdge(4, 10), 4);
   assert.equal(conservativeEdge(null, null), null);
-  assert.equal(conservativeEdge(undefined, undefined), null);
   assert.equal(conservativeEdge(0, 0), null);
 });
 
-test('e-commerce: break-even ROAS is 1 over the margin, and a lower margin means a higher break-even', () => {
-  const expected: Record<string, number> = { lt20: 10, '20_40': 5, gt40: 2.5 };
-  for (const [choice, roas] of Object.entries(expected)) {
+test('e-commerce: the SCALE ROAS comes from the lowest margin of the bucket and the CUT ROAS from the highest', () => {
+  // margin lt20 = 10..20%, 20_40 = 20..40%, gt40 = 40..80% (open-ended: twice the lower edge).
+  const expected: Record<string, [number, number]> = { lt20: [10, 5], '20_40': [5, 2.5], gt40: [2.5, 1.25] };
+  for (const [choice, [scale, cut]] of Object.entries(expected)) {
     const result = computeBreakEven({
       facts: { type: { choice: 'ecommerce' }, margin: factData('margin', choice) },
     });
     assert.equal(result.kind, 'ecommerce');
-    assert.equal(result.break_even_roas, roas, choice);
+    assert.equal(result.break_even_roas, scale, `${choice} scale`);
+    assert.equal(result.break_even_roas_cut, cut, `${choice} cut`);
+    assert.ok((result.break_even_roas as number) > (result.break_even_roas_cut as number), `${choice}: SCALE needs more than CUT allows`);
     assert.equal(result.break_even_cpa, null);
+    assert.equal(result.break_even_cpa_cut, null);
     assert.deepEqual(result.missing, []);
     assert.equal(result.basis, BREAK_EVEN_BASIS);
   }
@@ -52,6 +70,7 @@ test('e-commerce: break-even ROAS is 1 over the margin, and a lower margin means
 test('"I do not know" and "never asked" are the same: null, with the answer named in missing', () => {
   const unknown = computeBreakEven({ facts: { type: { choice: 'ecommerce' }, margin: factData('margin', 'unknown') } });
   assert.equal(unknown.break_even_roas, null);
+  assert.equal(unknown.break_even_roas_cut, null);
   assert.deepEqual(unknown.missing, ['margin']);
   assert.equal(hasBreakEven(unknown), false);
 
@@ -60,8 +79,8 @@ test('"I do not know" and "never asked" are the same: null, with the answer name
   assert.deepEqual(neverAsked.missing, ['margin']);
 });
 
-test('leads: break-even CPA is profit per customer x close rate, from the conservative edges', () => {
-  // profit 200_1k -> 200 SAR, close 2_3 -> 2 of 10: 200 x 0.2 = 40.
+test('leads: SCALE CPA is the low profit x the low close rate, CUT CPA the high profit x the high close rate', () => {
+  // profit 200_1k = 200..1,000 SAR, close 2_3 = 2..3 of 10: SCALE 200 x 0.2 = 40, CUT 1,000 x 0.3 = 300.
   const facts: EconomicsFacts = {
     type: { choice: 'services' },
     profit_per_deal: factData('profit_per_deal', '200_1k'),
@@ -70,18 +89,23 @@ test('leads: break-even CPA is profit per customer x close rate, from the conser
   const result = computeBreakEven({ facts });
   assert.equal(result.kind, 'services');
   assert.equal(result.break_even_cpa, 40);
+  assert.equal(result.break_even_cpa_cut, 300);
   assert.equal(result.break_even_roas, null);
+  assert.equal(result.break_even_roas_cut, null);
   assert.deepEqual(result.missing, []);
   assert.equal(result.inputs.profit_per_deal_sar, 200);
+  assert.equal(result.inputs.profit_per_deal_sar_high, 1000);
   assert.equal(result.inputs.close_rate_fraction, 0.2);
+  assert.equal(result.inputs.close_rate_fraction_high, 0.3);
   assert.equal(result.inputs.margin_fraction, null);
   assert.equal(result.inputs.deal_value_sar, null);
 
-  // Every bucket takes its worse edge: the lower edge, or half of the upper one when the bucket starts at 0.
-  const profit: Record<string, number> = { lt50: 25, '50_200': 50, '200_1k': 200, '1k_5k': 1000, gt5k: 5000 };
-  const close: Record<string, number> = { le1: 0.05, '2_3': 0.2, ge4: 0.4 };
-  for (const [profitChoice, profitSar] of Object.entries(profit)) {
-    for (const [closeChoice, fraction] of Object.entries(close)) {
+  // Every bucket: SCALE from its low edge (half of the upper one when it starts at 0), CUT from its high edge
+  // (twice the lower one when it is open-ended).
+  const profit: Record<string, [number, number]> = { lt50: [25, 50], '50_200': [50, 200], '200_1k': [200, 1000], '1k_5k': [1000, 5000], gt5k: [5000, 10000] };
+  const close: Record<string, [number, number]> = { le1: [0.05, 0.1], '2_3': [0.2, 0.3], ge4: [0.4, 1] };
+  for (const [profitChoice, [profitLow, profitHigh]] of Object.entries(profit)) {
+    for (const [closeChoice, [closeLow, closeHigh]] of Object.entries(close)) {
       const bucketed = computeBreakEven({
         facts: {
           type: { choice: 'clinic' },
@@ -89,20 +113,24 @@ test('leads: break-even CPA is profit per customer x close rate, from the conser
           close_rate: factData('close_rate', closeChoice),
         },
       });
-      assert.equal(bucketed.break_even_cpa, Math.round(profitSar * fraction * 100) / 100, `${profitChoice}/${closeChoice}`);
+      assert.equal(bucketed.break_even_cpa, Math.round(profitLow * closeLow * 100) / 100, `${profitChoice}/${closeChoice} scale`);
+      assert.equal(bucketed.break_even_cpa_cut, Math.round(profitHigh * closeHigh * 100) / 100, `${profitChoice}/${closeChoice} cut`);
+      assert.ok((bucketed.break_even_cpa as number) <= (bucketed.break_even_cpa_cut as number), `${profitChoice}/${closeChoice}: CUT allows at least what SCALE needs`);
     }
   }
 });
 
-test('leads: a bigger profit bucket never gives a smaller break-even CPA, and a smaller one never a bigger one', () => {
+test('leads: a bigger profit bucket never gives a smaller break-even CPA, at either end', () => {
   const order = ['lt50', '50_200', '200_1k', '1k_5k', 'gt5k'];
-  const cpas = order.map(
-    (choice) =>
-      computeBreakEven({
-        facts: { type: { choice: 'local_store' }, profit_per_deal: factData('profit_per_deal', choice), close_rate: factData('close_rate', '2_3') },
-      }).break_even_cpa as number
+  const economics = order.map((choice) =>
+    computeBreakEven({
+      facts: { type: { choice: 'local_store' }, profit_per_deal: factData('profit_per_deal', choice), close_rate: factData('close_rate', '2_3') },
+    })
   );
-  for (let index = 1; index < cpas.length; index += 1) assert.ok(cpas[index] > cpas[index - 1], order[index]);
+  for (let index = 1; index < economics.length; index += 1) {
+    assert.ok((economics[index].break_even_cpa as number) > (economics[index - 1].break_even_cpa as number), `${order[index]} scale`);
+    assert.ok((economics[index].break_even_cpa_cut as number) > (economics[index - 1].break_even_cpa_cut as number), `${order[index]} cut`);
+  }
 });
 
 test('leads: the profit per customer wins over the older deal value x margin x close rate', () => {
@@ -115,8 +143,9 @@ test('leads: the profit per customer wins over the older deal value x margin x c
       close_rate: factData('close_rate', '2_3'),
     },
   });
-  // 50 x 0.2 = 10, not 10,000 x 0.2 x 0.2 = 400.
+  // 50 x 0.2 = 10, not 10,000 x 0.2 x 0.2 = 400. (CUT: 200 x 0.3 = 60.)
   assert.equal(result.break_even_cpa, 10);
+  assert.equal(result.break_even_cpa_cut, 60);
 });
 
 test('leads: a profit answer of «ما أدري» falls back to the older answers, and to nothing when there are none', () => {
@@ -130,6 +159,8 @@ test('leads: a profit answer of «ما أدري» falls back to the older answer
     },
   });
   assert.equal(older.break_even_cpa, 400);
+  // CUT: 50,000 x 0.4 x 0.3 = 6,000.
+  assert.equal(older.break_even_cpa_cut, 6000);
 
   const nothing = computeBreakEven({
     facts: {
@@ -139,6 +170,7 @@ test('leads: a profit answer of «ما أدري» falls back to the older answer
     },
   });
   assert.equal(nothing.break_even_cpa, null);
+  assert.equal(nothing.break_even_cpa_cut, null);
   assert.deepEqual(nothing.missing, ['profit_per_deal']);
 });
 
@@ -160,16 +192,21 @@ test('leads: break-even CPA is deal value x margin x close rate for an owner who
   const result = computeBreakEven({ facts });
   assert.equal(result.kind, 'services');
   assert.equal(result.break_even_cpa, 400);
+  assert.equal(result.break_even_cpa_cut, 6000);
   assert.equal(result.break_even_roas, null);
   assert.deepEqual(result.inputs, {
     margin_fraction: 0.2,
+    margin_fraction_high: 0.4,
     deal_value_sar: 10000,
+    deal_value_sar_high: 50000,
     profit_per_deal_sar: null,
+    profit_per_deal_sar_high: null,
     close_rate_fraction: 0.2,
+    close_rate_fraction_high: 0.3,
     aov_reported: null,
   });
 
-  // The lowest buckets: 1,000 x 0.1 x 0.05 = 5.
+  // The lowest buckets: 1,000 x 0.1 x 0.05 = 5 (CUT: 2,000 x 0.2 x 0.1 = 40).
   const low = computeBreakEven({
     facts: {
       type: { choice: 'services' },
@@ -179,6 +216,7 @@ test('leads: break-even CPA is deal value x margin x close rate for an owner who
     },
   });
   assert.equal(low.break_even_cpa, 5);
+  assert.equal(low.break_even_cpa_cut, 40);
 });
 
 test('a services business that answered deal value and close rate but not the profit is asked for the profit', () => {
@@ -214,6 +252,7 @@ test('the reported average order is kept for information and never changes the b
   });
   assert.equal(withAov.inputs.aov_reported, 320);
   assert.equal(withAov.break_even_roas, 2.5);
+  assert.equal(withAov.break_even_roas_cut, 1.25);
   assert.equal(withAov.break_even_cpa, null);
 });
 
@@ -256,6 +295,7 @@ test('a CPA break-even is in riyals, so it is withheld from an account that spen
   assert.equal(breakEvenForCurrency(economics, null).break_even_cpa, 400);
   const usd = breakEvenForCurrency(economics, 'USD');
   assert.equal(usd.break_even_cpa, null);
+  assert.equal(usd.break_even_cpa_cut, null, 'both ends of the range are withheld');
   assert.ok(usd.missing.includes('currency_sar_only'));
 
   // ROAS is a ratio: any currency keeps it.
@@ -263,7 +303,7 @@ test('a CPA break-even is in riyals, so it is withheld from an account that spen
   assert.equal(breakEvenForCurrency(store, 'AED').break_even_roas, 5);
 });
 
-test('allowable CPA: the client break-even when known, otherwise the account 30-day CPA labeled as a fallback', () => {
+test('allowable CPA: CUT is the high end (waste), SCALE the low end; only CUT may fall back to the account history', () => {
   const leads = computeBreakEven({
     facts: {
       type: { choice: 'services' },
@@ -272,12 +312,16 @@ test('allowable CPA: the client break-even when known, otherwise the account 30-
       margin: factData('margin', '20_40'),
     },
   });
-  assert.deepEqual(allowableCpa(leads, 90), { value: 400, source: 'break_even_cpa' });
+  assert.deepEqual(allowableCpaCut(leads, 90), { value: 6000, source: 'break_even_cpa' });
+  assert.deepEqual(allowableCpaScale(leads), { value: 400, source: 'break_even_cpa' });
 
   const store = computeBreakEven({ facts: { type: { choice: 'ecommerce' }, margin: factData('margin', '20_40') } });
-  assert.deepEqual(allowableCpa(store, 42.456), { value: 42.46, source: 'account_30d_cpa_fallback' });
-  assert.equal(allowableCpa(store, null), null);
-  assert.equal(allowableCpa(null, 0), null);
+  assert.deepEqual(allowableCpaCut(store, 42.456), { value: 42.46, source: 'account_30d_cpa_fallback' });
+  assert.equal(allowableCpaCut(store, null), null);
+  assert.equal(allowableCpaCut(null, 0), null);
+  // Scaling never rests on the account's own history.
+  assert.equal(allowableCpaScale(store), null);
+  assert.equal(allowableCpaScale(null), null);
 });
 
 // ---------------------------------------------------------------------------

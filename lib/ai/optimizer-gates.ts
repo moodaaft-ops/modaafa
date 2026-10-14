@@ -16,7 +16,9 @@ import type { OptimizerAction, OptimizerSnapshot } from './optimizer-agent';
  * Thresholds come from the google-ads-titan knowledge base:
  *   5.2 / 5.3   a step is 10 to 20%, one change per 1-2 weeks; 20% or more
  *               resets learning on a smart strategy
- *   6.2         vertical scaling is 10-20% per 7-14 days
+ *   6.2         vertical scaling is 10-20% per 7-14 days; a budget change and
+ *               a target change never land on the same campaign in the same
+ *               week (Titan red rule 6)
  *   6.4         lost impression share to budget is the opportunity; lost to
  *               rank is not fixed with money. The KB says "Lost IS (budget)
  *               فوق 20%" with performance inside the target is a scale
@@ -24,6 +26,7 @@ import type { OptimizerAction, OptimizerSnapshot } from './optimizer-agent';
  *               exactly 20% passes; the share is a float, so the boundary is
  *               not a meaningful distinction)
  *   6.5         scale only what is profitable with enough conversions
+ *   5.3         a campaign in learning is not judged: no raise, no new target
  *   SKILL red rules 2, 5, 6, 8: targets from the client's economics, no
  *               money decisions on broken tracking, one change per week
  */
@@ -47,9 +50,19 @@ export const SCALE_MIN_CONVERSIONS_30D = 15;
 export const SCALE_MIN_LOST_BUDGET_IS = 0.2;
 export const SCALE_MAX_SEARCH_IS = 0.5;
 
-/** Cut a budget only for a campaign that is clearly losing money on enough spend. */
-export const CUT_CPA_FACTOR = 1.5;
+/**
+ * Cut a budget only for a campaign that is clearly losing money on enough spend.
+ * The comparison is against the CUT threshold, the optimistic end of the
+ * client's range (break_even_cpa_cut, break_even_roas_cut), so the factor is 1:
+ * a campaign below even the best case the owner described is losing money.
+ * (It was 1.5 against the pessimistic end, which cut campaigns that were
+ * profitable inside the owner's own range.)
+ */
+export const CUT_CPA_FACTOR = 1;
 export const CUT_MIN_SPEND_IN_CPAS = 2;
+
+/** A budget change and a target change on the same campaign must be this many days apart (titan 6.2). */
+export const CROSS_LOCK_DAYS = 7;
 
 /** A target-based bid change needs this many conversions in 30 days on the campaign. */
 export const BID_MIN_CONVERSIONS_30D = 30;
@@ -104,7 +117,7 @@ function camel(segment: string) {
 }
 
 /** `a.b_c` read from a row that may use snake_case or camelCase keys. */
-function pick(row: unknown, path: string): unknown {
+export function pick(row: unknown, path: string): unknown {
   let current: unknown = row;
   for (const segment of path.split('.')) {
     if (current === null || typeof current !== 'object') return undefined;
@@ -121,7 +134,7 @@ export function numOrNull(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function strOrEmpty(value: unknown): string {
+export function strOrEmpty(value: unknown): string {
   return value === undefined || value === null ? '' : String(value);
 }
 
@@ -168,6 +181,19 @@ export type GateContext = {
 
 function trackingHealthy(context: GateContext) {
   return context.snapshot.conversion_tracking?.status === TRACKING_HEALTHY;
+}
+
+/** Google's own label for a campaign that is still learning (titan 5.3: do not judge it). */
+function inLearning(entries: CampaignEntry[]): boolean {
+  return entries.some((entry) => String(entry.diag?.primary_status ?? '').toUpperCase() === 'LEARNING');
+}
+
+/** The CUT thresholds, null when the economics do not carry them (fail closed: no cut without them). */
+function cutRoas(economics: BreakEven): number | null {
+  return typeof economics.break_even_roas_cut === 'number' ? economics.break_even_roas_cut : null;
+}
+function cutCpa(economics: BreakEven): number | null {
+  return typeof economics.break_even_cpa_cut === 'number' ? economics.break_even_cpa_cut : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -258,33 +284,50 @@ function earnsClearlyMoreThanBreakEven(group: BudgetGroup, economics: BreakEven)
 
 /**
  * Is the campaign clearly losing money on enough spend to justify cutting its
- * budget? `spendFloor` is two break-even CPAs when the client has one; for an
+ * budget? Judged against the CUT threshold (the optimistic end of the owner's
+ * range), so a campaign that is profitable anywhere inside the range is never
+ * cut. `spendFloor` is two CUT break-even CPAs when the client has one; for an
  * e-commerce store (break-even ROAS only) the caller passes two of the
  * account's own CPAs, which only says "enough spend was tried".
  */
 function losesClearlyOnEnoughSpend(group: BudgetGroup, economics: BreakEven, spendFloor: number | null): boolean {
   if (spendFloor === null || !(group.cost >= spendFloor)) return false;
-  if (economics.break_even_cpa !== null) {
+  const cpaLimit = cutCpa(economics);
+  if (cpaLimit !== null) {
     if (group.conversions === 0) return true;
-    return group.cost / group.conversions >= CUT_CPA_FACTOR * economics.break_even_cpa;
+    return group.cost / group.conversions >= CUT_CPA_FACTOR * cpaLimit;
   }
-  if (economics.break_even_roas !== null) {
+  const roasLimit = cutRoas(economics);
+  if (roasLimit !== null) {
     // Conversions with no tracked value say nothing about ROAS: do not cut on a missing number.
     if (group.conversions > 0 && !(group.value > 0)) return false;
-    return group.value / (group.cost || 1) <= economics.break_even_roas / CUT_CPA_FACTOR;
+    return group.value / (group.cost || 1) <= roasLimit / CUT_CPA_FACTOR;
   }
   return false;
 }
 
+/**
+ * Is there real room to grow? Search campaigns: the share lost to budget must
+ * be a real opportunity (titan 6.4) and the campaign must not already own half
+ * the auction. FAILS CLOSED: a Search campaign whose lost-to-budget share is
+ * missing is not "constrained", whatever its other numbers say (a missing
+ * number used to pass as "no objection"). Campaign types with no impression
+ * share at all (Performance Max, Demand Gen, Shopping) need Google's own
+ * BUDGET_CONSTRAINED status.
+ */
 function budgetIsConstrained(group: BudgetGroup): boolean {
   const diags = group.entries.map((entry) => entry.diag).filter((diag): diag is CampaignDiag => Boolean(diag));
-  const lost = diags.map((d) => d.lost_budget_is).filter((v): v is number => typeof v === 'number');
-  const share = diags.map((d) => d.search_is).filter((v): v is number => typeof v === 'number');
-  const hasImpressionShare = lost.length > 0 || share.length > 0;
+  const isNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
+  const hasShareData = (d: CampaignDiag) =>
+    isNumber(d.search_is) || isNumber(d.lost_budget_is) || isNumber(d.lost_rank_is);
+  const shareDiags = diags.filter((d) => hasShareData(d) || String(d.type ?? '').toUpperCase() === 'SEARCH');
 
-  if (hasImpressionShare) {
-    // Search campaigns: lost-to-budget must be a real opportunity and there must be room to grow.
-    if (lost.length > 0 && Math.max(...lost) < SCALE_MIN_LOST_BUDGET_IS) return false;
+  if (shareDiags.length > 0) {
+    // Every campaign that reports a share (or is a Search campaign) must report the lost-to-budget one.
+    if (shareDiags.some((d) => !isNumber(d.lost_budget_is))) return false;
+    const lost = shareDiags.map((d) => d.lost_budget_is as number);
+    const share = shareDiags.map((d) => d.search_is).filter(isNumber);
+    if (Math.max(...lost) < SCALE_MIN_LOST_BUDGET_IS) return false;
     if (share.length > 0 && Math.max(...share) >= SCALE_MAX_SEARCH_IS) return false;
     return true;
   }
@@ -316,14 +359,16 @@ export function evaluateBudgetGate(
   if (!group.complete) return no('campaign_30d_unavailable');
 
   if (delta > 0) {
+    if (inLearning(group.entries)) return no('campaign_in_learning');
     if (!earnsClearlyMoreThanBreakEven(group, economics)) return no('scale_gate_not_met');
     if (!budgetIsConstrained(group)) return no('budget_not_constrained');
     return ok;
   }
 
+  const spendFloorCpa = cutCpa(economics);
   const spendFloor =
-    economics.break_even_cpa !== null
-      ? CUT_MIN_SPEND_IN_CPAS * economics.break_even_cpa
+    spendFloorCpa !== null
+      ? CUT_MIN_SPEND_IN_CPAS * spendFloorCpa
       : accountCpa30d !== null && accountCpa30d > 0
         ? CUT_MIN_SPEND_IN_CPAS * accountCpa30d
         : null;
@@ -336,9 +381,11 @@ export function evaluateBudgetGate(
 
 /**
  * Queue-time gate for adjust_bid, on top of the +-20% bound. The new target
- * must respect the client's break-even (a tCPA never above break-even CPA, a
- * tROAS never below break-even ROAS) and the campaign must have enough
- * conversions in 30 days for a target to mean anything.
+ * must respect the client's break-even at the SCALE end (a tCPA never above
+ * break_even_cpa, a tROAS never below break_even_roas: the pessimistic edge of
+ * the owner's range, because a target spends money), the campaign must not be
+ * in learning and must have enough conversions in 30 days for a target to mean
+ * anything.
  */
 export function evaluateBidGate(action: OptimizerAction, context: GateContext): GateVerdict {
   if (!trackingHealthy(context)) return no('tracking_not_healthy');
@@ -355,6 +402,7 @@ export function evaluateBidGate(action: OptimizerAction, context: GateContext): 
   const campaignResource = strOrEmpty(pick(target, 'ad_group.campaign'));
   const campaign = readCampaignEntries(context.snapshot).find((entry) => entry.resource === campaignResource);
   if (!campaign?.last30d) return no('campaign_30d_unavailable');
+  if (inLearning([campaign])) return no('campaign_in_learning');
   if (campaign.last30d.conversions < BID_MIN_CONVERSIONS_30D) return no('bid_needs_more_conversions');
 
   const nextCpaMicros = numOrNull(params.target_cpa_micros);
@@ -394,6 +442,76 @@ export function lockedByRecentChange(
     const at = Date.parse(row.at);
     return !Number.isFinite(at) || at >= cutoff;
   });
+}
+
+/** The rows of one operation that fall inside the window (a row with no usable time counts as recent). */
+export function recentLockRows(rows: LockRow[], operation: string, days: number, nowMs: number): LockRow[] {
+  const cutoff = nowMs - days * 24 * 60 * 60 * 1000;
+  return rows.filter((row) => {
+    if (row.operation !== operation) return false;
+    if (!row.at) return true;
+    const at = Date.parse(row.at);
+    return !Number.isFinite(at) || at >= cutoff;
+  });
+}
+
+type CrossLockSnapshot = Pick<OptimizerSnapshot, 'campaigns' | 'ad_group_bid_targets'>;
+
+/** The campaign an ad group with an explicit target belongs to (null when the snapshot does not list it). */
+export function campaignOfAdGroup(snapshot: CrossLockSnapshot, adGroupResource: string): string | null {
+  if (!adGroupResource) return null;
+  const row = (snapshot.ad_group_bid_targets ?? []).find(
+    (candidate: any) => strOrEmpty(pick(candidate, 'ad_group.resource_name')) === adGroupResource
+  );
+  const campaign = row ? strOrEmpty(pick(row, 'ad_group.campaign')) : '';
+  return campaign || null;
+}
+
+/** The budget a campaign spends from (null when the snapshot does not list the campaign). */
+export function budgetOfCampaign(snapshot: CrossLockSnapshot, campaignResource: string): string | null {
+  const entry = readCampaignEntries(snapshot).find((candidate) => candidate.resource === campaignResource);
+  return entry?.budgetResource || null;
+}
+
+/**
+ * Titan red rule 6 / KB 6.2: a campaign does not get a budget change and a
+ * target change in the same week, because the strategy cannot tell which one
+ * moved the result. A budget change on `budgetResource` collides with a recent
+ * target change on any ad group whose campaign spends from that budget (a
+ * shared budget has several campaigns). `bidRows` are adjust_bid rows keyed by
+ * ad_group_resource, executed or still waiting. An ad group the snapshot cannot
+ * place on a campaign cannot be matched and does not collide.
+ */
+export function budgetChangeCollidesWithBid(
+  snapshot: CrossLockSnapshot,
+  budgetResource: string,
+  bidRows: LockRow[],
+  nowMs: number
+): boolean {
+  if (!budgetResource) return false;
+  const campaigns = new Set(
+    readCampaignEntries(snapshot)
+      .filter((entry) => entry.budgetResource === budgetResource)
+      .map((entry) => entry.resource)
+  );
+  if (campaigns.size === 0) return false;
+  return recentLockRows(bidRows, 'adjust_bid', CROSS_LOCK_DAYS, nowMs).some((row) => {
+    const campaign = campaignOfAdGroup(snapshot, row.resource);
+    return campaign !== null && campaigns.has(campaign);
+  });
+}
+
+/** The mirror image: a target change on an ad group collides with a recent change of its campaign's budget. */
+export function bidChangeCollidesWithBudget(
+  snapshot: CrossLockSnapshot,
+  adGroupResource: string,
+  budgetRows: LockRow[],
+  nowMs: number
+): boolean {
+  const campaign = campaignOfAdGroup(snapshot, adGroupResource);
+  const budget = campaign ? budgetOfCampaign(snapshot, campaign) : null;
+  if (!budget) return false;
+  return lockedByRecentChange(budgetRows, 'adjust_budget', budget, CROSS_LOCK_DAYS, nowMs);
 }
 
 /** `ai_actions.payload` of an executed change -> the params of the action. */

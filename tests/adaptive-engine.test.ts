@@ -960,12 +960,22 @@ test('answers: the close-rate reaction needs the deal range, and most answers ge
   assert.equal(contactValueLine('2k_10k', 'unknown', 'SAR'), null);
   assert.equal(adaptiveReaction({ key: 'close_rate', choice: '2_3' }, { dealValue: '2k_10k' }), 'يعني الاتصال الواحد يسوى لك من 400 إلى 3,000 ريال تقريباً.');
   assert.equal(adaptiveReaction({ key: 'close_rate', choice: '2_3' }), null);
-  // With the profit per customer on record the reaction is the most one contact may cost: the same
-  // conservative edges (profit 200 x close 2 of 10 = 40) the optimizer's break-even CPA uses.
-  assert.equal(adaptiveReaction({ key: 'close_rate', choice: '2_3' }, { profit: '200_1k' }), 'يعني الاتصال الواحد لازم يكلفك إعلان أقل من 40 ريال تقريباً عشان تطلع رابح. بحسبها كذا.');
-  assert.equal(adaptiveReaction({ key: 'close_rate', choice: '2_3' }, { profit: '200_1k', dealValue: '2k_10k' }), 'يعني الاتصال الواحد لازم يكلفك إعلان أقل من 40 ريال تقريباً عشان تطلع رابح. بحسبها كذا.');
-  assert.equal(breakEvenContactLine('lt50', 'le1'), 'يعني الاتصال الواحد لازم يكلفك إعلان أقل من 1.3 ريال تقريباً عشان تطلع رابح. بحسبها كذا.');
-  assert.equal(breakEvenContactLine('gt5k', 'ge4'), 'يعني الاتصال الواحد لازم يكلفك إعلان أقل من 2,000 ريال تقريباً عشان تطلع رابح. بحسبها كذا.');
+  // With the profit per customer on record the reaction is the most one contact may cost, as the RANGE the two
+  // buckets leave (profit 200..1,000 x close 2..3 of 10 = 40..300): the same ends the optimizer's break-even uses.
+  assert.equal(adaptiveReaction({ key: 'close_rate', choice: '2_3' }, { profit: '200_1k' }), 'يعني أقصى سعر للاتصال الواحد عشان تطلع رابح بين 40 و300 ريال تقريباً. بحسبها كذا.');
+  assert.equal(adaptiveReaction({ key: 'close_rate', choice: '2_3' }, { profit: '200_1k', dealValue: '2k_10k' }), 'يعني أقصى سعر للاتصال الواحد عشان تطلع رابح بين 40 و300 ريال تقريباً. بحسبها كذا.');
+  // A thin profit with a low close rate never quotes a silly number («أقل من 1.3 ريال»): it says the margin is thin.
+  assert.equal(breakEvenContactLine('lt50', 'le1'), 'يعني الربح على الاتصال الواحد ضيّق، فلازم كل اتصال يجي رخيص. بحسبها كذا.');
+  // Only the low end under 10 riyals: the ceiling alone (profit 25..50 x close 2..3 of 10 = 5..15).
+  assert.equal(breakEvenContactLine('lt50', '2_3'), 'يعني أقصى سعر للاتصال الواحد عشان تطلع رابح أقل من 15 ريال تقريباً. بحسبها كذا.');
+  assert.equal(breakEvenContactLine('gt5k', 'ge4'), 'يعني أقصى سعر للاتصال الواحد عشان تطلع رابح بين 2,000 و10,000 ريال تقريباً. بحسبها كذا.');
+  // No line ever carries a limit under 5 riyals.
+  for (const profit of ['lt50', '50_200', '200_1k', '1k_5k', 'gt5k']) {
+    for (const close of ['le1', '2_3', 'ge4']) {
+      const line = breakEvenContactLine(profit, close) ?? '';
+      assert.doesNotMatch(line, /(^|[^\d,.])[0-4](\.\d)? ريال/, `${profit}/${close}: ${line}`);
+    }
+  }
   assert.equal(breakEvenContactLine('unknown', '2_3'), null);
   assert.equal(breakEvenContactLine('200_1k', 'unknown'), null);
   assert.equal(breakEvenContactLine(null, '2_3'), null);
@@ -1592,6 +1602,7 @@ test('copy: no long dash, no Latin comma, no banned phrase in anything the funct
   }
   for (const choice of ['lt20', '20_40', 'gt40', 'unknown']) returned.push(breakEvenLine(186, choice, 'SAR'));
   for (const deal of ['lt2k', '2k_10k', '10k_50k', 'gt50k']) for (const close of ['le1', '2_3', 'ge4']) returned.push(contactValueLine(deal, close, 'SAR'));
+  for (const profit of ['lt50', '50_200', '200_1k', '1k_5k', 'gt5k']) for (const close of ['le1', '2_3', 'ge4']) returned.push(breakEvenContactLine(profit, close));
 
   const texts = allStrings(returned);
   assert.ok(texts.length > 400, `walked ${texts.length} strings`);

@@ -2,12 +2,15 @@ import { cachedSystemBlock, createMessageForAgent, hasAIBackend } from './client
 import type { Customer } from 'google-ads-api';
 import { createAdminClient } from '../supabase/server';
 import { JARVIS_CORE_RULES_AR } from '../jarvis/playbook/core-rules';
-import type { BreakEven } from '../economics/break-even';
-import { dropStalePending } from '../recommendations/staleness';
+import type { AllowableCpa, BreakEven } from '../economics/break-even';
+import { holdsTargetLock } from '../recommendations/staleness';
 import {
   BID_LOCK_DAYS,
   BUDGET_LOCK_DAYS,
+  CROSS_LOCK_DAYS,
   accountCpa30dFromSnapshot,
+  bidChangeCollidesWithBudget,
+  budgetChangeCollidesWithBid,
   evaluateBidGate,
   evaluateBudgetBounds,
   evaluateBudgetGate,
@@ -16,6 +19,7 @@ import {
   lockedByRecentChange,
   type LockRow,
 } from './optimizer-gates';
+import { evaluateProposalEvidence } from './optimizer-proposal-gates';
 
 /**
  * Optimizer Agent - the heart of the platform.
@@ -39,7 +43,7 @@ const SYSTEM_PROMPT = `You are Modaafa's optimizer: a veteran Google Ads media b
 
 HOW A VETERAN THINKS (apply in this order)
 1. TRACKING FIRST. <account_data>.conversion_tracking.status is the verdict of a real health check (no enabled conversion action, clicks with no conversions, an action that went silent, a light-intent action counted as primary). Only "healthy" unlocks adjust_budget, adjust_bid, pause_keyword and pause_ad, and the server rejects them under any other status ("missing", "suspect", "broken_recently", "wrong_primary", "unknown"). Under those statuses you may still propose add_negative_keyword for clearly irrelevant search terms, and reason_ar must say that tracking has to be fixed first and quote the matching entry of conversion_tracking.issues.
-2. THE CLIENT'S ECONOMICS, NOT THE ACCOUNT'S HISTORY. <account_data>.economics carries break_even_roas (a store) or break_even_cpa (a lead business), taken from the owner's own answers (a store: its margin; a lead business: the profit per customer after costs and the close rate), plus allowable_cpa and the list of missing answers. These are the only yardsticks. <account_data>.account_history (roas_7d, cpa_7d, roas_30d, cpa_30d) is HISTORY: it says what happened, never what is good enough, and never a target. Never invent a margin, a profit per customer or a target. When break_even_roas and break_even_cpa are both null the economics are unknown: propose NO adjust_budget and NO adjust_bid, and say once, in the reason_ar of one of this run's actions, that the break-even is unknown and which answer from economics.missing is absent.
+2. THE CLIENT'S ECONOMICS, NOT THE ACCOUNT'S HISTORY. <account_data>.economics carries the client's break-even as a RANGE with two named ends, taken from the owner's own answers (a store: its margin; a lead business: the profit per customer after costs and the close rate), because the answers are buckets. The SCALE thresholds break_even_roas (a store) and break_even_cpa (a lead business) are the pessimistic end: every move that spends more (a budget raise, a target, a promoted keyword) must clear them. The CUT thresholds break_even_roas_cut and break_even_cpa_cut are the optimistic end: a budget cut, a pause or a negative on cost grounds must be clearly bad even by them. Between the two ends the answer is "not clear yet": do nothing. economics also carries allowable_cpa_cut, allowable_cpa_scale and the list of missing answers. These are the only yardsticks. <account_data>.account_history (roas_7d, cpa_7d, roas_30d, cpa_30d) is HISTORY: it says what happened, never what is good enough, and never a target. Never invent a margin, a profit per customer or a target. When break_even_roas and break_even_cpa are both null the economics are unknown: propose NO adjust_budget and NO adjust_bid, and say once, in the reason_ar of one of this run's actions, that the break-even is unknown and which answer from economics.missing is absent.
 3. STOP THE BLEEDING before scaling: search terms and keywords that spend without converting come before any growth move.
 4. FEED THE WINNERS cheaply: converting search terms that are not yet keywords are the cheapest growth available, so promote them with add_keyword. Money moves are earned, not assumed: a budget raise is allowed only through the scale gate under adjust_budget below.
 5. RESPECT THE BUSINESS: <account_data>.business_context tells you the sector, the primary goal (leads/conversions/traffic/awareness) and the owner's monthly budget ceiling in their account currency. When <account_data>.sector_benchmark is present it is anonymous medians from other accounts, SECONDARY context only: the account's own history and its break-even come first. You may mention it for colour, but it never justifies an action on its own and never moves a target.
@@ -52,21 +56,21 @@ YOUR PHILOSOPHY
 - Trust the data: don't guess. Not acting is a valid decision.
 
 READING THE DATA
-- Every *_micros value is millionths of the account currency. economics.allowable_cpa.value is in whole currency units.
-- economics.allowable_cpa.source "break_even_cpa" is the client's real limit. "account_30d_cpa_fallback" is the account's own 30-day CPA used ONLY to control waste (pausing and negating): never use it to scale, to set a target or to judge profitability.
+- Every *_micros value is millionths of the account currency. economics.allowable_cpa_cut.value and allowable_cpa_scale.value are in whole currency units.
+- economics.allowable_cpa_cut is the waste limit (the CUT end). Its source "break_even_cpa" is the client's real limit; "account_30d_cpa_fallback" is the account's own 30-day CPA used ONLY to control waste (pausing and negating): never use it to scale, to set a target or to judge profitability. economics.allowable_cpa_scale is the promotion limit (the SCALE end) and is null when the client's CPA is unknown; it has no fallback.
 - campaigns[] carries 7-day metrics, a diag object (type, bidding, primary_status, status_reasons, impressions_7d, search_is, lost_budget_is, lost_rank_is: fractions from 0 to 1, null when Google gives none) and last_30d (cost_micros, conversions, conversions_value). A budget shared by several campaigns is judged on their combined last_30d.
 - ROAS = conversions_value / cost. When a campaign has conversions but conversions_value is 0, ROAS is unusable (value is not tracked): never cut or scale on it.
 
 ALLOWED ACTIONS
-- pause_keyword: only when the keyword's 30-day cost is at least 2 x economics.allowable_cpa.value, it has 0 conversions and at least 20 clicks. underperforming_keywords is a 30-day list with cost, match type and ad group. target_id is the keyword's ad_group_criterion.resource_name copied verbatim.
-- add_negative_keyword: add a negative when a search term has 0 conversions AND 30-day cost of at least 1 x allowable_cpa.value, or when it is clearly irrelevant to the business and has 5+ clicks. Never negate a term that matches an enabled keyword of the account (the server drops those), and the server skips a term that already has a pending negative in the same campaign. params: { campaign_resource, keyword_text, match_type: "EXACT" | "PHRASE" }. campaign_resource MUST be the campaign.resource_name copied verbatim from the SAME wasted_search_terms row, never guessed from the campaign list.
-- add_keyword: promote a CONVERTING search term (2+ conversions in 30 days) into a real keyword in the ad group that captured it, and only when the term's CPA (cost / conversions) is at or below allowable_cpa.value. params: { ad_group_resource, keyword_text, match_type: "EXACT" | "PHRASE", source: { clicks, conversions, cost } }. Never propose a keyword that already exists in the account, and never use BROAD. The server skips a keyword that already has a pending recommendation in that ad group (under any match type) and allows at most 3 pending additions per ad group, so propose the strongest terms only.
+- pause_keyword: only when the keyword's 30-day cost is at least 2 x economics.allowable_cpa_cut.value, it has 0 conversions and at least 20 clicks. underperforming_keywords is a 30-day list with cost, match type and ad group. target_id is the keyword's ad_group_criterion.resource_name copied verbatim.
+- add_negative_keyword: add a negative when a search term has 0 conversions AND 30-day cost of at least 1 x allowable_cpa_cut.value, or when it is clearly irrelevant to the business and has 5+ clicks. Never negate a term that matches an enabled keyword of the account (the server drops those), and the server skips a term that already has a pending negative in the same campaign. params: { campaign_resource, keyword_text, match_type: "EXACT" | "PHRASE" }. campaign_resource MUST be the campaign.resource_name copied verbatim from the SAME wasted_search_terms row, never guessed from the campaign list.
+- add_keyword: promote a CONVERTING search term (2+ conversions in 30 days) into a real keyword in the ad group that captured it, and, when economics.allowable_cpa_scale is not null, only when the term's CPA (cost / conversions) is at or below allowable_cpa_scale.value. params: { ad_group_resource, keyword_text, match_type: "EXACT" | "PHRASE", source: { clicks, conversions, cost } }. Never propose a keyword that already exists in the account, and never use BROAD. The server skips a keyword that already has a pending recommendation in that ad group (under any match type) and allows at most 3 pending additions per ad group, so propose the strongest terms only.
 - adjust_budget: params { budget_resource, current_amount_micros (copy from the campaign row), new_amount_micros (the absolute new daily amount), delta_pct }. new_amount_micros is what actually executes. delta_pct must be between +5 and +20 or between -20 and -5, and must match the two amounts. At most one budget change per budget per 7 days: the server rejects a budget that was changed, or already has a pending recommendation, in the last 7 days.
-  INCREASE only if ALL of these hold: tracking is "healthy"; the economics are known; the campaign's 30-day return is clearly above break-even (ROAS at least 1.2 x break_even_roas, or CPA at most 0.8 x break_even_cpa) on at least 15 conversions in 30 days; diag.lost_budget_is is at least 0.20 AND diag.search_is is below 0.5; and no budget change on that budget in the last 7 days. For a campaign type with no impression share (null search_is and lost_budget_is), raise only if diag.status_reasons contains BUDGET_CONSTRAINED and the same return condition holds. Step: +10% to +20%.
-  DECREASE only if tracking is "healthy", the economics are known, the 30-day CPA is at least 1.5 x break_even_cpa (or ROAS is at most break_even_roas / 1.5) and the 30-day spend is at least 2 x break_even_cpa (for a store that has only break_even_roas, at least 2 x account_history.cpa_30d). Step: -10% to -20%.
+  INCREASE only if ALL of these hold: tracking is "healthy"; the economics are known; the campaign is not in learning (diag.primary_status is not LEARNING); the campaign's 30-day return is clearly above break-even (ROAS at least 1.2 x break_even_roas, or CPA at most 0.8 x break_even_cpa) on at least 15 conversions in 30 days; diag.lost_budget_is is at least 0.20 AND diag.search_is is below 0.5; and no budget change on that budget in the last 7 days. For a campaign type with no impression share (null search_is and lost_budget_is), raise only if diag.status_reasons contains BUDGET_CONSTRAINED and the same return condition holds. Step: +10% to +20%.
+  DECREASE only if tracking is "healthy", the economics are known, the 30-day CPA is at least 1 x break_even_cpa_cut (or ROAS is at most break_even_roas_cut) and the 30-day spend is at least 2 x break_even_cpa_cut (for a store that has only break_even_roas_cut, at least 2 x account_history.cpa_30d). A campaign at a return between the two ends is neither raised nor cut. Step: -10% to -20%.
   Economics unknown means no budget change at all.
-- adjust_bid: adjust an ad-group target CPA / target ROAS only for ad groups listed in <account_data>.ad_group_bid_targets, and only when the campaign has at least 30 conversions in 30 days, tracking is "healthy" and the economics are known. Step 10% to 20%, and no target change on that ad group in the last 14 days. A target CPA must never be set above break_even_cpa and a target ROAS never below break_even_roas. params: { ad_group_resource, and exactly ONE of target_cpa_micros or target_roas (the new value), plus the matching current_target_cpa_micros or current_target_roas copied verbatim from that row }. Match the target kind the ad group already uses; never introduce the other kind.
-- pause_ad: Ad Strength is NEVER a reason to pause an ad. Pause only if the ad has 1000+ impressions in 30 days, its CTR is below 50% of its ad group's CTR (poor_ads rows carry ad_group.ctr_30d, ad_group.cpa_30d and ad_group.enabled_ads; null means unknown, so do not pause), the ad group keeps at least 2 OTHER enabled ads, and the ad has 0 conversions or a CPA at least 2 x the ad group's CPA (ad_group.cpa_30d). target_id is ad_group_ad.resource_name copied verbatim.
+- adjust_bid: adjust an ad-group target CPA / target ROAS only for ad groups listed in <account_data>.ad_group_bid_targets, and only when the campaign has at least 30 conversions in 30 days, tracking is "healthy" and the economics are known. Step 10% to 20%, no target change on that ad group in the last 14 days, and no target change on a campaign that had a budget change in the last 7 days (nor a budget change on one that had a target change): never both on the same campaign in one run. A target CPA must never be set above break_even_cpa and a target ROAS never below break_even_roas. A campaign in learning (diag.primary_status LEARNING) gets no target change. params: { ad_group_resource, and exactly ONE of target_cpa_micros or target_roas (the new value), plus the matching current_target_cpa_micros or current_target_roas copied verbatim from that row }. Match the target kind the ad group already uses; never introduce the other kind.
+- pause_ad: Ad Strength is NEVER a reason to pause an ad. Pause only if the ad has 1000+ impressions in 30 days, its CTR is below 50% of its ad group's CTR (poor_ads rows carry ad_group.ctr_30d, ad_group.cpa_30d and ad_group.enabled_ads; null means unknown, so do not pause), the ad group keeps at least 2 OTHER enabled ads (ad_group.enabled_ads counts the ad itself, so it must be 3 or more), and the ad has 0 conversions or a CPA at least 2 x the ad group's CPA (ad_group.cpa_30d). target_id is ad_group_ad.resource_name copied verbatim.
 
 DECISION FRAMEWORK
 1. Read the snapshot below carefully, tracking and economics first.
@@ -140,10 +144,12 @@ export type ConversionTrackingStatus =
   | 'wrong_primary'
   | 'unknown';
 
-/** The break-even the optimizer sees, with the waste-control limit worked out for it. */
+/** The break-even the optimizer sees, with the waste-control and promotion limits worked out for it. */
 export type SnapshotEconomics = BreakEven & {
-  /** The most one conversion may cost before the spend is waste. The source says whose number it is. */
-  allowable_cpa: { value: number; source: 'break_even_cpa' | 'account_30d_cpa_fallback' } | null;
+  /** The most one conversion may cost before the spend is waste (CUT end). The source says whose number it is. */
+  allowable_cpa_cut: AllowableCpa | null;
+  /** The most one conversion may cost before promoting a keyword stops being safe (SCALE end). No fallback. */
+  allowable_cpa_scale: AllowableCpa | null;
 };
 
 /** What the account did. History, never a target. */
@@ -406,11 +412,13 @@ export function sanitizePromptText(value: string, maxLength = 300) {
 /**
  * What only the queue-time caller knows: the snapshot the model was shown.
  * With it the guardrails also enforce the economics, tracking, impression
- * share and conversion-volume conditions, and treat a pending or approved
- * recommendation on the same target as a lock. Execution-time callers (the
- * approval handler, autopilot, Jarvis) have no snapshot and omit it: the bounds
- * and the executed-history locks still apply to them, but a recommendation
- * that is itself waiting to run must not lock itself out.
+ * share and conversion-volume conditions, the evidence rows of keyword, negative
+ * and ad proposals, and treat a pending or approved recommendation on the same
+ * target as a lock. Execution-time callers (the approval handler, autopilot,
+ * Jarvis) have no snapshot and omit it: the bounds still apply to them, and the
+ * approval handler passes an `ExecutionGuard` (below) to get the
+ * executed-history locks too. A recommendation that is itself waiting to run
+ * must not lock itself out.
  */
 export type GuardrailContext = {
   snapshot: OptimizerSnapshot;
@@ -425,11 +433,29 @@ export type GuardrailContext = {
 
 export type GuardrailRejection = { code: string; action_type: string };
 
+/**
+ * Execution time for an optimizer card the owner approved days after it was
+ * queued. The queue-time locks were checked against the world of that night;
+ * by the time the owner presses «نفّذ», a budget or a target may have changed
+ * (by Jarvis, by hand, by another approved card). With this the executed-
+ * history locks (the same ai_actions windows as at queue time) apply to the
+ * action too, minus the rows the card itself wrote. Pending-card locks and the
+ * budget/bid cross-lock stay queue-time only: they need the snapshot, and the
+ * card is itself the pending row. Jarvis-prepared changes and autopilot do not
+ * pass it, which keeps the owner's right to change a budget again from chat.
+ */
+export type ExecutionGuard = {
+  /** The recommendation being executed; the ai_actions rows linked to it never lock it. */
+  recommendationId: string | null;
+  now?: Date;
+  onReject?: (rejection: GuardrailRejection) => void;
+};
+
 /** Rows of ai_actions for one action type since a moment. `error` means the history is unreadable. */
 async function recentExecutedRows(supabase: any, accountId: string, actionType: string, sinceMs: number) {
   return supabase
     .from('ai_actions')
-    .select('payload, created_at')
+    .select('payload, created_at, recommendation_id')
     .eq('account_id', accountId)
     .eq('action_type', actionType)
     .gte('created_at', new Date(sinceMs).toISOString());
@@ -450,28 +476,37 @@ async function pendingLockRows(
 ): Promise<LockRow[] | null> {
   const { data, error } = await supabase
     .from('recommendations')
-    .select('action_payload, status, created_at')
+    .select('action_payload, status, created_at, execution_started_at')
     .eq('account_id', accountId)
     .in('status', ['pending', 'approved', 'executing'])
     .gte('created_at', new Date(sinceMs).toISOString())
     .limit(200);
   if (error || !Array.isArray(data)) return null;
-  // The 7 and 14 day windows are shorter than the 14 day stale line, but a
-  // pending optimizer row that is stale never locks anything, whatever the
-  // window a caller passes.
-  return dropStalePending(data, nowMs).map((row: any) => ({
+  // A row that can no longer be acted on stops holding its target, whatever
+  // window a caller passes: a card stuck in `executing` for more than 24 hours
+  // (a crashed run), one approved and never executed for 7 days, a pending
+  // card older than 14 days (lib/recommendations/staleness.ts holdsTargetLock).
+  return data.filter((row: any) => holdsTargetLock(row, nowMs)).map((row: any) => ({
     operation: String(row?.action_payload?.operation ?? ''),
     resource: String(row?.action_payload?.params?.[resourceKey] ?? ''),
     at: row?.created_at ?? null,
   })).filter((row: LockRow) => row.operation === operation);
 }
 
-function executedLockRows(rows: any[] | null | undefined, operation: string, resourceKey: string): LockRow[] {
-  return (rows ?? []).map((row: any) => ({
-    operation,
-    resource: String(executedParams(row?.payload)[resourceKey] ?? ''),
-    at: row?.created_at ?? null,
-  }));
+function executedLockRows(
+  rows: any[] | null | undefined,
+  operation: string,
+  resourceKey: string,
+  /** The card being executed: the change it wrote itself is not a reason to refuse it. */
+  excludeRecommendationId?: string | null
+): LockRow[] {
+  return (rows ?? [])
+    .filter((row: any) => !excludeRecommendationId || row?.recommendation_id !== excludeRecommendationId)
+    .map((row: any) => ({
+      operation,
+      resource: String(executedParams(row?.payload)[resourceKey] ?? ''),
+      at: row?.created_at ?? null,
+    }));
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -484,14 +519,21 @@ export async function checkGuardrails(
   action: OptimizerAction,
   accountId: string,
   supabaseClient?: any,
-  context?: GuardrailContext
+  context?: GuardrailContext,
+  execution?: ExecutionGuard
 ): Promise<OptimizerAction | null> {
   const supabase = supabaseClient ?? createAdminClient();
-  const nowMs = (context?.now ?? new Date()).getTime();
+  const nowMs = (context?.now ?? execution?.now ?? new Date()).getTime();
   const reject = (code: string): null => {
-    context?.onReject?.({ code, action_type: action.type });
+    const rejection = { code, action_type: action.type };
+    context?.onReject?.(rejection);
+    execution?.onReject?.(rejection);
     return null;
   };
+  // Queue time (the snapshot is known) or the approval handler's execution of an optimizer card:
+  // both apply the executed-history locks; only queue time has the pending-card locks.
+  const appliesExecutedLocks = Boolean(context || execution);
+  const excludeOwnRows = execution?.recommendationId ?? null;
 
   // Tracking gate (queue time): every action that reads conversion numbers.
   if (context) {
@@ -530,14 +572,17 @@ export async function checkGuardrails(
     }
 
     // One change per budget per week, executed or still waiting for approval.
-    // Queue time only: the owner chatting with Jarvis keeps the right to change
-    // a budget again (the card carries a red warning), and an approved
-    // recommendation must not lock itself out at execution.
-    if (context) {
-      const executedRows = executedLockRows(recent, 'adjust_budget', 'budget_resource');
+    // Queue time, and the approval of an optimizer card (the executed-history
+    // half only, minus the card's own rows): the owner chatting with Jarvis
+    // keeps the right to change a budget again (the card carries a red
+    // warning), and an approved recommendation must not lock itself out.
+    if (appliesExecutedLocks) {
+      const executedRows = executedLockRows(recent, 'adjust_budget', 'budget_resource', excludeOwnRows);
       if (lockedByRecentChange(executedRows, 'adjust_budget', budgetResource, BUDGET_LOCK_DAYS, nowMs)) {
         return reject('budget_locked_recent_change');
       }
+    }
+    if (context) {
       const pending = await pendingLockRows(
         supabase,
         accountId,
@@ -549,6 +594,31 @@ export async function checkGuardrails(
       if (!pending) return reject('pending_unreadable');
       if (lockedByRecentChange(pending, 'adjust_budget', budgetResource, BUDGET_LOCK_DAYS, nowMs)) {
         return reject('budget_locked_pending');
+      }
+
+      // Titan red rule 6 / KB 6.2: never a budget change and a target change on
+      // the same campaign in the same week. A target change counts whether it
+      // ran, waits for the owner or was queued earlier in this very run (the
+      // first card is already a pending row when the second proposal is checked).
+      const { data: recentBids, error: recentBidsError } = await recentExecutedRows(
+        supabase,
+        accountId,
+        'adjust_bid',
+        nowMs - CROSS_LOCK_DAYS * DAY_MS
+      );
+      if (recentBidsError) return reject('bid_history_unreadable');
+      const pendingBids = await pendingLockRows(
+        supabase,
+        accountId,
+        'adjust_bid',
+        'ad_group_resource',
+        nowMs - CROSS_LOCK_DAYS * DAY_MS,
+        nowMs
+      );
+      if (!pendingBids) return reject('pending_unreadable');
+      const bidRows = [...executedLockRows(recentBids, 'adjust_bid', 'ad_group_resource'), ...pendingBids];
+      if (budgetChangeCollidesWithBid(context.snapshot, budgetResource, bidRows, nowMs)) {
+        return reject('budget_locked_by_bid_change');
       }
     }
 
@@ -673,7 +743,8 @@ export async function checkGuardrails(
 
     // One target change per ad group per 14 days (titan 5.3: a smart strategy
     // needs a full conversion cycle or two to settle after a target move).
-    if (context) {
+    // Queue time, and the approval of an optimizer card (executed history only).
+    if (appliesExecutedLocks) {
       const adGroupResource = String(params.ad_group_resource ?? '');
       const { data: recentBids, error: recentBidsError } = await recentExecutedRows(
         supabase,
@@ -688,10 +759,13 @@ export async function checkGuardrails(
         });
         return reject('bid_history_unreadable');
       }
-      const executedBids = executedLockRows(recentBids, 'adjust_bid', 'ad_group_resource');
+      const executedBids = executedLockRows(recentBids, 'adjust_bid', 'ad_group_resource', excludeOwnRows);
       if (lockedByRecentChange(executedBids, 'adjust_bid', adGroupResource, BID_LOCK_DAYS, nowMs)) {
         return reject('bid_locked_recent_change');
       }
+    }
+    if (context) {
+      const adGroupResource = String(params.ad_group_resource ?? '');
       const pending = await pendingLockRows(
         supabase,
         accountId,
@@ -703,6 +777,28 @@ export async function checkGuardrails(
       if (!pending) return reject('pending_unreadable');
       if (lockedByRecentChange(pending, 'adjust_bid', adGroupResource, BID_LOCK_DAYS, nowMs)) {
         return reject('bid_locked_pending');
+      }
+
+      // The other half of the budget/bid cross-lock (see the budget branch).
+      const { data: recentBudgets, error: recentBudgetsError } = await recentExecutedRows(
+        supabase,
+        accountId,
+        'adjust_budget',
+        nowMs - CROSS_LOCK_DAYS * DAY_MS
+      );
+      if (recentBudgetsError) return reject('budget_history_unreadable');
+      const pendingBudgets = await pendingLockRows(
+        supabase,
+        accountId,
+        'adjust_budget',
+        'budget_resource',
+        nowMs - CROSS_LOCK_DAYS * DAY_MS,
+        nowMs
+      );
+      if (!pendingBudgets) return reject('pending_unreadable');
+      const budgetRows = [...executedLockRows(recentBudgets, 'adjust_budget', 'budget_resource'), ...pendingBudgets];
+      if (bidChangeCollidesWithBudget(context.snapshot, adGroupResource, budgetRows, nowMs)) {
+        return reject('bid_locked_by_budget_change');
       }
     }
   }
@@ -753,6 +849,15 @@ export async function checkGuardrails(
     if (!(await campaignResourceInAccount(supabase, accountId, String(action.target_id ?? '')))) {
       return reject('campaign_not_in_account');
     }
+  }
+
+  // Evidence gate (queue time): the pause, promotion and negative rules the
+  // prompt states, re-derived from the snapshot row the proposal names. After
+  // the structural checks above, so a malformed proposal is refused for what
+  // is wrong with it and not for a missing row.
+  if (context) {
+    const evidenceVerdict = evaluateProposalEvidence(action, context);
+    if (!evidenceVerdict.ok) return reject(evidenceVerdict.code);
   }
 
   return action;

@@ -16,6 +16,16 @@ import {
   SCALE_MIN_LOST_BUDGET_IS,
   SCALE_ROAS_FACTOR,
 } from '../lib/ai/optimizer-gates';
+import {
+  NEGATIVE_COST_IN_CPAS,
+  NEGATIVE_IRRELEVANT_MIN_CLICKS,
+  PAUSE_AD_CPA_IN_GROUP_CPAS,
+  PAUSE_AD_MAX_CTR_SHARE,
+  PAUSE_AD_MIN_IMPRESSIONS,
+  PAUSE_AD_MIN_OTHER_ENABLED_ADS,
+  PAUSE_KEYWORD_COST_IN_CPAS,
+  PAUSE_KEYWORD_MIN_CLICKS,
+} from '../lib/ai/optimizer-proposal-gates';
 import { JARVIS_CORE_RULES_AR } from '../lib/jarvis/playbook';
 import { JARVIS_CORE_RULES_AR as RULES_FROM_SOURCE } from '../lib/jarvis/playbook/core-rules';
 
@@ -72,6 +82,10 @@ test('targets come from the client economics; the account history is labeled his
   const text = promptText();
   assert.match(text, /break_even_roas/);
   assert.match(text, /break_even_cpa/);
+  // Both ends of the owner's range are named, with what each is for.
+  assert.match(text, /SCALE thresholds break_even_roas[^.]*break_even_cpa[^.]*pessimistic end/);
+  assert.match(text, /CUT thresholds break_even_roas_cut and break_even_cpa_cut are the optimistic end/);
+  assert.match(text, /Between the two ends[^.]*do nothing/);
   assert.match(text, /account_history[^.]*is HISTORY/);
   assert.match(text, /never a target/);
   assert.match(text, /propose NO adjust_budget and NO adjust_bid/);
@@ -98,8 +112,11 @@ test('the numbers in the prompt are the numbers the code enforces', () => {
   assert.ok(budget.includes(`diag.lost_budget_is is at least ${SCALE_MIN_LOST_BUDGET_IS.toFixed(2)}`));
   assert.ok(budget.includes(`diag.search_is is below ${SCALE_MAX_SEARCH_IS}`));
   assert.ok(budget.includes('BUDGET_CONSTRAINED'));
-  assert.ok(budget.includes(`at least ${CUT_CPA_FACTOR} x break_even_cpa`));
-  assert.ok(budget.includes(`at least ${CUT_MIN_SPEND_IN_CPAS} x break_even_cpa`));
+  // A cut is judged against the CUT end of the range (factor 1), never against the SCALE end.
+  assert.ok(budget.includes(`at least ${CUT_CPA_FACTOR} x break_even_cpa_cut`));
+  assert.ok(budget.includes('ROAS is at most break_even_roas_cut'));
+  assert.ok(budget.includes(`at least ${CUT_MIN_SPEND_IN_CPAS} x break_even_cpa_cut`));
+  assert.ok(budget.includes('not in learning'));
   assert.ok(budget.includes('Economics unknown means no budget change at all'));
 
   const bid = text.slice(text.indexOf('- adjust_bid:'), text.indexOf('- pause_ad:'));
@@ -112,14 +129,32 @@ test('the numbers in the prompt are the numbers the code enforces', () => {
 test('pause_keyword and negatives are judged against the allowable CPA', () => {
   const text = promptText();
   const pause = text.slice(text.indexOf('- pause_keyword:'), text.indexOf('- add_negative_keyword:'));
-  assert.match(pause, /30-day cost is at least 2 x economics\.allowable_cpa\.value/);
-  assert.match(pause, /0 conversions and at least 20 clicks/);
+  assert.match(pause, new RegExp(`30-day cost is at least ${PAUSE_KEYWORD_COST_IN_CPAS} x economics\\.allowable_cpa_cut\\.value`));
+  assert.match(pause, new RegExp(`0 conversions and at least ${PAUSE_KEYWORD_MIN_CLICKS} clicks`));
   const negative = text.slice(text.indexOf('- add_negative_keyword:'), text.indexOf('- add_keyword:'));
-  assert.match(negative, /30-day cost of at least 1 x allowable_cpa\.value/);
-  assert.match(negative, /5\+ clicks/);
+  assert.match(negative, new RegExp(`30-day cost of at least ${NEGATIVE_COST_IN_CPAS} x allowable_cpa_cut\\.value`));
+  assert.match(negative, new RegExp(`${NEGATIVE_IRRELEVANT_MIN_CLICKS}\\+ clicks`));
   assert.match(negative, /Never negate a term that matches an enabled keyword/);
   const add = text.slice(text.indexOf('- add_keyword:'), text.indexOf('- adjust_budget:'));
-  assert.match(add, /CPA \(cost \/ conversions\) is at or below allowable_cpa\.value/);
+  assert.match(add, /CPA \(cost \/ conversions\) is at or below allowable_cpa_scale\.value/);
+});
+
+test('the pause_ad numbers in the prompt are the numbers the code checks', () => {
+  const text = promptText();
+  const pauseAd = text.slice(text.indexOf('- pause_ad:'), text.indexOf('DECISION FRAMEWORK'));
+  assert.ok(pauseAd.includes(`${PAUSE_AD_MIN_IMPRESSIONS}+ impressions`));
+  assert.ok(pauseAd.includes(`below ${PAUSE_AD_MAX_CTR_SHARE * 100}% of its ad group's CTR`));
+  assert.ok(pauseAd.includes(`at least ${PAUSE_AD_MIN_OTHER_ENABLED_ADS} OTHER enabled ads`));
+  assert.ok(pauseAd.includes(`${PAUSE_AD_CPA_IN_GROUP_CPAS} x the ad group's CPA`));
+  // enabled_ads counts the ad itself, so the model must read it as 3 or more.
+  assert.ok(pauseAd.includes('counts the ad itself'));
+});
+
+test('a budget change and a target change never go on the same campaign in the same week, and the prompt says so', () => {
+  const text = promptText();
+  const bid = text.slice(text.indexOf('- adjust_bid:'), text.indexOf('- pause_ad:'));
+  assert.match(bid, /no target change on a campaign that had a budget change in the last 7 days/);
+  assert.match(bid, /never both on the same campaign in one run/);
 });
 
 test('tracking comes first and names the verdicts the server enforces', () => {

@@ -1,5 +1,5 @@
 import { normalizeKeywordText } from '../ai/execution-preflight';
-import { isStalePendingRecommendation } from '../recommendations/staleness';
+import { holdsTargetLock, isStalePendingRecommendation } from '../recommendations/staleness';
 
 export const AUTOPILOT_FAILED_RETRY_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
@@ -94,6 +94,8 @@ export type ActiveRecommendationRow = {
   id: string;
   status: string;
   created_at?: string | null;
+  /** When the approval handler claimed the row; a claim older than a day is a crashed run. */
+  execution_started_at?: string | null;
   action_payload?: any;
 };
 
@@ -162,8 +164,10 @@ export function dedupeAppliesTo(actionType: string): boolean {
  *   negative batch that contains the term counts).
  * - adjust_budget: same budget. adjust_bid: same ad group.
  *
- * A pending optimizer row older than 14 days is stale and ignored (it is not a
- * current decision any more, so it neither blocks nor counts toward the cap).
+ * A row that can no longer be acted on is ignored (it neither blocks nor counts
+ * toward the cap): a pending row older than 14 days, whoever queued it, an
+ * approved row older than 7 days and a row stuck in `executing` for more than
+ * 24 hours (see holdsTargetLock in lib/recommendations/staleness.ts).
  * `pool` null means the waiting recommendations could not be read: the actions
  * this check covers are skipped for this run rather than risk a duplicate.
  */
@@ -177,7 +181,7 @@ export function findPendingDuplicate(
 
   const params = (action.params ?? {}) as Record<string, unknown>;
   const active = pool.filter(
-    (row) => (ACTIVE_STATUSES as readonly string[]).includes(row.status) && !isStalePendingRecommendation(row, nowMs)
+    (row) => (ACTIVE_STATUSES as readonly string[]).includes(row.status) && holdsTargetLock(row, nowMs)
   );
 
   if (action.type === 'add_keyword') {
@@ -248,7 +252,7 @@ export async function loadActiveRecommendationPool(
 ): Promise<ActiveRecommendationRow[] | null> {
   const { data, error } = await supabase
     .from('recommendations')
-    .select('id, status, created_at, action_payload')
+    .select('id, status, created_at, execution_started_at, action_payload')
     .eq('account_id', accountId)
     .in('status', [...ACTIVE_STATUSES])
     .order('created_at', { ascending: false })

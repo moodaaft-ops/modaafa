@@ -99,3 +99,78 @@ export function dropStalePending<T extends StalenessCandidate>(
 export function staleCutoffIso(nowMs: number = Date.now()): string {
   return new Date(nowMs - STALE_PENDING_MS).toISOString();
 }
+
+// ---------------------------------------------------------------------------
+// Locks and dedupe must not hold forever
+// ---------------------------------------------------------------------------
+
+/** A card stuck in `executing` longer than this is a crashed run, not a change in flight. */
+export const STUCK_EXECUTING_HOURS = 24;
+/** A card `approved` and never executed for this long no longer reserves its target. */
+export const STUCK_APPROVED_DAYS = 7;
+/** An optimizer budget or bid card older than this is not executable: its numbers belong to another week. */
+export const MONEY_MOVE_EXPIRY_DAYS = 7;
+/** The operations that move money or the bidding strategy, the ones with a short shelf life. */
+export const MONEY_MOVE_OPERATIONS: readonly string[] = ['adjust_budget', 'adjust_bid'];
+
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+
+export type LockHoldingCandidate = StalenessCandidate & {
+  /** Set when the approval handler claimed the row (status `executing`). */
+  execution_started_at?: string | null;
+};
+
+/** True when a timestamp is more than `ms` ago. An unreadable time is not past the line. */
+function olderThan(timestamp: string | null | undefined, ms: number, nowMs: number): boolean {
+  const at = timestamp ? Date.parse(timestamp) : Number.NaN;
+  return Number.isFinite(at) && nowMs - at > ms;
+}
+
+/**
+ * Does this recommendation still reserve its target (the per-target locks in
+ * checkGuardrails and the queue-time dedupe)? A row that can no longer be acted
+ * on must not block the optimizer for good:
+ *
+ *   pending     a current decision for 14 days, whoever created it; after that
+ *               nobody can say the numbers still hold
+ *   approved    7 days from creation; an approval nobody executed for a week
+ *   executing   24 hours from the claim (`execution_started_at`, else creation);
+ *               a longer claim is a crashed run, the same condition the
+ *               ops alerts already treat as stuck
+ *
+ * A status this function does not know (and a row with no status) keeps
+ * holding, as before: only the three states above can expire.
+ */
+export function holdsTargetLock(row: LockHoldingCandidate | null | undefined, nowMs: number = Date.now()): boolean {
+  if (!row) return false;
+  switch (row.status) {
+    case 'pending':
+      return !isPastStaleLine(row.created_at, nowMs);
+    case 'approved':
+      return !olderThan(row.created_at, STUCK_APPROVED_DAYS * DAY_MS, nowMs);
+    case 'executing':
+      return !olderThan(row.execution_started_at ?? row.created_at, STUCK_EXECUTING_HOURS * HOUR_MS, nowMs);
+    default:
+      return true;
+  }
+}
+
+/**
+ * An optimizer-queued budget or bid card that is more than 7 days old. The
+ * overnight run proposed it against that night's numbers and a lock window of
+ * one week; executing it later would move money on evidence from another
+ * week, and the executed-history locks may not have existed when it was
+ * queued. Cards from Jarvis or the assistant are the owner's own request and
+ * never expire here.
+ */
+export function isExpiredOptimizerMoneyMove(
+  row: StalenessCandidate | null | undefined,
+  operation: string,
+  nowMs: number = Date.now()
+): boolean {
+  if (!row || !MONEY_MOVE_OPERATIONS.includes(operation)) return false;
+  if (!isOptimizerRecommendation(row)) return false;
+  return olderThan(row.created_at, MONEY_MOVE_EXPIRY_DAYS * DAY_MS, nowMs);
+}
+

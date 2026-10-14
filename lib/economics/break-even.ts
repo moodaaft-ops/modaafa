@@ -8,7 +8,7 @@
  * The knowledge base is explicit (google-ads-titan SKILL red rule 2 and 8, and
  * references/bidding-budget.md 5.1): a target comes from the client's own
  * economics, never from the account's own history. This module turns the
- * onboarding answers into the two numbers that matter:
+ * onboarding answers into the numbers that matter:
  *
  *   e-commerce        break_even_roas = 1 / margin
  *   leads, services,  break_even_cpa  = profit per customer x close rate
@@ -21,22 +21,42 @@
  * a margin on top of the deal value. When it is answered it wins; the deal value
  * x margin x close rate path stays only for owners who answered those earlier.
  *
- * The answers are buckets, not numbers («من 20 إلى 40»). We always take the
- * edge of the bucket that is worse for the client, so the break-even we hand
- * the optimizer is never rosier than the truth:
+ * The answers are buckets, not numbers («من 20 إلى 40»), so each input is a
+ * RANGE with a low and a high edge, and the break-even is a range too. The two
+ * ends are used for opposite decisions, because the cost of being wrong is not
+ * symmetric:
  *
- *   margin       lt20 -> 10%   20_40 -> 20%   gt40 -> 40%
- *   deal value   lt2k -> 1,000   2k_10k -> 2,000   10k_50k -> 10,000   gt50k -> 50,000 SAR
- *   profit       lt50 -> 25   50_200 -> 50   200_1k -> 200   1k_5k -> 1,000   gt5k -> 5,000 SAR
- *   close rate   le1  -> 0.5 of 10   2_3 -> 2 of 10   ge4 -> 4 of 10
+ *   SCALE threshold   the PESSIMISTIC end: the low margin / profit / close rate.
+ *                     break_even_roas (the highest ROAS the client could need)
+ *                     and break_even_cpa (the lowest CPA the client could
+ *                     afford). Raising a budget, setting a bid target and
+ *                     promoting a keyword must clear THIS one, so they never
+ *                     rest on a rosier number than the owner gave.
+ *   CUT threshold     the OPTIMISTIC end: the high margin / profit / close rate.
+ *                     break_even_roas_cut (the lowest ROAS the client could
+ *                     live with) and break_even_cpa_cut (the highest CPA the
+ *                     client could afford). Cutting a budget, pausing a
+ *                     keyword and adding a negative must be clearly bad even by
+ *                     THIS one, so we never cut something that, inside the
+ *                     owner's own range, was actually profitable.
  *
- * Rule: the lower edge of the bucket; when the lower edge is 0 (an open-ended
- * "less than X" bucket) half of the upper edge. A lower margin means a HIGHER
- * break-even ROAS, a lower deal value or close rate means a LOWER break-even
- * CPA, so scaling decisions that compare against these numbers err on the
- * side of doing nothing. The price of that safety is stated in the report that
- * ships with this change: the same conservative number also makes the
- * "cut spend" rule fire sooner than an exact figure would.
+ * Between the two thresholds the honest answer is "we cannot tell yet", and the
+ * optimizer does nothing. Margin 20-40%, for example: SCALE needs ROAS of 5 and
+ * more (margin 20%), CUT starts at ROAS 2.5 and less (margin 40%); a campaign
+ * at 3.2 is neither scaled nor cut.
+ *
+ * Bucket edges (the onboarding offers these, see lib/setup/adaptive/answers.ts):
+ *
+ *   margin       lt20 -> 10..20%   20_40 -> 20..40%   gt40 -> 40..80%
+ *   deal value   lt2k -> 1,000..2,000   2k_10k -> 2,000..10,000   10k_50k -> 10,000..50,000   gt50k -> 50,000..100,000 SAR
+ *   profit       lt50 -> 25..50   50_200 -> 50..200   200_1k -> 200..1,000   1k_5k -> 1,000..5,000   gt5k -> 5,000..10,000 SAR
+ *   close rate   le1  -> 0.5..1 of 10   2_3 -> 2..3 of 10   ge4 -> 4..10 of 10
+ *
+ * Rules for the edges: a closed bucket keeps its two edges; a bucket that starts
+ * at 0 («أقل من») has no honest low edge, so its low edge is half of its upper
+ * edge; an open-ended top bucket («أكثر من») has no upper edge, so its high edge
+ * is TWICE its lower edge. Margin is capped at 100% and the close rate at 10 of
+ * 10.
  *
  * "I don't know" and "never asked" are the same thing here: the value is null
  * and its name is listed in `missing`. Nothing is guessed.
@@ -66,19 +86,43 @@ export type EconomicsMissing = 'business_kind' | 'margin' | 'profit_per_deal' | 
 
 export type BreakEven = {
   kind: EconomicsKind;
-  /** Revenue per riyal of ad spend below which the client loses money. e-commerce only. */
+  /**
+   * SCALE threshold (pessimistic end of the owner's ranges): the highest revenue per riyal of ad spend the
+   * client could need to break even. A budget raise or a tROAS must clear this. e-commerce only.
+   */
   break_even_roas: number | null;
-  /** Ad spend per lead (SAR) above which the client loses money. Leads, services, clinic, local only. */
+  /**
+   * SCALE threshold (pessimistic end): the lowest ad spend per lead (SAR) the client could afford.
+   * A budget raise, a tCPA or a promoted keyword must stay under this. Leads, services, clinic, local only.
+   */
   break_even_cpa: number | null;
+  /**
+   * CUT threshold (optimistic end of the ranges): the lowest ROAS the client could live with. A campaign is
+   * only cut when it is below even this. e-commerce only.
+   */
+  break_even_roas_cut: number | null;
+  /**
+   * CUT threshold (optimistic end): the highest ad spend per lead (SAR) the client could afford. Waste is
+   * only called waste when it costs more than even this. Leads, services, clinic, local only.
+   */
+  break_even_cpa_cut: number | null;
   inputs: {
-    /** 0..1, the conservative edge of the answered bucket. */
+    /** 0..1, the LOW edge of the answered bucket (pessimistic). */
     margin_fraction: number | null;
-    /** SAR. Only the older deal value x margin path uses it. */
+    /** 0..1, the HIGH edge of the answered bucket (optimistic). */
+    margin_fraction_high: number | null;
+    /** SAR, low edge. Only the older deal value x margin path uses it. */
     deal_value_sar: number | null;
-    /** SAR, the conservative edge of the answered bucket: what is left of one customer after the costs. */
+    /** SAR, high edge. */
+    deal_value_sar_high: number | null;
+    /** SAR, low edge: what is left of one customer after the costs. */
     profit_per_deal_sar: number | null;
-    /** 0..1, share of contacts that become customers. */
+    /** SAR, high edge. */
+    profit_per_deal_sar_high: number | null;
+    /** 0..1, low edge of the share of contacts that become customers. */
     close_rate_fraction: number | null;
+    /** 0..1, high edge. */
+    close_rate_fraction_high: number | null;
     /** The average order the account reported and the owner confirmed. Information only. */
     aov_reported: number | null;
   };
@@ -90,7 +134,7 @@ export type BreakEven = {
 export const BREAK_EVEN_CURRENCY = 'SAR';
 
 // ---------------------------------------------------------------------------
-// Bucket -> one conservative number
+// Bucket -> a low and a high edge
 // ---------------------------------------------------------------------------
 
 function finiteOrNull(value: unknown): number | null {
@@ -99,49 +143,63 @@ function finiteOrNull(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** The two edges of an answered bucket. `low` <= `high`, both above zero. */
+export type BucketBounds = { low: number; high: number };
+
+/**
+ * The two edges of a bucket. A closed bucket keeps its edges. A bucket that
+ * starts at 0 has no honest lower edge: low is half of the upper edge. An
+ * open-ended top bucket has no upper edge: high is TWICE the lower edge (a
+ * documented convention, so «أكثر من 40» reads as 40..80 and not as "anything").
+ * Null when the bucket is empty (the "I don't know" answer).
+ */
+export function bucketBounds(lower: unknown, upper: unknown): BucketBounds | null {
+  const lo = finiteOrNull(lower);
+  const hi = finiteOrNull(upper);
+  if (lo === null && hi === null) return null;
+  if (lo !== null && lo > 0) {
+    return { low: lo, high: hi !== null && hi > lo ? hi : lo * 2 };
+  }
+  if (hi !== null && hi > 0) return { low: hi / 2, high: hi };
+  return null;
+}
+
 /**
  * The edge of a bucket that is worse for the client. `lower` when it is above
  * zero, otherwise half of `upper` (a bucket that starts at 0 has no honest
  * lower edge). Null when the bucket is empty (the "I don't know" answer).
  */
 export function conservativeEdge(lower: unknown, upper: unknown): number | null {
-  const lo = finiteOrNull(lower);
-  const hi = finiteOrNull(upper);
-  if (lo === null && hi === null) return null;
-  if (lo !== null && lo > 0) return lo;
-  if (hi !== null && hi > 0) return hi / 2;
-  return null;
+  return bucketBounds(lower, upper)?.low ?? null;
 }
 
 function round2(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
-/** Margin of every 100 riyals, 0 < x <= 100, as a fraction. */
-function marginFraction(fact: EconomicsFactData | undefined): number | null {
+/** Margin of every 100 riyals, 0 < x <= 100, as fractions of 1 (the high edge is capped at 100%). */
+function marginRange(fact: EconomicsFactData | undefined): BucketBounds | null {
   if (!fact) return null;
-  const edge = conservativeEdge(fact.min_per_100, fact.max_per_100);
-  return edge !== null && edge > 0 && edge <= 100 ? edge / 100 : null;
+  const bounds = bucketBounds(fact.min_per_100, fact.max_per_100);
+  if (!bounds || bounds.low > 100) return null;
+  return { low: bounds.low / 100, high: Math.min(bounds.high, 100) / 100 };
 }
 
-function dealValueSar(fact: EconomicsFactData | undefined): number | null {
-  if (!fact) return null;
-  const edge = conservativeEdge(fact.min_sar, fact.max_sar);
-  return edge !== null && edge > 0 ? edge : null;
+function dealValueRange(fact: EconomicsFactData | undefined): BucketBounds | null {
+  return fact ? bucketBounds(fact.min_sar, fact.max_sar) : null;
 }
 
 /** Profit per customer after the costs, in riyals. Same bucket shape as the deal value (min_sar, max_sar). */
-function profitPerDealSar(fact: EconomicsFactData | undefined): number | null {
-  if (!fact) return null;
-  const edge = conservativeEdge(fact.min_sar, fact.max_sar);
-  return edge !== null && edge > 0 ? edge : null;
+function profitPerDealRange(fact: EconomicsFactData | undefined): BucketBounds | null {
+  return fact ? bucketBounds(fact.min_sar, fact.max_sar) : null;
 }
 
-/** "How many of 10 contacts become customers" as a fraction of 1. */
-function closeRateFraction(fact: EconomicsFactData | undefined): number | null {
+/** "How many of 10 contacts become customers" as fractions of 1 (the high edge is capped at 10 of 10). */
+function closeRateRange(fact: EconomicsFactData | undefined): BucketBounds | null {
   if (!fact) return null;
-  const edge = conservativeEdge(fact.min_of_10, fact.max_of_10);
-  return edge !== null && edge > 0 && edge <= 10 ? edge / 10 : null;
+  const bounds = bucketBounds(fact.min_of_10, fact.max_of_10);
+  if (!bounds || bounds.low > 10) return null;
+  return { low: bounds.low / 10, high: Math.min(bounds.high, 10) / 10 };
 }
 
 function aovReported(fact: EconomicsFactData | undefined): number | null {
@@ -222,18 +280,25 @@ export function computeBreakEven(input: {
   primaryGoal?: string | null;
 }): BreakEven {
   const kind = deriveEconomicsKind(input);
-  const margin = marginFraction(input.facts.margin);
-  const deal = dealValueSar(input.facts.deal_value);
-  const profit = profitPerDealSar(input.facts.profit_per_deal);
-  const close = closeRateFraction(input.facts.close_rate);
+  const margin = marginRange(input.facts.margin);
+  const deal = dealValueRange(input.facts.deal_value);
+  const profit = profitPerDealRange(input.facts.profit_per_deal);
+  const close = closeRateRange(input.facts.close_rate);
 
   const missing: EconomicsMissing[] = [];
-  let breakEvenRoas: number | null = null;
-  let breakEvenCpa: number | null = null;
+  let roasScale: number | null = null;
+  let roasCut: number | null = null;
+  let cpaScale: number | null = null;
+  let cpaCut: number | null = null;
 
   if (kind === 'ecommerce') {
-    if (margin === null) missing.push('margin');
-    else breakEvenRoas = round2(1 / margin);
+    if (margin === null) {
+      missing.push('margin');
+    } else {
+      // A thin margin needs a big ROAS (scale), a fat margin lives with a small one (cut).
+      roasScale = round2(1 / margin.low);
+      roasCut = round2(1 / margin.high);
+    }
   } else if (kind === 'general') {
     missing.push('business_kind');
   } else {
@@ -241,11 +306,19 @@ export function computeBreakEven(input: {
     // already has the costs taken out, so it needs only the close rate. An owner who answered deal value and
     // margin earlier (and never the profit question) keeps the older product of the three.
     if (profit !== null) {
-      if (close === null) missing.push('close_rate');
-      else breakEvenCpa = round2(profit * close);
+      if (close === null) {
+        missing.push('close_rate');
+      } else {
+        cpaScale = round2(profit.low * close.low);
+        cpaCut = round2(profit.high * close.high);
+      }
     } else if (deal !== null && margin !== null) {
-      if (close === null) missing.push('close_rate');
-      else breakEvenCpa = round2(deal * margin * close);
+      if (close === null) {
+        missing.push('close_rate');
+      } else {
+        cpaScale = round2(deal.low * margin.low * close.low);
+        cpaCut = round2(deal.high * margin.high * close.high);
+      }
     } else {
       missing.push('profit_per_deal');
       if (close === null) missing.push('close_rate');
@@ -254,13 +327,19 @@ export function computeBreakEven(input: {
 
   return {
     kind,
-    break_even_roas: breakEvenRoas,
-    break_even_cpa: breakEvenCpa,
+    break_even_roas: roasScale,
+    break_even_cpa: cpaScale,
+    break_even_roas_cut: roasCut,
+    break_even_cpa_cut: cpaCut,
     inputs: {
-      margin_fraction: margin,
-      deal_value_sar: deal,
-      profit_per_deal_sar: profit,
-      close_rate_fraction: close,
+      margin_fraction: margin?.low ?? null,
+      margin_fraction_high: margin?.high ?? null,
+      deal_value_sar: deal?.low ?? null,
+      deal_value_sar_high: deal?.high ?? null,
+      profit_per_deal_sar: profit?.low ?? null,
+      profit_per_deal_sar_high: profit?.high ?? null,
+      close_rate_fraction: close?.low ?? null,
+      close_rate_fraction_high: close?.high ?? null,
       aov_reported: aovReported(input.facts.aov_check),
     },
     missing,
@@ -276,10 +355,12 @@ export function computeBreakEven(input: {
  */
 export function breakEvenForCurrency(economics: BreakEven, accountCurrency: string | null | undefined): BreakEven {
   const currency = String(accountCurrency ?? BREAK_EVEN_CURRENCY).toUpperCase();
-  if (economics.break_even_cpa === null || currency === BREAK_EVEN_CURRENCY) return economics;
+  const hasCpa = economics.break_even_cpa !== null || economics.break_even_cpa_cut !== null;
+  if (!hasCpa || currency === BREAK_EVEN_CURRENCY) return economics;
   return {
     ...economics,
     break_even_cpa: null,
+    break_even_cpa_cut: null,
     missing: economics.missing.includes('currency_sar_only') ? economics.missing : [...economics.missing, 'currency_sar_only'],
   };
 }
@@ -289,23 +370,43 @@ export function hasBreakEven(economics: BreakEven | null | undefined): boolean {
   return Boolean(economics && (economics.break_even_roas !== null || economics.break_even_cpa !== null));
 }
 
+export type AllowableCpa = {
+  value: number;
+  source: 'break_even_cpa' | 'account_30d_cpa_fallback';
+};
+
 /**
  * The most the account may pay for one conversion before the spend counts as
- * waste. The client's break-even CPA when it is known; otherwise the account's
- * own 30-day CPA, and the source is stated so nobody mistakes it for a target.
- * The fallback is for waste control (pausing, negating) only, never for
- * scaling or for setting a bid target.
+ * WASTE (pausing a keyword, negating a search term, cutting a budget): the
+ * CUT end of the client's range, so only spend that is too expensive even by
+ * the owner's most optimistic numbers is called waste. When the client's
+ * economics give no CPA, the account's own 30-day CPA stands in and the source
+ * says so. The fallback is for waste control only, never for scaling or for a
+ * bid target.
  */
-export function allowableCpa(
+export function allowableCpaCut(
   economics: BreakEven | null | undefined,
   accountCpa30d: number | null | undefined
-): { value: number; source: 'break_even_cpa' | 'account_30d_cpa_fallback' } | null {
-  if (economics && economics.break_even_cpa !== null && economics.break_even_cpa > 0) {
-    return { value: economics.break_even_cpa, source: 'break_even_cpa' };
+): AllowableCpa | null {
+  if (economics && economics.break_even_cpa_cut !== null && economics.break_even_cpa_cut > 0) {
+    return { value: economics.break_even_cpa_cut, source: 'break_even_cpa' };
   }
   const fallback = finiteOrNull(accountCpa30d);
   if (fallback !== null && fallback > 0) {
     return { value: round2(fallback), source: 'account_30d_cpa_fallback' };
+  }
+  return null;
+}
+
+/**
+ * The most the account may pay for one conversion before spending MORE on it
+ * (promoting a keyword) stops being safe: the SCALE end of the client's range.
+ * Null when the client's economics give no CPA. There is deliberately no
+ * fallback: scaling never rests on the account's own history.
+ */
+export function allowableCpaScale(economics: BreakEven | null | undefined): AllowableCpa | null {
+  if (economics && economics.break_even_cpa !== null && economics.break_even_cpa > 0) {
+    return { value: economics.break_even_cpa, source: 'break_even_cpa' };
   }
   return null;
 }
