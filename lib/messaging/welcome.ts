@@ -1,4 +1,7 @@
-import { send, type SendDeps, type SendResult } from './send';
+import { EMAIL_COPY } from '@/lib/lifecycle/copy';
+import { EMPTY_FACTS } from '@/lib/lifecycle/types';
+import { firstName } from '@/lib/lifecycle/format';
+import { sendTemplate, type SendDeps, type SendTemplateResult } from './send';
 
 const TEMPLATE = 'welcome_ads_connect' as const;
 /** Catch-up window after an outage. The target is 1 minute, the ceiling 5. */
@@ -15,9 +18,14 @@ export type WelcomeSweepSummary = {
 };
 
 /**
- * Sends the sign-up follow-up to everyone who has a registration_completed
+ * Sends the sign-up welcome to everyone who has a registration_completed
  * event and no finished welcome message yet. Safe to call every minute and
  * from several places at once (claim_message decides the winner).
+ *
+ * The text is the `welcome_ads_connect` copy in lib/lifecycle/copy.ts, the same
+ * one the sign-up flow sends right after registration, so the person gets one
+ * welcome in one voice whichever path reaches them first. While that copy is
+ * not approved, sendTemplate skips it and nothing is sent or logged.
  */
 export async function sendDueWelcomeEmails(
   supabase: any,
@@ -73,7 +81,16 @@ export async function sendDueWelcomeEmails(
     const user = usersById.get(id);
     if (!user?.email) continue;
     summary.checked += 1;
-    const result: SendResult = await send('email', TEMPLATE, user, { ...options.deps, supabase });
+    const result: SendTemplateResult = await sendTemplate(
+      {
+        user,
+        templateKey: TEMPLATE,
+        copy: EMAIL_COPY.welcome_ads_connect,
+        facts: { ...EMPTY_FACTS, firstName: firstName(user.name) || null },
+        enforceGap: false,
+      },
+      { ...options.deps, supabase }
+    );
     if (result.status === 'sent') summary.sent += 1;
     else if (result.status === 'skipped') summary.skipped += 1;
     else if (result.status === 'duplicate') summary.duplicate += 1;

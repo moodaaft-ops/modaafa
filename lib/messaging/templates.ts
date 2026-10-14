@@ -1,5 +1,11 @@
 import { appBaseUrl, buildOptOutUrl } from './opt-out';
+import { firstName } from '@/lib/lifecycle/format';
+// TEMPORARY: the PR #84 follow-up texts. lib/stages/messages.ts is deleted by
+// the lifecycle engine (CONTRACT, agent A). When it goes, delete this import,
+// the `stageTemplates` block below and `StageTemplateId` from TemplateId.
 import { STAGE_TEMPLATE_IDS, renderStageEmail, type StageTemplateId } from '@/lib/stages/messages';
+
+export { firstName };
 
 export type TemplateId = 'welcome_ads_connect' | StageTemplateId;
 
@@ -19,12 +25,6 @@ function escapeHtml(value: string) {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#039;');
-}
-
-/** "أيمن أمين" becomes "أيمن". A missing or empty name leaves the greeting bare. */
-export function firstName(name?: string | null) {
-  const first = (name ?? '').trim().split(/\s+/)[0] ?? '';
-  return first.length > 0 && first.length <= 40 ? first : '';
 }
 
 /**
