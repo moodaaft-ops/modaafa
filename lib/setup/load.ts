@@ -24,6 +24,7 @@ import {
   type SetupKey,
 } from './questions';
 import { firstNameFrom, resolveSetupStage, type SetupStage } from './stage';
+import type { AdaptiveView } from './adaptive/types';
 
 export type SetupAccount = {
   customerId: string;
@@ -86,6 +87,8 @@ export type SetupState = {
    * locked. Read only for someone without access; null once they have it.
    */
   plan: Plan | null;
+  /** The adaptive tree (lib/setup/adaptive). Null while ADAPTIVE_ONBOARDING is off for this user: the screen then runs exactly as before. */
+  adaptive: AdaptiveView | null;
 };
 
 type User = { id: string; email?: string | null; user_metadata?: Record<string, unknown> | null };
@@ -263,6 +266,7 @@ export async function loadSetupState(supabase: any, user: User, opts: { edit?: b
     cta,
     freeAudit,
     plan,
+    adaptive: null,
   };
 }
 

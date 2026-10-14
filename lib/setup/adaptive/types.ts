@@ -281,3 +281,37 @@ export type FirstCampaignPlan = {
 };
 
 export type EndingKind = 'plan' | 'first_campaign' | 'agency' | 'tracking';
+
+// ---------------------------------------------------------------------------
+// What the setup screen receives (part C)
+// ---------------------------------------------------------------------------
+
+/**
+ * Built on the server by lib/setup/adaptive/view.ts and sent whole to the
+ * browser as `SetupState.adaptive` (null while ADAPTIVE_ONBOARDING is off).
+ * The raw signals never leave the server: only these computed pieces do.
+ */
+export type AdaptiveView = {
+  scenario: Pick<Scenario, 'state' | 'managed' | 'kind' | 'kindConfidence' | 'platform' | 'specialty' | 'outcome'>;
+  /** A linked, chosen account without a reusable stored read: the screen posts /api/setup/signals once, then reloads. */
+  needsRead: boolean;
+  /** Shown once before the first question, when the account was read and `confirm` is still pending. */
+  opener: Opener | null;
+  /** The adaptive copy for each pending key that has one. A pending key missing here keeps the legacy copy and dock. */
+  questions: Partial<Record<string, AdaptiveQuestion>>;
+  /** «فهمت عليك»: filled once nothing is pending, empty in edit mode. */
+  understood: UnderstoodRow[];
+  /** first_campaign for new, dormant and no_account; agency when managed is confirmed; tracking for no_tracking and tracking_suspect; else plan. */
+  ending: EndingKind;
+  /** May the free audit start? Never for new, dormant or no_account: they do not use the quota. */
+  auditAllowed: boolean;
+  /** A rules decision shown open and first on «خطتك جاهزة». When present the server has already moved the audit's first decision into the locked list. */
+  decision: ScenarioDecision | null;
+  /** «ليش أول شي» under the audit's first decision, when there is no rules decision. */
+  firstWhy: string | null;
+  firstCampaign: FirstCampaignPlan | null;
+  /** «أسئلة تسألها وكالتك» for the agency ending, at most five. */
+  agencyQuestions: string[];
+  /** Show «خل فريق مُضاعفة يديرها عنك» in the agency ending (AGENCY_FULL_MANAGEMENT_CARD). */
+  fullManagementCard: boolean;
+};
