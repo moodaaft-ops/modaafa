@@ -1,5 +1,5 @@
 import { stripPlanCategories, withScenarioLead, type Plan } from '@/lib/plan/plan';
-import type { SetupKey } from '../questions';
+import { TYPE_OPTIONS, keysAnsweredByProfile, type BusinessProfile, type SetupKey } from '../questions';
 import { resolveSetupStage, type SetupStage } from '../stage';
 import type { AdaptiveReactionContext } from './answers';
 import { adaptivePending, adaptiveQuestion } from './bank';
@@ -15,8 +15,11 @@ import type {
   AdaptiveAnswer,
   AdaptiveQuestion,
   AdaptiveView,
+  BusinessKind,
+  DominantOutcome,
   EndingKind,
   Scenario,
+  ScenarioDecision,
 } from './types';
 
 type Answered = Partial<Record<string, string | null>>;
@@ -41,7 +44,7 @@ export type AdaptiveViewInput = {
   answered: Answered;
   /** The words the customer saw when they answered (`data.label` of each ledger fact). */
   labels: Partial<Record<string, string>>;
-  business: { name: string | null; monthlyBudget: number | null; targetRegions: string[]; website: string | null } | null;
+  business: { name: string | null; monthlyBudget: number | null; targetRegions: string[]; website: string | null; sector?: string | null } | null;
   consentAnswered: boolean;
   edit: boolean;
   firstName: string | null;
@@ -52,6 +55,10 @@ export type AdaptiveViewInput = {
   plan: Plan | null;
   /** The chosen account's currency; the stored read's own wins when there is one. */
   currency?: string | null;
+  /** What the platform knows about the account's activity when the read failed (see ClassifyInput). Null when unknown. */
+  activityHint?: 'spends' | 'empty' | null;
+  /** The kind the customer agreed with on the opener, from the ledger (see ClassifyInput). */
+  confirmed?: { kind: BusinessKind; outcome: DominantOutcome | null } | null;
   /** For tests: the clock the stored read's age is judged by. */
   now?: Date;
 };
@@ -68,17 +75,20 @@ export type AdaptiveViewResult = {
  * The answers the adaptive tree reads. The opener's «إي صح» writes
  * `businesses.sector` and `primary_goal`, and the old-form rule would then count
  * `type`, `name` and `goal` as answered by the customer. They were not: they
- * were confirmed. So once `confirm` is «yes» those three count only when the
- * ledger itself holds them (a real `type` answer, a real `goal` answer), which
- * keeps the activity row sourced «أكدته» and still asks for the goal when the
- * account showed none.
+ * were confirmed. So once `confirm` is on record (yes, or a later no that
+ * replaced it: the sector an earlier yes wrote stays on the business) those three
+ * count only when the ledger itself holds them (a real `type` answer, a real
+ * `goal` answer), which keeps the activity row sourced «أكدته» and still asks
+ * for the goal when the account showed none. The kind the customer agreed with
+ * is read from the ledger (`LedgerEntries.confirmed`), not from the sector.
  */
 export function adaptiveAnswered(args: { answered: Answered; ledger: ReadonlyMap<string, string | null> }): Answered {
   const out: Answered = { ...args.answered };
   // The same holds when this chat wrote the sector through a `type` answer: the
   // screen re-plans after `type`, and the goal (asked in the kind's words for
   // new, dormant and no_account) must not vanish because the sector now exists.
-  if (args.ledger.get('confirm') === 'yes' || args.ledger.has('type')) {
+  // A «no» on the opener counts the same way: the sector an earlier «yes» wrote is not the customer's word either.
+  if (args.ledger.has('confirm') || args.ledger.has('type')) {
     for (const key of ['type', 'name', 'goal']) {
       if (!args.ledger.has(key)) delete out[key];
     }
@@ -86,8 +96,74 @@ export function adaptiveAnswered(args: { answered: Answered; ledger: ReadonlyMap
   return out;
 }
 
+/**
+ * Every setup answer on record for a business, as the setup screen and the plan
+ * lock both read it: the keys the old six-field form already answers (choice
+ * null), a stored sector that matches a type label (its id), and the ledger's
+ * own choice ids on top. Pass the result through `adaptiveAnswered` before the
+ * adaptive rules read it.
+ */
+export function answeredOnRecord(args: {
+  business: BusinessProfile | null;
+  ledger: ReadonlyMap<SetupKey, string | null>;
+}): Partial<Record<SetupKey, string | null>> {
+  const answered: Partial<Record<SetupKey, string | null>> = {};
+  for (const key of keysAnsweredByProfile(args.business)) answered[key] = null;
+  // The old form stored a free sector; when it matches a type label, edit mode can mark it.
+  const typeFromSector = TYPE_OPTIONS.find((option) => option.label === args.business?.sector?.trim())?.id;
+  if (typeFromSector) answered.type = typeFromSector;
+  for (const [key, choice] of args.ledger) answered[key] = choice;
+  return answered;
+}
+
 const FRESH_STATES = new Set<Scenario['state']>(['new', 'dormant', 'no_account']);
 const TRACKING_STATES = new Set<Scenario['state']>(['no_tracking', 'tracking_suspect']);
+
+/** The two states where the account spends but cannot say what the ads bring: no waste number, no amount on any finding. */
+export function isTrackingState(state: Scenario['state']): boolean {
+  return TRACKING_STATES.has(state);
+}
+
+/**
+ * «خطتك جاهزة» as the browser may see it once the tree has classified the
+ * account: the rules decision (if any) takes the open slot and the audit's first
+ * decision moves into the locked list, a tracking state shows no waste number,
+ * and no decision carries its audit category. `firstWhy` is «ليش أول شي» for the
+ * audit's own first decision, only when no rules decision took its place. One
+ * place, so the setup screen, /home, /optimizer and /audit say the same thing.
+ */
+export function scenarioLead(args: {
+  scenario: Scenario;
+  signals: AccountSignals | null;
+  answered: Answered;
+  labels: Partial<Record<string, string>>;
+  currency: string;
+  /** The plan as loaded with `includeCategory`, or null. */
+  plan: Plan | null;
+  /** False when there is no account flow to speak for (no rules decision, no «ليش أول شي»). */
+  active: boolean;
+}): { plan: Plan | null; decision: ScenarioDecision | null; firstWhy: string | null } {
+  const { scenario, signals, answered, labels, currency, active } = args;
+  const decision = active ? scenarioDecision({ scenario, signals, answered, currency }) : null;
+
+  let plan = args.plan;
+  if (plan) {
+    if (decision) plan = withScenarioLead(plan);
+    if (TRACKING_STATES.has(scenario.state)) plan = { ...plan, waste: null };
+    plan = stripPlanCategories(plan);
+  }
+
+  const firstWhy =
+    active && !decision && args.plan?.first
+      ? planReason({
+          scenario,
+          answered,
+          labels,
+          decision: { title: args.plan.first.title, category: args.plan.first.category ?? null },
+        })
+      : null;
+  return { plan, decision, firstWhy };
+}
 
 /** The ending the screen shows after «فهمت عليك». */
 export function endingFor(scenario: Pick<Scenario, 'state' | 'managed'>): EndingKind {
@@ -107,11 +183,17 @@ export function buildAdaptiveView(input: AdaptiveViewInput): AdaptiveViewResult 
   const signals = input.accountChosen ? input.signals : null;
   const connectNoAccount = input.connectError === 'no_accounts' || input.connectError === 'no_client_accounts';
 
-  const scenario = classifyScenario({ signals, linkedAccounts: input.linkedAccounts, connectNoAccount, answered });
+  const scenario = classifyScenario({
+    signals,
+    linkedAccounts: input.linkedAccounts,
+    connectNoAccount,
+    answered,
+    activityHint: input.activityHint ?? null,
+    confirmed: input.confirmed ?? null,
+  });
 
-  // --- which flow runs: an account to read, or the customer's «كمّل بدون حساب»
-  const goesOnWithoutAccount = !input.accountChosen && input.linkedAccounts === 0 && answeredChoice(answered, 'has_account') === 'none';
-  const withoutAccountFlow = goesOnWithoutAccount && !edit;
+  // --- which flow runs: an account to read, or the customer's «كمّل بدون حساب» (editing it too: «عدّل شي» must open the questions)
+  const withoutAccountFlow = !input.accountChosen && input.linkedAccounts === 0 && answeredChoice(answered, 'has_account') === 'none';
   const flowActive = input.accountChosen || withoutAccountFlow;
 
   let pending: SetupKey[] = [];
@@ -158,7 +240,12 @@ export function buildAdaptiveView(input: AdaptiveViewInput): AdaptiveViewResult 
           answered,
           labels,
           business: input.business
-            ? { name: input.business.name, monthlyBudget: input.business.monthlyBudget, targetRegions: input.business.targetRegions }
+            ? {
+                name: input.business.name,
+                monthlyBudget: input.business.monthlyBudget,
+                targetRegions: input.business.targetRegions,
+                sector: input.business.sector ?? null,
+              }
             : null,
         })
       : [];
@@ -167,7 +254,15 @@ export function buildAdaptiveView(input: AdaptiveViewInput): AdaptiveViewResult 
   const currency = (signals?.currency ?? input.currency ?? input.plan?.currency ?? 'SAR').toUpperCase();
 
   // --- the rules decision, the plan the browser may see, and the words around them
-  const decision = flowActive ? scenarioDecision({ scenario, signals, answered, currency }) : null;
+  const { plan, decision, firstWhy } = scenarioLead({
+    scenario,
+    signals,
+    answered,
+    labels,
+    currency,
+    plan: input.plan,
+    active: flowActive,
+  });
 
   const auditDecisions = input.plan
     ? [...(input.plan.first ? [input.plan.first] : []), ...input.plan.locked].map((row) => ({
@@ -175,23 +270,6 @@ export function buildAdaptiveView(input: AdaptiveViewInput): AdaptiveViewResult 
         category: row.category ?? null,
       }))
     : [];
-
-  let plan = input.plan;
-  if (plan) {
-    if (decision) plan = withScenarioLead(plan);
-    if (TRACKING_STATES.has(scenario.state)) plan = { ...plan, waste: null };
-    plan = stripPlanCategories(plan);
-  }
-
-  const firstWhy =
-    flowActive && !decision && input.plan?.first
-      ? planReason({
-          scenario,
-          answered,
-          labels,
-          decision: { title: input.plan.first.title, category: input.plan.first.category ?? null },
-        })
-      : null;
 
   const firstCampaign = flowActive
     ? firstCampaignPlan({
@@ -220,6 +298,8 @@ export function buildAdaptiveView(input: AdaptiveViewInput): AdaptiveViewResult 
     questions,
     understood,
     ending,
+    // The state comes from the read or, when the read failed, from the activity hint; with neither it
+    // stays «active» (today's behavior), which is the one case a free audit can still run on an empty account.
     auditAllowed: scenario.state === 'active' || TRACKING_STATES.has(scenario.state),
     decision,
     firstWhy,

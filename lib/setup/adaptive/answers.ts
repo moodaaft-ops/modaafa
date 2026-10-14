@@ -23,7 +23,7 @@ import {
   type DominantOutcome,
 } from './types';
 import { ALL_FOCUS_ENTRIES, FOCUS_ALL_ID, FOCUS_ALL_LABEL, FOCUS_OTHER_ID, FOCUS_TEXT_MAX, FOCUS_TEXT_MIN } from './focus';
-import { KIND_TYPE_ID, currencyWord } from './shared';
+import { KIND_TYPE_ID, currencyWord, money } from './shared';
 
 export type AdaptiveParse = { ok: true; answer: AdaptiveAnswer } | { ok: false; error: string };
 
@@ -346,6 +346,20 @@ function rangeText(range: { min: number | null; max: number | null }, unit: stri
   return `من ${formatAmount(range.min ?? 0)} إلى ${formatAmount(range.max ?? 0)} ${unit}`;
 }
 
+/**
+ * The `businesses` columns a «yes» on the opener writes for the kind and outcome it confirmed. One rule for the
+ * write itself and for taking it back when the customer later says «no» (see `recordSetupAnswer`).
+ */
+export function confirmBusinessColumns(
+  kind?: BusinessKind | null,
+  outcome?: DominantOutcome | null
+): Partial<{ sector: string; primary_goal: string }> {
+  const typeId = kind ? KIND_TYPE_ID[kind] : null;
+  const sector = typeId ? TYPE_OPTIONS.find((option) => option.id === typeId)?.label : undefined;
+  const goal = outcome ? OUTCOME_GOAL[outcome] : undefined;
+  return { ...(sector ? { sector } : {}), ...(goal ? { primary_goal: goal } : {}) };
+}
+
 /** CONTRACT (part B): the businesses columns (sector, primary_goal only) and the memory fact for one answer. */
 export function adaptiveEffects(answer: AdaptiveAnswer): {
   business: Partial<{ sector: string; primary_goal: string }>;
@@ -371,13 +385,11 @@ export function adaptiveEffects(answer: AdaptiveAnswer): {
           fact: { kind: 'other', fact_ar: 'قال إن قراءتنا لنوع نشاطه ونتيجته مو صح', data: data() },
         };
       }
-      const typeId = answer.kind ? KIND_TYPE_ID[answer.kind] : null;
-      const sector = typeId ? TYPE_OPTIONS.find((option) => option.id === typeId)?.label : undefined;
-      const goal = answer.outcome ? OUTCOME_GOAL[answer.outcome] : undefined;
+      const columns = confirmBusinessColumns(answer.kind, answer.outcome);
       const outcomeText = answer.outcome ? OUTCOME_TEXT[answer.outcome] : undefined;
-      const pieces = [sector ? `نشاطه ${sector}` : null, outcomeText ? `وأهم نتيجة يبيها: ${outcomeText}` : null].filter(Boolean);
+      const pieces = [columns.sector ? `نشاطه ${columns.sector}` : null, outcomeText ? `وأهم نتيجة يبيها: ${outcomeText}` : null].filter(Boolean);
       return {
-        business: { ...(sector ? { sector } : {}), ...(goal ? { primary_goal: goal } : {}) },
+        business: columns,
         fact: {
           kind: outcomeText ? 'goal' : 'other',
           fact_ar: pieces.length > 0 ? `${pieces.join('، ')} (أكد قراءتنا لحسابه)` : 'أكد قراءتنا لحسابه',
@@ -411,20 +423,30 @@ export function adaptiveEffects(answer: AdaptiveAnswer): {
       };
     }
 
-    case 'aov_check':
+    case 'aov_check': {
+      // The number the account reported, filled by the server (never the browser) so the fact can say it.
+      const reported = typeof answer.amount === 'number' && Number.isFinite(answer.amount) && answer.amount > 0 ? Math.round(answer.amount) : null;
+      const said = reported !== null ? money(reported, answer.currency) : null;
       return {
         business: {},
         fact: {
           kind: 'margin',
           fact_ar:
             choice === 'same'
-              ? 'متوسط الطلب اللي قراه حسابه قريب من الصح'
+              ? said
+                ? `متوسط طلبه من قوقل قرابة ${said}، وقال إنه قريب من الصح`
+                : 'متوسط الطلب اللي قراه حسابه قريب من الصح'
               : choice === 'less'
-                ? 'متوسط طلبه الفعلي أقل من اللي قراه حسابه'
-                : 'متوسط طلبه الفعلي أكثر من اللي قراه حسابه',
-          data: data(),
+                ? said
+                  ? `متوسط طلبه من قوقل قرابة ${said}، وقال إن الفعلي أقل`
+                  : 'متوسط طلبه الفعلي أقل من اللي قراه حسابه'
+                : said
+                  ? `متوسط طلبه من قوقل قرابة ${said}، وقال إن الفعلي أكثر`
+                  : 'متوسط طلبه الفعلي أكثر من اللي قراه حسابه',
+          data: data(reported !== null ? { aov: reported, ...(answer.currency ? { currency: answer.currency } : {}) } : {}),
         },
       };
+    }
 
     case 'margin': {
       const range = MARGIN_RANGES[choice] ?? { min: null, max: null };

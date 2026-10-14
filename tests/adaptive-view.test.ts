@@ -1,6 +1,4 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import test from 'node:test';
 
 import { adaptiveReaction } from '../lib/setup/adaptive/answers';
@@ -306,10 +304,24 @@ test('stage: a running connect job wins over everything, the no-account flow inc
   assert.equal(clinic.stage, 'connecting');
 });
 
-test('stage: editing with no account is plain setup (the page reloads it without edit)', () => {
-  const result = buildAdaptiveView(input({ signals: null, linkedAccounts: 0, accountChosen: false, answered: { has_account: 'none' }, edit: true }));
-  assert.equal(result.stage, 'connect');
-  assert.deepEqual(result.pending, []);
+test('stage: editing with no account asks the no-account questions again, with the current answers marked', () => {
+  // «عدّل شي» used to answer stage 'connect' with nothing pending, and the page then dropped edit: it did nothing.
+  const result = buildAdaptiveView(
+    input({
+      signals: null,
+      linkedAccounts: 0,
+      accountChosen: false,
+      answered: { has_account: 'none', type: 'clinic', goal: 'clinic_calls', focus_service: 'dental_braces' },
+      edit: true,
+    })
+  );
+  assert.equal(result.stage, 'questions');
+  assert.deepEqual(result.pending, ['type', 'focus_service', 'regions', 'goal', 'budget', 'website']);
+  assert.equal(result.view.questions.focus_service?.current, 'dental_braces');
+  // Editing never replays the opener, the summary or the connect step.
+  assert.equal(result.view.opener, null);
+  assert.deepEqual(result.view.understood, []);
+  assert.equal(result.view.needsRead, false);
 });
 
 test('stage: several accounts and none picked is choose, with nothing pending and nothing read', () => {
@@ -494,8 +506,13 @@ test('answered: a «yes» on the opener does not turn the sector it wrote into a
   // A `type` answered in this chat wrote the sector too: the goal is still asked.
   const typed = adaptiveAnswered({ answered: { type: 'ecommerce', name: null, goal: null }, ledger: new Map([['type', 'ecommerce']]) });
   assert.deepEqual(typed, { type: 'ecommerce' });
-  // Without a yes nothing is touched.
-  const untouched = adaptiveAnswered({ answered: { type: 'clinic', goal: null }, ledger: new Map([['confirm', 'no']]) });
+  // A «no» that replaced an earlier «yes» leaves the sector that «yes» wrote on the business: it is not the
+  // customer's word either, so it must not count as a stated type (this made the account read «stated clinic»
+  // right after the customer said it was not a clinic).
+  const afterNo = adaptiveAnswered({ answered: { type: 'clinic', name: null, goal: null, budget: null }, ledger: new Map([['confirm', 'no']]) });
+  assert.deepEqual(afterNo, { budget: null });
+  // Without any confirm on record nothing is touched.
+  const untouched = adaptiveAnswered({ answered: { type: 'clinic', goal: null }, ledger: new Map() });
   assert.deepEqual(untouched, { type: 'clinic', goal: null });
 
   // And the difference shows: the activity row is «أكدته», not «قلته».
@@ -751,40 +768,8 @@ test('saveSetupAnswer passes the reaction context to the reply (margin with the 
   assert.equal(without.ok && without.reaction, 'تمام، الربح ضيق، فبحسب كل ريال إعلان بدقة.');
 });
 
-const ROUTE = readFileSync(resolve(__dirname, '../app/api/setup/answer/route.ts'), 'utf8');
-
-test('answer route: an adaptive key from a user without the flag is a 404 before anything is parsed or written', () => {
-  const gate = ROUTE.indexOf("isAdaptiveKey(body?.key) && !adaptiveOn");
-  assert.ok(gate > 0, 'the gate exists');
-  assert.match(ROUTE.slice(gate, gate + 160), /status: 404/);
-  assert.ok(gate < ROUTE.indexOf('parseAnswer(body?.key'), 'the gate comes before parsing');
-  assert.ok(gate < ROUTE.indexOf('saveSetupAnswer({'), 'and before the write');
-  assert.match(ROUTE, /const adaptiveOn = isAdaptiveOnboarding\(process\.env, user\.email\)/);
-});
-
-test('answer route: the workspace is created only for «has_account», only with the flag on, and only when none exists', () => {
-  assert.match(ROUTE, /if \(!business && adaptiveOn && parsed\.answer\.key === 'has_account'\) \{\s*business = await ensureSetupBusiness\(supabase, user\);/);
-  // Every other answer without a business is still the old 409.
-  assert.match(ROUTE, /if \(!business\) return NextResponse\.json\(\{ error: 'no_business' \}, \{ status: 409 \}\)/);
-});
-
-test('answer route: product titles and the reaction context are read only for adaptive answers with the flag on', () => {
-  assert.match(ROUTE, /if \(adaptiveOn && admin && isAdaptiveAnswer\(answer\) && ANSWER_KEYS_NEEDING_SIGNALS\.includes\(answer\.key\)\)/);
-  assert.match(ROUTE, /if \(answer\.key === 'push_products'\) answer = withProductTitles\(answer, signals\)/);
-});
-
-test('load.ts: with the flag off nothing adaptive is read and adaptive is null', () => {
-  const load = readFileSync(resolve(__dirname, '../lib/setup/load.ts'), 'utf8');
-  assert.match(load, /const adaptiveOn = isAdaptiveOnboarding\(process\.env, user\.email\)/);
-  assert.match(load, /adaptiveOn && admin \? loadStoredSignals\(admin, selectedAccount\.id\) : Promise\.resolve\(null\)/);
-  assert.match(load, /let adaptive: AdaptiveView \| null = null;\s*if \(adaptiveOn\) \{/);
-  // pending, stage and plan are overwritten only inside that block.
-  const block = load.slice(load.indexOf('if (adaptiveOn) {\n    const built'), load.indexOf('const accountName ='));
-  for (const assignment of ['pending = built.pending', 'stage = built.stage', 'plan = built.plan', 'adaptive = built.view']) {
-    assert.ok(block.includes(assignment), assignment);
-  }
-  assert.equal(load.slice(0, load.indexOf('if (adaptiveOn) {\n    const built')).includes('built.'), false);
-});
+// The answer route's gate, the workspace creation and the server-filled fields are behavioral tests in
+// tests/adaptive-answers-flow.test.ts; the loader's flag-off guarantee is in tests/adaptive-load.test.ts.
 
 // ---------------------------------------------------------------------------
 // ensureSetupBusiness

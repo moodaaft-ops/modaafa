@@ -59,6 +59,8 @@ function specialtyOf(names: string[]): ClinicSpecialty {
 export function classifyScenario(input: ClassifyInput): Scenario {
   const { signals, linkedAccounts, connectNoAccount, answered } = input;
   const evidence: string[] = [];
+  // The kind the customer agreed with on the opener. «general» says nothing, so it is not used.
+  const confirmed = input.confirmed && input.confirmed.kind !== 'general' ? input.confirmed : null;
 
   const campaigns = sigValue(signals?.campaigns);
   const stated = (() => {
@@ -75,6 +77,14 @@ export function classifyScenario(input: ClassifyInput): Scenario {
     evidence.push('no_account');
   } else if (!campaigns) {
     evidence.push('no_read');
+    // The read failed, but the platform may already know whether the account spends. Only the
+    // answer «nothing runs» changes the state; «it spends» keeps it active with no kind guessed.
+    if (input.activityHint === 'empty') {
+      state = 'new';
+      evidence.push('hint:empty');
+    } else if (input.activityHint === 'spends') {
+      evidence.push('hint:spends');
+    }
   } else {
     evidence.push('read');
     const totals = campaignTotals(campaigns);
@@ -194,11 +204,19 @@ export function classifyScenario(input: ClassifyInput): Scenario {
   const scored = readable ? ranked.filter((key) => scores[key] >= 1) : [];
   let kindRanking: BusinessKind[] = [...scored, 'general', ...SCORED_KINDS.filter((key) => !scored.includes(key))];
 
+  let usedConfirmed = false;
   if (stated) {
     kind = stated;
     kindConfidence = 'stated';
     kindRanking = [stated, ...kindRanking.filter((key) => key !== stated)];
     evidence.push('stated:type');
+  } else if (confirmed && !confirmedNo && state !== 'no_account') {
+    // The customer agreed with this kind on the opener. It stays their word when the read is gone or says something else.
+    kind = confirmed.kind;
+    kindConfidence = 'confident';
+    kindRanking = [confirmed.kind, ...kindRanking.filter((key) => key !== confirmed.kind)];
+    usedConfirmed = true;
+    evidence.push('confirmed:kind');
   } else if (confirmedNo && kindConfidence !== 'none') {
     kindConfidence = 'none';
     evidence.push('confirm:no');
@@ -213,6 +231,12 @@ export function classifyScenario(input: ClassifyInput): Scenario {
   if (sigValue(signals?.hours)) evidence.push('hours');
   if (sigValue(signals?.products)) evidence.push('products');
 
+  let outcome: Scenario['outcome'] = campaigns ? outcomeOfGroup(dominant) : 'unknown';
+  if (usedConfirmed && outcome === 'unknown' && confirmed?.outcome && confirmed.outcome !== 'unknown') {
+    outcome = confirmed.outcome;
+    evidence.push('confirmed:outcome');
+  }
+
   return {
     state,
     managed,
@@ -221,7 +245,7 @@ export function classifyScenario(input: ClassifyInput): Scenario {
     kindRanking,
     platform: finalPlatform,
     specialty,
-    outcome: campaigns ? outcomeOfGroup(dominant) : 'unknown',
+    outcome,
     evidence,
   };
 }
