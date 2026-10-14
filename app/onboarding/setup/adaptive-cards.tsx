@@ -69,9 +69,6 @@ export function FirstCampaignCard({ plan }: { plan: FirstCampaignPlan }) {
           {plan.title}
         </h2>
         <p className="mt-1 text-[16px] font-semibold leading-8">{plan.campaign}</p>
-        <p className="mt-2 inline-flex max-w-full rounded-full border border-border-strong/60 px-3 py-0.5 text-[12.5px] leading-6 text-foreground">
-          الميزانية: {plan.budgetLine}
-        </p>
       </div>
       <ul className="space-y-3.5 border-t border-border/70 px-4 py-4">
         {plan.items.map((item) => (

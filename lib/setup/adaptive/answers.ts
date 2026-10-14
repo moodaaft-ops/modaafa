@@ -51,7 +51,7 @@ export const PRODUCT_TEXT_MAX = 120;
 
 export const CONFIRM_OPTIONS: AdaptiveOption[] = [
   { id: 'yes', label: 'إي صح' },
-  { id: 'no', label: 'لا مو صح' },
+  { id: 'no', label: 'لا، غير كذا' },
 ];
 
 export const HAS_ACCOUNT_OPTIONS: AdaptiveOption[] = [

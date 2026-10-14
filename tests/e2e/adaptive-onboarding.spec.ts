@@ -116,7 +116,7 @@ test('a clinic: the opener shows what was read, the answers lead to «فهمت �
   await expect(page.getByText('وتطلع في جدة بس', { exact: false })).toBeVisible();
   await expect(page.getByText('يعني عيادة أسنان في جدة، وشغلك على الاتصالات.')).toBeVisible();
   await expect(page.getByText('صح كذا؟', { exact: true })).toBeVisible();
-  expect(await dockActions(page)).toEqual(['إي صح', 'لا مو صح']);
+  expect(await dockActions(page)).toEqual(['إي صح', 'لا، غير كذا']);
   await noSidewaysOverflow(page);
   await shot(page, 'clinic-opener');
 
@@ -191,7 +191,7 @@ test('a store: the average order is asked with the read number, the products are
   await expect(page.getByText('المتجر على سلة', { exact: false })).toBeVisible();
   await expect(page.getByText('آخر 30 يوم صرفت 3,200 ريال وجاك منها 41 طلب.')).toBeVisible();
   await expect(page.getByText('صح إن اللي يهمك الطلبات من المتجر؟')).toBeVisible();
-  expect(await dockActions(page)).toEqual(['إي صح', 'لا مو صح']);
+  expect(await dockActions(page)).toEqual(['إي صح', 'لا، غير كذا']);
   await noSidewaysOverflow(page);
   await shot(page, 'store-opener');
 
@@ -270,7 +270,7 @@ test('a new account is asked about the business, never runs the audit, and ends 
   const campaign = page.getByRole('region', { name: 'خطة أول حملة' });
   await expect(campaign).toBeVisible({ timeout: 20_000 });
   await expect(campaign.getByText('حملة بحث على العطور في الرياض')).toBeVisible();
-  await expect(campaign.getByText(/الميزانية:/)).toBeVisible();
+  await expect(campaign.getByText('الميزانية', { exact: true })).toBeVisible();
   await expect(campaign.getByText('الهيكل', { exact: true })).toBeVisible();
   // The trial button and «بعدين»: the same two the audit plan ends on.
   await expect(page.getByRole('link', { name: 'ابدأ 14 يوم مجاناً' })).toHaveAttribute('href', '/onboarding/trial');

@@ -140,7 +140,7 @@ test('a tapped option sends its id and the label the customer read', () => {
   assert.deepEqual(optionPayload(opt('same', 'نفس الرقم')), { answer: { choice: 'same' }, label: 'نفس الرقم' });
 });
 
-test('«إي صح» carries the kind and outcome the opener proposed, «لا مو صح» carries nothing else', () => {
+test('«إي صح» carries the kind and outcome the opener proposed, «لا، غير كذا» carries nothing else', () => {
   const [yes, no] = CONFIRM_OPTIONS;
   const proposal = { kind: 'clinic', outcome: 'calls' } as const;
   assert.deepEqual(confirmPayload(yes, proposal).answer, { choice: 'yes', kind: 'clinic', outcome: 'calls' });
@@ -254,7 +254,9 @@ test('the cards show what the tree gave them', () => {
       },
     })
   );
-  assert.ok(campaign.includes('id="plan-card"') && campaign.includes('الميزانية: ميزانية تبدأ فيها') && campaign.includes('تقويم الأسنان في جدة'));
+  assert.ok(campaign.includes('id="plan-card"') && campaign.includes('تقويم الأسنان في جدة'));
+  // The budget is one of the items (with the daily figure); no second pill repeating it.
+  assert.ok(!campaign.includes('الميزانية:'));
 
   const agency = html(React.createElement(AgencyQuestionsCard, { questions: ['ليش الصرف بالليل؟', 'وين يروح الاتصال؟'] }));
   assert.ok(agency.includes('أسئلة تسألها وكالتك') && agency.includes('ليش الصرف بالليل؟') && agency.includes('وين يروح الاتصال؟'));
@@ -267,7 +269,7 @@ test('the cards show what the tree gave them', () => {
 
 test('the opener dock has the two confirm tiles, «إي صح» first', () => {
   const out = html(React.createElement(ConfirmDock, { proposal: null, busy: false, onAnswer: noop }));
-  assert.ok(out.indexOf('إي صح') > -1 && out.indexOf('إي صح') < out.indexOf('لا مو صح'));
+  assert.ok(out.indexOf('إي صح') > -1 && out.indexOf('إي صح') < out.indexOf('لا، غير كذا'));
 });
 
 function question(patch: Partial<AdaptiveQuestion>): AdaptiveQuestion {
