@@ -16,6 +16,7 @@ import { getSubscriptionAccess, featureAccessMessage } from '@/lib/billing/entit
 import { hasProductAccess } from '@/lib/billing/access-gate';
 import { loadPlanLock, type PlanLockData } from '@/lib/plan/load';
 import { PlanLock } from '@/lib/plan/plan-lock';
+import { dropStalePending } from '@/lib/recommendations/staleness';
 import { Alert } from '@/lib/ui/alert';
 
 export const metadata = {
@@ -73,9 +74,15 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
   assertSupabaseRead(actionsResult.error, 'load optimizer actions');
   const recommendations = recommendationsResult.data;
   const actions = actionsResult.data;
-  const recs = recommendations ?? [];
+  // A pending optimizer card older than 14 days is not a current decision any
+  // more (lib/recommendations/staleness.ts), so it is neither listed nor counted.
+  const recs = dropStalePending<any>((recommendations ?? []) as any[]);
   const pending = recs.filter((item: any) => item.status === 'pending');
   const approved = recs.filter((item: any) => item.status === 'approved');
+  // A locked screen reads only id and status, so it cannot tell a stale card
+  // apart; the plan lock beside it is built from the filtered rows, so its
+  // count is the one to show.
+  const pendingCount = locked && lock ? lock.plan.decisionsCount : pending.length;
   const accountName = selectedAccount ? googleAdsAccountDisplayName(selectedAccount) : 'الحساب المختار';
 
   return (
@@ -112,7 +119,7 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
             {params?.executed && <Alert tone="success">تم التحقق من العملية وتنفيذها وتسجيل نتيجتها.</Alert>}
             {params?.reverted && <Alert tone="success">تم التحقق من التراجع وإعادة الحالة السابقة في Google Ads.</Alert>}
             <section className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3">
-              <MetricCard label="بانتظار الموافقة" value={formatNumberAr(pending.length)} tone={pending.length ? 'brand' : 'default'} />
+              <MetricCard label="بانتظار الموافقة" value={formatNumberAr(pendingCount)} tone={pendingCount ? 'brand' : 'default'} />
               <MetricCard label="معتمدة للتنفيذ" value={formatNumberAr(approved.length)} />
               <MetricCard label="إجراءات مسجّلة" value={formatNumberAr((actions ?? []).length)} />
             </section>

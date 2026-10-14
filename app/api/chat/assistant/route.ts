@@ -22,6 +22,7 @@ import {
   featureAccessStatus,
   refundFeatureUsage,
 } from '@/lib/billing/entitlements';
+import { dropStalePending } from '@/lib/recommendations/staleness';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 import { isSameOriginRequest } from '@/lib/security/origin';
 
@@ -216,7 +217,8 @@ export async function POST(req: NextRequest) {
   }
 
   const cachedCampaigns = (campaignResult.data ?? []) as AssistantCampaignInput[];
-  const recommendations = (recommendationResult.data ?? []) as AssistantRecommendationInput[];
+  // A pending optimizer card older than 14 days is not a current decision (lib/recommendations/staleness.ts).
+  const recommendations = dropStalePending((recommendationResult.data ?? []) as AssistantRecommendationInput[]);
   const auditHistory = (auditResult.data ?? []) as AssistantAuditRecordInput[];
   const actions = (actionResult.data ?? []) as AssistantActionInput[];
   const analysis = buildAssistantAnalysis({

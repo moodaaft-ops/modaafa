@@ -217,7 +217,7 @@ test('the route builds targets from the economics, not from the account totals',
   assert.doesNotMatch(route, /enabledActions === 0/);
   // The verdict is the real health check, and the snapshot reaches the guardrails.
   assert.match(route, /buildConversionTracking\(/);
-  assert.match(route, /checkGuardrails\(action, account\.id, supabase, \{ snapshot \}\)/);
+  assert.match(route, /checkGuardrails\(action, account\.id, supabase, \{\s*snapshot,/);
   assert.match(route, /loadEconomics\(supabase,/);
 });
 

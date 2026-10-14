@@ -37,6 +37,7 @@ import { HomeThread } from './home-thread';
 import { LockedHome } from './locked-home';
 import { RecentChanges } from './recent-changes';
 import type { ChatQuickAction } from '@/lib/chat-first/contracts';
+import { dropStalePending } from '@/lib/recommendations/staleness';
 
 export const metadata = { title: 'الرئيسية' };
 
@@ -112,6 +113,8 @@ export default async function HomePage({
     loadRecentChanges(supabase, { accountId: selectedAccount.id, customerId: selectedAccount.customer_id }),
   ]);
 
+  // A pending optimizer card older than 14 days is not today's decision any more (lib/recommendations/staleness.ts).
+  const currentRecs: any[] = dropStalePending<any>(recsRes.error ? [] : ((recsRes.data ?? []) as any[]));
   const ledger = ledgerEntries.choices;
   const currency = (selectedAccount.currency_code ?? 'SAR').toUpperCase();
   const hasRecentChanges = recentChanges.items.length > 0;
@@ -138,7 +141,7 @@ export default async function HomePage({
     ]);
     const basePlan = buildPlan({
       audit: lockedAudit,
-      recommendations: toPlanRecommendations(recsRes.error ? [] : recsRes.data ?? []),
+      recommendations: toPlanRecommendations(currentRecs),
       currency,
       includeCategory: adaptiveOn,
     });
@@ -189,7 +192,7 @@ export default async function HomePage({
   const week = weekNumbers(campaignsRes.error ? [] : campaignsRes.data ?? []);
   const audit = auditRes.error ? null : auditRes.data;
   const decisions: Decision[] = orderDecisions(
-    (recsRes.error ? [] : recsRes.data ?? []).map((row: any) => ({
+    currentRecs.map((row: any) => ({
       id: row.id,
       title: row.title,
       description: row.description ?? null,

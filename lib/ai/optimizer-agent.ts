@@ -3,6 +3,7 @@ import type { Customer } from 'google-ads-api';
 import { createAdminClient } from '../supabase/server';
 import { JARVIS_CORE_RULES_AR } from '../jarvis/playbook/core-rules';
 import type { BreakEven } from '../economics/break-even';
+import { dropStalePending } from '../recommendations/staleness';
 import {
   BID_LOCK_DAYS,
   BUDGET_LOCK_DAYS,
@@ -58,10 +59,10 @@ READING THE DATA
 
 ALLOWED ACTIONS
 - pause_keyword: only when the keyword's 30-day cost is at least 2 x economics.allowable_cpa.value, it has 0 conversions and at least 20 clicks. underperforming_keywords is a 30-day list with cost, match type and ad group. target_id is the keyword's ad_group_criterion.resource_name copied verbatim.
-- add_negative_keyword: add a negative when a search term has 0 conversions AND 30-day cost of at least 1 x allowable_cpa.value, or when it is clearly irrelevant to the business and has 5+ clicks. Never negate a term that matches an enabled keyword of the account (the server drops those). params: { campaign_resource, keyword_text, match_type: "EXACT" | "PHRASE" }. campaign_resource MUST be the campaign.resource_name copied verbatim from the SAME wasted_search_terms row, never guessed from the campaign list.
-- add_keyword: promote a CONVERTING search term (2+ conversions in 30 days) into a real keyword in the ad group that captured it, and only when the term's CPA (cost / conversions) is at or below allowable_cpa.value. params: { ad_group_resource, keyword_text, match_type: "EXACT" | "PHRASE", source: { clicks, conversions, cost } }. Never propose a keyword that already exists in the account, and never use BROAD.
+- add_negative_keyword: add a negative when a search term has 0 conversions AND 30-day cost of at least 1 x allowable_cpa.value, or when it is clearly irrelevant to the business and has 5+ clicks. Never negate a term that matches an enabled keyword of the account (the server drops those), and the server skips a term that already has a pending negative in the same campaign. params: { campaign_resource, keyword_text, match_type: "EXACT" | "PHRASE" }. campaign_resource MUST be the campaign.resource_name copied verbatim from the SAME wasted_search_terms row, never guessed from the campaign list.
+- add_keyword: promote a CONVERTING search term (2+ conversions in 30 days) into a real keyword in the ad group that captured it, and only when the term's CPA (cost / conversions) is at or below allowable_cpa.value. params: { ad_group_resource, keyword_text, match_type: "EXACT" | "PHRASE", source: { clicks, conversions, cost } }. Never propose a keyword that already exists in the account, and never use BROAD. The server skips a keyword that already has a pending recommendation in that ad group (under any match type) and allows at most 3 pending additions per ad group, so propose the strongest terms only.
 - adjust_budget: params { budget_resource, current_amount_micros (copy from the campaign row), new_amount_micros (the absolute new daily amount), delta_pct }. new_amount_micros is what actually executes. delta_pct must be between +5 and +20 or between -20 and -5, and must match the two amounts. At most one budget change per budget per 7 days: the server rejects a budget that was changed, or already has a pending recommendation, in the last 7 days.
-  INCREASE only if ALL of these hold: tracking is "healthy"; the economics are known; the campaign's 30-day return is clearly above break-even (ROAS at least 1.2 x break_even_roas, or CPA at most 0.8 x break_even_cpa) on at least 15 conversions in 30 days; diag.lost_budget_is is at least 0.10 AND diag.search_is is below 0.5; and no budget change on that budget in the last 7 days. For a campaign type with no impression share (null search_is and lost_budget_is), raise only if diag.status_reasons contains BUDGET_CONSTRAINED and the same return condition holds. Step: +10% to +20%.
+  INCREASE only if ALL of these hold: tracking is "healthy"; the economics are known; the campaign's 30-day return is clearly above break-even (ROAS at least 1.2 x break_even_roas, or CPA at most 0.8 x break_even_cpa) on at least 15 conversions in 30 days; diag.lost_budget_is is at least 0.20 AND diag.search_is is below 0.5; and no budget change on that budget in the last 7 days. For a campaign type with no impression share (null search_is and lost_budget_is), raise only if diag.status_reasons contains BUDGET_CONSTRAINED and the same return condition holds. Step: +10% to +20%.
   DECREASE only if tracking is "healthy", the economics are known, the 30-day CPA is at least 1.5 x break_even_cpa (or ROAS is at most break_even_roas / 1.5) and the 30-day spend is at least 2 x break_even_cpa (for a store that has only break_even_roas, at least 2 x account_history.cpa_30d). Step: -10% to -20%.
   Economics unknown means no budget change at all.
 - adjust_bid: adjust an ad-group target CPA / target ROAS only for ad groups listed in <account_data>.ad_group_bid_targets, and only when the campaign has at least 30 conversions in 30 days, tracking is "healthy" and the economics are known. Step 10% to 20%, and no target change on that ad group in the last 14 days. A target CPA must never be set above break_even_cpa and a target ROAS never below break_even_roas. params: { ad_group_resource, and exactly ONE of target_cpa_micros or target_roas (the new value), plus the matching current_target_cpa_micros or current_target_roas copied verbatim from that row }. Match the target kind the ad group already uses; never introduce the other kind.
@@ -414,7 +415,15 @@ export function sanitizePromptText(value: string, maxLength = 300) {
 export type GuardrailContext = {
   snapshot: OptimizerSnapshot;
   now?: Date;
+  /**
+   * Told why a proposal was refused (a short code and the action type), so the
+   * caller can keep a tally for the run's audit trail. `checkGuardrails`
+   * itself still answers with the action or null.
+   */
+  onReject?: (rejection: GuardrailRejection) => void;
 };
+
+export type GuardrailRejection = { code: string; action_type: string };
 
 /** Rows of ai_actions for one action type since a moment. `error` means the history is unreadable. */
 async function recentExecutedRows(supabase: any, accountId: string, actionType: string, sinceMs: number) {
@@ -436,7 +445,8 @@ async function pendingLockRows(
   accountId: string,
   operation: string,
   resourceKey: string,
-  sinceMs: number
+  sinceMs: number,
+  nowMs: number = Date.now()
 ): Promise<LockRow[] | null> {
   const { data, error } = await supabase
     .from('recommendations')
@@ -446,7 +456,10 @@ async function pendingLockRows(
     .gte('created_at', new Date(sinceMs).toISOString())
     .limit(200);
   if (error || !Array.isArray(data)) return null;
-  return data.map((row: any) => ({
+  // The 7 and 14 day windows are shorter than the 14 day stale line, but a
+  // pending optimizer row that is stale never locks anything, whatever the
+  // window a caller passes.
+  return dropStalePending(data, nowMs).map((row: any) => ({
     operation: String(row?.action_payload?.operation ?? ''),
     resource: String(row?.action_payload?.params?.[resourceKey] ?? ''),
     at: row?.created_at ?? null,
@@ -475,9 +488,16 @@ export async function checkGuardrails(
 ): Promise<OptimizerAction | null> {
   const supabase = supabaseClient ?? createAdminClient();
   const nowMs = (context?.now ?? new Date()).getTime();
+  const reject = (code: string): null => {
+    context?.onReject?.({ code, action_type: action.type });
+    return null;
+  };
 
   // Tracking gate (queue time): every action that reads conversion numbers.
-  if (context && !evaluateTrackingGate(action, context).ok) return null;
+  if (context) {
+    const trackingVerdict = evaluateTrackingGate(action, context);
+    if (!trackingVerdict.ok) return reject(trackingVerdict.code);
+  }
 
   // Guardrail 1: budget changes. The step is 5 to 20% either way (titan 5.2,
   // 5.3, 6.2: 10 to 20% per step, and 20% or more can reset a smart
@@ -485,12 +505,14 @@ export async function checkGuardrails(
   // no increase over 50% cumulative in 24 hours.
   if (action.type === 'adjust_budget') {
     const budgetResource = String((action.params as any).budget_resource ?? '');
-    if (!evaluateBudgetBounds(action.params).ok) return null;
+    const boundsVerdict = evaluateBudgetBounds(action.params);
+    if (!boundsVerdict.ok) return reject(boundsVerdict.code);
     const newPct = Number((action.params as any).delta_pct ?? 0);
 
     // Queue time: economics known, tracking healthy, scale or cut gate, impression share.
-    if (context && !evaluateBudgetGate(action, context, accountCpa30dFromSnapshot(context.snapshot)).ok) {
-      return null;
+    if (context) {
+      const budgetVerdict = evaluateBudgetGate(action, context, accountCpa30dFromSnapshot(context.snapshot));
+      if (!budgetVerdict.ok) return reject(budgetVerdict.code);
     }
 
     const { data: recent, error: recentError } = await recentExecutedRows(
@@ -504,7 +526,7 @@ export async function checkGuardrails(
         accountId,
         error: recentError,
       });
-      return null;
+      return reject('budget_history_unreadable');
     }
 
     // One change per budget per week, executed or still waiting for approval.
@@ -513,16 +535,21 @@ export async function checkGuardrails(
     // recommendation must not lock itself out at execution.
     if (context) {
       const executedRows = executedLockRows(recent, 'adjust_budget', 'budget_resource');
-      if (lockedByRecentChange(executedRows, 'adjust_budget', budgetResource, BUDGET_LOCK_DAYS, nowMs)) return null;
+      if (lockedByRecentChange(executedRows, 'adjust_budget', budgetResource, BUDGET_LOCK_DAYS, nowMs)) {
+        return reject('budget_locked_recent_change');
+      }
       const pending = await pendingLockRows(
         supabase,
         accountId,
         'adjust_budget',
         'budget_resource',
-        nowMs - BUDGET_LOCK_DAYS * DAY_MS
+        nowMs - BUDGET_LOCK_DAYS * DAY_MS,
+        nowMs
       );
-      if (!pending) return null;
-      if (lockedByRecentChange(pending, 'adjust_budget', budgetResource, BUDGET_LOCK_DAYS, nowMs)) return null;
+      if (!pending) return reject('pending_unreadable');
+      if (lockedByRecentChange(pending, 'adjust_budget', budgetResource, BUDGET_LOCK_DAYS, nowMs)) {
+        return reject('budget_locked_pending');
+      }
     }
 
     // Compound the INCREASES on the SAME budget resource over 24h. Summing the
@@ -544,7 +571,7 @@ export async function checkGuardrails(
       if (Number.isFinite(rowPct) && rowPct > 0) increaseFactor *= 1 + rowPct / 100;
     }
     if ((increaseFactor - 1) * 100 > 50) {
-      return null; // Block: cumulative 24h increase would exceed 50%
+      return reject('budget_cumulative_24h_over_50pct'); // cumulative 24h increase would exceed 50%
     }
 
     // The absolute-amount cap is an EXECUTION-time check. `current_amount_micros`
@@ -567,7 +594,7 @@ export async function checkGuardrails(
           accountId,
           error: accountError,
         });
-        return null;
+        return reject('account_metadata_unavailable');
       }
 
       // The onboarding budget is explicitly entered in SAR. Applying it as a
@@ -586,11 +613,11 @@ export async function checkGuardrails(
             businessId: account.business_id,
             error: businessError,
           });
-          return null;
+          return reject('business_budget_unavailable');
         }
         const monthlyBudgetMicros = Number(business?.monthly_budget ?? 0) * 1_000_000;
         if (monthlyBudgetMicros > 0 && newAmountMicros * 30 > monthlyBudgetMicros) {
-          return null;
+          return reject('budget_over_monthly_ceiling');
         }
       }
     }
@@ -616,30 +643,33 @@ export async function checkGuardrails(
     // was compared against `current_target_roas: 4.0` — a +10% pass — and then
     // written as a target CPA of 0.0000044, collapsing delivery. Comparing the
     // same quantity on both sides is the whole point of the bound.
-    if (hasCpaTarget === hasRoasTarget) return null;
+    if (hasCpaTarget === hasRoasTarget) return reject('bid_target_kind_ambiguous');
 
     const next = Number(hasCpaTarget ? params.target_cpa_micros : params.target_roas);
     const current = Number(
       hasCpaTarget ? params.current_target_cpa_micros : params.current_target_roas
     );
 
-    if (!Number.isFinite(next) || next <= 0) return null;
+    if (!Number.isFinite(next) || next <= 0) return reject('bid_target_invalid');
 
     // Fail closed when the current value is unreadable — same policy as the
     // budget branch, where an unavailable history blocks the action. This also
     // rejects a CPA change proposed for a ROAS ad group (no matching current).
     if (!Number.isFinite(current) || current <= 0) {
       console.error('Guardrail blocked bid action because the current target is unknown', { accountId });
-      return null;
+      return reject('bid_current_target_unknown');
     }
 
     const changePct = ((next - current) / current) * 100;
-    if (Math.abs(changePct) > MAX_BID_CHANGE_PCT) return null;
+    if (Math.abs(changePct) > MAX_BID_CHANGE_PCT) return reject('bid_change_over_20pct');
 
     // Queue time: at least 30 conversions on the campaign, and the new target
     // must respect the client's break-even (never a tCPA above it, never a
     // tROAS below it).
-    if (context && !evaluateBidGate(action, context).ok) return null;
+    if (context) {
+      const bidVerdict = evaluateBidGate(action, context);
+      if (!bidVerdict.ok) return reject(bidVerdict.code);
+    }
 
     // One target change per ad group per 14 days (titan 5.3: a smart strategy
     // needs a full conversion cycle or two to settle after a target move).
@@ -656,19 +686,24 @@ export async function checkGuardrails(
           accountId,
           error: recentBidsError,
         });
-        return null;
+        return reject('bid_history_unreadable');
       }
       const executedBids = executedLockRows(recentBids, 'adjust_bid', 'ad_group_resource');
-      if (lockedByRecentChange(executedBids, 'adjust_bid', adGroupResource, BID_LOCK_DAYS, nowMs)) return null;
+      if (lockedByRecentChange(executedBids, 'adjust_bid', adGroupResource, BID_LOCK_DAYS, nowMs)) {
+        return reject('bid_locked_recent_change');
+      }
       const pending = await pendingLockRows(
         supabase,
         accountId,
         'adjust_bid',
         'ad_group_resource',
-        nowMs - BID_LOCK_DAYS * DAY_MS
+        nowMs - BID_LOCK_DAYS * DAY_MS,
+        nowMs
       );
-      if (!pending) return null;
-      if (lockedByRecentChange(pending, 'adjust_bid', adGroupResource, BID_LOCK_DAYS, nowMs)) return null;
+      if (!pending) return reject('pending_unreadable');
+      if (lockedByRecentChange(pending, 'adjust_bid', adGroupResource, BID_LOCK_DAYS, nowMs)) {
+        return reject('bid_locked_pending');
+      }
     }
   }
 
@@ -684,10 +719,10 @@ export async function checkGuardrails(
   if (action.type === 'add_keyword') {
     const keywordText = String((action.params as any).keyword_text ?? '').trim();
     const matchType = String((action.params as any).match_type ?? '').trim();
-    if (!keywordText || keywordText.length > 80) return null;
+    if (!keywordText || keywordText.length > 80) return reject('keyword_text_invalid');
     // Google rejects >10 words per keyword; stay under it.
-    if (keywordText.split(/\s+/).length > 10) return null;
-    if (!['EXACT', 'PHRASE'].includes(matchType)) return null;
+    if (keywordText.split(/\s+/).length > 10) return reject('keyword_too_many_words');
+    if (!['EXACT', 'PHRASE'].includes(matchType)) return reject('keyword_match_type_not_allowed');
   }
 
   // Guardrail 6: negative-keyword batches stay small, account-scoped and
@@ -697,21 +732,27 @@ export async function checkGuardrails(
   if (action.type === 'add_negative_keywords_batch') {
     const params = action.params as Record<string, unknown>;
     const campaignResource = String(params.campaign_resource ?? '').trim();
-    if (action.target_id && action.target_id !== campaignResource) return null;
-    if (!['EXACT', 'PHRASE'].includes(String(params.match_type ?? ''))) return null;
+    if (action.target_id && action.target_id !== campaignResource) return reject('negative_batch_malformed');
+    if (!['EXACT', 'PHRASE'].includes(String(params.match_type ?? ''))) return reject('negative_batch_malformed');
     const keywords = params.keywords;
-    if (!Array.isArray(keywords) || keywords.length === 0 || keywords.length > MAX_NEGATIVE_BATCH) return null;
-    for (const keyword of keywords) {
-      if (typeof keyword !== 'string') return null;
-      const text = keyword.trim();
-      if (!text || text.length > 80 || text.split(/\s+/).length > 10) return null;
+    if (!Array.isArray(keywords) || keywords.length === 0 || keywords.length > MAX_NEGATIVE_BATCH) {
+      return reject('negative_batch_malformed');
     }
-    if (!(await campaignResourceInAccount(supabase, accountId, campaignResource))) return null;
+    for (const keyword of keywords) {
+      if (typeof keyword !== 'string') return reject('negative_batch_malformed');
+      const text = keyword.trim();
+      if (!text || text.length > 80 || text.split(/\s+/).length > 10) return reject('negative_batch_malformed');
+    }
+    if (!(await campaignResourceInAccount(supabase, accountId, campaignResource))) {
+      return reject('campaign_not_in_account');
+    }
   }
 
   // Guardrail 7: campaign status changes only address a campaign of THIS account.
   if (action.type === 'pause_campaign' || action.type === 'enable_campaign') {
-    if (!(await campaignResourceInAccount(supabase, accountId, String(action.target_id ?? '')))) return null;
+    if (!(await campaignResourceInAccount(supabase, accountId, String(action.target_id ?? '')))) {
+      return reject('campaign_not_in_account');
+    }
   }
 
   return action;

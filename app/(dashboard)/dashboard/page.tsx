@@ -42,6 +42,7 @@ import { DateRangePicker } from '@/lib/ui/date-range-picker';
 import { buildDailyPlan, type DailyPlanTask } from '@/lib/guidance/daily-plan';
 import { isSimpleExperience } from '@/lib/setup/mode';
 import { homeTargetFrom } from '@/lib/setup/routes';
+import { dropStalePending } from '@/lib/recommendations/staleness';
 import {
   actionHistoryLabel,
   actionHistoryState,
@@ -143,7 +144,7 @@ export default async function DashboardPage({
     selectedAccount
       ? supabase
           .from('recommendations')
-          .select('id,title,status,severity,expected_impact,created_at')
+          .select('id,title,status,severity,expected_impact,action_payload,created_at')
           .eq('account_id', selectedAccount.id)
           .in('status', ['pending', 'approved', 'executing', 'failed'])
           .order('created_at', { ascending: false })
@@ -172,7 +173,8 @@ export default async function DashboardPage({
     campaignCount: cachedCampaigns.length,
     lastSyncedAt: selectedAccount?.last_synced_at,
     latestAuditAt: latestAudit?.ran_at,
-    recommendations: recommendationsResult.data ?? [],
+    // A pending optimizer card older than 14 days is not a current decision (lib/recommendations/staleness.ts).
+    recommendations: dropStalePending(recommendationsResult.data ?? []),
     actions: actionsResult.data ?? [],
   });
   const requestedRange = resolveDateRange(params, '7d');

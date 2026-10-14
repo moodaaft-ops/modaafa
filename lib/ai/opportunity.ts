@@ -162,3 +162,90 @@ export function detectCampaignOpportunity(
     description_ar,
   };
 }
+
+// ---------------------------------------------------------------------------
+// The recommendation row
+// ---------------------------------------------------------------------------
+
+/**
+ * Did the account tell Google what a conversion is worth? An account that never
+ * set a value gets Google's default of 1 per conversion, so the "value" equals
+ * the conversion count. Presenting that as revenue would invent a number
+ * (titan red rule 8), so it is treated as not tracked.
+ */
+export function conversionValueIsTracked(totals: { conversions: number; conversion_value: number }): boolean {
+  if (!Number.isFinite(totals.conversion_value) || totals.conversion_value <= 0) return false;
+  return Math.abs(totals.conversion_value - totals.conversions) > 0.01;
+}
+
+/** What a recommendation measured, never what it predicts: the terms' actual 30-day cost and conversions. */
+export type MeasuredOpportunityImpact = {
+  metric: 'conversions';
+  basis: 'measured_30d';
+  conversions: number;
+  cost: number;
+  /** Average cost of one conversion over those 30 days; null with no conversions. */
+  cpa: number | null;
+  currency: string;
+  /** Present only when the account sets a real conversion value. */
+  conversion_value?: number;
+};
+
+export type OpportunityRecommendation = {
+  category: 'keywords' | 'structure';
+  severity: 'medium' | 'growth';
+  title: string;
+  description: string;
+  expected_impact: MeasuredOpportunityImpact;
+  action_payload: {
+    operation: 'build_campaign_opportunity';
+    mode: OpportunityMode;
+    brief_ar: string;
+    terms: Array<Omit<ConvertingTermRow, 'conversion_value'> & { conversion_value: number | null }>;
+    totals: { clicks: number; conversions: number; cost: number; conversion_value: number | null };
+    /** False when the conversion value is Google's default (equal to the count): no value is shown or stored. */
+    value_tracked: boolean;
+    source: 'optimizer_cron';
+  };
+};
+
+/**
+ * The `recommendations` row for an opportunity. Severity follows the mode (only
+ * a cluster that reached 30 conversions is a «medium» structural decision;
+ * promoting Exact keywords is a «growth» tip), and the expected impact is the
+ * MEASURED cost and conversions of the terms: no percentage and no revenue is
+ * invented, and the conversion value is left out when the account never set one.
+ */
+export function buildOpportunityRecommendation(
+  opportunity: CampaignOpportunity,
+  currencyCode = 'SAR'
+): OpportunityRecommendation {
+  const valueTracked = conversionValueIsTracked(opportunity.totals);
+  const { conversions, cost } = opportunity.totals;
+  const round = (value: number) => Number(value.toFixed(2));
+
+  return {
+    category: opportunity.mode === 'new_campaign' ? 'structure' : 'keywords',
+    severity: opportunity.mode === 'new_campaign' ? 'medium' : 'growth',
+    title: opportunity.title_ar.slice(0, 120),
+    description: opportunity.description_ar,
+    expected_impact: {
+      metric: 'conversions',
+      basis: 'measured_30d',
+      conversions,
+      cost,
+      cpa: conversions > 0 ? round(cost / conversions) : null,
+      currency: currencyCode,
+      ...(valueTracked ? { conversion_value: opportunity.totals.conversion_value } : {}),
+    },
+    action_payload: {
+      operation: 'build_campaign_opportunity',
+      mode: opportunity.mode,
+      brief_ar: opportunity.brief_ar,
+      terms: opportunity.terms.map((row) => ({ ...row, conversion_value: valueTracked ? row.conversion_value : null })),
+      totals: { ...opportunity.totals, conversion_value: valueTracked ? opportunity.totals.conversion_value : null },
+      value_tracked: valueTracked,
+      source: 'optimizer_cron',
+    },
+  };
+}

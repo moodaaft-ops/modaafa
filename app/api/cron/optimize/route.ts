@@ -17,10 +17,18 @@ import {
   enrichPoorAds,
 } from '@/lib/ai/optimizer-snapshot';
 import { loadEconomics } from '@/lib/economics/load';
+import { isPastStaleLine } from '@/lib/recommendations/staleness';
 import type { BreakEven } from '@/lib/economics/break-even';
 import { consumeFeatureUsage } from '@/lib/billing/entitlements';
 import { executeAutopilotAction } from '@/lib/autopilot/executor';
-import { findBlockingAutopilotRecommendation } from '@/lib/autopilot/recommendation-dedupe';
+import {
+  findBlockingAutopilotRecommendation,
+  findPendingDuplicate,
+  loadActiveRecommendationPool,
+  rememberRecommendation,
+  renewStalePendingRecommendation,
+  type ActiveRecommendationRow,
+} from '@/lib/autopilot/recommendation-dedupe';
 import { recordAutopilotDecision } from '@/lib/autopilot/log';
 import {
   autopilotPolicyMetadata,
@@ -38,9 +46,16 @@ import {
 } from '@/lib/autopilot/types';
 import { measureObservedImpacts } from '@/lib/ai/impact';
 import {
+  buildOpportunityRecommendation,
   detectCampaignOpportunity,
   mapConvertingTermRows,
 } from '@/lib/ai/opportunity';
+import {
+  emptyReasonTally,
+  emptyTrackingVerdictCounts,
+  tallyReason,
+  tallyTrackingVerdict,
+} from '@/lib/ai/optimizer-audit-trail';
 import {
   getSectorBenchmark,
   refreshSectorBenchmarks,
@@ -323,6 +338,16 @@ async function runOptimizerCron(req: NextRequest) {
     impacts_measured: 0,
     opportunities_queued: 0,
     benchmarks_refreshed: 0,
+    /** Proposals skipped because the same change already waits for the owner (or hit the 3 per ad group cap). */
+    duplicates_skipped: 0,
+    /** Pending rows older than 14 days that the optimizer proposed again and that were refreshed in place. */
+    recommendations_renewed: 0,
+    /** Audit trail: accounts of this run per conversion tracking verdict. */
+    tracking_verdicts: emptyTrackingVerdictCounts(),
+    /** Audit trail: proposals the guardrails and gates refused, by reason code and by action type. */
+    gate_rejections: emptyReasonTally(),
+    /** Audit trail: proposals skipped as duplicates, by reason code and by action type. */
+    dedupe_skips: emptyReasonTally(),
     /** Accounts that reached the model (the paid step). */
     model_calls: 0,
     /** Accounts with nothing to act on, so the model was not asked. */
@@ -398,6 +423,7 @@ async function runOptimizerCron(req: NextRequest) {
         sectorBenchmark,
         economics
       );
+      tallyTrackingVerdict(results.tracking_verdicts, snapshot.conversion_tracking?.status);
 
       // Get AI decisions. An account with no spend and no evidence rows gives
       // the model nothing to act on, so we skip the paid call and record a
@@ -441,6 +467,21 @@ async function runOptimizerCron(req: NextRequest) {
       // it never decides whether a live mutation is allowed.
       const maxKeywordPauses = Math.floor(snapshot.keyword_count * 0.2);
       let keywordPauses = 0;
+      // What already waits for the owner (or is about to run) on this account.
+      // Read once; every row this run queues is added, so two proposals for
+      // the same target in one run are not both queued. Null = unreadable.
+      const recommendationPool: ActiveRecommendationRow[] | null =
+        actions.length > 0 ? await loadActiveRecommendationPool(supabase, account.id) : [];
+      const noteQueued = (
+        action: AutopilotCandidate,
+        queued: { id: string | null; created: boolean; renewed: boolean },
+        source: string
+      ) => {
+        if (queued.renewed) results.recommendations_renewed++;
+        if (queued.created || queued.renewed) {
+          rememberRecommendation(recommendationPool, action, { id: queued.id, status: 'pending', source });
+        }
+      };
       for (const proposedAction of actions.slice(0, 8)) {
         let action = groundAutopilotCandidate(
           proposedAction as AutopilotCandidate,
@@ -471,7 +512,10 @@ async function runOptimizerCron(req: NextRequest) {
         // The snapshot goes along so the queue-time gates (economics, tracking,
         // impression share, conversion volume, one change per target per
         // week) judge the proposal against the same numbers the model saw.
-        const guarded = await checkGuardrails(action, account.id, supabase, { snapshot });
+        const guarded = await checkGuardrails(action, account.id, supabase, {
+          snapshot,
+          onReject: (rejection) => tallyReason(results.gate_rejections, rejection),
+        });
         if (!guarded) {
           results.actions_blocked++;
           results.autopilot_blocked++;
@@ -490,6 +534,28 @@ async function runOptimizerCron(req: NextRequest) {
           continue;
         }
         action = guarded as AutopilotCandidate;
+
+        // The same change already waits for the owner (any match type for a
+        // keyword, same campaign for a negative, same budget or ad group), or
+        // this ad group already has 3 keyword additions waiting: do not stack
+        // another card on the owner's table. Pending optimizer rows older than
+        // 14 days are stale and do not count.
+        const duplicate = findPendingDuplicate(recommendationPool, action);
+        if (duplicate.skip) {
+          results.duplicates_skipped++;
+          tallyReason(results.dedupe_skips, { code: duplicate.code, action_type: action.type });
+          await safeRecordAutopilotDecision(results, {
+            supabase,
+            accountId: account.id,
+            jobRunId: job.id,
+            recommendationId: duplicate.recommendation_id ?? undefined,
+            mode: settings.mode,
+            action,
+            decision: 'blocked',
+            verdict: blockedVerdict(duplicate.code, duplicate.reason_ar),
+          });
+          continue;
+        }
 
         const targetKey = autopilotTargetKey(action);
         const cooldownCutoff = new Date(
@@ -541,6 +607,7 @@ async function runOptimizerCron(req: NextRequest) {
             source: settings.mode === 'observe' ? 'autopilot_observe' : 'optimizer_cron',
           });
           if (queued.created) results.recommendations_queued++;
+          noteQueued(action, queued, settings.mode === 'observe' ? 'autopilot_observe' : 'optimizer_cron');
           results.autopilot_observed++;
           await safeRecordAutopilotDecision(results, {
             supabase,
@@ -569,6 +636,7 @@ async function runOptimizerCron(req: NextRequest) {
             source: 'autopilot_fail_closed',
           });
           if (queued.created) results.recommendations_queued++;
+          noteQueued(action, queued, 'autopilot_fail_closed');
           results.autopilot_blocked++;
           await safeRecordAutopilotDecision(results, {
             supabase,
@@ -609,6 +677,7 @@ async function runOptimizerCron(req: NextRequest) {
             source: 'autopilot_quota_blocked',
           });
           if (queued.created) results.recommendations_queued++;
+          noteQueued(action, queued, 'autopilot_quota_blocked');
           results.autopilot_blocked++;
           await safeRecordAutopilotDecision(results, {
             supabase,
@@ -639,6 +708,10 @@ async function runOptimizerCron(req: NextRequest) {
           results.actions_executed++;
           results.autopilot_executed++;
           executedThisRun.set(account.id, (executedThisRun.get(account.id) ?? 0) + 1);
+          rememberRecommendation(recommendationPool, action, {
+            id: execution.recommendationId ?? null,
+            status: 'executing',
+          });
           accountHistory.push({
             decision: 'executed',
             target_id: targetKey,
@@ -726,6 +799,7 @@ async function runOptimizerCron(req: NextRequest) {
             currencyCode: account.currency_code ?? 'SAR',
           });
           if (queued) results.opportunities_queued++;
+          if (queued === 'renewed') results.recommendations_renewed++;
         } catch (opportunityError) {
           console.warn(`Campaign opportunity detection failed for ${account.customer_id}`, opportunityError);
         }
@@ -840,6 +914,15 @@ async function runOptimizerCron(req: NextRequest) {
       opportunities_queued: results.opportunities_queued,
       benchmarks_refreshed: results.benchmarks_refreshed,
       live_execution_enabled: allowLiveExecution,
+      // Audit trail (counts only): why accounts got no money decision. The
+      // conversion tracking verdict per account of this run, every proposal the
+      // guardrails and gates refused (by reason and by action type), and the
+      // proposals skipped as duplicates of a card that is already waiting.
+      tracking_verdicts: results.tracking_verdicts,
+      gate_rejections: results.gate_rejections,
+      duplicates_skipped: results.duplicates_skipped,
+      dedupe_skips: results.dedupe_skips,
+      recommendations_renewed: results.recommendations_renewed,
       // Never truncate silently: an operator reading job_runs must be able to
       // tell "covered everything" from "ran out of time".
       skipped_for_time: skippedForTime,
@@ -958,33 +1041,46 @@ async function queueOptimizerRecommendation({
   fingerprint: string;
   verdict: AutopilotPolicyVerdict;
   source: string;
-}): Promise<{ id: string | null; created: boolean }> {
+}): Promise<{ id: string | null; created: boolean; renewed: boolean }> {
+  const fields = {
+    category: categoryForAction(action.type),
+    severity: severityForAction(action),
+    title: action.reason_ar.slice(0, 120),
+    description: action.reason_ar,
+    expected_impact: action.expected_impact,
+    action_payload: {
+      operation: action.type,
+      target_id: action.target_id,
+      params: action.params,
+      confidence: action.confidence ?? null,
+      evidence: action.evidence ?? null,
+      source,
+      autopilot: autopilotPolicyMetadata(verdict),
+    },
+  };
+
   const existing = await findBlockingAutopilotRecommendation(
     supabase,
     accountId,
     fingerprint
   );
-  if (existing) return { id: existing.id, created: false };
+  if (existing) {
+    // The same change is still pending after more than 14 days. It is hidden
+    // from every list as stale, and the unique fingerprint stops a new row, so
+    // refresh the old one with tonight's numbers instead of losing the proposal.
+    if (existing.status === 'pending' && isPastStaleLine(existing.created_at)) {
+      const renewed = await renewStalePendingRecommendation(supabase, existing.id, fields);
+      if (renewed) return { id: existing.id, created: false, renewed: true };
+    }
+    return { id: existing.id, created: false, renewed: false };
+  }
 
   const { data, error } = await supabase
     .from('recommendations')
     .insert({
       account_id: accountId,
       fingerprint,
-      category: categoryForAction(action.type),
-      severity: severityForAction(action),
-      title: action.reason_ar.slice(0, 120),
-      description: action.reason_ar,
-      expected_impact: action.expected_impact,
-      action_payload: {
-        operation: action.type,
-        target_id: action.target_id,
-        params: action.params,
-        confidence: action.confidence ?? null,
-        evidence: action.evidence ?? null,
-        source,
-        autopilot: autopilotPolicyMetadata(verdict),
-      },
+      ...fields,
       status: 'pending',
     })
     .select('id')
@@ -996,11 +1092,11 @@ async function queueOptimizerRecommendation({
         accountId,
         fingerprint
       );
-      return { id: raced?.id ?? null, created: false };
+      return { id: raced?.id ?? null, created: false, renewed: false };
     }
     throw error;
   }
-  return { id: data?.id ?? null, created: true };
+  return { id: data?.id ?? null, created: true, renewed: false };
 }
 
 function blockedVerdict(code: string, reason_ar: string): AutopilotPolicyVerdict {
@@ -1352,10 +1448,21 @@ async function buildOptimizerSnapshot(
 const OPPORTUNITY_COOLDOWN_MS = 14 * 24 * 60 * 60 * 1000;
 
 /**
- * Queue a "build a new campaign" recommendation when the converting-terms pool
- * justifies one. Deduped two ways: a stable fingerprint blocks a second ACTIVE
- * opportunity, and a 14-day cooldown (any status, including dismissed) stops
- * the platform from re-nagging an owner who said no.
+ * Queue a "winning search terms" recommendation when the converting-terms pool
+ * justifies one. What it suggests follows the opportunity's own mode (titan
+ * 3.5 and 20.3): Exact keywords inside the ad group that already earns the
+ * terms, and a separate campaign only from 30 conversions in 30 days. The
+ * expected impact is the terms' measured cost and conversions, never a
+ * percentage, and the conversion value is left out when the account never set
+ * one (see buildOpportunityRecommendation).
+ *
+ * Deduped two ways: a stable fingerprint blocks a second ACTIVE opportunity, and
+ * a 14-day cooldown (any status, including dismissed) stops the platform from
+ * re-nagging an owner who said no. An opportunity still pending after the
+ * cooldown is stale (hidden from the lists) and holds the fingerprint, so it is
+ * renewed in place with the new numbers.
+ *
+ * Returns 'created', 'renewed', or false when nothing was queued.
  */
 async function maybeQueueCampaignOpportunity({
   supabase,
@@ -1367,7 +1474,7 @@ async function maybeQueueCampaignOpportunity({
   accountId: string;
   convertingTermRows: any[];
   currencyCode: string;
-}): Promise<boolean> {
+}): Promise<'created' | 'renewed' | false> {
   const opportunity = detectCampaignOpportunity(mapConvertingTermRows(convertingTermRows), currencyCode);
   if (!opportunity) return false;
 
@@ -1381,32 +1488,32 @@ async function maybeQueueCampaignOpportunity({
     .maybeSingle();
   if (recent) return false;
 
+  const fingerprint = createHash('sha256').update(`${accountId}:build_campaign_opportunity`).digest('hex');
+  const row = buildOpportunityRecommendation(opportunity, currencyCode);
+
   const { error } = await supabase.from('recommendations').insert({
     account_id: accountId,
-    fingerprint: createHash('sha256').update(`${accountId}:build_campaign_opportunity`).digest('hex'),
-    category: 'structure',
-    severity: opportunity.totals.conversions >= 15 ? 'medium' : 'growth',
-    title: opportunity.title_ar.slice(0, 120),
-    description: opportunity.description_ar,
-    expected_impact: {
-      metric: 'conversions',
-      delta_pct: 15,
-      delta_sar_per_month: Math.round(opportunity.totals.conversion_value * 0.15),
-    },
-    action_payload: {
-      operation: 'build_campaign_opportunity',
-      brief_ar: opportunity.brief_ar,
-      terms: opportunity.terms,
-      totals: opportunity.totals,
-      source: 'optimizer_cron',
-    },
+    fingerprint,
+    ...row,
     status: 'pending',
   });
   if (error) {
-    if (error.code === '23505') return false; // an active opportunity already exists
-    throw error;
+    if (error.code !== '23505') throw error;
+    // An opportunity already holds the fingerprint. If it is a pending one that
+    // went stale, refresh it; anything else (approved, executing) stays as it is.
+    const { data: held } = await supabase
+      .from('recommendations')
+      .select('id')
+      .eq('account_id', accountId)
+      .eq('fingerprint', fingerprint)
+      .eq('status', 'pending')
+      .limit(1)
+      .maybeSingle();
+    if (!held?.id) return false;
+    const renewed = await renewStalePendingRecommendation(supabase, held.id, row);
+    return renewed ? 'renewed' : false;
   }
-  return true;
+  return 'created';
 }
 
 // ---------------------------------------------------------------------------

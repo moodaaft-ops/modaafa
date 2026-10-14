@@ -10,6 +10,7 @@ import {
   evaluateBudgetGate,
   evaluateTrackingGate,
   lockedByRecentChange,
+  SCALE_MIN_LOST_BUDGET_IS,
 } from '../lib/ai/optimizer-gates';
 import { computeBreakEven } from '../lib/economics/break-even';
 import { buildSnapshotEconomics } from '../lib/ai/optimizer-snapshot';
@@ -293,11 +294,15 @@ test('a lead business raises a budget only at 0.8 x break-even CPA or better', (
   assert.equal(evaluateBudgetGate(budgetAction(), { snapshot: snap(6500) }, null).ok, false);
 });
 
-test('a budget increase needs lost-to-budget impression share of 10%+ and search impression share under 50%', () => {
+test('a budget increase needs lost-to-budget impression share of 20%+ (titan 6.4) and search impression share under 50%', () => {
   const gate = (diag: Record<string, unknown>) =>
     evaluateBudgetGate(budgetAction(), { snapshot: snapshot({ campaigns: [campaign({ diag })] }) }, null);
-  assert.equal(gate({ lost_budget_is: 0.1, search_is: 0.49 }).ok, true);
-  assert.deepEqual(gate({ lost_budget_is: 0.09, search_is: 0.3 }), { ok: false, code: 'budget_not_constrained' });
+  assert.equal(SCALE_MIN_LOST_BUDGET_IS, 0.2);
+  assert.equal(gate({ lost_budget_is: 0.2, search_is: 0.49 }).ok, true);
+  assert.equal(gate({ lost_budget_is: 0.31, search_is: 0.49 }).ok, true);
+  // The old 10% floor is no longer enough.
+  assert.deepEqual(gate({ lost_budget_is: 0.1, search_is: 0.3 }), { ok: false, code: 'budget_not_constrained' });
+  assert.deepEqual(gate({ lost_budget_is: 0.19, search_is: 0.3 }), { ok: false, code: 'budget_not_constrained' });
   assert.deepEqual(gate({ lost_budget_is: 0.3, search_is: 0.5 }), { ok: false, code: 'budget_not_constrained' });
   assert.equal(gate({ lost_budget_is: 0.3, search_is: 0.8 }).ok, false);
 });
@@ -418,6 +423,75 @@ test('one budget change per budget per 7 days: a pending or approved recommendat
     ...accountOk,
   };
   assert.equal(await checkGuardrails(other, 'account-1', db(bid), withContext()), other);
+});
+
+test('a stale pending optimizer recommendation (over 14 days) locks neither a budget nor a bid, a current one still does', async () => {
+  const pendingRow = (operation: string, params: Record<string, unknown>, ageDays: number): Tables => ({
+    ai_actions: { data: [], error: null },
+    // The fake returns the row whatever the window the query asked for, as a database with a bad clock would.
+    recommendations: { data: [{ status: 'pending', created_at: daysAgo(ageDays), action_payload: { operation, params, source: 'optimizer_cron' } }], error: null },
+    ...accountOk,
+  });
+  const budget = budgetAction();
+  assert.equal(await checkGuardrails(budget, 'account-1', db(pendingRow('adjust_budget', { budget_resource: BUDGET }, 20)), withContext()), budget);
+  assert.equal(await checkGuardrails(budgetAction(), 'account-1', db(pendingRow('adjust_budget', { budget_resource: BUDGET }, 6)), withContext()), null);
+  const bid = bidAction();
+  assert.equal(await checkGuardrails(bid, 'account-1', db(pendingRow('adjust_bid', { ad_group_resource: AD_GROUP }, 20)), withContext()), bid);
+  assert.equal(await checkGuardrails(bidAction(), 'account-1', db(pendingRow('adjust_bid', { ad_group_resource: AD_GROUP }, 13)), withContext()), null);
+});
+
+test('a refused proposal is reported with its reason code and action type', async () => {
+  const reasons: Array<{ code: string; action_type: string }> = [];
+  const context = (snap: OptimizerSnapshot) => ({ snapshot: snap, now: NOW, onReject: (r: { code: string; action_type: string }) => reasons.push(r) });
+  const open: Tables = { ai_actions: { data: [], error: null }, recommendations: { data: [], error: null }, ...accountOk };
+
+  // Tracking, economics, bounds, impression share: each its own code.
+  assert.equal(
+    await checkGuardrails(budgetAction(), 'account-1', db(open), context(snapshot({ conversion_tracking: { status: 'wrong_primary', enabled_actions: 2 } }))),
+    null
+  );
+  assert.equal(await checkGuardrails(budgetAction(), 'account-1', db(open), context(snapshot({ economics: unknownEconomics() }))), null);
+  assert.equal(await checkGuardrails(budgetAction({ delta_pct: 30, new_amount_micros: 13_000_000 }), 'account-1', db(open), context(snapshot())), null);
+  assert.equal(
+    await checkGuardrails(budgetAction(), 'account-1', db(open), context(snapshot({ campaigns: [campaign({ diag: { lost_budget_is: 0.1, search_is: 0.3 } })] }))),
+    null
+  );
+  // A lock, a keyword with a BROAD match type, a bid with no 30-day volume.
+  const locked: Tables = {
+    ai_actions: { data: [{ payload: { action: { params: { budget_resource: BUDGET } } }, created_at: daysAgo(2) }], error: null },
+    recommendations: { data: [], error: null },
+    ...accountOk,
+  };
+  assert.equal(await checkGuardrails(budgetAction(), 'account-1', db(locked), context(snapshot())), null);
+  const broad: OptimizerAction = {
+    type: 'add_keyword',
+    target_id: AD_GROUP,
+    params: { ad_group_resource: AD_GROUP, keyword_text: 'عيادة', match_type: 'BROAD' },
+    reason_ar: 'اختبار',
+    reason_en: 'test',
+    expected_impact: { metric: 'conversions', delta_pct: 0, delta_sar_per_month: 0 },
+  };
+  assert.equal(await checkGuardrails(broad, 'account-1', db(open), context(snapshot())), null);
+
+  assert.deepEqual(
+    reasons.map((r) => r.code),
+    [
+      'tracking_not_healthy',
+      'economics_unknown',
+      'budget_step_too_large',
+      'budget_not_constrained',
+      'budget_locked_recent_change',
+      'keyword_match_type_not_allowed',
+    ]
+  );
+  assert.deepEqual(reasons.map((r) => r.action_type), ['adjust_budget', 'adjust_budget', 'adjust_budget', 'adjust_budget', 'adjust_budget', 'add_keyword']);
+
+  // An accepted proposal reports nothing, and a caller with no callback is unaffected.
+  const before = reasons.length;
+  const fine = budgetAction();
+  assert.equal(await checkGuardrails(fine, 'account-1', db(open), context(snapshot())), fine);
+  assert.equal(reasons.length, before);
+  assert.equal(await checkGuardrails(budgetAction({ delta_pct: 30, new_amount_micros: 13_000_000 }), 'account-1', db(open), withContext()), null);
 });
 
 test('the locks fail closed when the history cannot be read', async () => {

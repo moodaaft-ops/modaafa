@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
   MIN_CLUSTER_CONVERSIONS_FOR_NEW_CAMPAIGN,
+  buildOpportunityRecommendation,
+  conversionValueIsTracked,
   detectCampaignOpportunity,
   mapConvertingTermRows,
   opportunityMode,
@@ -95,6 +98,93 @@ test('a new campaign is suggested only from 30 conversions in 30 days, and only 
   for (const text of [atThirty!.title_ar, atThirty!.description_ar, atThirty!.brief_ar]) {
     assert.doesNotMatch(text, /[—–]/, 'no long dashes in user-facing Arabic');
   }
+});
+
+// ---------------------------------------------------------------------------
+// The opportunity's recommendation row: mode-based, measured, no invented value
+// ---------------------------------------------------------------------------
+
+const cluster = (conversions: number, conversion_value: number) => [
+  term({ term: 'أ', conversions: conversions / 3, cost: 100, conversion_value: conversion_value / 3 }),
+  term({ term: 'ب', conversions: conversions / 3, cost: 100, conversion_value: conversion_value / 3 }),
+  term({ term: 'ج', conversions: conversions / 3, cost: 100, conversion_value: conversion_value / 3 }),
+];
+
+test('a conversion value equal to the conversion count is Google\'s default, not revenue', () => {
+  assert.equal(conversionValueIsTracked({ conversions: 12, conversion_value: 12 }), false);
+  assert.equal(conversionValueIsTracked({ conversions: 12, conversion_value: 12.004 }), false);
+  assert.equal(conversionValueIsTracked({ conversions: 12, conversion_value: 0 }), false);
+  assert.equal(conversionValueIsTracked({ conversions: 12, conversion_value: Number.NaN }), false);
+  assert.equal(conversionValueIsTracked({ conversions: 12, conversion_value: 1800 }), true);
+});
+
+test('under 30 conversions the row is a «growth» Exact-keywords tip with the MEASURED cost and conversions, no percentage', () => {
+  const opportunity = detectCampaignOpportunity(cluster(15, 2250), 'SAR')!;
+  assert.equal(opportunity.mode, 'exact_keywords');
+  const row = buildOpportunityRecommendation(opportunity, 'SAR');
+  assert.equal(row.severity, 'growth');
+  assert.equal(row.category, 'keywords');
+  assert.equal(row.action_payload.operation, 'build_campaign_opportunity');
+  assert.equal(row.action_payload.mode, 'exact_keywords');
+  assert.deepEqual(row.expected_impact, {
+    metric: 'conversions',
+    basis: 'measured_30d',
+    conversions: 15,
+    cost: 300,
+    cpa: 20,
+    currency: 'SAR',
+    conversion_value: 2250,
+  });
+  // The old fixed 15% and the revenue derived from it are gone.
+  assert.equal('delta_pct' in row.expected_impact, false);
+  assert.equal('delta_sar_per_month' in row.expected_impact, false);
+  assert.match(row.title, /مطابقة تامة/);
+});
+
+test('from 30 conversions the row is a «medium» structure decision, still behind the economic-reason brief', () => {
+  const opportunity = detectCampaignOpportunity(cluster(30, 4500), 'SAR')!;
+  const row = buildOpportunityRecommendation(opportunity, 'SAR');
+  assert.equal(opportunity.mode, 'new_campaign');
+  assert.equal(row.severity, 'medium');
+  assert.equal(row.category, 'structure');
+  assert.equal(row.action_payload.mode, 'new_campaign');
+  assert.match(row.action_payload.brief_ar, /سبب اقتصادي للفصل/);
+  assert.equal(row.expected_impact.conversions, 30);
+});
+
+test('an account that never set a conversion value gets no value in the impact or the payload', () => {
+  // Value equals the count: 15 conversions, 15 "value".
+  const opportunity = detectCampaignOpportunity(cluster(15, 15), 'SAR')!;
+  const row = buildOpportunityRecommendation(opportunity, 'SAR');
+  assert.equal(row.action_payload.value_tracked, false);
+  assert.equal('conversion_value' in row.expected_impact, false);
+  assert.equal(row.action_payload.totals.conversion_value, null);
+  assert.ok(row.action_payload.terms.every((entry) => entry.conversion_value === null));
+  assert.deepEqual(row.expected_impact, { metric: 'conversions', basis: 'measured_30d', conversions: 15, cost: 300, cpa: 20, currency: 'SAR' });
+
+  const tracked = buildOpportunityRecommendation(detectCampaignOpportunity(cluster(15, 2250), 'SAR')!, 'SAR');
+  assert.equal(tracked.action_payload.value_tracked, true);
+  assert.equal(tracked.action_payload.totals.conversion_value, 2250);
+});
+
+test('the row text has no long dash and the title fits the column', () => {
+  for (const conversions of [15, 30]) {
+    const row = buildOpportunityRecommendation(detectCampaignOpportunity(cluster(conversions, conversions), 'SAR')!, 'SAR');
+    assert.ok(row.title.length <= 120);
+    for (const text of [row.title, row.description, row.action_payload.brief_ar]) assert.doesNotMatch(text, /[—–]/);
+  }
+});
+
+test('the cron builds the opportunity row from the mode and no longer invents a 15% impact', () => {
+  const route = readFileSync(new URL('../app/api/cron/optimize/route.ts', import.meta.url), 'utf8');
+  const start = route.indexOf('async function maybeQueueCampaignOpportunity');
+  const fn = route.slice(start, route.indexOf('// Weekly intelligence report', start));
+  assert.match(fn, /buildOpportunityRecommendation\(opportunity, currencyCode\)/);
+  assert.doesNotMatch(fn, /delta_pct: 15/);
+  assert.doesNotMatch(fn, /\* 0\.15/);
+  assert.doesNotMatch(fn, /totals\.conversions >= 15/);
+  // A pending opportunity older than the cooldown holds the fingerprint: it is renewed, not lost.
+  assert.match(fn, /renewStalePendingRecommendation\(supabase, held\.id, row\)/);
 });
 
 test('too few terms or too few conversions produce NO opportunity', () => {

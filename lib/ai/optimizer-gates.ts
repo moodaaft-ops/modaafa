@@ -18,9 +18,11 @@ import type { OptimizerAction, OptimizerSnapshot } from './optimizer-agent';
  *               resets learning on a smart strategy
  *   6.2         vertical scaling is 10-20% per 7-14 days
  *   6.4         lost impression share to budget is the opportunity; lost to
- *               rank is not fixed with money. The scale gate here uses 0.10
- *               as the floor (the KB text says "more than 20%" for a serious
- *               opportunity; the floor is the product owner's number)
+ *               rank is not fixed with money. The KB says "Lost IS (budget)
+ *               فوق 20%" with performance inside the target is a scale
+ *               opportunity, so the scale gate floor is 0.20 (a share of
+ *               exactly 20% passes; the share is a float, so the boundary is
+ *               not a meaningful distinction)
  *   6.5         scale only what is profitable with enough conversions
  *   SKILL red rules 2, 5, 6, 8: targets from the client's economics, no
  *               money decisions on broken tracking, one change per week
@@ -41,7 +43,8 @@ export const BID_LOCK_DAYS = 14;
 export const SCALE_ROAS_FACTOR = 1.2;
 export const SCALE_CPA_FACTOR = 0.8;
 export const SCALE_MIN_CONVERSIONS_30D = 15;
-export const SCALE_MIN_LOST_BUDGET_IS = 0.1;
+/** titan bidding-budget.md 6.4: lost impression share to budget above 20%. */
+export const SCALE_MIN_LOST_BUDGET_IS = 0.2;
 export const SCALE_MAX_SEARCH_IS = 0.5;
 
 /** Cut a budget only for a campaign that is clearly losing money on enough spend. */
