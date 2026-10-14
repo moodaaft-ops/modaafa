@@ -55,6 +55,7 @@ const CAMPAIGN_TYPE_LABELS: Record<string, string> = {
 };
 
 const BIDDING_LABELS: Record<string, string> = {
+  MAXIMIZE_CLICKS: 'تعظيم النقرات',
   MAXIMIZE_CONVERSIONS: 'تعظيم التحويلات',
   MAXIMIZE_CONVERSION_VALUE: 'تعظيم قيمة التحويل',
   TARGET_CPA: 'تكلفة مستهدفة للتحويل',
@@ -145,6 +146,7 @@ const ENGLISH_TERMS: Record<string, string> = {
   APP: 'App',
   LOCAL: 'Local',
   DEMAND_GEN: 'Demand Gen',
+  MAXIMIZE_CLICKS: 'Maximize clicks',
   MAXIMIZE_CONVERSIONS: 'Maximize conversions',
   MAXIMIZE_CONVERSION_VALUE: 'Maximize conversion value',
   TARGET_CPA: 'Target CPA',

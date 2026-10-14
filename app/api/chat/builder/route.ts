@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerClient } from '@/lib/supabase/server';
+import { createAdminClient, createServerClient } from '@/lib/supabase/server';
 import { getCustomer } from '@/lib/google-ads/client';
 import { decrypt } from '@/lib/crypto';
 import { buildCampaign, shouldRefundBuilderUsage } from '@/lib/ai/builder-agent';
+import { loadBuilderSignals } from '@/lib/ai/builder-signals';
 import { getLinkedGoogleAdsAccount, normalizeCustomerId } from '@/lib/accounts/selection';
 import {
   consumeFeatureUsage,
@@ -132,6 +133,16 @@ export async function POST(req: NextRequest) {
     const customer = getCustomer(account.customer_id, refreshToken, account.manager_id ?? undefined);
 
     const business = (account as any).businesses;
+    // What the account can support (conversions, tracking, Merchant Center)
+    // decides which bidding strategy and campaign type the draft may use. A
+    // failed read is "unknown", which takes the conservative option.
+    let adminClient: ReturnType<typeof createAdminClient> | null = null;
+    try {
+      adminClient = createAdminClient();
+    } catch {
+      adminClient = null;
+    }
+    const signals = await loadBuilderSignals({ supabase, admin: adminClient, accountId: account.id });
     const result = await buildCampaign(
       brief,
       customer,
@@ -139,6 +150,7 @@ export async function POST(req: NextRequest) {
         business_name: business?.name,
         sector: business?.sector,
         website: business?.website,
+        signals,
       },
       { deadlineAt }
     );
