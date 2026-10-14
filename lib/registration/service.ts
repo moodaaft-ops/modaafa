@@ -1,5 +1,6 @@
 import type { NextRequest } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/server';
+import { sendWelcomeInBackground } from '@/lib/lifecycle/welcome';
 import { resolveClientIp } from '@/lib/security/rate-limit';
 import { ATTRIBUTION_COOKIE, parseAttributionCookie } from './attribution';
 import { finalizeRegistration, type ClientContext, type FinalizeUser, type RegistrationDb } from './finalize';
@@ -19,10 +20,15 @@ export async function finalizeForRequest(
   user: FinalizeUser,
   details?: { name?: string | null; phone?: string | null },
 ) {
-  return finalizeRegistration({ db: createAdminClient() as unknown as RegistrationDb }, user, {
+  const outcome = await finalizeRegistration({ db: createAdminClient() as unknown as RegistrationDb }, user, {
     name: details?.name,
     phone: details?.phone,
     cookieAttribution: parseAttributionCookie(req.cookies.get(ATTRIBUTION_COOKIE)?.value),
     client: clientContextFromRequest(req),
   });
+  // The welcome mail goes out right after the registration is committed, not
+  // when the address is confirmed: a Google user is not registered at that point.
+  // Fire and forget; the /api/cron/welcome-email sweep is the safety net.
+  if (outcome.status === 'completed') sendWelcomeInBackground(user.id);
+  return outcome;
 }

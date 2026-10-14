@@ -1,13 +1,13 @@
 import { appBaseUrl, buildOptOutUrl } from './opt-out';
 import { firstName } from '@/lib/lifecycle/format';
-// TEMPORARY: the PR #84 follow-up texts. lib/stages/messages.ts is deleted by
-// the lifecycle engine (CONTRACT, agent A). When it goes, delete this import,
-// the `stageTemplates` block below and `StageTemplateId` from TemplateId.
-import { STAGE_TEMPLATE_IDS, renderStageEmail, type StageTemplateId } from '@/lib/stages/messages';
 
 export { firstName };
 
-export type TemplateId = 'welcome_ads_connect' | StageTemplateId;
+/**
+ * Legacy registry for the #81 `send()` path. Every lifecycle mail now goes
+ * through sendTemplate with lib/lifecycle/copy.ts; this keeps send() compiling.
+ */
+export type TemplateId = 'welcome_ads_connect';
 
 export type RenderedEmail = {
   subject: string;
@@ -70,17 +70,9 @@ export type TemplateDefinition = {
   renderEmail: (user: TemplateUser) => RenderedEmail | null;
 };
 
-const stageTemplates = Object.fromEntries(
-  STAGE_TEMPLATE_IDS.map((id): [StageTemplateId, TemplateDefinition] => [
-    id,
-    { sentEvent: null, dailyLimit: true, renderEmail: (user) => renderStageEmail(id, user) },
-  ])
-) as Record<StageTemplateId, TemplateDefinition>;
-
 export const TEMPLATES: Record<TemplateId, TemplateDefinition> = {
   welcome_ads_connect: {
     sentEvent: 'welcome_email_sent',
     renderEmail: renderWelcomeAdsConnect,
   },
-  ...stageTemplates,
 };

@@ -1,4 +1,5 @@
 import type { CopyKey, JourneyId } from './types';
+import { EMAIL_LIFECYCLE_ACTIVATED_AT, HOLDOUT_PERCENT, JOURNEY_STEPS } from '@/config/email-journeys';
 
 /**
  * What the email section of the funnel report needs to know about the journeys:
@@ -22,29 +23,12 @@ export type ReportStep = { copyKey: CopyKey; journey: JourneyId; afterMinutes: n
 
 const MINUTES_PER_DAY = 24 * 60;
 
-export const REPORT_STEPS: ReportStep[] = [
-  { journey: 'registered', copyKey: 'registered_1d', afterMinutes: MINUTES_PER_DAY },
-  { journey: 'registered', copyKey: 'registered_3d', afterMinutes: 3 * MINUTES_PER_DAY },
-  { journey: 'registered', copyKey: 'registered_7d', afterMinutes: 7 * MINUTES_PER_DAY },
-  { journey: 'connected', copyKey: 'connected_3h', afterMinutes: 180 },
-  { journey: 'connected', copyKey: 'connected_1d', afterMinutes: MINUTES_PER_DAY },
-  { journey: 'plan_ready', copyKey: 'plan_ready_1d', afterMinutes: MINUTES_PER_DAY },
-  { journey: 'plan_ready', copyKey: 'plan_ready_3d', afterMinutes: 3 * MINUTES_PER_DAY },
-  { journey: 'plan_ready', copyKey: 'plan_ready_7d', afterMinutes: 7 * MINUTES_PER_DAY },
-  { journey: 'trial', copyKey: 'trial_d1', afterMinutes: MINUTES_PER_DAY },
-  { journey: 'trial', copyKey: 'trial_d4', afterMinutes: 4 * MINUTES_PER_DAY },
-  { journey: 'trial', copyKey: 'trial_d9', afterMinutes: 9 * MINUTES_PER_DAY },
-  { journey: 'trial_lapsed', copyKey: 'trial_lapsed_2d', afterMinutes: 2 * MINUTES_PER_DAY },
-  { journey: 'trial_lapsed', copyKey: 'trial_lapsed_14d', afterMinutes: 14 * MINUTES_PER_DAY },
-  { journey: 'canceled', copyKey: 'canceled_1d', afterMinutes: MINUTES_PER_DAY },
-  { journey: 'canceled', copyKey: 'canceled_30d', afterMinutes: 30 * MINUTES_PER_DAY },
-  { journey: 'past_due', copyKey: 'past_due_3d', afterMinutes: 3 * MINUTES_PER_DAY },
-];
+export const REPORT_STEPS: ReportStep[] = flattenSteps(JOURNEY_STEPS);
 
 /** The moment the lifecycle goes live (ISO). null = it has not, so no holdout comparison exists yet. */
-export const REPORT_ACTIVATED_AT: string | null = null;
+export const REPORT_ACTIVATED_AT: string | null = EMAIL_LIFECYCLE_ACTIVATED_AT;
 
-export const REPORT_HOLDOUT_PERCENT = 10;
+export const REPORT_HOLDOUT_PERCENT = HOLDOUT_PERCENT;
 
 export function flattenSteps(
   journeys: Record<JourneyId, Array<{ copyKey: CopyKey; afterMinutes: number }>>
