@@ -130,7 +130,7 @@ export function detectCampaignOpportunity(
   let brief_ar: string;
 
   if (mode === 'new_campaign') {
-    title_ar = `فرصة نمو: ${qualified.length} عبارات بحث رابحة وصلت ${round(totals.conversions)} تحويل وتستحق تنظر لحملة لحالها`;
+    title_ar = `فرصة نمو: ${qualified.length} عبارات بحث رابحة وصلت ${round(totals.conversions)} تحويل وتستاهل تفكر تعطيها حملة لحالها`;
     description_ar =
       `${evidence} هذا حجم يكفي حملة مستقلة (30 تحويل أو أكثر في الشهر). ` +
       `بس لا تفصلها لمجرد إنها رابحة. افصلها إذا لها اقتصاد مختلف عن باقي الحساب، مثل هامش أو مدينة بميزانية مستقلة أو لغة إعلان أو براند. ` +

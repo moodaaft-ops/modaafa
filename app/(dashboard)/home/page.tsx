@@ -17,6 +17,7 @@ import { isSimpleExperience } from '@/lib/setup/mode';
 import { isAdaptiveOnboarding } from '@/lib/setup/adaptive/flag';
 import { adaptiveLockedPlan } from '@/lib/setup/adaptive/locked-plan';
 import { readLedgerEntries } from '@/lib/setup/load';
+import { economicsKindFromLedger } from '@/lib/setup/ledger';
 import { loadRecentChanges } from '@/lib/home/recent-changes';
 import { keysAnsweredByProfile, missingCoreKeys, type SetupKey } from '@/lib/setup/questions';
 import { firstNameFrom, healthWord } from '@/lib/setup/stage';
@@ -206,7 +207,10 @@ export default async function HomePage({
   );
   const actions = actionsRes.error ? [] : actionsRes.data ?? [];
   const answered = new Set<SetupKey>([...keysAnsweredByProfile(business), ...ledger.keys()]);
-  const missing = missingCoreKeys(answered);
+  // Core answers plus, by the kind of business, the economics ones the optimizer needs before it may touch a
+  // budget. Only where the adaptive onboarding can collect them: the ten fixed questions never ask for a margin,
+  // and a chip that leads nowhere would nag a customer who cannot answer.
+  const missing = missingCoreKeys(answered, adaptiveOn ? economicsKindFromLedger(ledgerEntries, business) : null);
   const notice = noticeFrom(params);
   const firstName = firstNameFrom(user.user_metadata ?? null);
   const accountName = googleAdsAccountDisplayName(selectedAccount);

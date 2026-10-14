@@ -1,4 +1,5 @@
 import { BUSINESS_KINDS, DOMINANT_OUTCOMES, type BusinessKind, type DominantOutcome } from './adaptive/types';
+import { deriveEconomicsKind, type EconomicsFacts, type EconomicsKind } from '../economics/break-even';
 import { cleanUserText, isSetupKey, type SetupKey } from './questions';
 
 /**
@@ -74,4 +75,25 @@ export async function readLedgerEntries(admin: any, businessId: string): Promise
 /** Same read as `readLedgerEntries`, choices only: what /home uses. */
 export async function readLedger(admin: any, businessId: string): Promise<Map<SetupKey, string | null>> {
   return (await readLedgerEntries(admin, businessId)).choices;
+}
+
+/**
+ * The kind of business the optimizer will take this one for, from the answers
+ * on record: the same derivation lib/economics/break-even.ts runs over the
+ * stored facts, fed from the ledger's choices. It decides which economics
+ * answers (lib/setup/questions.ts missingEconomicsKeys) the home screen asks for.
+ */
+export function economicsKindFromLedger(
+  entries: LedgerEntries,
+  business: { sector?: string | null; primary_goal?: string | null } | null | undefined
+): EconomicsKind {
+  const facts: EconomicsFacts = {};
+  const type = entries.choices.get('type');
+  if (type) facts.type = { choice: type };
+  if (entries.confirmed) facts.confirm = { choice: 'yes', kind: entries.confirmed.kind };
+  // The question that was asked says what the tree thought the business was; only its presence matters.
+  for (const key of ['margin', 'deal_value', 'profit_per_deal', 'close_rate'] as const) {
+    if (entries.choices.has(key)) facts[key] = {};
+  }
+  return deriveEconomicsKind({ facts, sector: business?.sector ?? null, primaryGoal: business?.primary_goal ?? null });
 }
