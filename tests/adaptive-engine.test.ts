@@ -1327,7 +1327,7 @@ test('first campaign: a dental clinic gets a search campaign on the service it n
   assert.match(byLabel['التتبع'], /الاتصال/);
 });
 
-test('first campaign: a store with Merchant Center gets a product campaign, without it a search campaign', () => {
+test('first campaign: a store with Merchant Center starts on Standard Shopping (not Performance Max), without it a search campaign', () => {
   const withFeed = account({ campaigns: { ok: true, value: [] }, merchantCenterLinked: { ok: true, value: true } });
   const scenarioFeed = classify(withFeed, { type: 'ecommerce' });
   const feed = firstCampaignPlan({
@@ -1338,9 +1338,17 @@ test('first campaign: a store with Merchant Center gets a product campaign, with
     currency: 'SAR',
   });
   assert.ok(feed);
-  assert.equal(feed.campaign, 'حملة أداء أقصى على منتجات المتجر في السعودية');
+  // Titan 8.1, 21.12: a new store starts on Standard Shopping; PMax needs ~30 conversions a month and a healthy feed.
+  assert.equal(feed.campaign, 'حملة تسوق على منتجات المتجر في السعودية');
+  assert.doesNotMatch(feed.campaign, /أداء أقصى/);
   assert.equal(feed.items.some((item) => item.label === 'أول كلمات البحث'), false, 'a product feed runs on products, not on typed words');
   assert.match(feed.items[0].detail, /Merchant Center/);
+  assert.match(feed.items[0].detail, /حملة تسوق/);
+  const pmax = feed.items.find((item) => item.label === 'أداء أقصى');
+  assert.ok(pmax, 'the plan says when Performance Max comes');
+  assert.match(pmax.detail, /30 عملية شراء/);
+  assert.match(pmax.detail, /الفيد سليم/);
+  assert.ok(feed.items.length >= 3 && feed.items.length <= 5);
 
   const noFeed = classify(null, { type: 'ecommerce', has_account: 'none' }, { linked: 0 });
   const search = firstCampaignPlan({
