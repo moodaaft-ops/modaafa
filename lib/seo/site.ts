@@ -34,13 +34,16 @@ export const BRAND = {
   email: 'moodaaft@gmail.com',
   whatsappLocal: '0541004029',
   whatsappIntl: '+966541004029',
-  // Only profiles opened and confirmed live on 14 Oct 2026. The agency's
-  // Instagram link in the modaafa.com footer returned "profile not available",
-  // so it stays out until the owner confirms the handle.
+  // Only profiles opened and confirmed live on 14 Oct 2026. The old agency
+  // Instagram handle (moodaafa.sa) returned "profile not available", so the
+  // owner pointed the agency at aiman.google.ads and added the YouTube channel.
+  // The same list is now set in Rank Math on modaafa.com, so both sites agree.
   agencySameAs: [
     'https://x.com/moodaafa_sa',
+    'https://www.instagram.com/aiman.google.ads/',
     'https://www.tiktok.com/@moodaafa.sa',
     'https://www.snapchat.com/@moodaafa.sa',
+    'https://www.youtube.com/channel/UC2uUk74twH7aEyQp8W8u27w',
   ],
   founderSameAs: [
     'https://www.tiktok.com/@aiman.google.ads',
