@@ -106,6 +106,14 @@ test('siteGraph round-trips through JSON and every node has an id from ENTITY_ID
   assert.ok(!orgSameAs.some((u) => u.includes('modaafa.com')), 'the agency url is not repeated inside sameAs');
   assert.ok(orgSameAs.every((u) => u.startsWith('https://')), 'sameAs entries are absolute https urls');
   assert.equal(new Set(orgSameAs).size, orgSameAs.length, 'no duplicate sameAs entries');
+  assert.ok(
+    orgSameAs.some((u) => u.startsWith('https://www.youtube.com/channel/UC')),
+    'the agency YouTube channel is listed by its channel id',
+  );
+  assert.ok(
+    !orgSameAs.some((u) => u.includes('instagram.com/moodaafa.sa')),
+    'the dead agency Instagram handle stays out',
+  );
 
   const founder = nodes.find((node) => node['@id'] === ENTITY_IDS.founder);
   assert.ok(founder);
