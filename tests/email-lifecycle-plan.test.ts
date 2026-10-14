@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { EMAIL_COPY } from '../lib/lifecycle/copy';
 import { planEmails, type PlanConfig, type PlanContext, type PlanLogRow } from '../lib/lifecycle/plan';
 import { ACTIVATED_AT, approvedCopy, makeCtx, riyadh, sentLog } from './support/lifecycle';
 
@@ -80,10 +81,12 @@ test('copy that is not approved is ignored and nothing is recorded', () => {
   assert.equal(result.ignored.not_approved, 1);
 });
 
-test('the shipped stubs are all unapproved, so the real config plans nothing', () => {
+test('unapproved stubs plan nothing, even with the real config', () => {
+  const stubs = Object.fromEntries(Object.entries(EMAIL_COPY).map(([key, c]) => [key, { ...c, approved: c.category === 'transactional' }])) as typeof EMAIL_COPY;
   const result = planEmails({
     now: riyadh('2026-10-11T12:00'),
     contexts: [registered('2026-10-10T10:00')],
+    copy: stubs,
     config: { activatedAt: ACTIVATED_AT, isHeldOut: none },
   });
   assert.deepEqual(result.sends, []);
