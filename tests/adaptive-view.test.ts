@@ -359,6 +359,8 @@ test('stage: an account that runs ads keeps today\'s rule (finishing until the a
     confirm: 'yes',
     focus_service: 'dental_braces',
     value: '100_500',
+    profit_per_deal: '200_1k',
+    close_rate: '2_3',
     pain: 'clinic_few_calls',
     call_hours: 'always',
     whatsapp_booking: 'yes',
@@ -449,7 +451,7 @@ test('questions: edit mode marks the answer on record as current', () => {
 });
 
 test('understood: only when nothing is pending and not in edit mode', () => {
-  const answered = { confirm: 'yes', focus_service: 'dental_braces', value: '100_500', pain: 'clinic_few_calls', call_hours: 'always', whatsapp_booking: 'yes', budget: null };
+  const answered = { confirm: 'yes', focus_service: 'dental_braces', value: '100_500', profit_per_deal: '200_1k', close_rate: '2_3', pain: 'clinic_few_calls', call_hours: 'always', whatsapp_booking: 'yes', budget: null };
   const asking = buildAdaptiveView(input({ answered: { confirm: 'yes' } }));
   assert.deepEqual(asking.view.understood, []);
 
@@ -516,7 +518,7 @@ test('answered: a «yes» on the opener does not turn the sector it wrote into a
   assert.deepEqual(untouched, { type: 'clinic', goal: null });
 
   // And the difference shows: the activity row is «أكدته», not «قلته».
-  const answers = { confirm: 'yes', focus_service: 'dental_braces', value: '100_500', pain: 'clinic_few_calls', call_hours: 'always', whatsapp_booking: 'yes', budget: null };
+  const answers = { confirm: 'yes', focus_service: 'dental_braces', value: '100_500', profit_per_deal: '200_1k', close_rate: '2_3', pain: 'clinic_few_calls', call_hours: 'always', whatsapp_booking: 'yes', budget: null };
   const asProfile = buildAdaptiveView(input({ answered: { ...answers, type: 'clinic', name: null, goal: null }, consentAnswered: true }));
   assert.equal(asProfile.view.scenario.kindConfidence, 'stated');
   const asFixed = buildAdaptiveView(input({ answered: adaptiveAnswered({ answered: { ...answers, type: 'clinic', name: null, goal: null }, ledger }), consentAnswered: true }));
@@ -607,7 +609,7 @@ test('categories ride on the plan only when asked for, and stripPlanCategories r
 });
 
 test('plan: a rules decision takes the open slot and the browser never sees the audit category', () => {
-  const answered = { confirm: 'yes', focus_service: 'dental_braces', value: '100_500', pain: 'clinic_few_calls', call_hours: 'split_9_13_16_22', whatsapp_booking: 'yes', budget: null };
+  const answered = { confirm: 'yes', focus_service: 'dental_braces', value: '100_500', profit_per_deal: '200_1k', close_rate: '2_3', pain: 'clinic_few_calls', call_hours: 'split_9_13_16_22', whatsapp_booking: 'yes', budget: null };
   const result = buildAdaptiveView(input({ answered, consentAnswered: true, auditExists: true, plan: auditPlan() }));
   const { view, plan } = result;
   assert.ok(view.decision, 'ad spend while nobody answers the phone is a rules decision');
@@ -734,7 +736,7 @@ test('reaction context: the account\'s average order counts only when the custom
   assert.equal(reactionContextFor({ answer: answerOf('aov_check', { choice: 'same' }), ledger: new Map(), signals }).aov, 186);
   assert.equal(reactionContextFor({ answer: answerOf('aov_check', { choice: 'less' }), ledger: new Map([['aov_check', 'same']]), signals }).aov, null);
   // No read: no number, no currency.
-  assert.deepEqual(reactionContextFor({ answer: margin, ledger: new Map([['aov_check', 'same']]), signals: null }), { aov: null, currency: null, dealValue: null });
+  assert.deepEqual(reactionContextFor({ answer: margin, ledger: new Map([['aov_check', 'same']]), signals: null }), { aov: null, currency: null, dealValue: null, profit: null });
 });
 
 test('reaction context: the deal value comes from the ledger and the currency from the stored read', () => {
@@ -742,6 +744,9 @@ test('reaction context: the deal value comes from the ledger and the currency fr
   const context = reactionContextFor({ answer: close, ledger: new Map([['deal_value', 'lt2k']]), signals: clinicAccount() });
   assert.equal(context.dealValue, 'lt2k');
   assert.equal(context.currency, 'SAR');
+  assert.equal(context.profit, null);
+  const withProfit = reactionContextFor({ answer: close, ledger: new Map([['profit_per_deal', '200_1k']]), signals: clinicAccount() });
+  assert.equal(withProfit.profit, '200_1k');
   assert.deepEqual([...ANSWER_KEYS_NEEDING_LEDGER].sort(), ['close_rate', 'margin']);
   for (const key of ANSWER_KEYS_NEEDING_LEDGER) assert.ok(ANSWER_KEYS_NEEDING_SIGNALS.includes(key));
   assert.ok(ANSWER_KEYS_NEEDING_SIGNALS.includes('push_products'));

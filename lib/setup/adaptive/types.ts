@@ -203,6 +203,12 @@ export const ADAPTIVE_KEYS = [
   'call_hours',
   'whatsapp_booking',
   'deal_value',
+  /**
+   * Services, clinic, local: what is left of one customer after the costs, in a
+   * SAR bucket. With close_rate it gives the optimizer its break-even CPA
+   * (lib/economics/break-even.ts).
+   */
+  'profit_per_deal',
   'close_rate',
   'peak_hours',
   'delivery_apps',

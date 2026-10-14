@@ -11,8 +11,15 @@
  * onboarding answers into the two numbers that matter:
  *
  *   e-commerce        break_even_roas = 1 / margin
- *   leads, services,  break_even_cpa  = deal value x margin x close rate
- *   clinic, local
+ *   leads, services,  break_even_cpa  = profit per customer x close rate
+ *   clinic, local                       (or, for an owner who answered the older questions,
+ *                                        deal value x margin x close rate)
+ *
+ * The profit per customer is the answer to «كم تربح تقريباً من العميل الواحد بعد
+ * التكاليف؟», asked of services, clinic and local businesses. It already has the
+ * margin inside it, which is why a services business no longer has to be asked
+ * a margin on top of the deal value. When it is answered it wins; the deal value
+ * x margin x close rate path stays only for owners who answered those earlier.
  *
  * The answers are buckets, not numbers («من 20 إلى 40»). We always take the
  * edge of the bucket that is worse for the client, so the break-even we hand
@@ -20,6 +27,7 @@
  *
  *   margin       lt20 -> 10%   20_40 -> 20%   gt40 -> 40%
  *   deal value   lt2k -> 1,000   2k_10k -> 2,000   10k_50k -> 10,000   gt50k -> 50,000 SAR
+ *   profit       lt50 -> 25   50_200 -> 50   200_1k -> 200   1k_5k -> 1,000   gt5k -> 5,000 SAR
  *   close rate   le1  -> 0.5 of 10   2_3 -> 2 of 10   ge4 -> 4 of 10
  *
  * Rule: the lower edge of the bucket; when the lower edge is 0 (an open-ended
@@ -43,10 +51,18 @@ export type EconomicsFactData = Record<string, unknown>;
 
 /** The newest active onboarding fact per setup key, only the keys this module reads. */
 export type EconomicsFacts = Partial<
-  Record<'confirm' | 'type' | 'margin' | 'deal_value' | 'close_rate' | 'aov_check', EconomicsFactData>
+  Record<
+    'confirm' | 'type' | 'margin' | 'deal_value' | 'profit_per_deal' | 'close_rate' | 'aov_check',
+    EconomicsFactData
+  >
 >;
 
-export type EconomicsMissing = 'business_kind' | 'margin' | 'deal_value' | 'close_rate' | 'currency_sar_only';
+/**
+ * What the owner could still answer to unlock a number, named by the question that is asked today. A lead
+ * business without a profit per customer is asked for it (`profit_per_deal`) rather than for the deal value and
+ * margin pair, which only owners who answered them earlier still have.
+ */
+export type EconomicsMissing = 'business_kind' | 'margin' | 'profit_per_deal' | 'close_rate' | 'currency_sar_only';
 
 export type BreakEven = {
   kind: EconomicsKind;
@@ -57,8 +73,10 @@ export type BreakEven = {
   inputs: {
     /** 0..1, the conservative edge of the answered bucket. */
     margin_fraction: number | null;
-    /** SAR. */
+    /** SAR. Only the older deal value x margin path uses it. */
     deal_value_sar: number | null;
+    /** SAR, the conservative edge of the answered bucket: what is left of one customer after the costs. */
+    profit_per_deal_sar: number | null;
     /** 0..1, share of contacts that become customers. */
     close_rate_fraction: number | null;
     /** The average order the account reported and the owner confirmed. Information only. */
@@ -107,6 +125,13 @@ function marginFraction(fact: EconomicsFactData | undefined): number | null {
 }
 
 function dealValueSar(fact: EconomicsFactData | undefined): number | null {
+  if (!fact) return null;
+  const edge = conservativeEdge(fact.min_sar, fact.max_sar);
+  return edge !== null && edge > 0 ? edge : null;
+}
+
+/** Profit per customer after the costs, in riyals. Same bucket shape as the deal value (min_sar, max_sar). */
+function profitPerDealSar(fact: EconomicsFactData | undefined): number | null {
   if (!fact) return null;
   const edge = conservativeEdge(fact.min_sar, fact.max_sar);
   return edge !== null && edge > 0 ? edge : null;
@@ -179,8 +204,8 @@ export function deriveEconomicsKind(input: {
   if (fromSector) return fromSector;
 
   // The question that was asked says what the tree thought the business was.
-  if (facts.margin && !facts.deal_value && !facts.close_rate) return 'ecommerce';
-  if (facts.deal_value || facts.close_rate) return 'services';
+  if (facts.margin && !facts.deal_value && !facts.close_rate && !facts.profit_per_deal) return 'ecommerce';
+  if (facts.deal_value || facts.close_rate || facts.profit_per_deal) return 'services';
 
   if (input.primaryGoal === 'conversions') return 'ecommerce';
   if (input.primaryGoal === 'leads') return 'services';
@@ -199,6 +224,7 @@ export function computeBreakEven(input: {
   const kind = deriveEconomicsKind(input);
   const margin = marginFraction(input.facts.margin);
   const deal = dealValueSar(input.facts.deal_value);
+  const profit = profitPerDealSar(input.facts.profit_per_deal);
   const close = closeRateFraction(input.facts.close_rate);
 
   const missing: EconomicsMissing[] = [];
@@ -211,11 +237,19 @@ export function computeBreakEven(input: {
   } else if (kind === 'general') {
     missing.push('business_kind');
   } else {
-    // clinic, services, local: a lead only pays for itself through a closed deal.
-    if (deal === null) missing.push('deal_value');
-    if (close === null) missing.push('close_rate');
-    if (margin === null) missing.push('margin');
-    if (deal !== null && close !== null && margin !== null) breakEvenCpa = round2(deal * margin * close);
+    // clinic, services, local: a lead only pays for itself through a closed deal. The profit per customer
+    // already has the costs taken out, so it needs only the close rate. An owner who answered deal value and
+    // margin earlier (and never the profit question) keeps the older product of the three.
+    if (profit !== null) {
+      if (close === null) missing.push('close_rate');
+      else breakEvenCpa = round2(profit * close);
+    } else if (deal !== null && margin !== null) {
+      if (close === null) missing.push('close_rate');
+      else breakEvenCpa = round2(deal * margin * close);
+    } else {
+      missing.push('profit_per_deal');
+      if (close === null) missing.push('close_rate');
+    }
   }
 
   return {
@@ -225,6 +259,7 @@ export function computeBreakEven(input: {
     inputs: {
       margin_fraction: margin,
       deal_value_sar: deal,
+      profit_per_deal_sar: profit,
       close_rate_fraction: close,
       aov_reported: aovReported(input.facts.aov_check),
     },

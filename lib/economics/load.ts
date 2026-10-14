@@ -18,7 +18,7 @@ import {
  * missing.
  */
 
-const ECONOMICS_KEYS = ['confirm', 'type', 'margin', 'deal_value', 'close_rate', 'aov_check'] as const;
+const ECONOMICS_KEYS = ['confirm', 'type', 'margin', 'deal_value', 'profit_per_deal', 'close_rate', 'aov_check'] as const;
 type EconomicsKey = (typeof ECONOMICS_KEYS)[number];
 
 /** Same ceiling lib/setup/ledger.ts reads: the answers of one business are far fewer than this. */

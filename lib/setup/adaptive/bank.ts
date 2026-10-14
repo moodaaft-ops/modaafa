@@ -20,6 +20,7 @@ import {
   EXCLUDE_PRODUCTS_OPTIONS,
   MARGIN_OPTIONS,
   PEAK_HOURS_OPTIONS,
+  PROFIT_PER_DEAL_OPTIONS,
   PUSH_NONE_ID,
   PRODUCT_TEXT_MAX,
   TRACKING_NOW_OPTIONS,
@@ -60,9 +61,12 @@ import type {
 
 /** What the questions of a kind are, after the opener and before the shared tail. */
 const KIND_CORE: Record<Exclude<BusinessKind, 'general' | 'ecommerce'>, SetupKey[]> = {
-  clinic: ['focus_service', 'value', 'pain', 'call_hours', 'whatsapp_booking'],
-  services: ['focus_service', 'deal_value', 'close_rate', 'pain'],
-  local: ['goal', 'peak_hours', 'value', 'delivery_apps'],
+  // profit_per_deal and close_rate are what the optimizer needs to work out a break-even CPA
+  // (lib/economics/break-even.ts). A kind that lacks one of them gets it, and a customer who already
+  // answered it is not asked again (adaptivePending drops answered keys). At most two more per kind.
+  clinic: ['focus_service', 'value', 'profit_per_deal', 'close_rate', 'pain', 'call_hours', 'whatsapp_booking'],
+  services: ['focus_service', 'deal_value', 'profit_per_deal', 'close_rate', 'pain'],
+  local: ['goal', 'peak_hours', 'value', 'profit_per_deal', 'close_rate', 'delivery_apps'],
 };
 
 /** The questions for no account, a new account and a dormant one: what they sell and to whom, never the pain. */
@@ -463,11 +467,24 @@ export function adaptiveQuestion(key: SetupKey, ctx: QuestionContext): AdaptiveQ
         current,
       };
 
+    case 'profit_per_deal': {
+      // The same question in the words of the business: a patient, a customer, a customer of the shop.
+      const who = kind === 'clinic' ? 'المريض' : kind === 'local' ? 'الزبون' : 'العميل';
+      return {
+        key,
+        text: `كم تربح تقريباً من ${who} الواحد بعد التكاليف؟`,
+        why: `عشان أعرف أقصى مبلغ أصرفه على ${who} وأنت لسا رابح.`,
+        options: toAdaptive(PROFIT_PER_DEAL_OPTIONS),
+        layout: 'tiles2',
+        current,
+      };
+    }
+
     case 'close_rate':
       return {
         key,
-        text: 'من كل 10 يتواصلون معك، كم يصيرون عملاء؟',
-        why: 'مع جواب الصفقة أعرف كم يسوى لك الاتصال الواحد.',
+        text: kind === 'local' ? 'من كل 10 يتواصلون معك، كم واحد يصير زبون؟' : 'من كل 10 يتواصلون معك، كم واحد يصير عميل؟',
+        why: 'مع ربحك من الواحد أعرف كم يسوى لك الاتصال الواحد.',
         options: toAdaptive(CLOSE_RATE_OPTIONS),
         layout: 'tiles',
         current,

@@ -15,14 +15,16 @@
  * Who reads what. The audit and the optimizer read the `businesses` columns
  * (sector, primary goal, monthly budget) as context. The scheduled optimizer
  * reads exactly these facts and no others: the economics answers (`margin`,
- * `deal_value`, `close_rate`, `aov_check`) plus `confirm` and `type` to tell
- * which kind of business it is, through lib/economics/load.ts, and turns them
- * into the break-even ROAS or CPA its budget and bid decisions are held to.
+ * `deal_value`, `profit_per_deal`, `close_rate`, `aov_check`) plus `confirm`
+ * and `type` to tell which kind of business it is, through
+ * lib/economics/load.ts, and turns them into the break-even ROAS or CPA its
+ * budget and bid decisions are held to.
  * Every other answer here (pain points, hours, products to push or exclude,
  * regions, website) is for the brain and the screens; the optimizer does not
  * see them. Which kinds are asked which economics questions is decided in
- * lib/setup/adaptive/bank.ts: today only an e-commerce store is asked its
- * margin, and only a services business is asked deal value and close rate.
+ * lib/setup/adaptive/bank.ts: an e-commerce store is asked its margin; a
+ * services business, a clinic and a local business are asked the profit per
+ * customer after costs and the close rate (a services business also its deal value).
  */
 
 import { ADAPTIVE_KEYS, type AdaptiveAnswer, type AdaptiveKey } from './adaptive/types';

@@ -14,7 +14,11 @@ import { loadEconomics, loadEconomicsFacts } from '../lib/economics/load';
 import { adaptiveEffects } from '../lib/setup/adaptive/answers';
 
 /** The `data` payload the onboarding writer really produces for one answer. */
-function factData(key: 'margin' | 'deal_value' | 'close_rate' | 'aov_check', choice: string, extra: object = {}) {
+function factData(
+  key: 'margin' | 'deal_value' | 'profit_per_deal' | 'close_rate' | 'aov_check',
+  choice: string,
+  extra: object = {}
+) {
   const effects = adaptiveEffects({ key, choice, ...extra } as any);
   assert.ok(effects.fact, `${key}:${choice} writes a fact`);
   return effects.fact!.data as Record<string, unknown>;
@@ -56,7 +60,96 @@ test('"I do not know" and "never asked" are the same: null, with the answer name
   assert.deepEqual(neverAsked.missing, ['margin']);
 });
 
-test('leads: break-even CPA is deal value x margin x close rate, from the conservative edges', () => {
+test('leads: break-even CPA is profit per customer x close rate, from the conservative edges', () => {
+  // profit 200_1k -> 200 SAR, close 2_3 -> 2 of 10: 200 x 0.2 = 40.
+  const facts: EconomicsFacts = {
+    type: { choice: 'services' },
+    profit_per_deal: factData('profit_per_deal', '200_1k'),
+    close_rate: factData('close_rate', '2_3'),
+  };
+  const result = computeBreakEven({ facts });
+  assert.equal(result.kind, 'services');
+  assert.equal(result.break_even_cpa, 40);
+  assert.equal(result.break_even_roas, null);
+  assert.deepEqual(result.missing, []);
+  assert.equal(result.inputs.profit_per_deal_sar, 200);
+  assert.equal(result.inputs.close_rate_fraction, 0.2);
+  assert.equal(result.inputs.margin_fraction, null);
+  assert.equal(result.inputs.deal_value_sar, null);
+
+  // Every bucket takes its worse edge: the lower edge, or half of the upper one when the bucket starts at 0.
+  const profit: Record<string, number> = { lt50: 25, '50_200': 50, '200_1k': 200, '1k_5k': 1000, gt5k: 5000 };
+  const close: Record<string, number> = { le1: 0.05, '2_3': 0.2, ge4: 0.4 };
+  for (const [profitChoice, profitSar] of Object.entries(profit)) {
+    for (const [closeChoice, fraction] of Object.entries(close)) {
+      const bucketed = computeBreakEven({
+        facts: {
+          type: { choice: 'clinic' },
+          profit_per_deal: factData('profit_per_deal', profitChoice),
+          close_rate: factData('close_rate', closeChoice),
+        },
+      });
+      assert.equal(bucketed.break_even_cpa, Math.round(profitSar * fraction * 100) / 100, `${profitChoice}/${closeChoice}`);
+    }
+  }
+});
+
+test('leads: a bigger profit bucket never gives a smaller break-even CPA, and a smaller one never a bigger one', () => {
+  const order = ['lt50', '50_200', '200_1k', '1k_5k', 'gt5k'];
+  const cpas = order.map(
+    (choice) =>
+      computeBreakEven({
+        facts: { type: { choice: 'local_store' }, profit_per_deal: factData('profit_per_deal', choice), close_rate: factData('close_rate', '2_3') },
+      }).break_even_cpa as number
+  );
+  for (let index = 1; index < cpas.length; index += 1) assert.ok(cpas[index] > cpas[index - 1], order[index]);
+});
+
+test('leads: the profit per customer wins over the older deal value x margin x close rate', () => {
+  const result = computeBreakEven({
+    facts: {
+      type: { choice: 'services' },
+      deal_value: factData('deal_value', '10k_50k'),
+      margin: factData('margin', '20_40'),
+      profit_per_deal: factData('profit_per_deal', '50_200'),
+      close_rate: factData('close_rate', '2_3'),
+    },
+  });
+  // 50 x 0.2 = 10, not 10,000 x 0.2 x 0.2 = 400.
+  assert.equal(result.break_even_cpa, 10);
+});
+
+test('leads: a profit answer of «ما أدري» falls back to the older answers, and to nothing when there are none', () => {
+  const older = computeBreakEven({
+    facts: {
+      type: { choice: 'services' },
+      deal_value: factData('deal_value', '10k_50k'),
+      margin: factData('margin', '20_40'),
+      profit_per_deal: factData('profit_per_deal', 'unknown'),
+      close_rate: factData('close_rate', '2_3'),
+    },
+  });
+  assert.equal(older.break_even_cpa, 400);
+
+  const nothing = computeBreakEven({
+    facts: {
+      type: { choice: 'clinic' },
+      profit_per_deal: factData('profit_per_deal', 'unknown'),
+      close_rate: factData('close_rate', '2_3'),
+    },
+  });
+  assert.equal(nothing.break_even_cpa, null);
+  assert.deepEqual(nothing.missing, ['profit_per_deal']);
+});
+
+test('leads: a profit without a close rate is not enough, and the close rate is named', () => {
+  const result = computeBreakEven({ facts: { type: { choice: 'local_store' }, profit_per_deal: factData('profit_per_deal', '1k_5k') } });
+  assert.equal(result.break_even_cpa, null);
+  assert.deepEqual(result.missing, ['close_rate']);
+  assert.equal(hasBreakEven(result), false);
+});
+
+test('leads: break-even CPA is deal value x margin x close rate for an owner who answered those earlier', () => {
   // deal 10k_50k -> 10,000 SAR, close 2_3 -> 2 of 10, margin 20_40 -> 20%: 10,000 x 0.2 x 0.2 = 400.
   const facts: EconomicsFacts = {
     type: { choice: 'services' },
@@ -71,6 +164,7 @@ test('leads: break-even CPA is deal value x margin x close rate, from the conser
   assert.deepEqual(result.inputs, {
     margin_fraction: 0.2,
     deal_value_sar: 10000,
+    profit_per_deal_sar: null,
     close_rate_fraction: 0.2,
     aov_reported: null,
   });
@@ -87,7 +181,7 @@ test('leads: break-even CPA is deal value x margin x close rate, from the conser
   assert.equal(low.break_even_cpa, 5);
 });
 
-test('FINDING: a services business is asked deal value and close rate but never margin, so its CPA break-even is null', () => {
+test('a services business that answered deal value and close rate but not the profit is asked for the profit', () => {
   const result = computeBreakEven({
     facts: {
       confirm: { choice: 'yes', kind: 'services' },
@@ -97,16 +191,16 @@ test('FINDING: a services business is asked deal value and close rate but never 
   });
   assert.equal(result.kind, 'services');
   assert.equal(result.break_even_cpa, null);
-  assert.deepEqual(result.missing, ['margin']);
+  assert.deepEqual(result.missing, ['profit_per_deal']);
   assert.equal(hasBreakEven(result), false);
 });
 
-test('clinic and local are asked none of the three: everything is reported missing, nothing is guessed', () => {
+test('clinic and local with nothing answered: the profit per customer and the close rate are reported missing, nothing is guessed', () => {
   for (const choice of ['clinic', 'local_store']) {
     const result = computeBreakEven({ facts: { type: { choice } } });
     assert.equal(result.break_even_cpa, null);
     assert.equal(result.break_even_roas, null);
-    assert.deepEqual(result.missing, ['deal_value', 'close_rate', 'margin']);
+    assert.deepEqual(result.missing, ['profit_per_deal', 'close_rate']);
   }
 });
 
@@ -135,6 +229,7 @@ test('kind: the confirmed kind wins, then the type answer, the sector label, the
   assert.equal(kind({ facts: {}, sector: 'محل أو فرع' }), 'local');
   assert.equal(kind({ facts: { margin: factData('margin', 'lt20') }, sector: 'غير كذا' }), 'ecommerce');
   assert.equal(kind({ facts: { deal_value: factData('deal_value', 'lt2k') } }), 'services');
+  assert.equal(kind({ facts: { profit_per_deal: factData('profit_per_deal', 'lt50') } }), 'services');
   assert.equal(kind({ facts: {}, primaryGoal: 'conversions' }), 'ecommerce');
   assert.equal(kind({ facts: {}, primaryGoal: 'leads' }), 'services');
   assert.equal(kind({ facts: {}, primaryGoal: 'traffic' }), 'general');
@@ -243,4 +338,22 @@ test('the loader never throws: a failed read is "nothing on record" and withhold
   }
   const none = await loadEconomics(null, { businessId: null });
   assert.equal(none.kind, 'general');
+});
+
+test('the loader reads the profit per customer, so a clinic break-even CPA comes from profit x close rate', async () => {
+  const { admin } = fakeAdmin({
+    data: [
+      { data: { setup_key: 'profit_per_deal', choice: '200_1k', min_sar: 200, max_sar: 1000 }, created_at: '2026-10-14T10:00:00Z' },
+      { data: { setup_key: 'close_rate', choice: '2_3', min_of_10: 2, max_of_10: 3 }, created_at: '2026-10-14T09:00:00Z' },
+      { data: { setup_key: 'type', choice: 'clinic' }, created_at: '2026-10-14T08:00:00Z' },
+    ],
+    error: null,
+  });
+  const facts = await loadEconomicsFacts(admin, 'business-1');
+  assert.equal(facts?.profit_per_deal?.choice, '200_1k');
+
+  const economics = await loadEconomics(admin, { businessId: 'business-1', accountCurrency: 'SAR' });
+  assert.equal(economics.kind, 'clinic');
+  assert.equal(economics.break_even_cpa, 40);
+  assert.deepEqual(economics.missing, []);
 });
