@@ -54,7 +54,8 @@ function clean(line: string): string {
 }
 
 function money(amount: number, currency: string) {
-  return formatMoney(Math.round(amount), currency);
+  // formatMoney keeps two decimals under 100 (a cost per conversion of 12.5 stays 12.5).
+  return formatMoney(amount, currency);
 }
 
 // ---------------------------------------------------------------------------
@@ -180,7 +181,7 @@ const connected_1d: EmailCopy = {
       { type: 'p', text: 'حسابك الإعلاني مربوط، والخطة ما فتحتها.' },
       {
         type: 'p',
-        text: 'في آخر الأسئلة يطلع لك أول قرار تقدر تطبقه، وإذا لقى مُضاعِف فلوس تروح على الفاضي في حسابك يحط لها تقدير بالريال من أرقام آخر 30 يوم.',
+        text: 'في آخر الأسئلة تطلع لك خطتك وأول قرار فيها، وإذا لقى مُضاعِف فلوس تروح على الفاضي في حسابك يحط لها تقدير شهري من أرقام آخر 30 يوم.',
       },
     ],
     cta: { label: 'شوف خطتي', path: '/onboarding' },
@@ -214,12 +215,12 @@ const plan_ready_1d: EmailCopy = {
       type: 'p',
       text: plan.firstDecisionTitle
         ? `أول قرار في خطتك مفتوح لك: ${clean(plan.firstDecisionTitle)}.`
-        : 'أول قرار في خطتك مفتوح لك وتقدر تطبقه اليوم.',
+        : 'أول قرار في خطتك مفتوح لك تشوفه بسببه كامل.',
     });
     if (plan.lockedCount > 0) {
       blocks.push({
         type: 'p',
-        text: `وفيها ${decisions(plan.lockedCount)} ثانية مقفولة، تنفتح مع تجربتك المجانية 14 يوم.`,
+        text: `ومقفول فيها ${decisions(plan.lockedCount)} غيره. الخطة كلها تنفتح وتقدر تطبقها مع تجربتك المجانية 14 يوم.`,
       });
     }
     blocks.push({ type: 'note', text: TRUST_LINE });
@@ -227,7 +228,7 @@ const plan_ready_1d: EmailCopy = {
       subject: hasWaste
         ? `تقدير الهدر في حسابك: ${money(plan.wasteEstimate as number, plan.currency)} بالشهر`
         : 'خطتك جاهزة، وأول قرار فيها مفتوح لك',
-      preheader: 'ومعه قرار واحد تقدر تطبقه اليوم',
+      preheader: 'وأول قرار فيها مفتوح لك تشوفه الحين',
       blocks,
       cta: { label: 'ابدأ 14 يوم مجاناً', path: PLAN_CHECKOUT_PATH },
       signer: 'team',

@@ -88,7 +88,7 @@ test('copies that need facts return null without them instead of guessing', () =
 test('numbers come from the facts, in Latin digits', () => {
   const plan = EMAIL_COPY.plan_ready_1d.build(RICH)!;
   assert.match(plan.subject, /1,240/);
-  assert.ok(plan.blocks.some((b) => b.type === 'p' && b.text.includes('5 قرارات')));
+  assert.ok(plan.blocks.some((b) => b.type === 'p' && b.text.includes('5 قرارات غيره')));
   const noWaste = EMAIL_COPY.plan_ready_1d.build({ ...RICH, plan: { ...RICH.plan!, wasteEstimate: null } })!;
   assert.ok(!noWaste.blocks.some((b) => b.type === 'stat'));
   assert.doesNotMatch(noWaste.subject, /[0-9]/);
