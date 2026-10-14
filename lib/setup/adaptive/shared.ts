@@ -231,7 +231,8 @@ export const SERVICES_WORDS = [
   'ألمنيوم',
 ] as const;
 
-export const LOCAL_WORDS = ['مطعم', 'مطاعم', 'كافيه', 'قهوة', 'فرع', 'فروع', 'مشويات', 'حلويات', 'restaurant', 'cafe'] as const;
+/** «فرع» is left out on purpose: service companies name campaigns «فرع الرياض» too. */
+export const LOCAL_WORDS = ['مطعم', 'مطاعم', 'كافيه', 'قهوة', 'مشويات', 'حلويات', 'restaurant', 'cafe'] as const;
 
 /** Hosts of store platforms and what they mean. */
 export const PLATFORM_HOSTS: Array<{ host: string; platform: 'salla' | 'zid' | 'shopify' }> = [

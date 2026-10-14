@@ -48,10 +48,8 @@ export function activityPhrase(scenario: Scenario, signals: AccountSignals | nul
       const found = matchFocusEntries('services', campaigns.map((campaign) => campaign.name));
       return `${found.length === 1 ? `شركة ${found[0].label}` : 'شركة خدمات'}${city ? ` ${city}` : ''}`;
     }
-    case 'local': {
-      const locations = sigValue(signals?.assets)?.locations ?? 0;
-      return `${locations >= 2 ? 'نشاط بفروع' : 'محل أو فرع'}${city ? ` ${city}` : ''}`;
-    }
+    case 'local':
+      return `محل أو فرع${city ? ` ${city}` : ''}`;
     default:
       return null;
   }
@@ -121,8 +119,8 @@ export function buildOpener(scenario: Scenario, signals: AccountSignals | null, 
     }
   } else if (kind === 'local') {
     const locations = sigValue(signals.assets)?.locations ?? 0;
-    if (locations === 1) seen.push('إضافة الموقع مفعّلة');
-    else if (locations > 1) seen.push(`إضافة الموقع مفعّلة على ${countPhrase(locations, NOUNS.location)}`);
+    // `locations` counts linked location sets, not branches (one Business Profile set can hold many).
+    if (locations > 0) seen.push('إضافة الموقع مفعّلة');
   }
 
   if (scenario.state === 'no_tracking') {

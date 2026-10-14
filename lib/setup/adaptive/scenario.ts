@@ -175,8 +175,9 @@ export function classifyScenario(input: ClassifyInput): Scenario {
       evidence.push('words:services');
     }
 
-    const locations = sigValue(signals?.assets)?.locations ?? 0;
-    if (campaigns.some((campaign) => campaign.kind === 'LOCAL') || locations > 0) {
+    // A location asset is not a sign of a shop: on real accounts (14 Oct 2026) a dental clinic and a pool
+    // contractor both had their Business Profile linked. Only a Local campaign counts.
+    if (campaigns.some((campaign) => campaign.kind === 'LOCAL')) {
       scores.local += 2;
       evidence.push('loc');
     }
