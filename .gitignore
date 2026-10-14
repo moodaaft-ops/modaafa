@@ -33,3 +33,5 @@ artifacts/
 
 # Private Jarvis playbook build output (never commit the knowledge base).
 .playbook-build/
+landing-shots-out/
+scripts/landing-shots/*.log
