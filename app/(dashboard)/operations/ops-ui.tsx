@@ -9,11 +9,12 @@ import { contactHref } from '@/lib/platform/operator-page';
  * interactive part (operator actions) lives in its own client file.
  */
 
-export function OpsTabs({ active, updatedAt }: { active: 'overview' | 'customers' | 'costs'; updatedAt: string }) {
+export function OpsTabs({ active, updatedAt }: { active: 'overview' | 'customers' | 'costs' | 'signals'; updatedAt: string }) {
   const tabs = [
     { key: 'overview', href: '/operations', label: 'نظرة عامة' },
     { key: 'customers', href: '/operations/users', label: 'العملاء' },
     { key: 'costs', href: '/operations/costs', label: 'التكلفة' },
+    { key: 'signals', href: '/operations/onboarding-signals', label: 'قراءة الحساب' },
   ] as const;
   return (
     <div className="flex flex-wrap items-end justify-between gap-3 border-b border-border px-4 sm:px-6 lg:px-8">
@@ -24,7 +25,7 @@ export function OpsTabs({ active, updatedAt }: { active: 'overview' | 'customers
             href={tab.href}
             aria-current={active === tab.key ? 'page' : undefined}
             className={cn(
-              'border-b-2 px-3 pb-2.5 pt-1 text-sm font-semibold transition-colors',
+              'border-b-2 px-2.5 pb-2.5 pt-1 text-sm font-semibold transition-colors sm:px-3',
               active === tab.key
                 ? 'border-foreground text-foreground'
                 : 'border-transparent text-muted-foreground hover:text-foreground'
