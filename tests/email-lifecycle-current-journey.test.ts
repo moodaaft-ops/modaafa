@@ -126,8 +126,8 @@ test('past_due_3d is due the day after the access grace ends (copy key kept, the
   assert.equal(step!.afterMinutes, 8 * 24 * 60);
 });
 
-test('limits and switches match the contract, and the shipped state sends nothing', () => {
-  assert.equal(EMAIL_LIFECYCLE_ACTIVATED_AT, null);
+test('limits and switches match the contract, and only the four approved texts can go out', () => {
+  assert.equal(EMAIL_LIFECYCLE_ACTIVATED_AT, '2026-10-15T09:00:00+03:00');
   assert.equal(HOLDOUT_PERCENT, 10);
   assert.deepEqual(SEND_WINDOW, { tz: 'Asia/Riyadh', startHour: 9, endHour: 22 });
   assert.equal(MIN_GAP_MS, 24 * 60 * 60 * 1000);
@@ -136,7 +136,9 @@ test('limits and switches match the contract, and the shipped state sends nothin
   assert.equal(BROADCAST_BATCH_PER_RUN, 40);
   assert.deepEqual(WEEKLY_REPORT, { weekday: 0, hour: 9, windowHours: 60 });
   for (const copy of Object.values(EMAIL_COPY)) {
-    if (copy.category !== 'transactional') assert.equal(copy.approved, false, `${copy.key} must ship unapproved`);
+    if (copy.category === 'transactional') continue;
+    const approvedByAyman = ['welcome_ads_connect', 'registered_1d', 'plan_ready_1d', 'weekly_report'].includes(copy.key);
+    assert.equal(copy.approved, approvedByAyman, `${copy.key} approval must match what Ayman approved`);
   }
   for (const broadcast of BROADCASTS) assert.equal(broadcast.approved, false);
 });

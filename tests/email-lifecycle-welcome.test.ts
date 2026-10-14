@@ -67,7 +67,7 @@ test('welcome: activation exactly now is open', async () => {
 
 test('welcome: unapproved copy is never sent (the shipped state)', async () => {
   const { calls, options } = setup();
-  assert.equal(await sendWelcomeAfterRegistration('u1', { ...options, copy: EMAIL_COPY.welcome_ads_connect }), 'not_approved');
+  assert.equal(await sendWelcomeAfterRegistration('u1', { ...options, copy: { ...EMAIL_COPY.welcome_ads_connect, approved: false } }), 'not_approved');
   assert.deepEqual(calls, []);
 });
 

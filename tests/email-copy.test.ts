@@ -47,10 +47,13 @@ test('every copy key has exactly one entry with a matching key', () => {
   for (const key of COPY_KEYS) assert.equal(EMAIL_COPY[key].key, key);
 });
 
-test('only the live billing mails are approved; everything else waits for Ayman', () => {
+// Ayman approved these four on 14 Oct 2026 (review page). Anything else waits for him.
+const APPROVED_BY_AYMAN = new Set(['welcome_ads_connect', 'registered_1d', 'plan_ready_1d', 'weekly_report']);
+
+test('only the live billing mails and the four texts Ayman approved are approved', () => {
   for (const key of COPY_KEYS) {
     const approved = EMAIL_COPY[key].approved;
-    assert.equal(approved, key.startsWith('tx_'), key);
+    assert.equal(approved, key.startsWith('tx_') || APPROVED_BY_AYMAN.has(key), key);
   }
 });
 

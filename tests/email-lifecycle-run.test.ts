@@ -4,6 +4,11 @@ import type { Broadcast } from '../config/email-broadcasts';
 import { EMAIL_COPY } from '../lib/lifecycle/copy';
 import { runEmailLifecycle, type LoadEmailFactsFn, type SendTemplateFn, type SendTemplateInput } from '../lib/lifecycle/run';
 import { EMPTY_FACTS, type EmailCopy } from '../lib/lifecycle/types';
+
+// Every lifecycle text unapproved (only billing live): the state before Ayman approves anything.
+const UNAPPROVED_COPY = Object.fromEntries(
+  Object.entries(EMAIL_COPY).map(([key, c]) => [key, { ...c, approved: c.category === 'transactional' }]),
+) as typeof EMAIL_COPY;
 import { createFakeAdmin } from './support/fake-admin';
 import { ACTIVATED_AT, adsAccountSeed, approvedCopy, fakeSendTemplate, richFacts, riyadh, weeklyReportRow } from './support/lifecycle';
 
@@ -157,18 +162,18 @@ test('an unreadable activation moment is treated as not activated', async () => 
   assert.equal(admin.tables.message_log!.length, 0);
 });
 
-test('the shipped state (null activation, unapproved copy) sends nothing even on a real run', async () => {
+test('a null activation sends nothing even on a real run', async () => {
   const admin = createFakeAdmin(merge(dueRegistered('a')));
   admin.setClock(() => NOW);
   const fake = fakeSendTemplate(admin);
-  const summary = await runEmailLifecycle({ admin, now: NOW, deps: { sendTemplate: fake.fn, loadEmailFacts: richFacts } });
+  const summary = await runEmailLifecycle({ admin, now: NOW, config: { activatedAt: null }, deps: { sendTemplate: fake.fn, loadEmailFacts: richFacts } });
   assert.equal(summary.gate, 'not_activated');
   assert.equal(fake.calls.length, 0);
 });
 
 test('with an activation moment but unapproved copy, nothing is sent and nothing is written', async () => {
   const admin = createFakeAdmin(merge(dueRegistered('a'), connectedBoth('c')));
-  const { summary, calls } = await go(admin, { config: { copy: EMAIL_COPY } });
+  const { summary, calls } = await go(admin, { config: { copy: UNAPPROVED_COPY } });
   assert.equal(summary.gate, 'open');
   assert.equal(summary.sent, 0);
   assert.equal(summary.ignored.not_approved, 2);
@@ -200,14 +205,14 @@ test('dry run: reports the plan and writes, sends and loads nothing', async () =
 
 test('dry run with assumeApproved previews unapproved copy; a real run ignores the flag', async () => {
   const seed = merge(dueRegistered('a'));
-  const dry = await go(createFakeAdmin(seed), { dryRun: true, config: { copy: EMAIL_COPY, assumeApproved: true } });
+  const dry = await go(createFakeAdmin(seed), { dryRun: true, config: { copy: UNAPPROVED_COPY, assumeApproved: true } });
   assert.equal(dry.summary.planned.total, 1);
 
-  const plain = await go(createFakeAdmin(seed), { dryRun: true, config: { copy: EMAIL_COPY } });
+  const plain = await go(createFakeAdmin(seed), { dryRun: true, config: { copy: UNAPPROVED_COPY } });
   assert.equal(plain.summary.planned.total, 0);
   assert.equal(plain.summary.ignored.not_approved, 1);
 
-  const real = await go(createFakeAdmin(seed), { config: { copy: EMAIL_COPY, assumeApproved: true } });
+  const real = await go(createFakeAdmin(seed), { config: { copy: UNAPPROVED_COPY, assumeApproved: true } });
   assert.equal(real.summary.planned.total, 0, 'assumeApproved never applies to a real run');
   assert.deepEqual(real.calls, []);
 });
