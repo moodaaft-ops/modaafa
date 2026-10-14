@@ -1,3 +1,4 @@
+import type { AdaptiveReactionContext } from './adaptive/answers';
 import { answerEffects, answerLabel, reactionTo, type SetupAnswer } from './questions';
 
 export type SaveOutcome =
@@ -22,6 +23,8 @@ export async function saveSetupAnswer(args: {
   businessId: string;
   accountId: string | null;
   answer: SetupAnswer;
+  /** What only the server knows (the account's average order, an earlier answer); sharpens the adaptive reactions. */
+  reactionContext?: AdaptiveReactionContext;
 }): Promise<SaveOutcome> {
   const effects = answerEffects(args.answer);
 
@@ -60,5 +63,5 @@ export async function saveSetupAnswer(args: {
     }
   }
 
-  return { ok: true, label: answerLabel(args.answer), reaction: reactionTo(args.answer), memorySaved };
+  return { ok: true, label: answerLabel(args.answer), reaction: reactionTo(args.answer, args.reactionContext), memorySaved };
 }
