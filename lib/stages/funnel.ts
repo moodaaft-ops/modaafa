@@ -1,4 +1,10 @@
 import {
+  EMAIL_REPORT_HEADER_AR,
+  emailReportRowCells,
+  emailReportTotalCells,
+  type EmailReport,
+} from '@/lib/lifecycle/email-report';
+import {
   STAGE_LABEL_AR,
   USER_STAGES,
   stageForEvent,
@@ -91,8 +97,15 @@ export function formatPercent(rate: number | null): string {
   return `${Math.round(rate * 1000) / 10}%`;
 }
 
-/** CSV with a BOM so Excel opens the Arabic labels correctly. */
-export function funnelToCsv(report: FunnelReport): string {
+/**
+ * CSV with a BOM so Excel opens the Arabic labels correctly.
+ *
+ * With an email report the file carries a second table under the stage table,
+ * after one blank line and a title line: one row per email, then a totals row.
+ * `emailNote` replaces that table with one line of text when the email numbers
+ * could not be read, so the file never silently looks complete.
+ */
+export function funnelToCsv(report: FunnelReport, email?: EmailReport | null, emailNote?: string): string {
   const header = [
     'المرحلة',
     'وصلوا للمرحلة (الكل)',
@@ -119,6 +132,16 @@ export function funnelToCsv(report: FunnelReport): string {
         .join(',')
     );
   });
+  if (email) {
+    lines.push('');
+    lines.push(csvCell('رسائل البريد'));
+    lines.push(EMAIL_REPORT_HEADER_AR.map(csvCell).join(','));
+    for (const row of email.rows) lines.push(emailReportRowCells(row, email.engagementTracked).map(csvCell).join(','));
+    lines.push(emailReportTotalCells(email).map(csvCell).join(','));
+  } else if (emailNote) {
+    lines.push('');
+    lines.push(csvCell(emailNote));
+  }
   return '﻿' + lines.join('\r\n') + '\r\n';
 }
 

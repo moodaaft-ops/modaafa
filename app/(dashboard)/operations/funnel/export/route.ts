@@ -3,6 +3,8 @@ import { createAdminClient, getRequestAuthContext } from '@/lib/supabase/server'
 import { isModaafaOperator } from '@/lib/platform/operators';
 import { funnelToCsv } from '@/lib/stages/funnel';
 import { loadFunnelReport } from '@/lib/stages/load-funnel';
+import { loadEmailReport } from '@/lib/lifecycle/load-email-report';
+import type { EmailReport } from '@/lib/lifecycle/email-report';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,9 +16,19 @@ export async function GET() {
   }
 
   try {
-    const report = await loadFunnelReport(createAdminClient());
+    const admin = createAdminClient();
+    const report = await loadFunnelReport(admin);
+    // The email table is extra: if it cannot be read the stage table still downloads, with one line saying so.
+    let email: EmailReport | null = null;
+    let emailNote: string | undefined;
+    try {
+      email = await loadEmailReport(admin);
+    } catch (error) {
+      console.error('[funnel-export] email report failed', error instanceof Error ? error.message : 'unknown');
+      emailNote = 'تعذر قراءة أرقام رسائل البريد';
+    }
     const stamp = new Date().toISOString().slice(0, 10);
-    return new NextResponse(funnelToCsv(report), {
+    return new NextResponse(funnelToCsv(report, email, emailNote), {
       headers: {
         'content-type': 'text/csv; charset=utf-8',
         'content-disposition': `attachment; filename="modaafa-funnel-${stamp}.csv"`,
