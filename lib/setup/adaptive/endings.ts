@@ -13,7 +13,13 @@ import type { BusinessKind, FirstCampaignPlan, Scenario } from './types';
 /** How many of the focus catalog's entries a plan names when the customer said «كلها بنفس القدر». */
 const ALL_FOCUS_NAMED = 2;
 
-type CampaignType = 'search' | 'pmax_feed';
+/**
+ * A store with a linked Merchant Center starts on Standard Shopping, not on
+ * Performance Max (google-ads-titan 8.1, 9.1, 21.12): PMax needs a healthy feed
+ * AND about 30 conversions a month to learn, and a new account has neither.
+ * Standard Shopping lets us control the bids and see which products sell first.
+ */
+type CampaignType = 'search' | 'shopping_feed';
 
 type FocusRead = {
   /** «التقويم والزراعة», or null when nothing specific was said. */
@@ -96,19 +102,19 @@ export function firstCampaignPlan(args: {
   const where = regions.length > 0 ? ` في ${joinAnd(regions)}` : '';
   const budget = budgetText(business?.monthlyBudget, currency);
 
-  const type: CampaignType = kind === 'ecommerce' && hasEvidence(scenario, 'mc') ? 'pmax_feed' : 'search';
+  const type: CampaignType = kind === 'ecommerce' && hasEvidence(scenario, 'mc') ? 'shopping_feed' : 'search';
   const about = focus.topic ? ` على ${focus.topic}` : '';
 
   let campaign: string;
-  if (type === 'pmax_feed') campaign = `حملة أداء أقصى على منتجات المتجر${where}`;
+  if (type === 'shopping_feed') campaign = `حملة تسوق على منتجات المتجر${where}`;
   else if (kind === 'local') campaign = `حملة بحث قريب من الفرع${about}${where}`;
   else campaign = `حملة بحث${about}${where}`;
 
   const items: FirstCampaignPlan['items'] = [];
 
   // Structure
-  if (type === 'pmax_feed') {
-    items.push({ label: 'الهيكل', detail: 'حملة وحدة تنزّل منتجاتك من Merchant Center، ونقسمها بعد ما نشوف أي المنتجات تبيع.' });
+  if (type === 'shopping_feed') {
+    items.push({ label: 'الهيكل', detail: 'حملة تسوق وحدة تنزّل منتجاتك من Merchant Center، ونقسمها بعد ما نشوف أي المنتجات تبيع.' });
   } else if (kind === 'local') {
     items.push({ label: 'الهيكل', detail: 'حملة بحث وحدة تطلع للناس القريبين من الفرع، ومعها إضافة الموقع عشان يوصلون لك.' });
   } else if (focus.topic) {
@@ -118,7 +124,7 @@ export function firstCampaignPlan(args: {
   }
 
   // First keywords
-  if (type !== 'pmax_feed') {
+  if (type !== 'shopping_feed') {
     items.push({
       label: 'أول كلمات البحث',
       detail: focus.seeds.length > 0 ? focus.seeds.join('، ') : 'نبنيها من وصف نشاطك، وتراجعها قبل لا تشتغل الحملة.',
@@ -128,8 +134,13 @@ export function firstCampaignPlan(args: {
   // What the kind adds
   if (kind === 'clinic' || kind === 'services') {
     items.push({ label: 'الاتصال من الإعلان', detail: 'نفعّل إضافة الاتصال عشان العميل يتصل من الإعلان مباشرة.' });
+  } else if (type === 'shopping_feed') {
+    items.push({
+      label: 'أداء أقصى',
+      detail: 'نأجله لين تتجمع نحو 30 عملية شراء بالشهر ويكون الفيد سليم، وقتها نجرّبه جنب حملة التسوق.',
+    });
   } else if (type === 'search' && kind === 'ecommerce') {
-    items.push({ label: 'المنتجات', detail: 'نربط Merchant Center بعدين عشان نفتح حملة منتجات لما تتجمع أول نتائج.' });
+    items.push({ label: 'المنتجات', detail: 'نربط Merchant Center بعدين عشان نفتح حملة تسوق لما تتجمع أول نتائج.' });
   }
 
   items.push({ label: 'التتبع', detail: TRACKING_ITEM[kind] });

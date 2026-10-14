@@ -191,7 +191,7 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
                                   href={`/assistant?brief=${encodeURIComponent(String(item.action_payload?.brief_ar ?? ''))}`}
                                   className={buttonClasses({ variant: 'primary', size: 'sm' })}
                                 >
-                                  ابنِ الحملة في المساعد
+                                  افتح في المساعد
                                 </a>
                                 <RecommendationAction id={item.id} intent="dismiss" label="تجاهل" secondary />
                               </div>
@@ -373,7 +373,7 @@ function ChangePreview({
     pause_campaign: 'إيقاف حملة',
     enable_campaign: 'تشغيل حملة',
     add_negative_keywords_batch: 'منع عبارات بحث (دفعة)',
-    build_campaign_opportunity: 'اقتراح حملة جديدة (تُبنى في المساعد)',
+    build_campaign_opportunity: 'عبارات بحث رابحة (تُراجع في المساعد)',
     manual_campaign_draft: 'مسودة حملة جديدة (تحتاج مراجعة يدوية)',
   };
 
