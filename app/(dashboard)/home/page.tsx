@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation';
+import { after } from 'next/server';
 import { ChevronLeft } from 'lucide-react';
 import { getAccountWorkspace, normalizeCustomerId } from '@/lib/accounts/selection';
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
@@ -18,6 +19,7 @@ import { isAdaptiveOnboarding } from '@/lib/setup/adaptive/flag';
 import { adaptiveLockedPlan } from '@/lib/setup/adaptive/locked-plan';
 import { readLedgerEntries } from '@/lib/setup/load';
 import { loadRecentChanges } from '@/lib/home/recent-changes';
+import { recordUserEvent } from '@/lib/stages/events';
 import { keysAnsweredByProfile, missingCoreKeys, type SetupKey } from '@/lib/setup/questions';
 import { firstNameFrom, healthWord } from '@/lib/setup/stage';
 import {
@@ -148,6 +150,11 @@ export default async function HomePage({
       ? await adaptiveLockedPlan({ admin, accountId: selectedAccount.id, business, plan: basePlan, currency, ledger: ledgerEntries })
       : null;
     const plan = adaptiveLock ? adaptiveLock.plan : basePlan;
+    // The plan is on screen (an audit is on record): first_analysis_viewed, once per user, after the response,
+    // never throws. With no audit the card says «ما جهزت خطتك للحين» and nothing was analysed.
+    if (lockedAudit) {
+      after(() => recordUserEvent(user.id, 'first_analysis_viewed', { metadata: { page: 'home' } }));
+    }
     const lockedName = googleAdsAccountDisplayName(selectedAccount);
     const lockedNotice = lockedNoticeFrom(params);
     const lockedFirstName = firstNameFrom(user.user_metadata ?? null);
