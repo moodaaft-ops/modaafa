@@ -440,6 +440,14 @@ export function SetupChat({
 
   const finishQuestions = useCallback(async () => {
     const s = stateRef.current;
+    if (s.edit && s.adaptive && s.accounts.length === 0) {
+      // Going on without an account: there is no /home to go back to. The edit ends where the first run ends, on
+      // «فهمت عليك» with the new answers (a fresh /onboarding, so «عدّل شي» works again), and one tap from the plan.
+      setPhase('finishing');
+      await say('حفظت التعديل.');
+      router.replace('/onboarding');
+      return;
+    }
     if (s.edit) {
       setPhase('result');
       await say('حفظت كل شي. وأي شي يتغير في نشاطك بعدين قله لي بالكلام وأحفظه.');
@@ -466,7 +474,7 @@ export function SetupChat({
     push({ id: nid(), from: 'assistant', kind: 'audit' });
     waitingForAuditRef.current = true;
     if (kind === 'idle' || kind === 'error') void auditRef.current.retry();
-  }, [finishAdaptive, push, reload, say, showResults]);
+  }, [finishAdaptive, push, reload, router, say, showResults]);
 
   /**
    * Adaptive: «لحظة، أقرا حسابك.» The one read of the account, at most once per
@@ -1002,7 +1010,8 @@ export function SetupChat({
                 {Math.min(asked, total)} من {total}
               </span>
             )}
-            {(state.edit || adding) && (
+            {/* Without an account (the adaptive «كمّل بدون حساب») there is no page of theirs to go back to. */}
+            {(state.edit || adding) && !(state.adaptive && state.accounts.length === 0) && (
               <Link href="/home" className="inline-flex min-h-9 items-center rounded-full px-3 font-semibold text-foreground hover:bg-muted">
                 رجوع لصفحتك
               </Link>
@@ -1422,7 +1431,12 @@ function DockView({
     case 'plan':
       return (
         <div className="space-y-1">
-          <PlanCta trialEligible={state.trialEligible} cta={state.cta} />
+          {/* The agency ending executes nothing, so the trust line about what «مُضاعِف» changes is left out of it. Every other ending is the plain button. */}
+          {state.adaptive?.ending === 'agency' ? (
+            <PlanCta trialEligible={state.trialEligible} cta={state.cta} hideTrust />
+          ) : (
+            <PlanCta trialEligible={state.trialEligible} cta={state.cta} />
+          )}
           <Link
             href={PLAN_LATER_PATH}
             className="flex h-12 w-full items-center justify-center rounded-full text-[15px] font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"

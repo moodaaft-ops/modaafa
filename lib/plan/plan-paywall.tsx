@@ -338,13 +338,24 @@ export function PlanCtaReason({ cta, className }: { cta: PaywallCta | undefined;
  * cancel promise and the trust line, in that order. A stopped subscription has
  * nothing to cancel, so it gets no cancel promise.
  */
-export function PlanCta({ trialEligible, cta, className }: { trialEligible: boolean; cta?: PaywallCta; className?: string }) {
+export function PlanCta({
+  trialEligible,
+  cta,
+  className,
+  hideTrust = false,
+}: {
+  trialEligible: boolean;
+  cta?: PaywallCta;
+  className?: string;
+  /** Adaptive onboarding's agency ending only: the trust line talks about what «مُضاعِف» executes, and that ending executes nothing. */
+  hideTrust?: boolean;
+}) {
   return (
     <div className={cn('space-y-2', className)}>
       <PlanCtaReason cta={cta} />
       <PlanCtaButton trialEligible={trialEligible} cta={cta} />
       {cta?.kind !== 'billing' && <PlanCancelLine trialEligible={trialEligible} />}
-      <PlanTrust />
+      {!hideTrust && <PlanTrust />}
     </div>
   );
 }

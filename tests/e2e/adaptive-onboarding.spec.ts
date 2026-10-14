@@ -179,6 +179,7 @@ test('a clinic: the opener shows what was read, the answers lead to «فهمت �
   await expect(plan.getByText('أوقف عبارة «تقويم أسنان رخيص»: صرفت 380 ريال بدون ولا حجز')).toBeVisible();
   // The paywall is the one it always was.
   const cta = page.getByRole('link', { name: 'ابدأ 14 يوم مجاناً' });
+  await expect(page.getByText('ولا شي يتغير في حسابك إلا باعتمادك', { exact: false })).toBeVisible();
   await expect(cta).toHaveAttribute('href', '/onboarding/trial');
   await expect(page.getByRole('link', { name: 'أشوف الخطة بعدين' })).toHaveAttribute('href', '/home');
   await noSidewaysOverflow(page);
@@ -303,8 +304,11 @@ test('an agency-managed account: the plan comes with questions for the agency an
   const management = page.getByRole('region', { name: 'خل فريق مُضاعفة يديرها عنك' });
   await expect(management).toBeVisible();
   await expect(management.getByRole('link', { name: 'كلمنا على الواتساب' })).toHaveAttribute('href', /^https:\/\/wa\.me\/966541004029\?text=/);
-  // Nothing to execute: the lead has manual steps only, and there is no approve button.
+  // Nothing to execute: the lead has manual steps only, there is no approve button, and the trust line about
+  // what «مُضاعِف» changes in the account is not on this ending.
   await expect(page.getByRole('button', { name: 'اعتمد' })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'ابدأ 14 يوم مجاناً' })).toBeVisible();
+  await expect(page.getByText('ولا شي يتغير في حسابك إلا باعتمادك', { exact: false })).toHaveCount(0);
   await noSidewaysOverflow(page);
   await page.evaluate(() => document.getElementById('plan-card')?.scrollIntoView({ block: 'start' }));
   await shot(page, 'agency-ending');
@@ -414,6 +418,124 @@ test('no ads account: «كمّل بدون حساب» runs the questions, and the
   await page.evaluate(() => document.getElementById('plan-card')?.scrollIntoView({ block: 'start' }));
   await shot(page, 'no-account-ending');
   await shotEnd(page, 'no-account-ending-bottom');
+
+  expect(seen.auditRuns).toEqual([]);
+  expect(seen.errors).toEqual([]);
+});
+
+// ---------------------------------------------------------------------------
+// «عدّل شي» without an account: the questions again with the current answers marked, and back to «فهمت عليك»
+// ---------------------------------------------------------------------------
+
+test('no ads account: «عدّل شي» reopens the questions with the current answers marked, and the edit ends on «فهمت عليك» and the plan', async ({ page, baseURL }) => {
+  await scenario('adaptive_no_account');
+  await signIn(page, baseURL);
+  const seen = watchRequests(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/onboarding');
+
+  await pick(page, 'ما عندي حساب إعلانات');
+  await pick(page, 'كمّل بدون حساب، وأجهز لك خطة أول حملة');
+  await answerFirstCampaignQuestions(page);
+  await expect(page.getByText('خلصنا. هذا اللي فهمته عنك:')).toBeVisible({ timeout: 20_000 });
+
+  // «عدّل شي» is a page of its own: the questions start over, the answers on record marked.
+  await page.getByRole('link', { name: 'عدّل شي' }).click();
+  await expect(page).toHaveURL(/\/onboarding\?edit=1/, { timeout: 20_000 });
+  await expect(page.getByText('نعدّل معلومات نشاطك', { exact: false })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText('وش نوع نشاطك؟')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('button', { name: /متجر إلكتروني/ })).toContainText('الحالي');
+  // There is no page of theirs to go back to without an account.
+  await expect(page.getByRole('link', { name: 'رجوع لصفحتك' })).toHaveCount(0);
+  await noSidewaysOverflow(page);
+  await shot(page, 'no-account-edit-type');
+  await pick(page, 'متجر إلكتروني');
+  await expect(page.getByText('وش تبيع بالضبط؟')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('button', { name: /عطور/ }).first()).toContainText('الحالي');
+  await pick(page, 'عطور');
+  // The rest is answered again, one tap each, and the budget is the one that changes. The city picker opens with
+  // the city on record already chosen.
+  await pick(page, 'مدن معيّنة');
+  await expect(page.getByRole('button', { name: 'الرياض' })).toHaveAttribute('aria-pressed', 'true');
+  await pick(page, /^تم،/);
+  await expect(page.getByText('متى تقول إن الإعلان نجح؟')).toBeVisible({ timeout: 15_000 });
+  await pick(page, 'طلبات شراء من المتجر');
+  await expect(page.getByText('كم تبي تصرف على إعلانات قوقل بالشهر؟')).toBeVisible({ timeout: 15_000 });
+  await pick(page, 'أكثر من 30,000 ريال');
+  await pick(page, 'بكتبه بعدين');
+
+  // Nothing to go back to (there is no /home without an account): the edit ends where the first run ends.
+  await expect(page).toHaveURL(/\/onboarding$/, { timeout: 20_000 });
+  await expect(page.getByText('خلصنا. هذا اللي فهمته عنك:')).toBeVisible({ timeout: 20_000 });
+  const understood = page.getByRole('region', { name: 'فهمت عليك' });
+  // The tile «أكثر من 30,000 ريال» is booked as 40,000 a month; the first run said 6,000.
+  await expect(understood.getByText('40,000 ريال بالشهر')).toBeVisible();
+  await noSidewaysOverflow(page);
+  await shot(page, 'no-account-edit-understood');
+  await pick(page, 'صح، وريني الخطة');
+  const campaign = page.getByRole('region', { name: 'خطة أول حملة' });
+  await expect(campaign).toBeVisible({ timeout: 20_000 });
+  await expect(campaign.getByText('حملة بحث على العطور في الرياض')).toBeVisible();
+  const dock = await dockActions(page);
+  expect(dock).toHaveLength(3);
+  expect(dock[0]).toContain('افتحه معي على الواتساب');
+  await noSidewaysOverflow(page);
+
+  expect(seen.auditRuns).toEqual([]);
+  expect(seen.errors).toEqual([]);
+});
+
+// ---------------------------------------------------------------------------
+// After the clinic's plan: /home says the same thing, and «عدّل شي» opens with the type and the goal
+// ---------------------------------------------------------------------------
+
+test('a clinic: /home shows the same plan (the call-hours decision open, the audit one a locked title), and editing starts with the type and the goal', async ({ page, baseURL }) => {
+  await scenario('adaptive_clinic');
+  await signIn(page, baseURL);
+  const seen = watchRequests(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/onboarding');
+
+  await expect(page.getByText('هلا أيمن، ربطت حسابك وقريته.')).toBeVisible({ timeout: 20_000 });
+  await pick(page, 'إي صح');
+  await pick(page, /^زراعة/);
+  await pick(page, 'من 100 إلى 500 ريال');
+  await pick(page, 'الاتصالات قليلة');
+  await pick(page, /^فترتين/);
+  await pick(page, /^إي$/);
+  await pick(page, /^نفسه تقريباً/);
+  await pick(page, 'استأذني في كل شي');
+  await expect(page.getByText('خلصنا. هذا اللي فهمته عنك:')).toBeVisible({ timeout: 20_000 });
+  await pick(page, 'صح، وريني الخطة');
+  await expect(page.getByRole('region', { name: 'خطتك جاهزة' })).toBeVisible({ timeout: 20_000 });
+
+  // «أشوف الخطة بعدين»: /home is the plan the chat just showed, not the audit's own order.
+  await page.getByRole('link', { name: 'أشوف الخطة بعدين' }).click();
+  await expect(page).toHaveURL(/\/home$/, { timeout: 20_000 });
+  const lock = page.getByRole('region', { name: 'خطتك جاهزة' });
+  await expect(lock).toBeVisible({ timeout: 20_000 });
+  await expect(lock.getByText('وقّف الإعلان من 10 الليل لين 9 الصبح')).toBeVisible();
+  await expect(lock.getByText('ليش أول شي', { exact: false })).toBeVisible();
+  await expect(lock.getByText('كيف أسويه؟')).toBeVisible();
+  // The audit's own first decision is a title among the locked ones: no second open decision, no reason, no button.
+  const locked = lock.getByRole('listitem').filter({ hasText: 'تقويم أسنان رخيص' });
+  await expect(locked).toHaveCount(1);
+  await expect(lock.getByText('العبارة جابت 80 ضغطة', { exact: false })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'اعتمد' })).toHaveCount(0);
+  await noSidewaysOverflow(page);
+  await shot(page, 'clinic-home-lock');
+
+  // «عدّل معلومات نشاطك»: the business type and the goal come first, with the current answers marked.
+  await page.goto('/onboarding?edit=1');
+  await expect(page.getByText('نعدّل معلومات نشاطك', { exact: false })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText('وش نوع نشاطك؟')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('button', { name: /عيادة أو مركز طبي/ })).toContainText('الحالي');
+  await noSidewaysOverflow(page);
+  await shot(page, 'clinic-edit-type');
+  await pick(page, /عيادة أو مركز طبي/);
+  await expect(page.getByText('متى تقول إن الإعلان نجح؟')).toBeVisible({ timeout: 15_000 });
+  await noSidewaysOverflow(page);
+  await shot(page, 'clinic-edit-goal');
 
   expect(seen.auditRuns).toEqual([]);
   expect(seen.errors).toEqual([]);

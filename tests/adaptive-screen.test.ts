@@ -5,8 +5,8 @@ import test from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-import { PlanCard } from '../lib/plan/plan-paywall';
-import { buildPlan } from '../lib/plan/plan';
+import { PlanCard, PlanCta } from '../lib/plan/plan-paywall';
+import { buildPlan, PLAN_COPY } from '../lib/plan/plan';
 import { CONFIRM_OPTIONS } from '../lib/setup/adaptive/answers';
 import type { AdaptiveOption, AdaptiveQuestion, AdaptiveView, ScenarioDecision } from '../lib/setup/adaptive/types';
 import type { SetupState } from '../lib/setup/load';
@@ -225,6 +225,15 @@ test('PlanCard takes the subtitle it is given in place of its own sentence', () 
   const plan = buildPlan({ audit, currency: 'SAR', recommendations: [rec('a')] });
   const out = html(React.createElement(PlanCard, { plan, trialEligible: true, subtitle: 'جملة من عندي' }));
   assert.ok(out.includes('جملة من عندي'));
+});
+
+test('PlanCta keeps the trust line by default and drops it only when hideTrust is set', () => {
+  const withTrust = html(React.createElement(PlanCta, { trialEligible: true }));
+  assert.ok(withTrust.includes(PLAN_COPY.trust), 'the default output still carries the trust line');
+  assert.equal(html(React.createElement(PlanCta, { trialEligible: true, hideTrust: false })), withTrust, 'false is the same as no prop');
+  const hidden = html(React.createElement(PlanCta, { trialEligible: true, hideTrust: true }));
+  assert.ok(!hidden.includes(PLAN_COPY.trust), 'hideTrust removes the trust line');
+  assert.ok(hidden.includes('ابدأ 14 يوم مجاناً') || hidden.includes('<button') || hidden.includes('<a '), 'the button stays');
 });
 
 // ------------------------------------------------------------------ the cards
