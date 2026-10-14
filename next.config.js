@@ -31,6 +31,16 @@ const nextConfig = {
   // Drop the `X-Powered-By: Next.js` header — a free version-fingerprint for
   // anyone probing the stack, and nothing depends on it.
   poweredByHeader: false,
+  // Next 15.5 streams <title>, description and Open Graph tags into <body> for
+  // every user agent except a short built-in list of "HTML-limited" bots
+  // (bingbot, Applebot, social-card fetchers...). AI answer-engine crawlers
+  // (GPTBot, ClaudeBot, PerplexityBot, OAI-SearchBot, ChatGPT-User, CCBot) read
+  // the raw HTML and may parse only <head>, so they saw a page with no title
+  // or description. Matching every user agent makes Next wait for metadata and
+  // emit it in <head> for all of them. Our metadata is static (no
+  // generateMetadata, no data fetching), so blocking on it costs nothing.
+  // Top-level option in Next 15.5 (not under `experimental`), takes a RegExp.
+  htmlLimitedBots: /.*/,
   experimental: {
     serverActions: {
       bodySizeLimit: '2mb',

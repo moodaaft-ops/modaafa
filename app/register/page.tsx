@@ -15,10 +15,13 @@ import {
   detectInAppBrowser,
 } from '@/lib/registration/in-app-browser';
 import { requireAppUrl } from '@/lib/platform/env';
+import { pageMetadata } from '@/lib/seo/site';
 
-export const metadata: Metadata = {
+export const metadata: Metadata = pageMetadata({
   title: 'إنشاء حساب',
-};
+  path: '/register',
+  description: 'أنشئ حسابك في مُضاعِف بالاسم والبريد والجوال، ثم اربط حساب إعلانات جوجل وشوف أول فحص مجاناً وبدون بطاقة.',
+});
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 

@@ -1,10 +1,12 @@
 import Link from 'next/link';
 import { LegalPage, LegalSection } from '@/lib/ui/legal-page';
+import { pageMetadata } from '@/lib/seo/site';
 
-export const metadata = {
+export const metadata = pageMetadata({
   title: 'سياسة الاسترجاع والاسترداد',
+  path: '/refund',
   description: 'متى يُخصم الاشتراك، وكيف تلغيه قبل أول خصم، وما الذي يشمله الاسترداد في مُضاعِف.',
-};
+});
 
 export default function RefundPage() {
   return (
