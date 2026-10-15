@@ -1,4 +1,3 @@
-import Image from 'next/image';
 import Link from 'next/link';
 import { headers } from 'next/headers';
 import { NONCE_HEADER } from '@/lib/security/csp';
@@ -127,19 +126,6 @@ export default async function AboutPage() {
             المشكلة إن صاحب المحل الصغير ما عنده وقت لهالقراية، والوكالة مكلفة على أغلب الناس. فانبنى مُضاعِف يسوي نفس
             القراية لحسابك، ويحط القرار قدامك مع سببه.
           </p>
-          <figure className="mt-8">
-            <Image
-              src="/landing/ayman-desk-v4.jpg"
-              alt="أيمن أمين على مكتبه الصبح، قدامه اللابتوب وفنجال قهوة"
-              width={980}
-              height={1223}
-              sizes="(min-width: 768px) 24rem, 90vw"
-              className="block h-auto w-full max-w-[24rem]"
-            />
-            <figcaption className="mt-3 text-[13px] text-muted-foreground">
-              {BRAND.founderAr}، {BRAND.founderTitle}
-            </figcaption>
-          </figure>
         </section>
 
         <section className="mt-12" aria-labelledby="does">

@@ -10,62 +10,6 @@ import { cn } from '@/lib/utils';
 
 const lift = 'shadow-[0_18px_40px_-18px_rgba(0,0,0,0.55)] ring-1 ring-black/10';
 
-export function HeroStage() {
-  return (
-    <figure className="relative mx-auto w-full max-w-[34rem] lg:max-w-none">
-      <div className="relative pb-[22%] pt-[30%]">
-        <div className="relative mx-auto w-[74%]">
-          <Image
-            src="/landing/ayman-portrait-v4.jpg"
-            alt="أيمن أمين، مؤسس مُضاعِف، بالثوب والشماغ وجواله في يده"
-            width={892}
-            height={1189}
-            priority
-            sizes="(min-width: 1024px) 34vw, (min-width: 640px) 28rem, 82vw"
-            className="block h-auto w-full"
-          />
-          {/* the logo's yellow lamp, on the photo's corner nearest the text */}
-          <span aria-hidden className="absolute right-0 top-0 h-5 w-5 bg-brand-signal motion-safe:animate-lamp sm:h-6 sm:w-6" />
-        </div>
-
-        <div
-          className={cn(
-            'absolute right-0 top-0 w-[66%] overflow-hidden rounded-2xl bg-[#F3F2EE] sm:w-[56%] motion-safe:animate-fade-up motion-safe:[animation-delay:250ms]',
-            lift
-          )}
-        >
-          <Image
-            src="/landing/chat-message-m.png"
-            alt="رسالة مُضاعِف أول ما تفتحه: آخر 7 أيام صرفت 1,470 ر.س وجاك منها 41 نتيجة، عندي لك 3 قرارات اليوم"
-            width={780}
-            height={470}
-            sizes="(min-width: 1024px) 20vw, 58vw"
-            className="block h-auto w-full"
-          />
-        </div>
-
-        <div
-          className={cn(
-            'absolute bottom-0 left-0 w-[72%] overflow-hidden rounded-[22px] sm:w-[60%] motion-safe:animate-fade-up motion-safe:[animation-delay:550ms]',
-            lift
-          )}
-        >
-          <Image
-            src="/landing/chat-decision-m.png"
-            alt="أول قرار من مُضاعِف: أوقف عبارة «عطور رخيصة»، صرفت 412 ريال بدون ولا طلب، مع زر اعتمد وزر مو الحين"
-            width={720}
-            height={488}
-            sizes="(min-width: 1024px) 22vw, 62vw"
-            className="block h-auto w-full"
-          />
-        </div>
-      </div>
-      <figcaption className="mt-4 text-[12.5px] text-brand-paper/55">البطاقات لقطات من المنصة نفسها، بحساب تجريبي.</figcaption>
-    </figure>
-  );
-}
-
-/** A phone frame around a mobile screenshot (780x1688 captures). */
 export function Phone({
   src,
   alt,

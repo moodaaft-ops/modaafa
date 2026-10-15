@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Image from 'next/image';
 import Link from 'next/link';
 import { headers } from 'next/headers';
-import { BadgeCheck, Check, MessageCircle, Mic, ShieldCheck } from 'lucide-react';
+import { BadgeCheck, Check, MessageCircle, ShieldCheck } from 'lucide-react';
 import { TikTokPixel } from '@/lib/analytics/tiktok-pixel';
 import { getPlanPriceAmounts, type PeriodKey, type PlanKey } from '@/lib/billing/stripe';
 import { NONCE_HEADER } from '@/lib/security/csp';
@@ -12,7 +12,7 @@ import { cn, formatCurrency } from '@/lib/utils';
 import { CTA_TEXT, WHATSAPP, ownerConfig, showDrafts } from '@/lib/landing/owner-config';
 import { getProofCounts } from '@/lib/landing/proof-stats';
 import { SquareField } from './landing/square-field';
-import { HeroStage, HomeScreen, Phone } from './landing/screens';
+import { DecisionCard, TodayDecisions } from './landing/decision-card';
 
 export const metadata: Metadata = {
   alternates: { canonical: '/' },
@@ -21,17 +21,6 @@ export const metadata: Metadata = {
 const container = 'mx-auto w-full max-w-[76rem] px-5 sm:px-8';
 const h2Class = 'font-display text-[1.9rem] font-semibold leading-[1.32] text-balance sm:text-[2.5rem]';
 const leadClass = 'mt-5 max-w-[38rem] text-[17px] leading-9 text-muted-foreground';
-
-const questions = [
-  'أصرف على قوقل كل يوم، وما أدري وين راحت فلوسي.',
-  'تقرير الوكالة يجيني آخر الشهر، وما أفهم منه شي.',
-  'قوقل كل شوي يقول لي: زد الميزانية.',
-  'ليش الطلبات أمس قليلة؟',
-  'ما عندي وقت أفتح الحساب كل يوم، وأخاف أضغط شي يخرب الحملة.',
-];
-
-// The quick questions under the chat box, verbatim from lib/chat-first.
-const quickAsks = ['وش خطة اليوم؟', 'وين تروح فلوسي؟', 'ليش الطلبات قليلة؟', 'وش وضع حسابي؟'];
 
 const steps = [
   {
@@ -61,12 +50,6 @@ const limits = [
   { value: '30', unit: 'يوم', text: 'ترجع فيها أي تعديل اعتمدته، بضغطة وحدة.' },
 ];
 
-const notDoing = [
-  'ما يصمم إعلانات ولا فيديوهات. يقرا الحساب ويحسّنه، ويكتب لك مسودة حملة نصية لو طلبت.',
-  'ما يوعدك بمبيعات. اللي يقدر يقوله لك هو وين تروح فلوسك، ووش القرار اللي يستاهل.',
-  'ما ينفّذ شي من نفسه، لا بالكتابة ولا بالصوت.',
-  'يحتاج حساب إعلانات قوقل. وإذا ما عندك، نفتحه لك مجاناً على الواتساب.',
-];
 
 // Feature lists mirror lib/billing/entitlements PLAN_LIMITS. Do not change a
 // number here without changing the plan itself.
@@ -117,10 +100,6 @@ const faq: Array<{ q: string; a: string; whatsapp?: boolean }> = [
     a: 'مُضاعِف يطبّق التعديل على حسابك في قوقل مباشرة بعد ما يتحقق منه، فما تحتاج تدخل قوقل أدز بنفسك. وكل تعديل منفّذ يبقى له زر «رجّعه» لمدة 30 يوم.',
   },
   {
-    q: 'أقدر أكلمه بالصوت؟',
-    a: 'إيه. داخل المحادثة زر مكالمة، تكلمه وتسمع رده. أما التنفيذ فما يصير بالصوت: أي تعديل يطلع لك في المحادثة وتعتمده بيدك.',
-  },
-  {
     q: 'أحتاج بطاقة عشان أشوف النتيجة؟',
     a: 'لا. تربط حسابك وتشوف الفحص وخطتك وأول قرار بدون بطاقة، ولكل حساب إعلانات إعادة فحص وحدة مجانية. البطاقة تنطلب لما تبدأ التجربة عشان تنفتح المحادثة والقرارات الباقية، وما ينخصم منك شي 14 يوم.',
   },
@@ -132,14 +111,6 @@ const faq: Array<{ q: string; a: string; whatsapp?: boolean }> = [
     q: 'ما عندي حساب إعلانات قوقل، أقدر أستخدمه؟',
     a: 'مُضاعِف يجهّز لك خطة أول حملة من أسئلة بسيطة عن نشاطك. وعشان يشتغل على الحساب نفسه لازم حساب إعلانات، فكلمنا على الواتساب ونفتح لك حساب مستقل باسمك مجاناً.',
     whatsapp: true,
-  },
-  {
-    q: 'أقدر أدير أكثر من حساب؟',
-    a: 'إيه. موافقة وحدة تجيب حسابك المباشر وكل حساب عميل تحت أي حساب إداري (MCC) عندك صلاحية عليه، وتبدّل بينها بدون ما تعيد الربط.',
-  },
-  {
-    q: 'إذا ألغيت، وش يصير لبياناتي؟',
-    a: 'تحذف حسابك نهائياً من الإعدادات: نلغي الاشتراك، ونسحب صلاحية قوقل، ونحذف بياناتك. الحذف يطلب تأكيد مكتوب عشان ما يصير بالغلط.',
   },
 ];
 
@@ -167,50 +138,38 @@ export default async function HomePage({
       <SiteHeader />
 
       {/* ---------------------------------------------------------------- Hero */}
-      <section className="relative isolate overflow-hidden bg-brand-navy text-brand-paper dark:bg-[#0A0F1E]">
-        <SquareField tone="navy" id="sq-hero" fade="edges" />
+      <section className="relative isolate overflow-hidden bg-brand-signal text-brand-navy">
         <div
           className={cn(
             container,
-            'grid items-center gap-12 pb-16 pt-10 sm:pt-14 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)] lg:gap-16 lg:pb-24 lg:pt-20'
+            'grid items-center gap-12 pb-16 pt-12 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] lg:gap-16 lg:pb-24 lg:pt-20'
           )}
         >
           <div>
-            <div className="flex items-center gap-3">
-              <Image
-                src="/landing/ayman-avatar-v4.jpg"
-                alt=""
-                width={44}
-                height={44}
-                className="h-11 w-11 rounded-full object-cover ring-2 ring-brand-paper/20"
-              />
-              <p className="text-[14px] leading-6 text-brand-paper/75">
-                أيمن أمين، مؤسس وكالة مُضاعفة
-                <br />
-                <a
-                  href={ownerConfig.founderProfileUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  dir="ltr"
-                  className="text-brand-paper/55 underline-offset-4 hover:text-brand-paper hover:underline"
-                >
-                  @{ownerConfig.founderHandle}
-                </a>
-              </p>
-            </div>
-
-            <h1 className="mt-8 font-display text-[2.35rem] font-semibold leading-[1.22] text-balance sm:text-[3.1rem] lg:text-[3.35rem]">
-              صار لك أحد تسأله عن إعلاناتك في قوقل.
+            <p className="text-[15px] font-semibold text-brand-navy/70">متجر عطور (حساب تجريبي)، آخر 30 يوم</p>
+            <p
+              className="mt-2 flex flex-wrap items-baseline gap-x-3 font-display font-bold leading-none"
+              aria-label="412 ريال"
+            >
+              <span aria-hidden className="numeric text-[7.5rem] sm:text-[11.5rem] lg:text-[13.5rem]">
+                412
+              </span>
+              <span aria-hidden className="text-[2.4rem] sm:text-[3.6rem]">
+                ريال
+              </span>
+            </p>
+            <h1 className="mt-5 max-w-[40rem] font-display text-[1.7rem] font-semibold leading-[1.5] text-balance sm:text-[2.1rem]">
+              راحت على ناس يكتبون «عطور رخيصة» في قوقل، وولا واحد منهم اشترى.
             </h1>
-            <p className="mt-6 max-w-[34rem] text-[17.5px] leading-9 text-brand-paper/80 sm:text-[19px]">
-              مُضاعِف يقرا حسابك كل يوم، ويقول لك بكلامك وين تروح فلوسك ووش القرار اليوم. يجهّزه لك، وأنت اللي تضغط
-              اعتمد.
+            <p className="mt-5 max-w-[36rem] text-[17.5px] leading-9 text-brand-navy/80 sm:text-[19px]">
+              صار لك أحد تسأله عن إعلاناتك. مُضاعِف يقرا حسابك كل يوم، ويقول لك بكلامك وين راحت فلوسك ووش القرار، وأنت
+              اللي تضغط اعتمد.
             </p>
 
-            <div className="mt-9 flex flex-col gap-3 sm:flex-row">
+            <div className="mt-9 flex flex-col gap-4 sm:flex-row sm:items-center sm:gap-7">
               <Link
                 href="/register"
-                className="inline-flex h-14 items-center justify-center bg-brand-paper px-8 text-[17px] font-bold text-brand-navy transition-colors hover:bg-white"
+                className="inline-flex h-14 items-center justify-center bg-brand-navy px-8 text-[17px] font-bold text-brand-paper transition-colors hover:bg-[#1B2440]"
               >
                 {CTA_TEXT}
               </Link>
@@ -218,178 +177,53 @@ export default async function HomePage({
                 href={WHATSAPP.general}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex h-14 items-center justify-center gap-2 border border-brand-paper/30 px-6 text-[16px] font-semibold text-brand-paper transition-colors hover:border-brand-paper hover:bg-white/5"
+                className="inline-flex items-center gap-2 py-2 text-[16px] font-semibold underline decoration-brand-navy decoration-2 underline-offset-8"
               >
                 <MessageCircle className="h-[18px] w-[18px]" aria-hidden />
                 كلّمني على الواتساب
               </a>
             </div>
-            <p className="mt-5 text-[14.5px] leading-7 text-brand-paper/60">
+            <p className="mt-5 text-[14.5px] leading-7 text-brand-navy/70">
               الفحص الأول بدون بطاقة، وما يتغيّر شي في حسابك إلا باعتمادك.
             </p>
             {proof.auditedAccounts !== null && (
-              <p className="mt-6 max-w-[34rem] border-s-2 border-brand-signal ps-3 text-[14.5px] leading-7 text-brand-paper/80">
-                انفحص فيه <span className="font-bold text-brand-paper numeric">{proof.auditedAccounts}</span> حساب إعلانات
-                حقيقي
+              <p className="mt-6 max-w-[34rem] border-s-2 border-brand-navy ps-3 text-[14.5px] leading-7 text-brand-navy/85">
+                انفحص فيه <span className="font-bold numeric">{proof.auditedAccounts}</span> حساب إعلانات حقيقي
                 {proof.monthlyImpactSar !== null && (
                   <>
                     ، وطلّع قرارات قيمتها التقديرية{' '}
-                    <span className="font-bold text-brand-paper numeric">
-                      {proof.monthlyImpactSar.toLocaleString('en-US')}
-                    </span>{' '}
-                    ريال في الشهر
+                    <span className="font-bold numeric">{proof.monthlyImpactSar.toLocaleString('en-US')}</span> ريال في
+                    الشهر
                   </>
                 )}
                 .
               </p>
             )}
-            {ownerConfig.googlePartner && <PartnerBadge tone="navy" className="mt-6" />}
-          </div>
-
-          <HeroStage />
-        </div>
-      </section>
-
-      {/* ------------------------------------------------- Questions they carry */}
-      <section aria-labelledby="questions" className="py-16 sm:py-24">
-        <div className={cn(container, 'grid gap-12 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:gap-20')}>
-          <div>
-            <h2 id="questions" className={h2Class}>
-              كل صاحب نشاط يعلن في قوقل يعرف هالأسئلة.
-            </h2>
-            <p className={leadClass}>
-              المشكلة مو إن ما فيه أجوبة. المشكلة إن ما فيه أحد يشوف حسابك كل يوم ويجاوبك من أرقامه.
-            </p>
-          </div>
-          <div className="space-y-3.5">
-            {questions.map((q) => (
-              <p
-                key={q}
-                className="me-0 ms-auto w-fit max-w-[92%] rounded-[22px] bg-muted px-5 py-3 text-[16.5px] leading-8 text-foreground"
-              >
-                {q}
+            <div className="mt-8 flex flex-wrap items-center gap-x-5 gap-y-3">
+              <p className="text-[15px] leading-6">
+                <span className="font-bold">أيمن أمين</span>، مؤسس وكالة مُضاعفة
               </p>
-            ))}
-            <div className="flex items-start gap-3 pt-4">
-              <Image src="/brand/modaafa-symbol-primary.svg" alt="" width={30} height={30} className="mt-1 dark:hidden" />
-              <Image src="/brand/modaafa-symbol-reversed.svg" alt="" width={30} height={30} className="mt-1 hidden dark:block" />
-              <p className="max-w-[30rem] text-[17px] font-medium leading-9">
-                هذي بالضبط الأسئلة اللي تسأل عنها مُضاعِف. وجوابها يجي من حسابك أنت، مو من نصايح عامة.
-              </p>
+              {ownerConfig.googlePartner && <PartnerBadge tone="yellow" />}
             </div>
           </div>
+
+          <DecisionCard />
         </div>
       </section>
 
       {/* ------------------------------------------------------- The chat home */}
-      <section id="product" aria-labelledby="product-title" className="scroll-mt-20 border-t border-border bg-card py-16 sm:py-24">
-        <div className={container}>
-          <div className="max-w-[44rem]">
+      <section id="product" aria-labelledby="product-title" className="scroll-mt-20 py-16 sm:py-24">
+        <div className={cn(container, 'grid items-start gap-12 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] lg:gap-20')}>
+          <div className="lg:sticky lg:top-28">
             <h2 id="product-title" className={h2Class}>
               تفتحه، ويبدأ هو الكلام.
             </h2>
             <p className={leadClass}>
               أول ما تفتح مُضاعِف تلقى رسالة فيها آخر 7 أيام بالريال، وتحتها قرارات اليوم مرتبة. الأهم أول، وكل قرار معه
-              سببه وكم يوفّر لك في الشهر.
+              سببه وكم يوفّر لك في الشهر. تضغط اعتمد، وهو ينفّذ.
             </p>
           </div>
-          <div className="mt-12">
-            <HomeScreen />
-          </div>
-        </div>
-      </section>
-
-      {/* -------------------------------------------------------- Ask in words */}
-      <section aria-labelledby="ask" className="border-t border-border py-16 sm:py-24">
-        <div className={cn(container, 'grid items-center gap-14 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] lg:gap-20')}>
-          <div>
-            <h2 id="ask" className={h2Class}>
-              اسأله بكلامك، ويرد بأرقامك.
-            </h2>
-            <p className={leadClass}>
-              تكتب له زي ما تكلم موظفك. يرد من أرقام حسابك، ولو فيه شي يحتاج يتعدّل يجهّزه لك في بطاقة وينتظر اعتمادك.
-            </p>
-            <p className="mt-8 text-[15px] font-semibold">أسئلة تلقاها جاهزة بضغطة:</p>
-            <ul className="mt-3 flex flex-wrap gap-2.5">
-              {quickAsks.map((q) => (
-                <li key={q} className="rounded-full border border-border bg-card px-4 py-2 text-[15px]">
-                  {q}
-                </li>
-              ))}
-            </ul>
-            <div className="mt-10 flex gap-4 border-t border-border pt-8">
-              <span className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full bg-brand-navy text-brand-paper">
-                <Mic className="h-5 w-5" aria-hidden />
-              </span>
-              <p className="max-w-[32rem] text-[16px] leading-8 text-muted-foreground">
-                <span className="font-semibold text-foreground">ما تبي تكتب؟</span> اضغط المكالمة وكلّمه بالصوت. وأي
-                تعديل يطلع لك في المحادثة تعتمده بيدك، لأن التنفيذ ما يصير بالصوت.
-              </p>
-            </div>
-          </div>
-          <div>
-            <Phone
-              src="/landing/chat-ask-mobile.png"
-              alt="محادثة في مُضاعِف: السؤال «ليش الطلبات أمس قليلة؟» والرد بأرقام الحساب، وتحته بطاقة رفع ميزانية تحتاج اعتماد"
-            />
-            <p className="mt-4 text-center text-[13px] text-muted-foreground">لقطة من المنصة، بحساب تجريبي.</p>
-          </div>
-        </div>
-      </section>
-
-      {/* ------------------------------------------------------- First session */}
-      <section id="how" aria-labelledby="how-title" className="scroll-mt-20 border-t border-border bg-card py-16 sm:py-24">
-        <div className={container}>
-          <h2 id="how-title" className={cn(h2Class, 'max-w-[40rem]')}>
-            من الربط لأول قرار، في جلسة وحدة.
-          </h2>
-          <div className="mt-12 grid gap-14 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:gap-20">
-            <ol className="space-y-9">
-              {steps.map((step, i) => (
-                <li key={step.title} className="grid grid-cols-[2.75rem_minmax(0,1fr)] gap-4">
-                  <span className="flex h-11 w-11 items-center justify-center border border-foreground/80 font-display text-[18px] font-semibold numeric">
-                    {i + 1}
-                  </span>
-                  <div>
-                    <h3 className="text-[19px] font-bold leading-8">{step.title}</h3>
-                    <p className="mt-1.5 text-[16px] leading-8 text-muted-foreground">{step.body}</p>
-                  </div>
-                </li>
-              ))}
-              <li className="border-s-2 border-brand-signal ps-4 text-[15.5px] leading-8 text-muted-foreground">
-                ما عندك حساب إعلانات قوقل؟ مُضاعِف يجهّز لك خطة أول حملة، ونفتح لك الحساب مجاناً{' '}
-                <a
-                  href={WHATSAPP.noAccount}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="font-semibold text-foreground underline underline-offset-4"
-                >
-                  على الواتساب
-                </a>
-                .
-              </li>
-            </ol>
-            <div className="grid grid-cols-2 items-start gap-4 sm:gap-6">
-              <figure>
-                <Phone
-                  src="/landing/chat-confirm-mobile.png"
-                  alt="أول رسالة بعد الربط: هلا، ربطت حسابك وقريته، مع اللي شافه في الحساب وسؤال صح إن اللي يهمك الطلبات من المتجر؟"
-                  crop={1300}
-                  className="max-w-[250px] rounded-[30px] border-[7px]"
-                />
-                <figcaption className="mt-3 text-center text-[13px] text-muted-foreground">يقرا ويسألك</figcaption>
-              </figure>
-              <figure className="mt-12">
-                <Phone
-                  src="/landing/chat-plan-mobile.png"
-                  alt="شاشة خطتك جاهزة: صحة الحساب 64 من 100، وهدر شهري تقديري 1,840 ر.س، وأول قرار مفتوح"
-                  crop={2400}
-                  className="max-w-[250px] rounded-[30px] border-[7px]"
-                />
-                <figcaption className="mt-3 text-center text-[13px] text-muted-foreground">وتلقى خطتك جاهزة</figcaption>
-              </figure>
-            </div>
-          </div>
+          <TodayDecisions />
         </div>
       </section>
 
@@ -421,10 +255,35 @@ export default async function HomePage({
         </div>
       </section>
 
+      {/* ------------------------------------------------------- First session */}
+      <section id="how" aria-labelledby="how-title" className="scroll-mt-20 bg-brand-signal py-16 text-brand-navy sm:py-24">
+        <div className={container}>
+          <h2 id="how-title" className="max-w-[40rem] font-display text-[2rem] font-semibold leading-[1.35] text-balance sm:text-[2.6rem]">
+            من الربط لأول قرار، في جلسة وحدة.
+          </h2>
+          <ol className="mt-12 grid gap-x-8 gap-y-10 sm:grid-cols-2 lg:grid-cols-4">
+            {steps.map((step, i) => (
+              <li key={step.title} className="border-t-4 border-brand-navy pt-4">
+                <span className="font-display text-[3.5rem] font-bold leading-none numeric">{i + 1}</span>
+                <h3 className="mt-3 text-[19px] font-bold leading-8">{step.title}</h3>
+                <p className="mt-1.5 text-[16px] leading-8 text-brand-navy/80">{step.body}</p>
+              </li>
+            ))}
+          </ol>
+          <p className="mt-10 max-w-[40rem] text-[15.5px] leading-8 text-brand-navy/80">
+            ما عندك حساب إعلانات قوقل؟ مُضاعِف يجهّز لك خطة أول حملة، ونفتح لك الحساب مجاناً{' '}
+            <a href={WHATSAPP.noAccount} target="_blank" rel="noopener noreferrer" className="font-bold underline decoration-2 underline-offset-4">
+              على الواتساب
+            </a>
+            .
+          </p>
+        </div>
+      </section>
+
       {/* ------------------------------------------------ Founder and proof */}
       <section id="ayman" aria-labelledby="ayman-title" className="scroll-mt-20 py-16 sm:py-24">
-        <div className={cn(container, 'grid items-start gap-12 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] lg:gap-20')}>
-          <div className="order-2 lg:order-1">
+        <div className={cn(container, 'max-w-[54rem]')}>
+          <div>
             <h2 id="ayman-title" className={h2Class}>
               ليش بنيت مُضاعِف
             </h2>
@@ -458,19 +317,17 @@ export default async function HomePage({
                 <MessageCircle className="h-[18px] w-[18px]" aria-hidden />
                 كلّمني على الواتساب
               </a>
+              <a
+                href={WHATSAPP.fullManagement}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[15px] font-semibold underline decoration-2 underline-offset-8"
+              >
+                تبي فريق الوكالة يديرها عنك؟
+              </a>
             </div>
           </div>
 
-          <div className="order-1 lg:order-2">
-            <Image
-              src="/landing/ayman-desk-v4.jpg"
-              alt="أيمن أمين على مكتبه الصبح، قدامه اللابتوب وفنجال قهوة"
-              width={980}
-              height={1223}
-              sizes="(min-width: 1024px) 34vw, 100vw"
-              className="mx-auto block h-auto w-full max-w-[26rem] lg:max-w-none"
-            />
-          </div>
         </div>
 
         {(proof.monthlyImpactSar !== null || proof.auditedAccounts !== null || ownerConfig.agencyResults.length > 0) && (
@@ -536,45 +393,6 @@ export default async function HomePage({
             ))}
           </div>
         )}
-      </section>
-
-      {/* ------------------------------------------------------- Two ways in */}
-      <section aria-labelledby="paths" className="border-t border-border bg-card py-16 sm:py-24">
-        <div className={container}>
-          <h2 id="paths" className={cn(h2Class, 'max-w-[40rem]')}>
-            تبيها بنفسك؟ ولا تبينا نديرها عنك؟
-          </h2>
-          <div className="mt-10 grid gap-5 md:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
-            <div className="flex flex-col border-2 border-foreground p-7 sm:p-9">
-              <h3 className="text-[21px] font-bold">سوّها بنفسك مع مُضاعِف</h3>
-              <p className="mt-3 flex-1 text-[16.5px] leading-8 text-muted-foreground">
-                لصاحب النشاط اللي يبي يفهم حسابه ويقرر بنفسه، بدون ما يدفع راتب ميديا باير. تبدأ بالفحص المجاني، وتشوف
-                خطتك قبل أي بطاقة.
-              </p>
-              <Link
-                href="/register"
-                className="mt-7 inline-flex h-12 w-fit items-center bg-foreground px-6 text-[15.5px] font-bold text-background transition-opacity hover:opacity-90"
-              >
-                {CTA_TEXT}
-              </Link>
-            </div>
-            <div className="flex flex-col border border-border p-7 sm:p-9">
-              <h3 className="text-[21px] font-bold">خلّ فريق وكالة مُضاعفة يديرها</h3>
-              <p className="mt-3 flex-1 text-[16.5px] leading-8 text-muted-foreground">
-                إذا ما عندك وقت أبد، أو حسابك كبير ويبي أحد يمسكه كل يوم. نفس الفريق اللي بنى مُضاعِف.
-              </p>
-              <a
-                href={WHATSAPP.fullManagement}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-7 inline-flex h-12 w-fit items-center gap-2 border border-foreground px-6 text-[15.5px] font-semibold transition-colors hover:bg-foreground hover:text-background"
-              >
-                <MessageCircle className="h-[18px] w-[18px]" aria-hidden />
-                كلّم الوكالة على الواتساب
-              </a>
-            </div>
-          </div>
-        </div>
       </section>
 
       {/* ------------------------------------------------------------ Pricing */}
@@ -721,21 +539,6 @@ export default async function HomePage({
       </section>
 
       {/* ------------------------------------------------- What it doesn't do */}
-      <section aria-labelledby="not-doing" className="border-t border-border bg-card py-16 sm:py-24">
-        <div className={cn(container, 'grid gap-10 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] lg:gap-20')}>
-          <h2 id="not-doing" className={h2Class}>
-            قبل ما تسجّل، اعرف وش ما يسويه.
-          </h2>
-          <ul className="divide-y divide-border border-y border-border">
-            {notDoing.map((line) => (
-              <li key={line} className="py-5 text-[17px] leading-8">
-                {line}
-              </li>
-            ))}
-          </ul>
-        </div>
-      </section>
-
       {/* ---------------------------------------------------------------- FAQ */}
       <section id="faq" aria-labelledby="faq-title" className="scroll-mt-20 border-t border-border py-16 sm:py-24">
         <div className={cn(container, 'grid gap-10 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] lg:gap-20')}>
@@ -779,18 +582,17 @@ export default async function HomePage({
       </section>
 
       {/* ---------------------------------------------------------- Final CTA */}
-      <section className="relative isolate overflow-hidden bg-brand-navy py-20 text-brand-paper dark:bg-[#0A0F1E] sm:py-28">
-        <SquareField tone="navy" id="sq-final" fade="edges" />
-        <div className={cn(container, 'max-w-[48rem] text-center')}>
-          <h2 className="font-display text-[2rem] font-semibold leading-[1.3] text-balance sm:text-[2.8rem]">
+      <section className="bg-brand-signal py-20 text-brand-navy sm:py-28">
+        <div className={cn(container, 'max-w-[48rem]')}>
+          <h2 className="font-display text-[2.2rem] font-bold leading-[1.3] text-balance sm:text-[3.2rem]">
             اربط حسابك اليوم، وشوف وين راحت فلوس آخر 30 يوم.
           </h2>
-          <p className="mx-auto mt-5 max-w-[32rem] text-[17px] leading-9 text-brand-paper/75">
+          <p className="mt-5 max-w-[32rem] text-[17.5px] leading-9 text-brand-navy/80">
             الفحص الأول مجاني وبدون بطاقة. وإذا ما عجبك اللي شفته، ما خسرت شي.
           </p>
           <Link
             href="/register"
-            className="mt-9 inline-flex h-14 items-center justify-center bg-brand-paper px-9 text-[17px] font-bold text-brand-navy transition-colors hover:bg-white"
+            className="mt-9 inline-flex h-14 items-center justify-center bg-brand-navy px-9 text-[17px] font-bold text-brand-paper transition-colors hover:bg-[#1B2440]"
           >
             {CTA_TEXT}
           </Link>
@@ -815,20 +617,24 @@ export default async function HomePage({
 }
 
 /** Text badge for the agency's Google Partner status. No Google logo is drawn. */
-function PartnerBadge({ tone, className }: { tone: 'navy' | 'paper'; className?: string }) {
+function PartnerBadge({ tone, className }: { tone: 'navy' | 'paper' | 'yellow'; className?: string }) {
   return (
     <p
       className={cn(
         'inline-flex items-center gap-2.5 border px-3.5 py-2',
-        tone === 'navy' ? 'border-brand-paper/25 text-brand-paper' : 'border-foreground/30 text-foreground',
+        tone === 'navy'
+          ? 'border-brand-paper/25 text-brand-paper'
+          : tone === 'yellow'
+            ? 'border-brand-navy/40 text-brand-navy'
+            : 'border-foreground/30 text-foreground',
         className
       )}
     >
-      <BadgeCheck className={cn('h-5 w-5', tone === 'navy' ? 'text-brand-signal' : 'text-foreground')} aria-hidden />
+      <BadgeCheck className={cn('h-5 w-5', tone === 'navy' ? 'text-brand-signal' : tone === 'yellow' ? 'text-brand-navy' : 'text-foreground')} aria-hidden />
       <span dir="ltr" className="text-[14.5px] font-bold">
         Google Partner
       </span>
-      <span className={cn('text-[13.5px]', tone === 'navy' ? 'text-brand-paper/70' : 'text-muted-foreground')}>
+      <span className={cn('text-[13.5px]', tone === 'navy' ? 'text-brand-paper/70' : tone === 'yellow' ? 'text-brand-navy/75' : 'text-muted-foreground')}>
         وكالة مُضاعفة شريك معتمد
       </span>
     </p>
