@@ -64,7 +64,7 @@ export const PLAN_PRICES_SAR = [
 ] as const;
 
 export const OG_IMAGE = {
-  url: '/og-image-v2.png',
+  url: '/og-image-v3.png',
   width: 1200,
   height: 630,
   alt: 'مُضاعِف - Modaafa Ads AI',

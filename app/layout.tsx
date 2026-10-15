@@ -64,7 +64,7 @@ export const metadata: Metadata = {
     // LinkedIn — every shared link rendered with no preview at all.
     images: [
       {
-        url: '/og-image-v2.png',
+        url: '/og-image-v3.png',
         width: 1200,
         height: 630,
         alt: 'مُضاعِف - Modaafa Ads AI',
@@ -75,7 +75,7 @@ export const metadata: Metadata = {
     card: 'summary_large_image',
     title: 'مُضاعِف - الميديا باير الذكي',
     description: 'فحص وتوصيات ومساعد ذكي لإعلانات Google، مع موافقة واضحة قبل أي تعديل.',
-    images: ['/og-image-v2.png'],
+    images: ['/og-image-v3.png'],
   },
 };
 

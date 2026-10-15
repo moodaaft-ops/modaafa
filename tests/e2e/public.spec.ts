@@ -110,7 +110,7 @@ test.describe('public launch surface', () => {
       '/favicon.svg',
       '/icon-192.png',
       '/icon-512.png',
-      '/og-image-v2.png',
+      '/og-image-v3.png',
       '/manifest.webmanifest',
     ];
 
