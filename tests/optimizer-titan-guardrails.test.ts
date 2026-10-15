@@ -196,7 +196,7 @@ test('the 24-hour compounding cap still blocks a second rise on the same budget'
     google_ads_accounts: { data: { business_id: null }, error: null },
   });
   // 1.30 x 1.20 = 1.56: over 50% in a day.
-  assert.equal(await checkGuardrails(budgetAction({ delta_pct: 20, new_amount_micros: 12_000_000 }), 'account-1', legacy), null);
+  assert.equal(await checkGuardrails(budgetAction({ delta_pct: 20, new_amount_micros: 12_000_000 }), 'account-1', legacy, withContext()), null);
 
   // The same row a few days old is outside the 24-hour window.
   const old = db({
@@ -204,7 +204,7 @@ test('the 24-hour compounding cap still blocks a second rise on the same budget'
     google_ads_accounts: { data: { business_id: null }, error: null },
   });
   const action = budgetAction({ delta_pct: 20, new_amount_micros: 12_000_000 });
-  assert.equal(await checkGuardrails(action, 'account-1', old), action);
+  assert.equal(await checkGuardrails(action, 'account-1', old, withContext()), action);
 });
 
 // ---------------------------------------------------------------------------
