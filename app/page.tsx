@@ -10,7 +10,6 @@ import { JsonLd } from '@/lib/seo/json-ld';
 import { SiteFooter, SiteHeader } from '@/lib/ui/site-chrome';
 import { cn, formatCurrency } from '@/lib/utils';
 import { CTA_TEXT, WHATSAPP, ownerConfig, showDrafts } from '@/lib/landing/owner-config';
-import { getProofCounts } from '@/lib/landing/proof-stats';
 import { SquareField } from './landing/square-field';
 import { DecisionCard, TodayDecisions } from './landing/decision-card';
 
@@ -121,16 +120,10 @@ export default async function HomePage({
 }) {
   const params = await searchParams;
   const period: PeriodKey = params?.period === 'yearly' ? 'yearly' : 'monthly';
-  const [priceAmounts, proof, nonce] = await Promise.all([
+  const [priceAmounts, nonce] = await Promise.all([
     getPlanPriceAmounts(),
-    getProofCounts({
-      auditedAccounts: ownerConfig.proofMinAuditedAccounts,
-      recommendations: ownerConfig.proofMinRecommendations,
-      monthlyImpactSar: ownerConfig.proofMinMonthlyImpactSar,
-    }),
     headers().then((h) => h.get(NONCE_HEADER) ?? undefined),
   ]);
-  const realProof = proof.monthlyImpactSar !== null && proof.auditedAccounts !== null;
   const guarantee = ownerConfig.guarantee.approved || showDrafts() ? ownerConfig.guarantee : null;
 
   return (
@@ -147,43 +140,9 @@ export default async function HomePage({
           )}
         >
           <div>
-            {realProof ? (
-              <>
-                <p className="text-[15px] font-semibold text-brand-navy/70">لقاها مُضاعِف في حسابات إعلانات حقيقية، كل شهر</p>
-                <p
-                  className="mt-2 flex flex-wrap items-baseline gap-x-3 font-display font-bold leading-none"
-                  aria-label={`${proof.monthlyImpactSar!.toLocaleString('en-US')} ريال`}
-                >
-                  <span aria-hidden className="numeric text-[5.6rem] sm:text-[9rem] lg:text-[11rem]">
-                    {proof.monthlyImpactSar!.toLocaleString('en-US')}
-                  </span>
-                  <span aria-hidden className="text-[2.4rem] sm:text-[3.6rem]">
-                    ريال
-                  </span>
-                </p>
-                <h1 className="mt-5 max-w-[40rem] font-display text-[1.7rem] font-semibold leading-[1.5] text-balance sm:text-[2.1rem]">
-                  فلوس كانت رايحة على إعلانات ما تبيع، وما أحد قال لأصحابها.
-                </h1>
-              </>
-            ) : (
-              <>
-                <p className="text-[15px] font-semibold text-brand-navy/70">مثال من متجر عطور، آخر 30 يوم</p>
-                <p
-                  className="mt-2 flex flex-wrap items-baseline gap-x-3 font-display font-bold leading-none"
-                  aria-label="412 ريال"
-                >
-                  <span aria-hidden className="numeric text-[7.5rem] sm:text-[11.5rem] lg:text-[13.5rem]">
-                    412
-                  </span>
-                  <span aria-hidden className="text-[2.4rem] sm:text-[3.6rem]">
-                    ريال
-                  </span>
-                </p>
-                <h1 className="mt-5 max-w-[40rem] font-display text-[1.7rem] font-semibold leading-[1.5] text-balance sm:text-[2.1rem]">
-                  راحت على ناس يكتبون «عطور رخيصة» في قوقل، وولا واحد منهم اشترى.
-                </h1>
-              </>
-            )}
+            <h1 className="max-w-[44rem] font-display text-[3.1rem] font-bold leading-[1.2] text-balance sm:text-[4.9rem] lg:text-[5.6rem]">
+              فلوس رايحة على إعلانات ما تبيع، وما أحد يقول لك.
+            </h1>
             <p className="mt-5 max-w-[36rem] text-[17.5px] leading-9 text-brand-navy/80 sm:text-[19px]">
               مُضاعِف يقرا حساب إعلاناتك كل يوم، ويقول لك بكلام عادي: وش يبيع ووش لا، ووش توقفه. وأنت اللي تضغط اعتمد.
             </p>
@@ -208,11 +167,9 @@ export default async function HomePage({
             <p className="mt-5 text-[14.5px] leading-7 text-brand-navy/70">
               الفحص الأول بدون بطاقة، وما يتغيّر شي في حسابك إلا باعتمادك.
             </p>
-            {realProof && (
-              <p className="mt-6 max-w-[34rem] border-s-2 border-brand-navy ps-3 text-[14.5px] leading-7 text-brand-navy/85">
-                انفحص <span className="font-bold numeric">{proof.auditedAccounts}</span> حساب إعلانات حقيقي.
-              </p>
-            )}
+            <p className="mt-6 max-w-[34rem] border-s-2 border-brand-navy ps-3 text-[14.5px] leading-7 text-brand-navy/85">
+              وراه وكالة تدير إعلانات قوقل لعملاء حقيقيين كل يوم: عيادة أسنان، ومعرض مراتب، وشركة أبواب، ومسابح.
+            </p>
             <div className="mt-8 flex flex-wrap items-center gap-x-5 gap-y-3">
               <p className="text-[15px] leading-6">
                 <span className="font-bold">أيمن أمين</span>، مؤسس وكالة مُضاعفة
@@ -344,47 +301,8 @@ export default async function HomePage({
 
         </div>
 
-        {(proof.monthlyImpactSar !== null || proof.auditedAccounts !== null || ownerConfig.agencyResults.length > 0) && (
+        {ownerConfig.agencyResults.length > 0 && (
           <div className={cn(container, 'mt-16 space-y-5 sm:mt-24')}>
-            {(proof.monthlyImpactSar !== null || proof.auditedAccounts !== null) && (
-              <div className="grid items-end gap-10 border border-border bg-card p-7 sm:p-10 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
-                <div>
-                  <p className="text-[14px] font-semibold text-muted-foreground">من قاعدة بيانات المنصة، تتحدث كل ساعة</p>
-                  {proof.monthlyImpactSar !== null && (
-                    <>
-                      <p className="mt-5 flex flex-wrap items-baseline gap-x-3 font-display font-semibold leading-none">
-                        <span className="text-[3.4rem] numeric sm:text-[4.6rem]">
-                          {proof.monthlyImpactSar.toLocaleString('en-US')}
-                        </span>
-                        <span className="text-[1.6rem] text-muted-foreground sm:text-[2rem]">ريال في الشهر</span>
-                      </p>
-                      <p className="mt-4 max-w-[30rem] text-[16.5px] leading-8 text-muted-foreground">
-                        القيمة التقديرية للهدر والفرص في القرارات اللي جهّزها مُضاعِف لأصحاب الحسابات، كل قرار بسببه
-                        ورقمه.
-                      </p>
-                    </>
-                  )}
-                </div>
-                <dl className="grid grid-cols-2 gap-px overflow-hidden border border-border bg-border">
-                  {proof.auditedAccounts !== null && (
-                    <div className="bg-card p-5 sm:p-6">
-                      <dt className="font-display text-[2.2rem] font-semibold leading-none numeric">
-                        {proof.auditedAccounts.toLocaleString('en-US')}
-                      </dt>
-                      <dd className="mt-2 text-[14.5px] leading-6 text-muted-foreground">حساب إعلانات انفحص</dd>
-                    </div>
-                  )}
-                  {proof.recommendations !== null && (
-                    <div className="bg-card p-5 sm:p-6">
-                      <dt className="font-display text-[2.2rem] font-semibold leading-none numeric">
-                        {proof.recommendations.toLocaleString('en-US')}
-                      </dt>
-                      <dd className="mt-2 text-[14.5px] leading-6 text-muted-foreground">قرار جهّزه بسببه</dd>
-                    </div>
-                  )}
-                </dl>
-              </div>
-            )}
             {ownerConfig.agencyResults.map((r) => (
               <div key={r.business} className="border border-border bg-card p-7 sm:p-9">
                 <p className="text-[14px] font-semibold text-muted-foreground">
