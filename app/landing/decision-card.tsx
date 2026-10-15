@@ -2,7 +2,7 @@ import Image from 'next/image';
 
 /**
  * The first decision the product shows, drawn in code so it stays sharp at any
- * size. The numbers match the demo account «متجر عطور».
+ * size. The example is drawn from a perfume-store scenario, no real account figures.
  */
 export function DecisionCard({ className }: { className?: string }) {
   return (
@@ -19,8 +19,7 @@ export function DecisionCard({ className }: { className?: string }) {
         </div>
         <div className="space-y-4 p-5">
           <p className="rounded-2xl rounded-tr-md bg-white/[0.06] px-4 py-3 text-[16px] leading-7">
-            آخر 7 أيام صرفت <b className="numeric">1,470</b> ريال، وجاك منها <b className="numeric">41</b> طلب. عندي لك 3
-            قرارات اليوم، ابدأ بأولها.
+            قريت حسابك وطلعت لك 3 قرارات اليوم، ابدأ بأولها.
           </p>
           <div className="rounded-2xl border-r-4 border-brand-signal bg-white/[0.04] p-4">
             <div className="flex items-center gap-2 text-[12.5px] font-semibold text-[#FB923C]">
@@ -35,9 +34,6 @@ export function DecisionCard({ className }: { className?: string }) {
                 <span className="rounded-xl bg-brand-signal px-5 py-2.5 text-[15px] font-bold text-brand-navy">اعتمد</span>
                 <span className="rounded-xl bg-white/10 px-4 py-2.5 text-[15px] font-semibold">مو الحين</span>
               </div>
-              <span className="text-[13.5px] text-brand-paper/60">
-                توفر <b className="numeric text-brand-paper">412</b> ريال بالشهر
-              </span>
             </div>
           </div>
         </div>
@@ -53,7 +49,7 @@ const todayDecisions = [
     dot: 'bg-[#E0561B]',
     title: 'أوقف عبارة «عطور رخيصة»',
     why: 'جابت 96 ضغطة في 30 يوم وما سجّلت ولا طلب.',
-    save: '412',
+    save: null,
   },
   {
     tag: 'مهم',
