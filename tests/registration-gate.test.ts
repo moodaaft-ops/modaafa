@@ -23,5 +23,8 @@ test('registered users pass, unregistered users are held', async () => {
 test('a read failure lets people in rather than locking out paying customers', async () => {
   assert.equal(await isRegistrationComplete(reader({ data: null, error: { message: 'column missing' } }), 'u'), true);
   assert.equal(await isRegistrationComplete(reader(null, true), 'u'), true);
-  assert.equal(await isRegistrationComplete(reader({ data: null, error: null }), 'u'), true);
+});
+
+test('a signed-in user with no profile row still owes their details', async () => {
+  assert.equal(await isRegistrationComplete(reader({ data: null, error: null }), 'u'), false);
 });
