@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerClient } from '@/lib/supabase/server';
+import { createAdminClient, createServerClient } from '@/lib/supabase/server';
 import { isSameOriginRequest } from '@/lib/security/origin';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 import { validateRegistration } from '@/lib/registration/validate';
@@ -36,6 +36,20 @@ export async function POST(req: NextRequest) {
     }
   } catch {
     return NextResponse.json({ ok: false, error: 'unavailable' }, { status: 503 });
+  }
+
+  // The profile row is created lazily (first Google connect or business step), so
+  // someone who signed in and went straight here may not have one yet. Without it
+  // finalize_registration answers no_user and the details could never be saved.
+  try {
+    await createAdminClient()
+      .from('users')
+      .upsert(
+        { id: user.id, email: user.email, last_login_at: new Date().toISOString() },
+        { onConflict: 'id', ignoreDuplicates: true },
+      );
+  } catch {
+    console.warn('[api/register/complete] could not ensure the profile row');
   }
 
   const outcome = await finalizeForRequest(req, user, { name: parsed.value.name, phone: parsed.value.phoneE164 });

@@ -9,7 +9,7 @@ type UsersReader = {
 /**
  * True when the user has finished registering (name, email, phone).
  *
- * Fails OPEN on a read error. If the migration is not applied yet the column
+ * Fails OPEN on a read error (not on a missing row). If the migration is not applied yet the column
  * does not exist and the query errors; locking every existing customer out of
  * the dashboard because of that would be far worse than letting a newcomer
  * through for a few minutes.
@@ -25,7 +25,10 @@ export async function isRegistrationComplete(supabase: unknown, userId: string) 
       console.warn('[registration] gate read failed, allowing access');
       return true;
     }
-    if (!data) return true;
+    // No profile row means the person signed in but never gave their details
+    // (the row is created lazily). Nobody with a subscription or a workspace is in
+    // this state, so they go through the details form like everyone else.
+    if (!data) return false;
     return data.registered_at != null;
   } catch {
     return true;

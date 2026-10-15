@@ -41,6 +41,9 @@ export function ProvisionAccountTile({ email, initial }: { email: string | null;
   const [emailInput, setEmailInput] = useState(email ?? '');
   const [error, setError] = useState<PostError>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [detailsName, setDetailsName] = useState('');
+  const [detailsPhone, setDetailsPhone] = useState('');
+  const [detailsError, setDetailsError] = useState<string | null>(null);
   const viewRef = useRef(view);
   viewRef.current = view;
 
@@ -112,6 +115,35 @@ export function ProvisionAccountTile({ email, initial }: { email: string | null;
     }
   }
 
+  async function saveDetails(event: React.FormEvent) {
+    event.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setDetailsError(null);
+    try {
+      const res = await fetch('/api/register/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: detailsName, phone: detailsPhone }),
+      });
+      const body = (await res.json().catch(() => null)) as { ok?: boolean; error?: string; errors?: { name?: string; phone?: string } } | null;
+      if (res.ok && body?.ok) {
+        setBusy(false);
+        setError(null);
+        await start();
+        return;
+      }
+      if (body?.error === 'validation') setDetailsError(body.errors?.name ?? body.errors?.phone ?? 'راجع الاسم والجوال.');
+      else if (body?.error === 'phone_taken') setDetailsError('هذا الرقم مسجل بحساب ثاني. استخدم رقماً آخر.');
+      else if (res.status === 429) setDetailsError('كثرت المحاولات. انتظر دقيقة وجرّب.');
+      else setDetailsError('صار خلل من عندنا. جرّب بعد شوي.');
+    } catch {
+      setDetailsError('تعذر الاتصال. تأكد من الإنترنت وجرّب.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const shownEmail = view?.invitedEmail ?? (editing && emailInput.trim() ? emailInput.trim() : email);
   const whatsapp = (
     <a href={whatsappHelpUrl('no_ads_account', email)} target="_blank" rel="noopener noreferrer" className={tileClass}>
@@ -122,6 +154,50 @@ export function ProvisionAccountTile({ email, initial }: { email: string | null;
 
   // The server withdrew the feature (flag off, token gone): back to what the screen had before.
   if (!available) return whatsapp;
+
+  if (error === 'registration') {
+    const field =
+      'mt-1 h-11 w-full rounded-[12px] border border-border-strong bg-background px-3 text-base text-foreground';
+    return (
+      <form onSubmit={saveDetails} className="space-y-2.5" noValidate>
+        <p className="px-1 text-[15px] leading-7 text-foreground">قبل لا نفتح لك الحساب، اكتب اسمك ورقم جوالك.</p>
+        <label className="block px-1 text-[13px] leading-6 text-muted-foreground">
+          الاسم
+          <input
+            type="text"
+            value={detailsName}
+            onChange={(event) => setDetailsName(event.target.value)}
+            autoComplete="name"
+            required
+            className={field}
+          />
+        </label>
+        <label className="block px-1 text-[13px] leading-6 text-muted-foreground">
+          رقم الجوال
+          <input
+            type="tel"
+            dir="ltr"
+            inputMode="tel"
+            value={detailsPhone}
+            onChange={(event) => setDetailsPhone(event.target.value)}
+            autoComplete="tel"
+            placeholder="05xxxxxxxx"
+            required
+            className={field}
+          />
+        </label>
+        {detailsError && (
+          <p role="alert" className="px-1 text-[13px] leading-6 text-danger">
+            {detailsError}
+          </p>
+        )}
+        <button type="submit" disabled={busy} className={primaryClass}>
+          {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : null}
+          {busy ? 'لحظات…' : 'كمّل وافتحه لي'}
+        </button>
+      </form>
+    );
+  }
 
   if (view?.status === 'creating') {
     return (
