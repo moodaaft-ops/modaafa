@@ -3,8 +3,6 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { countActiveClients, type ActiveClients } from '@/lib/google-ads/provisioning';
 import { loadProvisioningContext, readProvisioningTokenStatus, type ProvisioningTokenStatus } from '@/lib/provisioning/credentials';
 import {
-  PROVISIONING_ACCOUNT_CEILING,
-  PROVISIONING_WARN_AT,
   provisioningMccId,
   unlinkAfterAcceptEnabled,
 } from '@/lib/provisioning/flag';
@@ -101,7 +99,6 @@ export default async function ProvisioningPage({ searchParams }: { searchParams?
   }
 
   const active = counts?.active ?? null;
-  const tone = active === null ? '' : active >= PROVISIONING_ACCOUNT_CEILING ? 'bg-danger' : active >= PROVISIONING_WARN_AT ? 'bg-warning' : 'bg-foreground';
 
   return (
     <div className="pb-16">
@@ -179,7 +176,7 @@ export default async function ProvisioningPage({ searchParams }: { searchParams?
         <section className="space-y-3">
           <SectionHead
             title="الحسابات تحت المدير"
-            note={`السقف ${formatNumberAr(PROVISIONING_ACCOUNT_CEILING)} حساب نشط لأن المدير بدون صرف. التنبيه من ${formatNumberAr(PROVISIONING_WARN_AT)}.`}
+            note="عدد الحسابات النشطة تحت المدير، بدون سقف من عندنا."
           />
           {!token?.connected ? (
             <p className="border border-border px-4 py-5 text-sm text-muted-foreground">اربط حساب المدير عشان يظهر العدد.</p>
@@ -188,18 +185,8 @@ export default async function ProvisioningPage({ searchParams }: { searchParams?
           ) : (
             <div className="border border-border px-4 py-4">
               <p className="text-sm font-semibold text-foreground">
-                <span className="numeric">{formatNumberAr(active)}</span> من <span className="numeric">{formatNumberAr(PROVISIONING_ACCOUNT_CEILING)}</span>
+                <span className="numeric">{formatNumberAr(active)}</span> حساب نشط
               </p>
-              <div className="mt-2 h-2 w-full bg-muted" role="img" aria-label={`${active} من ${PROVISIONING_ACCOUNT_CEILING}`}>
-                <div className={cn('h-2', tone)} style={{ width: `${Math.min(100, (active / PROVISIONING_ACCOUNT_CEILING) * 100)}%` }} />
-              </div>
-              {active >= PROVISIONING_WARN_AT && (
-                <p className="mt-2 text-[13px] leading-6 text-foreground">
-                  {active >= PROVISIONING_ACCOUNT_CEILING
-                    ? 'وصلنا السقف: قوقل ما تنشئ حساب جديد لين يفضى مكان. فعّل فك الحسابات المقبولة أو الغِ المعلقة من واجهة قوقل.'
-                    : 'قربنا من السقف. فعّل فك الحسابات المقبولة أو نظّف الدعوات المعلقة قبل ما يمتلئ.'}
-                </p>
-              )}
             </div>
           )}
         </section>
