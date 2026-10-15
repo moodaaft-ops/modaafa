@@ -30,6 +30,8 @@ import { holdsTargetLock, isExpiredOptimizerMoneyMove } from '../lib/recommendat
 const NOW = new Date('2026-10-14T10:00:00.000Z');
 const DAY = 24 * 60 * 60 * 1000;
 const daysAgo = (days: number) => new Date(NOW.getTime() - days * DAY).toISOString();
+/** The handler reads the real clock, so handler tests age their cards from the real now (a pinned date went stale after 24h). */
+const realDaysAgo = (days: number) => new Date(Date.now() - days * DAY).toISOString();
 const hoursAgo = (hours: number) => new Date(NOW.getTime() - hours * 60 * 60 * 1000).toISOString();
 
 const CAMPAIGN = 'customers/123/campaigns/789';
@@ -831,7 +833,7 @@ function handlerWorld(options: {
         params,
       },
       status: options.status ?? 'approved',
-      created_at: daysAgo(options.ageDays),
+      created_at: realDaysAgo(options.ageDays),
     },
     history: options.history ?? [],
     aiActions: [],
@@ -958,7 +960,7 @@ test('handler: an expired optimizer bid card is refused the same way, through ap
 test('handler: a 6-day-old optimizer budget card whose budget changed since is routed to review', async () => {
   const world = handlerWorld({
     ageDays: 6,
-    history: [executedRow('adjust_budget', { budget_resource: HANDLER_BUDGET }, daysAgo(2), 'rec-other')],
+    history: [executedRow('adjust_budget', { budget_resource: HANDLER_BUDGET }, realDaysAgo(2), 'rec-other')],
   });
   const result = await handler(world)();
   assert.match(result.location, /\/optimizer\?error=recent_change_lock$/);
@@ -974,7 +976,7 @@ test('handler: a 6-day-old optimizer budget card executes when nothing else touc
   assert.equal(clean.rec.status, 'applied');
   assert.equal(clean.mutations, 2, 'validate-only, then the live mutate');
 
-  const own = handlerWorld({ ageDays: 6, history: [executedRow('adjust_budget', { budget_resource: HANDLER_BUDGET }, daysAgo(1), 'rec-1')] });
+  const own = handlerWorld({ ageDays: 6, history: [executedRow('adjust_budget', { budget_resource: HANDLER_BUDGET }, realDaysAgo(1), 'rec-1')] });
   assert.match((await handler(own)()).location, /executed=1$/);
 });
 
