@@ -130,6 +130,7 @@ export default async function HomePage({
     }),
     headers().then((h) => h.get(NONCE_HEADER) ?? undefined),
   ]);
+  const realProof = proof.monthlyImpactSar !== null && proof.auditedAccounts !== null;
   const guarantee = ownerConfig.guarantee.approved || showDrafts() ? ownerConfig.guarantee : null;
 
   return (
@@ -146,21 +147,43 @@ export default async function HomePage({
           )}
         >
           <div>
-            <p className="text-[15px] font-semibold text-brand-navy/70">مثال من متجر عطور، آخر 30 يوم</p>
-            <p
-              className="mt-2 flex flex-wrap items-baseline gap-x-3 font-display font-bold leading-none"
-              aria-label="412 ريال"
-            >
-              <span aria-hidden className="numeric text-[7.5rem] sm:text-[11.5rem] lg:text-[13.5rem]">
-                412
-              </span>
-              <span aria-hidden className="text-[2.4rem] sm:text-[3.6rem]">
-                ريال
-              </span>
-            </p>
-            <h1 className="mt-5 max-w-[40rem] font-display text-[1.7rem] font-semibold leading-[1.5] text-balance sm:text-[2.1rem]">
-              راحت على ناس يكتبون «عطور رخيصة» في قوقل، وولا واحد منهم اشترى.
-            </h1>
+            {realProof ? (
+              <>
+                <p className="text-[15px] font-semibold text-brand-navy/70">من حسابات إعلانات حقيقية انفحصت في مُضاعِف</p>
+                <p
+                  className="mt-2 flex flex-wrap items-baseline gap-x-3 font-display font-bold leading-none"
+                  aria-label={`${proof.monthlyImpactSar!.toLocaleString('en-US')} ريال`}
+                >
+                  <span aria-hidden className="numeric text-[5.6rem] sm:text-[9rem] lg:text-[11rem]">
+                    {proof.monthlyImpactSar!.toLocaleString('en-US')}
+                  </span>
+                  <span aria-hidden className="text-[2.4rem] sm:text-[3.6rem]">
+                    ريال
+                  </span>
+                </p>
+                <h1 className="mt-5 max-w-[40rem] font-display text-[1.7rem] font-semibold leading-[1.5] text-balance sm:text-[2.1rem]">
+                  قرارات طلّعها مُضاعِف من حسابات إعلانات حقيقية، قيمتها التقديرية في الشهر.
+                </h1>
+              </>
+            ) : (
+              <>
+                <p className="text-[15px] font-semibold text-brand-navy/70">مثال من متجر عطور، آخر 30 يوم</p>
+                <p
+                  className="mt-2 flex flex-wrap items-baseline gap-x-3 font-display font-bold leading-none"
+                  aria-label="412 ريال"
+                >
+                  <span aria-hidden className="numeric text-[7.5rem] sm:text-[11.5rem] lg:text-[13.5rem]">
+                    412
+                  </span>
+                  <span aria-hidden className="text-[2.4rem] sm:text-[3.6rem]">
+                    ريال
+                  </span>
+                </p>
+                <h1 className="mt-5 max-w-[40rem] font-display text-[1.7rem] font-semibold leading-[1.5] text-balance sm:text-[2.1rem]">
+                  راحت على ناس يكتبون «عطور رخيصة» في قوقل، وولا واحد منهم اشترى.
+                </h1>
+              </>
+            )}
             <p className="mt-5 max-w-[36rem] text-[17.5px] leading-9 text-brand-navy/80 sm:text-[19px]">
               صار لك أحد تسأله عن إعلاناتك. مُضاعِف يقرا حسابك كل يوم، ويقول لك بكلامك وين راحت فلوسك ووش القرار، وأنت
               اللي تضغط اعتمد.
@@ -186,23 +209,10 @@ export default async function HomePage({
             <p className="mt-5 text-[14.5px] leading-7 text-brand-navy/70">
               الفحص الأول بدون بطاقة، وما يتغيّر شي في حسابك إلا باعتمادك.
             </p>
-            {proof.auditedAccounts !== null && (
-              <div className="mt-8 flex max-w-[36rem] flex-wrap items-end gap-x-10 gap-y-4 border-s-4 border-brand-navy ps-4">
-                {proof.monthlyImpactSar !== null && (
-                  <p className="leading-none">
-                    <span className="block font-display text-5xl font-bold numeric sm:text-6xl">
-                      {proof.monthlyImpactSar.toLocaleString('en-US')}
-                    </span>
-                    <span className="mt-2 block text-[14.5px] leading-6 text-brand-navy/85">
-                      ريال في الشهر، قيمة القرارات التقديرية
-                    </span>
-                  </p>
-                )}
-                <p className="leading-none">
-                  <span className="block font-display text-5xl font-bold numeric sm:text-6xl">{proof.auditedAccounts}</span>
-                  <span className="mt-2 block text-[14.5px] leading-6 text-brand-navy/85">حساب إعلانات حقيقي انفحص</span>
-                </p>
-              </div>
+            {realProof && (
+              <p className="mt-6 max-w-[34rem] border-s-2 border-brand-navy ps-3 text-[14.5px] leading-7 text-brand-navy/85">
+                انفحص <span className="font-bold numeric">{proof.auditedAccounts}</span> حساب إعلانات حقيقي.
+              </p>
             )}
             <div className="mt-8 flex flex-wrap items-center gap-x-5 gap-y-3">
               <p className="text-[15px] leading-6">
