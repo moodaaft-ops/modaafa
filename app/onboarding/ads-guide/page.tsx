@@ -13,6 +13,8 @@ import {
   resolveGuideVideo,
 } from '@/lib/onboarding/ads-guide';
 import { OnboardingProgress } from '../onboarding-progress';
+import { loadProvisioningInitial } from '@/lib/provisioning/load';
+import { ProvisionAccountTile } from '../provision-account-tile';
 import { GuideVideoButton } from './guide-video';
 
 export const metadata = {
@@ -25,6 +27,9 @@ export default async function AdsGuidePage() {
 
   const { business } = await getAccountWorkspace(user.id);
   if (!business) redirect('/onboarding/business');
+
+  // «افتحه لي»: offered in place of the WhatsApp box below when it is on for this user.
+  const provisioning = await loadProvisioningInitial(user);
 
   const video = resolveGuideVideo(
     process.env.NEXT_PUBLIC_ADS_GUIDE_VIDEO_ID,
@@ -90,20 +95,27 @@ export default async function AdsGuidePage() {
           </div>
         </section>
 
-        <div className="mt-5 flex flex-col gap-3 border border-border bg-background-elevated px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-[13px] leading-7 text-foreground">تفضّل أحد يمشي معك؟ نفتحه معك على واتساب، بدون رسوم.</p>
-          <a
-            href={whatsappHelpUrl('no_ads_account', user.email)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={`${buttonClasses({ variant: 'outline' })} flex-shrink-0`}
-          >
-            <MessageCircle className="h-4 w-4" />
-            <span dir="ltr" className="numeric">
-              {SUPPORT_WHATSAPP_DISPLAY}
-            </span>
-          </a>
-        </div>
+        {provisioning.available ? (
+          <div className="mt-5 space-y-3 border border-border bg-background-elevated px-5 py-4">
+            <p className="text-[13px] leading-7 text-foreground">تفضّل نفتحه لك بدل الخطوات؟ بدون رسوم.</p>
+            <ProvisionAccountTile email={user.email ?? null} initial={provisioning.view} />
+          </div>
+        ) : (
+          <div className="mt-5 flex flex-col gap-3 border border-border bg-background-elevated px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-[13px] leading-7 text-foreground">تفضّل أحد يمشي معك؟ نفتحه معك على واتساب، بدون رسوم.</p>
+            <a
+              href={whatsappHelpUrl('no_ads_account', user.email)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`${buttonClasses({ variant: 'outline' })} flex-shrink-0`}
+            >
+              <MessageCircle className="h-4 w-4" />
+              <span dir="ltr" className="numeric">
+                {SUPPORT_WHATSAPP_DISPLAY}
+              </span>
+            </a>
+          </div>
+        )}
       </div>
     </main>
   );

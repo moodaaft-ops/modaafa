@@ -13,6 +13,8 @@ import { CONNECT_ERROR_MESSAGES, connectPollDelayMs, type ConnectProgressView } 
 import { recommendationsCountLabel } from '@/lib/onboarding/first-opportunities';
 import { NO_ACCOUNT_PATH } from '@/lib/onboarding/ads-guide';
 import { whatsappHelpUrl, type WhatsAppHelpReason } from '@/lib/support/contact';
+import { PROVISIONING_UNAVAILABLE, type ProvisioningInitial } from '@/lib/provisioning/types';
+import { ProvisionAccountTile } from '../provision-account-tile';
 import { formatAmount, isAdaptiveKey, type SetupKey } from '@/lib/setup/questions';
 import { healthWord } from '@/lib/setup/stage';
 import { PLAN_COPY, PLAN_LATER_PATH, type Plan } from '@/lib/plan/plan';
@@ -153,11 +155,14 @@ export function SetupChat({
   initial,
   errorCode,
   adding = false,
+  provisioning = PROVISIONING_UNAVAILABLE,
 }: {
   initial: SetupState;
   errorCode: string | null;
   /** Opened from «إضافة حساب» or «تجديد الربط» by someone who already uses the app. */
   adding?: boolean;
+  /** «افتحه لي»: when available, the no-account docks offer it in place of the WhatsApp tile. */
+  provisioning?: ProvisioningInitial;
 }) {
   const router = useRouter();
   const [lines, setLines] = useState<Line[]>([]);
@@ -1080,6 +1085,7 @@ export function SetupChat({
             <DockView
               dock={dock}
               state={state}
+              provisioning={provisioning}
               busy={busy}
               canBack={phase === 'questions' && historyRef.current.length > 0}
               onAnswer={submitAnswer}
@@ -1088,7 +1094,11 @@ export function SetupChat({
               onNoAccount={async () => {
                 setDock({ kind: 'none' });
                 me('ما عندي حساب إعلانات');
-                await say('ولا يهمك. نفتحه لك مجاناً على الواتساب، أو تفتحه بنفسك بالخطوات وترجع لي.');
+                await say(
+                  provisioning.available
+                    ? 'ولا يهمك. نفتحه لك مجاناً من هنا، أو تفتحه بنفسك بالخطوات وترجع لي.'
+                    : 'ولا يهمك. نفتحه لك مجاناً على الواتساب، أو تفتحه بنفسك بالخطوات وترجع لي.'
+                );
                 setDock({ kind: 'no_account' });
               }}
               onContinueWithoutAccount={continueWithoutAccount}
@@ -1293,6 +1303,7 @@ function WhatsAppTile({ reason, email, label }: { reason: WhatsAppHelpReason; em
 function DockView({
   dock,
   state,
+  provisioning,
   busy,
   canBack,
   onAnswer,
@@ -1306,6 +1317,7 @@ function DockView({
 }: {
   dock: Dock;
   state: SetupState;
+  provisioning: ProvisioningInitial;
   busy: boolean;
   canBack: boolean;
   onAnswer: (key: SetupKey, payload: AnswerPayload) => void;
@@ -1333,7 +1345,11 @@ function DockView({
     case 'no_account':
       return (
         <div className="space-y-2.5">
-          <WhatsAppTile reason="no_ads_account" email={state.email} label="افتحه معي على الواتساب، مجاناً" />
+          {provisioning.available ? (
+            <ProvisionAccountTile email={state.email} initial={provisioning.view} />
+          ) : (
+            <WhatsAppTile reason="no_ads_account" email={state.email} label="افتحه معي على الواتساب، مجاناً" />
+          )}
           {adaptive && <AnswerTile label={CONTINUE_WITHOUT_ACCOUNT} icon="rocket" disabled={busy} onClick={onContinueWithoutAccount} />}
           <Link
             href={NO_ACCOUNT_PATH}
@@ -1348,7 +1364,11 @@ function DockView({
       // The first-campaign plan of someone with no account: the way to an account, never «كمّل بدون حساب» again.
       return (
         <div className="space-y-2.5">
-          <WhatsAppTile reason="no_ads_account" email={state.email} label="افتحه معي على الواتساب، مجاناً" />
+          {provisioning.available ? (
+            <ProvisionAccountTile email={state.email} initial={provisioning.view} />
+          ) : (
+            <WhatsAppTile reason="no_ads_account" email={state.email} label="افتحه معي على الواتساب، مجاناً" />
+          )}
           <Link
             href={NO_ACCOUNT_PATH}
             className="flex min-h-[56px] w-full items-center gap-3 rounded-[16px] border border-border bg-card px-4 py-3 text-[15px] font-semibold transition-colors hover:bg-muted"

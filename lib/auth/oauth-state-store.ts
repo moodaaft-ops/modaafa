@@ -18,7 +18,13 @@ import { createAdminClient } from '@/lib/supabase/server';
 
 const STATE_TTL_MINUTES = 60;
 
-export type OAuthStatePurpose = 'google_ads_connect';
+/**
+ * `provisioning_mcc`: an operator connecting the Google user who owns the
+ * dedicated manager account (plan 121, section 2.3). It shares the redirect URI
+ * and the callback with `google_ads_connect`; the callback tells them apart by
+ * which purpose the state was issued for.
+ */
+export type OAuthStatePurpose = 'google_ads_connect' | 'provisioning_mcc';
 
 export type ConsumeOAuthStateResult =
   | 'ok'

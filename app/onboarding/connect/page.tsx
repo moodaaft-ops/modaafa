@@ -12,6 +12,8 @@ import { OnboardingProgress } from '../onboarding-progress';
 import { isSimpleExperience } from '@/lib/setup/mode';
 import { simpleOnboardingTarget } from '@/lib/setup/routes';
 import { ConnectGoogleAdsButton } from './connect-google-ads-button';
+import { loadProvisioningInitial } from '@/lib/provisioning/load';
+import { ProvisionAccountTile } from '../provision-account-tile';
 import {
   SUPPORT_WHATSAPP_DISPLAY,
   whatsappHelpUrl,
@@ -60,6 +62,8 @@ export default async function ConnectGoogleAdsPage({
     redirect(simpleOnboardingTarget('connect', { error: params?.error }, { hasAccounts: hasAccounts || hasRevokedAccounts }));
   }
   const googleVerified = process.env.GOOGLE_OAUTH_APP_VERIFIED === 'true';
+  // «افتحه لي»: offered in place of the WhatsApp link below when it is on for this user.
+  const provisioning = hasAccounts ? null : await loadProvisioningInitial(user);
   // `no_client_accounts` is not an error the user can fix by retrying the same
   // thing, so it gets its own recovery block instead of a red bar above an
   // unchanged page. See ManagerOnlyRecovery below.
@@ -145,17 +149,28 @@ export default async function ConnectGoogleAdsPage({
               </Link>
             )}
           </div>
+          {provisioning?.available && (
+            <div className="mt-5 border-t border-border pt-5">
+              <p className="mb-3 text-[13.5px] font-semibold text-foreground">ليس لديك حساب إعلاني؟</p>
+              <ProvisionAccountTile email={user.email ?? null} initial={provisioning.view} />
+            </div>
+          )}
           <p className="mt-4 text-[12.5px] leading-6 text-muted-foreground">
-            في شاشة Google اختر البريد الذي يملك حساب Google Ads، وقد يختلف عن بريد دخولك إلى مُضاعِف. ليس لديك
-            حساب إعلاني؟{' '}
-            <a
-              href={whatsappHelpUrl('no_ads_account', user.email)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-semibold text-primary hover:underline"
-            >
-              نفتحه معك مجاناً عبر واتساب
-            </a>
+            في شاشة Google اختر البريد الذي يملك حساب Google Ads، وقد يختلف عن بريد دخولك إلى مُضاعِف.
+            {!provisioning?.available && (
+              <>
+                {' '}
+                ليس لديك حساب إعلاني؟{' '}
+                <a
+                  href={whatsappHelpUrl('no_ads_account', user.email)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-semibold text-primary hover:underline"
+                >
+                  نفتحه معك مجاناً عبر واتساب
+                </a>
+              </>
+            )}
           </p>
         </section>
 
