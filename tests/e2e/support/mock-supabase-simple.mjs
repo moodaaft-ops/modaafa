@@ -530,6 +530,13 @@ SCENARIOS.adaptive_new = () => ({
   subscriptions: [], ai_actions: [],
 });
 SCENARIOS.adaptive_no_account = () => ({ ...SCENARIOS.connect() });
+// The same customer with the dedicated manager connected (the server runs with ACCOUNT_PROVISIONING=true and
+// PROVISIONING_MCC_ID=1234567890): the «افتحه لي الحين» tile replaces the WhatsApp tile. The stored token is not a
+// real one on purpose: a press must end on the quiet fallback, never on an account.
+SCENARIOS.adaptive_no_account_provisioning = () => ({
+  ...SCENARIOS.connect(),
+  provisioning_credentials: [{ id: 1, mcc_id: '1234567890', google_email: null, refresh_token_encrypted: 'v1:not-a-real-token', connected_at: hoursAgo(1) }],
+});
 
 /** PostgREST-style `job_name=eq.…`, `status=in.(a,b)` and newest first, for the adaptive scenarios only. */
 function adaptiveJobRuns(rows, params) {

@@ -1,6 +1,7 @@
 import type { GaqlCustomer } from '@/lib/jarvis/tools/types';
 import { classifyActor } from '@/lib/jarvis/tools/get-change-history';
 import { addDays, bool, currencyUnits, money, num, num0, pick, round, str, utcDate } from '@/lib/jarvis/tools/shared';
+import { provisioningMccId } from '@/lib/provisioning/flag';
 import { SIGNAL_KEYS } from './signals-store';
 import type {
   AccountSignals,
@@ -31,9 +32,13 @@ export type ReadSignalsContext = {
   now?: Date;
 };
 
-/** Modaafa's MCC plus every configured manager id, digits only, no repeats. */
+/**
+ * Modaafa's MCC, the dedicated provisioning MCC (PROVISIONING_MCC_ID, set once
+ * «افتحه لي» is configured) and every configured manager id, digits only, no repeats.
+ * A customer whose account sits under the provisioning MCC must not be asked «مين يدير حسابك؟».
+ */
 export function ownManagerIdsFrom(configured: Array<string | null | undefined> = []) {
-  const ids = [MODAAFA_MCC_ID, ...configured].map((id) => String(id ?? '').replace(/\D/g, '')).filter(Boolean);
+  const ids = [MODAAFA_MCC_ID, provisioningMccId(), ...configured].map((id) => String(id ?? '').replace(/\D/g, '')).filter(Boolean);
   return Array.from(new Set(ids));
 }
 

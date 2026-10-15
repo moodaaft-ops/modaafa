@@ -7,6 +7,7 @@ import { GOOGLE_ADS_OAUTH_STATE_COOKIE } from '@/lib/auth/google-ads-oauth-state
 import { consumeOAuthStateWithTime } from '@/lib/auth/oauth-state-store';
 import { validateGoogleAdsOAuthState } from '@/lib/auth/oauth-state-validation';
 import { runConnectJob, startConnectJob } from '@/lib/onboarding/connect-job';
+import { handleProvisioningConnect } from '@/lib/provisioning/connect-callback';
 
 // The background half (after()) shares this budget. The preparing screen
 // treats a job still running past CONNECT_TIMEOUT_MS as killed.
@@ -49,6 +50,27 @@ export async function GET(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
     return NextResponse.redirect(new URL('/login?next=/onboarding/connect', req.url));
+  }
+
+  // An operator connecting the dedicated manager account (plan 121, 2.3) comes
+  // back on this same redirect URI. Its state was issued for the purpose
+  // `provisioning_mcc`; consuming it here with that purpose leaves every other
+  // state untouched (a state of another purpose is `not_found` and is NOT burned),
+  // so the normal connect below is unaffected. No cookie fallback exists for it.
+  const provisioningState = await consumeOAuthStateWithTime({
+    userId: user.id,
+    state,
+    purpose: 'provisioning_mcc',
+  });
+  if (provisioningState.result === 'ok') {
+    return handleProvisioningConnect({
+      requestUrl: req.url,
+      code,
+      user: { id: user.id, email: user.email ?? null, email_confirmed_at: user.email_confirmed_at ?? null },
+    });
+  }
+  if (provisioningState.result === 'user_mismatch') {
+    return NextResponse.redirect(new URL('/operations/provisioning?error=state_user_mismatch', req.url), 303);
   }
 
   // Verify CSRF state.

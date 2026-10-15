@@ -1223,3 +1223,63 @@ create index if not exists operator_audit_log_created_idx
 alter table public.operator_audit_log enable row level security;
 revoke all on table public.operator_audit_log from public, anon, authenticated, service_role;
 grant select, insert, update on table public.operator_audit_log to service_role;
+
+-- =====================================================
+-- ACCOUNT PROVISIONING (db/migrations/20261015_account_provisioning.sql)
+-- =====================================================
+
+
+create table if not exists public.ads_account_provisions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null unique references public.users(id) on delete cascade,
+  invited_email text not null,
+  account_name text not null,
+  customer_id text check (customer_id is null or customer_id ~ '^[0-9]{3,20}$'),
+  status text not null default 'creating'
+    check (status in ('creating', 'invited', 'accepted', 'unlinked', 'expired', 'failed')),
+  error_code text,
+  attempts integer not null default 1,
+  created_at timestamptz not null default now(),
+  invited_at timestamptz,
+  accepted_at timestamptz,
+  unlinked_at timestamptz,
+  last_checked_at timestamptz,
+  updated_at timestamptz not null default now()
+);
+
+-- A Google account belongs to at most one user.
+create unique index if not exists ads_account_provisions_customer_uidx
+  on public.ads_account_provisions (customer_id)
+  where customer_id is not null;
+
+-- The hourly job walks the open rows oldest-check first.
+create index if not exists ads_account_provisions_open_idx
+  on public.ads_account_provisions (status, last_checked_at nulls first)
+  where status in ('creating', 'invited', 'accepted');
+
+alter table public.ads_account_provisions enable row level security;
+revoke all on table public.ads_account_provisions from public, anon, authenticated, service_role;
+grant select on table public.ads_account_provisions to authenticated;
+grant select, insert, update on table public.ads_account_provisions to service_role;
+
+drop policy if exists ads_account_provisions_owner_read on public.ads_account_provisions;
+create policy ads_account_provisions_owner_read
+  on public.ads_account_provisions
+  for select
+  to authenticated
+  using (user_id = auth.uid());
+
+create table if not exists public.provisioning_credentials (
+  id smallint primary key default 1 check (id = 1),
+  mcc_id text not null check (mcc_id ~ '^[0-9]{10}$'),
+  google_email text,
+  refresh_token_encrypted text not null,
+  connected_by uuid,
+  connected_at timestamptz not null default now()
+);
+
+alter table public.provisioning_credentials enable row level security;
+revoke all on table public.provisioning_credentials from public, anon, authenticated, service_role;
+grant select, insert, update on table public.provisioning_credentials to service_role;
+-- No policy on purpose: RLS on with no policy means no browser role sees a row.
+

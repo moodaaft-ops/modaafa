@@ -3,6 +3,7 @@ import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { getRequestAuthContext } from '@/lib/supabase/server';
 import { isSimpleExperience } from '@/lib/setup/mode';
 import { loadSetupState } from '@/lib/setup/load';
+import { loadProvisioningInitial } from '@/lib/provisioning/load';
 import { SetupChat } from './setup/setup-chat';
 
 export const metadata = {
@@ -32,7 +33,17 @@ export default async function OnboardingPage({
     const adding = params?.connect === '1' && state.stage !== 'connecting';
     if (state.stage === 'done' && !edit && !adding) redirect('/home');
     // A new key when «عدّل شي» opens the same page in edit mode, so the chat starts over instead of keeping its state.
-    return <SetupChat key={edit ? 'edit' : 'setup'} initial={state} errorCode={params?.error ?? null} adding={adding} />;
+    // «افتحه لي» replaces the WhatsApp tile of the no-account screens when it is on for this user.
+    const provisioning = await loadProvisioningInitial(user);
+    return (
+      <SetupChat
+        key={edit ? 'edit' : 'setup'}
+        initial={state}
+        errorCode={params?.error ?? null}
+        adding={adding}
+        provisioning={provisioning}
+      />
+    );
   }
 
   const { accounts, business } = await getAccountWorkspace(user.id);

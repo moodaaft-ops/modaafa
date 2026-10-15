@@ -184,21 +184,28 @@ function pickNumber(value: Record<string, any>, ...keys: string[]) {
   return null;
 }
 
-async function googleAdsRest<T>({
+export async function googleAdsRest<T>({
   refreshToken,
   path,
   method = 'GET',
   body,
   loginCustomerId,
+  maxAttempts: requestedAttempts,
 }: {
   refreshToken: string;
   path: string;
   method?: 'GET' | 'POST';
   body?: unknown;
   loginCustomerId?: string | null;
+  /**
+   * Overrides the default (1 for `:mutate`, 3 otherwise). Callers that create
+   * something through a path without `:mutate` (createCustomerClient) pass 1,
+   * or a retried request after a timeout could create a second account.
+   */
+  maxAttempts?: number;
 }): Promise<T> {
   const isMutation = path.includes(':mutate');
-  const maxAttempts = isMutation ? 1 : GOOGLE_ADS_MAX_ATTEMPTS;
+  const maxAttempts = requestedAttempts ?? (isMutation ? 1 : GOOGLE_ADS_MAX_ATTEMPTS);
   let lastError: unknown;
   let retriedAfter401 = false;
 

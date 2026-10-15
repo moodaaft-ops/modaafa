@@ -5,6 +5,7 @@ on:
     - cron: '17 * * * *'
     - cron: '47 * * * *'
     - cron: '7,27 * * * *'
+    - cron: '9 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -73,3 +74,21 @@ jobs:
           curl --fail-with-body --silent --show-error --max-time 60 \
             -H "Authorization: Bearer $CRON_SECRET" \
             https://ai.modaafa.com/api/cron/welcome-email
+
+  provisioning:
+    # «افتحه لي» (plan 121): follows the open invitations, marks the accepted and
+    # the expired, and releases accepted accounts when PROVISIONING_UNLINK_AFTER_ACCEPT=true.
+    # Harmless while the feature is not set up: the route answers 200 {"skipped":"not_configured"}.
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '9 * * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Follow account invitations
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          test -n "$CRON_SECRET"
+          curl --fail-with-body --silent --show-error \
+            --max-time 290 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            https://ai.modaafa.com/api/cron/provisioning
