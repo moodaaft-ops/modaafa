@@ -2,7 +2,7 @@ import Image from 'next/image';
 
 /**
  * The first decision the product shows, drawn in code so it stays sharp at any
- * size. The numbers match the demo account «متجر عطور».
+ * size. Example decisions only, no real account figures.
  */
 export function DecisionCard({ className }: { className?: string }) {
   return (
@@ -19,30 +19,26 @@ export function DecisionCard({ className }: { className?: string }) {
         </div>
         <div className="space-y-4 p-5">
           <p className="rounded-2xl rounded-tr-md bg-white/[0.06] px-4 py-3 text-[16px] leading-7">
-            آخر 7 أيام صرفت <b className="numeric">1,470</b> ريال، وجاك منها <b className="numeric">41</b> طلب. عندي لك 3
-            قرارات اليوم، ابدأ بأولها.
+            قريت حسابك الصبح. فيه 3 قرارات اليوم، ابدأ بأولها.
           </p>
           <div className="rounded-2xl border-r-4 border-brand-signal bg-white/[0.04] p-4">
             <div className="flex items-center gap-2 text-[12.5px] font-semibold text-[#FB923C]">
               <span className="h-2 w-2 rounded-full bg-[#FB923C]" /> عاجل
             </div>
-            <div className="mt-1.5 text-[18px] font-bold leading-7">أوقف عبارة «عطور رخيصة»</div>
+            <div className="mt-1.5 text-[18px] font-bold leading-7">أوقف الإعلان اللي ياخذ فلوس وما يبيع</div>
             <p className="mt-1 text-[14.5px] leading-6 text-brand-paper/70">
-              جابت 96 ضغطة في 30 يوم وما سجّلت ولا طلب. اللي يكتبونها يدورون أرخص من أسعارك.
+              ناس يضغطون عليه كل يوم وتدفع على كل ضغطة، وما جاك منه ولا طلب. أنقل ميزانيته لإعلان يبيع.
             </p>
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
               <div className="flex gap-2">
                 <span className="rounded-xl bg-brand-signal px-5 py-2.5 text-[15px] font-bold text-brand-navy">اعتمد</span>
                 <span className="rounded-xl bg-white/10 px-4 py-2.5 text-[15px] font-semibold">مو الحين</span>
               </div>
-              <span className="text-[13.5px] text-brand-paper/60">
-                توفر <b className="numeric text-brand-paper">412</b> ريال بالشهر
-              </span>
             </div>
           </div>
         </div>
       </div>
-      <figcaption className="mt-4 text-[12.5px] text-brand-navy/60">مثال من متجر عطور.</figcaption>
+      <figcaption className="mt-4 text-[12.5px] text-brand-navy/60">مثال على قرار يطلعه مُضاعِف.</figcaption>
     </figure>
   );
 }
@@ -51,22 +47,22 @@ const todayDecisions = [
   {
     tag: 'عاجل',
     dot: 'bg-[#E0561B]',
-    title: 'أوقف عبارة «عطور رخيصة»',
-    why: 'جابت 96 ضغطة في 30 يوم وما سجّلت ولا طلب.',
-    save: '412',
+    title: 'أوقف الإعلان اللي ياخذ فلوس وما يبيع',
+    why: 'ناس يضغطون عليه كل يوم وتدفع على كل ضغطة، وما جاك منه ولا طلب.',
+    save: null,
   },
   {
     tag: 'مهم',
     dot: 'bg-brand-signal',
-    title: 'حملة «أداء أقصى - عطور» تتوقف قبل العصر',
-    why: 'آخر 7 أيام خلصت ميزانيتها قبل الساعة 2 العصر في 6 أيام، وأكثر طلباتك تجي بعد العصر.',
+    title: 'ميزانية اليوم تخلص قبل وقت طلباتك',
+    why: 'الإعلان يوقف الظهر، وأكثر ناسك يشترون بعد العصر. أحرك الميزانية للوقت اللي يشترون فيه.',
     save: null,
   },
   {
     tag: 'فرصة',
     dot: 'bg-brand-slate',
-    title: 'أضف عبارة «عطر عود فاخر» لحملة البحث',
-    why: 'تطلع في بحث الناس عندك، وجابت 4 طلبات من حملة ثانية بتكلفة أقل.',
+    title: 'كلمة بحث تجيب لك طلبات في حملة ثانية',
+    why: 'الناس يكتبونها وتشتري، بس ما هي في حملتك الرئيسية. أضيفها هناك.',
     save: null,
   },
 ];
@@ -98,7 +94,7 @@ export function TodayDecisions({ className }: { className?: string }) {
         ))}
       </div>
       <figcaption className="mt-4 text-[13px] text-brand-slate dark:text-brand-paper/60">
-        مثال من الشاشة الرئيسية لمتجر عطور.
+        مثال على قرارات اليوم في مُضاعِف.
       </figcaption>
     </figure>
   );

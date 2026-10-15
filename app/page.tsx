@@ -149,7 +149,7 @@ export default async function HomePage({
           <div>
             {realProof ? (
               <>
-                <p className="text-[15px] font-semibold text-brand-navy/70">من حسابات إعلانات حقيقية انفحصت في مُضاعِف</p>
+                <p className="text-[15px] font-semibold text-brand-navy/70">لقاها مُضاعِف في حسابات إعلانات حقيقية، كل شهر</p>
                 <p
                   className="mt-2 flex flex-wrap items-baseline gap-x-3 font-display font-bold leading-none"
                   aria-label={`${proof.monthlyImpactSar!.toLocaleString('en-US')} ريال`}
@@ -162,7 +162,7 @@ export default async function HomePage({
                   </span>
                 </p>
                 <h1 className="mt-5 max-w-[40rem] font-display text-[1.7rem] font-semibold leading-[1.5] text-balance sm:text-[2.1rem]">
-                  قرارات طلّعها مُضاعِف من حسابات إعلانات حقيقية، قيمتها التقديرية في الشهر.
+                  فلوس كانت رايحة على إعلانات ما تبيع، وما أحد قال لأصحابها.
                 </h1>
               </>
             ) : (
@@ -185,8 +185,7 @@ export default async function HomePage({
               </>
             )}
             <p className="mt-5 max-w-[36rem] text-[17.5px] leading-9 text-brand-navy/80 sm:text-[19px]">
-              صار لك أحد تسأله عن إعلاناتك. مُضاعِف يقرا حسابك كل يوم، ويقول لك بكلامك وين راحت فلوسك ووش القرار، وأنت
-              اللي تضغط اعتمد.
+              مُضاعِف يقرا حساب إعلاناتك كل يوم، ويقول لك بكلام عادي: وش يبيع ووش لا، ووش توقفه. وأنت اللي تضغط اعتمد.
             </p>
 
             <div className="mt-9 flex flex-col gap-4 sm:flex-row sm:items-center sm:gap-7">
