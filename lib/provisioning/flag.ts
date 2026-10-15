@@ -36,14 +36,10 @@ export function unlinkAfterAcceptEnabled(env: Record<string, string | undefined>
 }
 
 /**
- * The agency's own manager account. Provisioning must never run against it: it
- * holds clients that pay us, and unlinking one of them would cut a live customer.
+ * The agency's own manager account. Provisioning may run against it, but keep
+ * unlink-after-accept off there: it holds clients that pay us.
  * Kept here, not imported from lib/setup/adaptive/signals.ts, so this module
  * stays light; a test pins the two constants together.
  */
 export const AGENCY_MCC_ID = '7561141000';
 
-/** The ceiling of active accounts under a manager with no spend (Google, answer 7526520). */
-export const PROVISIONING_ACCOUNT_CEILING = 50;
-/** The operations page warns from here. */
-export const PROVISIONING_WARN_AT = 40;
