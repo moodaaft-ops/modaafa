@@ -146,7 +146,7 @@ export default async function HomePage({
           )}
         >
           <div>
-            <p className="text-[15px] font-semibold text-brand-navy/70">متجر عطور (حساب تجريبي)، آخر 30 يوم</p>
+            <p className="text-[15px] font-semibold text-brand-navy/70">مثال من متجر عطور، آخر 30 يوم</p>
             <p
               className="mt-2 flex flex-wrap items-baseline gap-x-3 font-display font-bold leading-none"
               aria-label="412 ريال"
@@ -187,17 +187,22 @@ export default async function HomePage({
               الفحص الأول بدون بطاقة، وما يتغيّر شي في حسابك إلا باعتمادك.
             </p>
             {proof.auditedAccounts !== null && (
-              <p className="mt-6 max-w-[34rem] border-s-2 border-brand-navy ps-3 text-[14.5px] leading-7 text-brand-navy/85">
-                انفحص فيه <span className="font-bold numeric">{proof.auditedAccounts}</span> حساب إعلانات حقيقي
+              <div className="mt-8 flex max-w-[36rem] flex-wrap items-end gap-x-10 gap-y-4 border-s-4 border-brand-navy ps-4">
                 {proof.monthlyImpactSar !== null && (
-                  <>
-                    ، وطلّع قرارات قيمتها التقديرية{' '}
-                    <span className="font-bold numeric">{proof.monthlyImpactSar.toLocaleString('en-US')}</span> ريال في
-                    الشهر
-                  </>
+                  <p className="leading-none">
+                    <span className="block font-display text-5xl font-bold numeric sm:text-6xl">
+                      {proof.monthlyImpactSar.toLocaleString('en-US')}
+                    </span>
+                    <span className="mt-2 block text-[14.5px] leading-6 text-brand-navy/85">
+                      ريال في الشهر، قيمة القرارات التقديرية
+                    </span>
+                  </p>
                 )}
-                .
-              </p>
+                <p className="leading-none">
+                  <span className="block font-display text-5xl font-bold numeric sm:text-6xl">{proof.auditedAccounts}</span>
+                  <span className="mt-2 block text-[14.5px] leading-6 text-brand-navy/85">حساب إعلانات حقيقي انفحص</span>
+                </p>
+              </div>
             )}
             <div className="mt-8 flex flex-wrap items-center gap-x-5 gap-y-3">
               <p className="text-[15px] leading-6">
