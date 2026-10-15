@@ -84,7 +84,10 @@ test('the migration locks both tables: RLS on, nothing for anon, the owner reads
   assert.match(sql, /alter table public\.provisioning_credentials enable row level security/i);
   assert.match(sql, /revoke all on table public\.ads_account_provisions from public, anon, authenticated, service_role/i);
   assert.match(sql, /revoke all on table public\.provisioning_credentials from public, anon, authenticated, service_role/i);
-  assert.match(sql, /grant select on table public\.ads_account_provisions to authenticated/i);
+  const ownerGrant = /grant select \(([^)]*)\)\s+on table public\.ads_account_provisions to authenticated/i.exec(sql);
+  assert.ok(ownerGrant, 'the owner gets a column-level SELECT only');
+  assert.doesNotMatch(ownerGrant![1], /customer_id|error_code|attempts|account_name/, 'never the Google id, the error codes or the attempts');
+  assert.doesNotMatch(sql, /grant select on table public\.ads_account_provisions to authenticated/i);
   assert.match(sql, /using \(user_id = auth\.uid\(\)\)/i);
   assert.doesNotMatch(sql, /grant[^;]+provisioning_credentials[^;]+to (anon|authenticated)/i);
   assert.doesNotMatch(sql, /create policy[^;]+provisioning_credentials/i, 'no policy at all on the credentials table');
@@ -166,4 +169,23 @@ test('the tile falls back to WhatsApp on every failure path and writes no long d
   assert.match(tile, /whatsappHelpUrl\('no_ads_account'/);
   assert.match(tile, /if \(!available\) return whatsapp/);
   assert.doesNotMatch(tile, /[—–]/);
+});
+
+test('the normal connect does nothing extra while no dedicated manager is configured', () => {
+  const callback = read('app/api/auth/google-ads/callback/route.ts');
+  assert.match(callback, /provisioningMccId\(\)\s*\n?\s*\? await consumeOAuthStateWithTime/);
+});
+
+test('the manager connect refuses a manager that sits under the agency', () => {
+  const callback = read('lib/provisioning/connect-callback.ts');
+  assert.match(callback, /activeParentManagers/);
+  assert.match(callback, /parents\?\.includes\(AGENCY_MCC_ID\)\) return back\('under_agency'\)/);
+  assert.match(read('app/(dashboard)/operations/provisioning/page.tsx'), /under_agency:/);
+});
+
+test('the tile polls fast for two minutes, slowly after, and not while the tab is hidden', () => {
+  const tile = read('app/onboarding/provision-account-tile.tsx');
+  assert.match(tile, /FAST_WINDOW_MS = 120_000/);
+  assert.match(tile, /SLOW_POLL_MS = 20_000/);
+  assert.match(tile, /if \(document\.visibilityState === 'visible'\) void refresh\(false\);\n\s+timer = window\.setTimeout/);
 });

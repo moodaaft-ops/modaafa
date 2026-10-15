@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server';
 import { exchangeCodeForTokens } from '@/lib/google-ads/oauth';
 import { listAccessibleCustomers } from '@/lib/google-ads/client';
-import { transportFromRefreshToken, verifyManagerAccess } from '@/lib/google-ads/provisioning';
+import { activeParentManagers, transportFromRefreshToken, verifyManagerAccess } from '@/lib/google-ads/provisioning';
 import { createAdminClient } from '@/lib/supabase/server';
 import { isOperatorUser, type OperatorCandidate } from '@/lib/platform/operators';
 import { saveProvisioningCredentials } from './credentials';
-import { provisioningMccId } from './flag';
+import { AGENCY_MCC_ID, provisioningMccId } from './flag';
 
 const PAGE = '/operations/provisioning';
 
@@ -42,6 +42,9 @@ export async function handleProvisioningConnect(input: {
     if (!accessible.includes(mccId)) return back('mcc_not_visible');
     const manager = await verifyManagerAccess({ mccId, transport: transportFromRefreshToken(refreshToken) });
     if (!manager.manager) return back('not_a_manager');
+    // It must stand alone: under the agency manager its accounts would appear in the agency's list.
+    const parents = await activeParentManagers({ mccId, transport: transportFromRefreshToken(refreshToken) });
+    if (parents?.includes(AGENCY_MCC_ID)) return back('under_agency');
   } catch (error) {
     // Includes the agency manager id being configured by mistake (verifyManagerAccess refuses it).
     console.warn('provisioning manager verification failed', error instanceof Error ? error.message : 'unknown');

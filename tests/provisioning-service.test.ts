@@ -387,3 +387,87 @@ test('with the unlink flag off the sweep only follows invited rows', async () =>
   assert.equal(summary.checked, 0);
   assert.equal(google.calls.length, 0);
 });
+
+test('a dropped connection or an unreadable answer on create is treated as maybe-created, never as a plain failure', async () => {
+  for (const failure of [Object.assign(new TypeError('terminated'), {}), restError(200, 'BAD_BODY'), restError(408)]) {
+    const { google, deps } = setup();
+    google.failNext(isCreate, failure, { executes: true });
+    const first = await startProvision(deps, USER);
+    assert.ok(first.ok);
+    assert.equal(first.row.error_code, 'CREATE_UNCONFIRMED', String(failure));
+
+    const retry = await startProvision(deps, USER);
+    assert.ok(retry.ok);
+    assert.equal(retry.row.status, 'invited');
+    assert.equal(google.creates, 1, 'the retry adopted the account instead of making a second');
+  }
+});
+
+test('changing the email while a create is unconfirmed keeps the account name, so the orphan is still found', async () => {
+  const { google, deps } = setup();
+  google.failNext(isCreate, restError(503), { executes: true });
+  const first = await startProvision(deps, USER);
+  assert.ok(first.ok);
+  assert.equal(first.row.error_code, 'CREATE_UNCONFIRMED');
+
+  const retry = await startProvision(deps, USER, 'sara.other@gmail.com');
+  assert.ok(retry.ok);
+  assert.equal(retry.row.status, 'invited');
+  assert.equal(retry.row.invited_email, 'sara.other@gmail.com');
+  assert.equal(retry.row.account_name, 'ahmed.ali', 'the name the orphan was created under');
+  assert.equal(google.creates, 1);
+  assert.equal(google.accounts.size, 1);
+});
+
+test('Google saying the invitation is already out, or already accepted, is where we wanted to be', async () => {
+  const pending = setup();
+  pending.google.failNext(isInvite, restError(400, 'EMAIL_ADDRESS_ALREADY_HAS_PENDING_INVITATION'));
+  const a = await startProvision(pending.deps, USER);
+  assert.ok(a.ok);
+  assert.equal(a.row.status, 'invited');
+  assert.equal(a.row.error_code, null);
+
+  const access = setup();
+  access.google.failNext(isInvite, restError(400, 'EMAIL_ADDRESS_ALREADY_HAS_ACCESS'));
+  const b = await startProvision(access.deps, USER);
+  assert.ok(b.ok);
+  assert.equal(b.row.status, 'accepted');
+
+  const other = setup();
+  other.google.failNext(isInvite, restError(400, 'INVALID_EMAIL_ADDRESS'));
+  const c = await startProvision(other.deps, USER);
+  assert.ok(c.ok);
+  assert.equal(c.row.status, 'failed');
+  assert.equal(c.row.error_code, 'INVALID_EMAIL_ADDRESS');
+});
+
+test('a stale copy of a row never overwrites a newer state', async () => {
+  const { google, store, deps } = setup({ unlink: true });
+  const started = await startProvision(deps, USER);
+  assert.ok(started.ok);
+  const staleCopy = { ...started.row };
+  google.accept(started.row.customer_id!, 'ahmed.ali@gmail.com');
+
+  // Another worker already took the row all the way to unlinked.
+  await store.update(started.row.id, { status: 'unlinked', unlinked_at: new Date(T0).toISOString() });
+
+  const result = await refreshProvision(deps, staleCopy);
+  assert.equal(result.status, 'unlinked');
+  assert.equal((await store.get(USER.id))!.status, 'unlinked');
+  assert.equal(google.unlinks, 0, 'the stale copy did not release anything');
+});
+
+test('simultaneous polls make one look at Google, not one each', async () => {
+  const { google, deps, advance } = setup();
+  const started = await startProvision(deps, USER);
+  assert.ok(started.ok);
+  advance(31_000);
+  const searches = () => google.count((request) => request.path.endsWith('/googleAds:search'));
+  const before = searches();
+
+  const [a, b, c] = await Promise.all([refreshIfStale(deps, started.row), refreshIfStale(deps, started.row), refreshIfStale(deps, started.row)]);
+  assert.equal(a.status, 'invited');
+  assert.equal(b.status, 'invited');
+  assert.equal(c.status, 'invited');
+  assert.equal(searches() - before, 2, 'one check is two searches (access, then invitations)');
+});

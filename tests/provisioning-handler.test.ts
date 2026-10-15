@@ -219,3 +219,60 @@ test('GET: a Google fault does not break the poll; the stored state is returned'
   assert.equal(result.status, 200);
   assert.equal((result.body.provision as any).status, 'invited');
 });
+
+test('POST: an auth outage is 503 and touches nothing; GET quietly says unavailable', async () => {
+  const post = postDeps({
+    getUser: async () => {
+      throw new Error('auth down');
+    },
+  });
+  const a = await handleProvisionPost(post.deps);
+  assert.equal(a.status, 503);
+  assert.equal(post.google.calls.length, 0);
+
+  const get = await handleProvisionGet(
+    getDeps({
+      getUser: async () => {
+        throw new Error('auth down');
+      },
+    }).deps
+  );
+  assert.deepEqual(get.body, { ok: true, available: false, provision: null });
+});
+
+test('GET: a request stuck in creating is released for a retry once it is stale, a fresh one is left alone', async () => {
+  const old = new MemoryStore(() => new Date(Date.now() - 20 * 60 * 1000));
+  const stuck = getDeps({ store: old, loadState: async (user) => ({ available: true, row: await old.get(user.id) }) });
+  old.seed({ user_id: USER.id, status: 'creating', customer_id: null });
+  const a = await handleProvisionGet(stuck.deps);
+  assert.deepEqual(a.body.provision, { status: 'failed', invitedEmail: 'user@gmail.com', canRetry: true });
+  assert.equal(old.rows.get(USER.id)!.error_code, 'CREATE_UNCONFIRMED');
+
+  const fresh = new MemoryStore();
+  const quick = getDeps({ store: fresh, loadState: async (user) => ({ available: true, row: await fresh.get(user.id) }) });
+  fresh.seed({ user_id: USER.id, status: 'creating' });
+  const b = await handleProvisionGet(quick.deps);
+  assert.equal((b.body.provision as any).status, 'creating');
+});
+
+test('GET: the manager token is not even loaded when this poll will not look at Google', async () => {
+  let loads = 0;
+  const { deps, store } = getDeps({
+    loadAds: async () => {
+      loads += 1;
+      return null;
+    },
+  });
+  store.seed({ user_id: USER.id, status: 'invited', customer_id: '5550000009', last_checked_at: new Date().toISOString() });
+  const recent = await handleProvisionGet(deps);
+  assert.equal((recent.body.provision as any).status, 'invited');
+  assert.equal(loads, 0, 'checked a moment ago: no decrypt, no Google');
+
+  store.rows.get(USER.id)!.last_checked_at = new Date(Date.now() - 60_000).toISOString();
+  await handleProvisionGet(deps);
+  assert.equal(loads, 1);
+
+  store.rows.get(USER.id)!.status = 'failed';
+  await handleProvisionGet(deps);
+  assert.equal(loads, 1, 'a finished or failed row never loads it');
+});

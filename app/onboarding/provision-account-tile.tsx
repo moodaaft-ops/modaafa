@@ -6,7 +6,10 @@ import { whatsappHelpUrl } from '@/lib/support/contact';
 import type { ProvisionView } from '@/lib/provisioning/types';
 
 const GMAIL_DOMAINS = new Set(['gmail.com', 'googlemail.com']);
+/** Quick polls for the first two minutes (the user is probably in their inbox), slow ones after, and none while the tab is hidden. */
 const POLL_MS = 6000;
+const FAST_WINDOW_MS = 120_000;
+const SLOW_POLL_MS = 20_000;
 
 const tileClass =
   'flex min-h-[56px] w-full items-center gap-3 rounded-[16px] border border-border bg-card px-4 py-3 text-start text-[15px] font-semibold text-foreground transition-colors hover:bg-muted disabled:opacity-60';
@@ -64,13 +67,19 @@ export function ProvisionAccountTile({ email, initial }: { email: string | null;
   const status = view?.status;
   useEffect(() => {
     if (status !== 'creating' && status !== 'invited') return;
-    const timer = window.setInterval(() => void refresh(false), POLL_MS);
+    const startedAt = Date.now();
+    let timer: number | undefined;
+    const tick = () => {
+      if (document.visibilityState === 'visible') void refresh(false);
+      timer = window.setTimeout(tick, Date.now() - startedAt < FAST_WINDOW_MS ? POLL_MS : SLOW_POLL_MS);
+    };
+    timer = window.setTimeout(tick, POLL_MS);
     const onVisible = () => {
       if (document.visibilityState === 'visible') void refresh(false);
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => {
-      window.clearInterval(timer);
+      window.clearTimeout(timer);
       document.removeEventListener('visibilitychange', onVisible);
     };
   }, [status, refresh]);

@@ -24,6 +24,8 @@ type Injector = { match: (request: AdsRequest) => boolean; error: unknown; execu
  */
 export class FakeGoogle {
   accounts = new Map<string, FakeAccount>();
+  /** Active managers above the dedicated manager (customer_manager_link). Empty = it stands alone. */
+  parents: string[] = [];
   calls: AdsRequest[] = [];
   private nextId = 5550000001;
   private injectors: Injector[] = [];
@@ -106,6 +108,9 @@ export class FakeGoogle {
       const account = this.accounts.get(customerId);
       return (account?.access ?? []).map((email) => ({ customerUserAccess: { emailAddress: email, accessRole: 'ADMIN' } }));
     }
+    if (query.includes('FROM customer_manager_link')) {
+      return this.parents.map((id) => ({ customerManagerLink: { managerCustomer: `customers/${id}`, status: 'ACTIVE' } }));
+    }
     if (query.includes('FROM customer_client_link')) {
       return [...this.accounts.values()].map((account) => ({
         customerClientLink: {
@@ -180,14 +185,22 @@ export class MemoryStore implements ProvisionStore {
     return { ...current };
   }
 
-  async update(id: string, patch: ProvisionPatch) {
+  async update(id: string, patch: ProvisionPatch, expectStatus?: ProvisionStatus) {
     const row = [...this.rows.values()].find((candidate) => candidate.id === id);
     if (!row) throw new Error('no such row');
+    if (expectStatus && row.status !== expectStatus) return { ...row };
     if (patch.customer_id && [...this.rows.values()].some((other) => other !== row && other.customer_id === patch.customer_id)) {
       throw Object.assign(new Error('duplicate key value violates unique constraint'), { code: '23505' });
     }
     Object.assign(row, patch, { updated_at: this.stamp() });
     return { ...row };
+  }
+
+  async claimCheck(row: ProvisionRow, nowIso: string) {
+    const current = this.rows.get(row.user_id);
+    if (!current || current.status !== row.status || current.last_checked_at !== row.last_checked_at) return false;
+    current.last_checked_at = nowIso;
+    return true;
   }
 
   async claimedCustomerIds() {

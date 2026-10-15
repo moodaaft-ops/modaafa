@@ -85,7 +85,10 @@ export async function startProvision(
     if (!existing.customer_id && asked) {
       const email = validateInviteEmail(requestedEmail);
       if (!email) return { ok: false, reason: 'bad_email' };
-      patch = { invited_email: email, account_name: accountNameFromEmail(email) };
+      // While a create may still be out there under the old name, the name stays: adoption finds the account by it.
+      patch = existing.error_code === 'CREATE_UNCONFIRMED'
+        ? { invited_email: email }
+        : { invited_email: email, account_name: accountNameFromEmail(email) };
     }
     const claimed = await store.claimRetry(existing, patch);
     if (!claimed) {
@@ -175,7 +178,15 @@ async function runCreation(deps: ProvisionDeps, start: ProvisionRow): Promise<Pr
   try {
     await inviteAdmin(ads, customerId, row.invited_email);
   } catch (error) {
-    return fail(deps, row, provisioningErrorCode(error));
+    const code = provisioningErrorCode(error);
+    // Google says the invitation is already out (or already accepted): that is where we wanted to be.
+    if (code === 'EMAIL_ADDRESS_ALREADY_HAS_PENDING_INVITATION') {
+      return store.update(row.id, { status: 'invited', invited_at: row.invited_at ?? nowIso, error_code: null, last_checked_at: nowIso });
+    }
+    if (code === 'EMAIL_ADDRESS_ALREADY_HAS_ACCESS') {
+      return store.update(row.id, { status: 'accepted', accepted_at: nowIso, invited_at: row.invited_at ?? nowIso, error_code: null, last_checked_at: nowIso });
+    }
+    return fail(deps, row, code);
   }
   return store.update(row.id, { status: 'invited', invited_at: nowIso, error_code: null, last_checked_at: nowIso });
 }
@@ -199,17 +210,21 @@ export async function refreshProvision(deps: ProvisionDeps, start: ProvisionRow)
     }
 
     if (state === 'accepted') {
-      row = await store.update(row.id, { status: 'accepted', accepted_at: nowIso, last_checked_at: nowIso, error_code: null });
+      row = await store.update(row.id, { status: 'accepted', accepted_at: nowIso, last_checked_at: nowIso, error_code: null }, 'invited');
     } else if (state === 'expired' || state === 'declined') {
-      return store.update(row.id, {
-        status: 'expired',
-        error_code: state === 'declined' ? 'INVITE_DECLINED' : 'INVITE_EXPIRED',
-        last_checked_at: nowIso,
-      });
+      return store.update(
+        row.id,
+        {
+          status: 'expired',
+          error_code: state === 'declined' ? 'INVITE_DECLINED' : 'INVITE_EXPIRED',
+          last_checked_at: nowIso,
+        },
+        'invited'
+      );
     } else {
       const age = clock(deps).getTime() - Date.parse(row.invited_at ?? row.created_at);
       if (state === 'unknown' && age > INVITE_MAX_AGE_MS) {
-        return store.update(row.id, { status: 'expired', error_code: 'INVITE_AGE', last_checked_at: nowIso });
+        return store.update(row.id, { status: 'expired', error_code: 'INVITE_AGE', last_checked_at: nowIso }, 'invited');
       }
       return store.update(row.id, { last_checked_at: nowIso, error_code: state === 'unknown' ? 'INVITE_NOT_VISIBLE' : null });
     }
@@ -233,15 +248,25 @@ async function maybeUnlink(deps: ProvisionDeps, row: ProvisionRow): Promise<Prov
   } catch (error) {
     return store.update(row.id, { last_checked_at: nowIso, error_code: provisioningErrorCode(error) });
   }
-  return store.update(row.id, { status: 'unlinked', unlinked_at: nowIso, last_checked_at: nowIso, error_code: null });
+  return store.update(row.id, { status: 'unlinked', unlinked_at: nowIso, last_checked_at: nowIso, error_code: null }, 'accepted');
 }
 
-/** The status poll of a signed-in user: looks at Google only if the last look is older than 30 seconds. */
-export async function refreshIfStale(deps: ProvisionDeps, row: ProvisionRow): Promise<ProvisionRow> {
-  if (row.status !== 'invited' && !(row.status === 'accepted' && deps.unlinkAfterAccept)) return row;
+/** Would a poll of this row look at Google now? (Cheap: no Google call, no token.) */
+export function isCheckDue(row: ProvisionRow, unlinkAfterAccept: boolean, nowMs: number) {
+  if (row.status !== 'invited' && !(row.status === 'accepted' && unlinkAfterAccept)) return false;
   const last = row.last_checked_at ? Date.parse(row.last_checked_at) : 0;
-  if (clock(deps).getTime() - last < USER_CHECK_INTERVAL_MS) return row;
-  return refreshProvision(deps, row);
+  return nowMs - last >= USER_CHECK_INTERVAL_MS;
+}
+
+/**
+ * The status poll of a signed-in user: looks at Google only if the last look is
+ * older than 30 seconds, and only one of several simultaneous polls gets to.
+ */
+export async function refreshIfStale(deps: ProvisionDeps, row: ProvisionRow): Promise<ProvisionRow> {
+  const now = clock(deps);
+  if (!isCheckDue(row, deps.unlinkAfterAccept, now.getTime())) return row;
+  if (!(await deps.store.claimCheck(row, now.toISOString()))) return (await deps.store.get(row.user_id)) ?? row;
+  return refreshProvision(deps, { ...row, last_checked_at: now.toISOString() });
 }
 
 export type SweepSummary = {

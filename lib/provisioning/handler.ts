@@ -1,5 +1,5 @@
 import type { ProvisioningContext } from '@/lib/google-ads/provisioning';
-import { refreshIfStale, startProvision } from './service';
+import { STALE_CREATING_MS, isCheckDue, refreshIfStale, startProvision } from './service';
 import type { ProvisionStore } from './store';
 import { provisionView, type ProvisionRow, type ProvisionView } from './types';
 
@@ -30,7 +30,12 @@ export type ProvisionPostDeps = {
 export async function handleProvisionPost(deps: ProvisionPostDeps): Promise<HandlerResult> {
   if (!deps.isSameOrigin()) return { status: 403, body: { ok: false, error: 'invalid_origin' } };
 
-  const user = await deps.getUser();
+  let user: Awaited<ReturnType<ProvisionPostDeps['getUser']>>;
+  try {
+    user = await deps.getUser();
+  } catch {
+    return { status: 503, body: { ok: false, error: 'service_unavailable' } };
+  }
   if (!user) return { status: 401, body: { ok: false, error: 'unauthorized' } };
 
   if (!deps.isEnabledFor(user.email)) return { status: 404, body: { ok: false, error: 'not_available' } };
@@ -68,7 +73,13 @@ export type ProvisionGetDeps = {
 };
 
 export async function handleProvisionGet(deps: ProvisionGetDeps): Promise<HandlerResult> {
-  const user = await deps.getUser();
+  let user: Awaited<ReturnType<ProvisionGetDeps['getUser']>>;
+  try {
+    user = await deps.getUser();
+  } catch {
+    // Not an error for the screen: it falls back to the WhatsApp tile.
+    return { status: 200, body: { ok: true, available: false, provision: null } };
+  }
   if (!user) return { status: 401, body: { ok: false, error: 'unauthorized' } };
 
   const state = await deps.loadState(user);
@@ -76,7 +87,20 @@ export async function handleProvisionGet(deps: ProvisionGetDeps): Promise<Handle
   if (!state.row) return { status: 200, body: { ok: true, available: true, provision: null } };
 
   let row = state.row;
-  if (row.status === 'invited' || row.status === 'accepted') {
+  const nowMs = Date.now();
+
+  // A request that died halfway should not leave the user on the spinner until the hourly job.
+  if (row.status === 'creating' && nowMs - Date.parse(row.updated_at) > STALE_CREATING_MS) {
+    try {
+      await deps.store.failStale(new Date(nowMs - STALE_CREATING_MS).toISOString());
+      row = (await deps.store.get(user.id)) ?? row;
+    } catch (error) {
+      console.warn('provision stale check failed', error instanceof Error ? error.message : 'unknown');
+    }
+  }
+
+  // The token is decrypted and Google is asked only when this poll is going to look.
+  if (isCheckDue(row, deps.unlinkAfterAccept, nowMs)) {
     try {
       const ads = await deps.loadAds();
       if (ads) row = await refreshIfStale({ store: deps.store, ads, unlinkAfterAccept: deps.unlinkAfterAccept }, row);

@@ -63,13 +63,16 @@ export function provisioningErrorCode(error: unknown) {
   return (known[0] ?? 'UNKNOWN').slice(0, 80);
 }
 
-/** Could the request have been executed by Google even though we got an error? */
+/**
+ * Could the request have been executed by Google even though we got an error?
+ * Only a definite refusal (a 4xx answer from Google) says no. A 5xx, a timeout, a
+ * dropped socket, an answer we could not read, or anything unexpected may have
+ * come after Google did the work, so the caller must look before it tries again.
+ */
 export function isAmbiguousFailure(error: unknown) {
   if (error instanceof ProvisioningError) return error.ambiguous;
-  if (error instanceof GoogleAdsRestError) return error.status >= 500;
-  const name = (error as { name?: string })?.name;
-  if (name === 'TimeoutError' || name === 'AbortError') return true;
-  return error instanceof TypeError && /fetch failed/i.test(error.message);
+  if (error instanceof GoogleAdsRestError) return error.status >= 500 || error.status < 400 || error.status === 408;
+  return true;
 }
 
 function assertDedicatedMcc(mccId: string) {
@@ -119,6 +122,29 @@ export async function verifyManagerAccess(ctx: ProvisioningContext) {
     manager: field(row, 'customer', 'manager', 'manager') === true,
     name: (field(row, 'customer', 'descriptiveName', 'descriptive_name') as string | undefined) ?? null,
   };
+}
+
+/**
+ * The managers this manager sits under. The dedicated manager must stand alone:
+ * if the agency manager (or any active parent) is above it, the accounts created
+ * here would show up under the agency. Best effort: a failed read returns null
+ * (unknown), it never blocks on its own.
+ */
+export async function activeParentManagers(ctx: ProvisioningContext): Promise<string[] | null> {
+  assertDedicatedMcc(ctx.mccId);
+  try {
+    const rows = await searchRows(
+      ctx,
+      ctx.mccId,
+      'SELECT customer_manager_link.manager_customer, customer_manager_link.status FROM customer_manager_link'
+    );
+    return rows
+      .filter((row) => String(field(row, 'customer_manager_link', 'status', 'status')).toUpperCase() === 'ACTIVE')
+      .map((row) => parseCustomerId(field(row, 'customer_manager_link', 'managerCustomer', 'manager_customer')))
+      .filter((id): id is string => Boolean(id));
+  } catch {
+    return null;
+  }
 }
 
 /**

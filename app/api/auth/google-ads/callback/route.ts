@@ -8,6 +8,7 @@ import { consumeOAuthStateWithTime } from '@/lib/auth/oauth-state-store';
 import { validateGoogleAdsOAuthState } from '@/lib/auth/oauth-state-validation';
 import { runConnectJob, startConnectJob } from '@/lib/onboarding/connect-job';
 import { handleProvisioningConnect } from '@/lib/provisioning/connect-callback';
+import { provisioningMccId } from '@/lib/provisioning/flag';
 
 // The background half (after()) shares this budget. The preparing screen
 // treats a job still running past CONNECT_TIMEOUT_MS as killed.
@@ -57,11 +58,10 @@ export async function GET(req: NextRequest) {
   // `provisioning_mcc`; consuming it here with that purpose leaves every other
   // state untouched (a state of another purpose is `not_found` and is NOT burned),
   // so the normal connect below is unaffected. No cookie fallback exists for it.
-  const provisioningState = await consumeOAuthStateWithTime({
-    userId: user.id,
-    state,
-    purpose: 'provisioning_mcc',
-  });
+  // Skipped entirely while no dedicated manager is configured, so the normal connect is untouched.
+  const provisioningState = provisioningMccId()
+    ? await consumeOAuthStateWithTime({ userId: user.id, state, purpose: 'provisioning_mcc' })
+    : { result: 'not_found' as const };
   if (provisioningState.result === 'ok') {
     return handleProvisioningConnect({
       requestUrl: req.url,

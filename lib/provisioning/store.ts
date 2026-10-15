@@ -31,7 +31,17 @@ export interface ProvisionStore {
    * as it was read wins. Returns null when somebody else got there first.
    */
   claimRetry(row: ProvisionRow, patch: ProvisionPatch): Promise<ProvisionRow | null>;
-  update(id: string, patch: ProvisionPatch): Promise<ProvisionRow>;
+  /**
+   * Write `patch`. With `expectStatus` the write happens only while the row still
+   * has that status; if somebody moved it meanwhile, nothing is written and the
+   * row as it is now is returned (a stale copy never overwrites a newer state).
+   */
+  update(id: string, patch: ProvisionPatch, expectStatus?: ProvisionStatus): Promise<ProvisionRow>;
+  /**
+   * Take the right to look at Google for this row now: sets last_checked_at only if
+   * it is still what `row` says, so concurrent polls make one Google read, not many.
+   */
+  claimCheck(row: ProvisionRow, nowIso: string): Promise<boolean>;
   /** Every customer id some row already owns. */
   claimedCustomerIds(): Promise<Set<string>>;
   /** Open rows, least recently checked first. */
@@ -80,15 +90,37 @@ export function supabaseProvisionStore(admin: AdminClient, now: () => Date = () 
       return ((data as ProvisionRow[] | null) ?? [])[0] ?? null;
     },
 
-    async update(id, patch) {
+    async update(id, patch, expectStatus) {
+      if (!expectStatus) {
+        const { data, error } = await admin
+          .from(TABLE)
+          .update({ ...patch, updated_at: stamp() })
+          .eq('id', id)
+          .select(PROVISION_COLUMNS)
+          .single();
+        if (error) throw error;
+        return data as ProvisionRow;
+      }
       const { data, error } = await admin
         .from(TABLE)
         .update({ ...patch, updated_at: stamp() })
         .eq('id', id)
-        .select(PROVISION_COLUMNS)
-        .single();
+        .eq('status', expectStatus)
+        .select(PROVISION_COLUMNS);
       if (error) throw error;
-      return data as ProvisionRow;
+      const written = ((data as ProvisionRow[] | null) ?? [])[0];
+      if (written) return written;
+      const current = await admin.from(TABLE).select(PROVISION_COLUMNS).eq('id', id).single();
+      if (current.error) throw current.error;
+      return current.data as ProvisionRow;
+    },
+
+    async claimCheck(row, nowIso) {
+      let query = admin.from(TABLE).update({ last_checked_at: nowIso, updated_at: stamp() }).eq('id', row.id).eq('status', row.status);
+      query = row.last_checked_at ? query.eq('last_checked_at', row.last_checked_at) : query.is('last_checked_at', null);
+      const { data, error } = await query.select('id');
+      if (error) throw error;
+      return (data?.length ?? 0) > 0;
     },
 
     async claimedCustomerIds() {

@@ -68,7 +68,9 @@ create index if not exists ads_account_provisions_open_idx
 
 alter table public.ads_account_provisions enable row level security;
 revoke all on table public.ads_account_provisions from public, anon, authenticated, service_role;
-grant select on table public.ads_account_provisions to authenticated;
+-- The owner may read only what the screen shows: never the Google customer id, error codes or attempts.
+grant select (id, user_id, invited_email, status, created_at, invited_at, accepted_at, unlinked_at)
+  on table public.ads_account_provisions to authenticated;
 grant select, insert, update on table public.ads_account_provisions to service_role;
 
 drop policy if exists ads_account_provisions_owner_read on public.ads_account_provisions;

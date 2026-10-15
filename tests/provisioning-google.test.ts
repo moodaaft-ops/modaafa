@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   ProvisioningError,
+  activeParentManagers,
   checkInvite,
   countActiveClients,
   createClientAccount,
@@ -71,10 +72,15 @@ test('createClientAccount marks a 5xx, a timeout and an answer without an id as 
   assert.equal(noId.calls.length, 0);
 });
 
-test('a 429 from Google is a refusal, not an ambiguous create', () => {
+test('only a definite refusal from Google is "not created"; everything else may have been', () => {
   assert.equal(isAmbiguousFailure(restError(429, 'RESOURCE_EXHAUSTED')), false);
   assert.equal(isAmbiguousFailure(restError(500)), true);
   assert.equal(isAmbiguousFailure(restError(400, 'INVALID_ARGUMENT')), false);
+  assert.equal(isAmbiguousFailure(restError(403, 'USER_PERMISSION_DENIED')), false);
+  assert.equal(isAmbiguousFailure(restError(408)), true);
+  assert.equal(isAmbiguousFailure(restError(200, 'BAD_BODY')), true, 'Google answered OK but we could not read it');
+  assert.equal(isAmbiguousFailure(new TypeError('terminated')), true, 'the socket dropped while reading the answer');
+  assert.equal(isAmbiguousFailure(new Error('something unexpected')), true);
   assert.equal(provisioningErrorCode(restError(400)), 'HTTP_400');
   assert.equal(provisioningErrorCode(Object.assign(new Error('x'), { name: 'AbortError' })), 'REQUEST_TIMEOUT');
 });
@@ -214,4 +220,17 @@ test('parseCustomerId reads the id out of a resource name', () => {
   assert.equal(parseCustomerId('customers/1234567890'), '1234567890');
   assert.equal(parseCustomerId('nope'), null);
   assert.equal(parseCustomerId(undefined), null);
+});
+
+test('activeParentManagers lists the active managers above the dedicated one, and says "unknown" when it cannot read', async () => {
+  const google = new FakeGoogle();
+  assert.deepEqual(await activeParentManagers(google.context()), []);
+
+  google.parents = [AGENCY_MCC_ID];
+  assert.deepEqual(await activeParentManagers(google.context()), [AGENCY_MCC_ID]);
+
+  google.failNext((request) => request.path.endsWith('/googleAds:search'), restError(403, 'USER_PERMISSION_DENIED'));
+  assert.equal(await activeParentManagers(google.context()), null);
+
+  await assert.rejects(() => activeParentManagers(google.context(AGENCY_MCC_ID)), (e: unknown) => e instanceof ProvisioningError && e.code === 'MCC_IS_AGENCY');
 });
