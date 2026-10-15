@@ -3,6 +3,7 @@ import { headers } from 'next/headers';
 import { NONCE_HEADER } from '@/lib/security/csp';
 import { buttonClasses } from '@/lib/ui/button';
 import { SiteFooter, SiteHeader } from '@/lib/ui/site-chrome';
+import { Phone } from '@/app/landing/screens';
 import { JsonLd } from '@/lib/seo/json-ld';
 import { BRAND, ENTITY_IDS, PAGE_DATES, PLAN_PRICES_SAR, SITE_URL, pageMetadata } from '@/lib/seo/site';
 
@@ -157,8 +158,7 @@ export default async function GoogleAdsAuditPage() {
 
       <article className="mx-auto max-w-3xl px-4 pb-16 pt-10 sm:px-6 sm:pt-14">
         <header>
-          <p className="text-xs font-semibold tracking-wide text-muted-foreground">مُضاعِف · Modaafa</p>
-          <h1 className="mt-3 text-[2rem] font-bold leading-[1.3] sm:text-[2.6rem]">فحص حساب إعلانات جوجل مجاناً</h1>
+          <h1 className="font-display text-[2.1rem] font-semibold leading-[1.28] sm:text-[2.8rem]">فحص حساب إعلانات جوجل مجاناً</h1>
           <p className="mt-5 text-[1.05rem] leading-9">
             مُضاعِف (Modaafa) يقرأ آخر 30 يوم من حساب إعلانات جوجل حقك ويطلع لك تقرير بالأخطاء اللي تاكل ميزانيتك، مرتبة
             من الأخطر للأخف، ومع كل خطأ سببه بالأرقام. الفحص الأول مجاني وما يطلب بطاقة، ويكفيك حساب Google له صلاحية
@@ -192,7 +192,7 @@ export default async function GoogleAdsAuditPage() {
         </dl>
 
         <section className="mt-12" aria-labelledby="checks">
-          <h2 id="checks" className="text-2xl font-bold leading-[1.4]">
+          <h2 id="checks" className="font-display text-[1.65rem] font-semibold leading-[1.4]">
             وش يفحص مُضاعِف في حساب إعلانات جوجل؟
           </h2>
           <p className="mt-3 leading-8 text-muted-foreground">
@@ -226,7 +226,7 @@ export default async function GoogleAdsAuditPage() {
         </section>
 
         <section className="mt-12" aria-labelledby="report">
-          <h2 id="report" className="text-2xl font-bold leading-[1.4]">
+          <h2 id="report" className="font-display text-[1.65rem] font-semibold leading-[1.4]">
             وش يطلع لك في تقرير الفحص؟
           </h2>
           <p className="mt-3 leading-8">
@@ -237,10 +237,31 @@ export default async function GoogleAdsAuditPage() {
             وبصراحة، باقي القرارات تنفتح مع الاشتراك أو مع التجربة 14 يوم. الملخص والهدر التقديري تشوفهم مجاناً ومعهم
             أول قرار، وتقدر تحكم منها هل يستاهل تكمل.
           </p>
+          <div className="mt-8 grid grid-cols-2 items-start gap-4 sm:gap-8">
+            <figure>
+              <Phone
+                src="/landing/chat-confirm-mobile.png"
+                alt="أول رسالة بعد الربط: ربطت حسابك وقريته، مع اللي شافه في الحساب وسؤال للتأكد"
+                crop={1300}
+                className="max-w-[240px] rounded-[30px] border-[7px]"
+              />
+              <figcaption className="mt-3 text-center text-[13px] text-muted-foreground">يقرا حسابك ويتأكد منك</figcaption>
+            </figure>
+            <figure className="mt-10">
+              <Phone
+                src="/landing/chat-plan-mobile.png"
+                alt="نتيجة الفحص: صحة الحساب 64 من 100، والهدر الشهري التقديري 1,840 ر.س، وأول قرار مفتوح"
+                crop={2400}
+                className="max-w-[240px] rounded-[30px] border-[7px]"
+              />
+              <figcaption className="mt-3 text-center text-[13px] text-muted-foreground">ثم خطتك وأول قرار</figcaption>
+            </figure>
+          </div>
+          <p className="mt-4 text-center text-[13px] text-muted-foreground">لقطات من المنصة نفسها، بحساب تجريبي لمتجر عطور.</p>
         </section>
 
         <section className="mt-12" aria-labelledby="steps">
-          <h2 id="steps" className="text-2xl font-bold leading-[1.4]">
+          <h2 id="steps" className="font-display text-[1.65rem] font-semibold leading-[1.4]">
             كيف تفحص حسابك؟
           </h2>
           <ol className="mt-5 space-y-5">
@@ -259,7 +280,7 @@ export default async function GoogleAdsAuditPage() {
         </section>
 
         <section className="mt-12 border-s-4 border-brand-signal ps-5" aria-labelledby="fit">
-          <h2 id="fit" className="text-2xl font-bold leading-[1.4]">
+          <h2 id="fit" className="font-display text-[1.65rem] font-semibold leading-[1.4]">
             لمن يناسب الفحص؟
           </h2>
           <p className="mt-3 leading-8">
@@ -273,7 +294,7 @@ export default async function GoogleAdsAuditPage() {
         </section>
 
         <section className="mt-12" aria-labelledby="faq">
-          <h2 id="faq" className="text-2xl font-bold leading-[1.4]">
+          <h2 id="faq" className="font-display text-[1.65rem] font-semibold leading-[1.4]">
             أسئلة شائعة عن فحص حساب إعلانات جوجل
           </h2>
           <div className="mt-5 divide-y divide-border border-y border-border">

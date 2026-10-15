@@ -6,6 +6,7 @@ import { ArrowLeft, ExternalLink, Loader2 } from 'lucide-react';
 import { Alert } from '@/lib/ui/alert';
 import { ThemeToggle } from '@/lib/ui/theme-toggle';
 import { LogoLockup } from '@/lib/ui/logo';
+import { AuthPanel } from '@/app/landing/auth-panel';
 
 type FieldErrors = Partial<Record<'name' | 'email' | 'phone', string>>;
 
@@ -71,13 +72,13 @@ export function RegisterForm({ consentText, inApp = null }: { consentText: strin
   }
 
   return (
-    <main className="min-h-screen bg-background p-4 lg:p-6">
-      <div className="mx-auto flex min-h-[calc(100dvh-2rem)] max-w-md items-center">
-        <div className="relative w-full surface-card p-6 sm:p-10">
-          <div className="absolute end-4 top-4">
+    <main className="min-h-screen bg-background lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]">
+      <div className="flex min-h-[100dvh] items-center justify-center p-4 sm:p-8">
+        <div className="relative w-full max-w-md p-2 sm:p-4">
+          <div className="absolute end-0 top-0">
             <ThemeToggle />
           </div>
-          <Link href="/" className="mb-8 flex items-center gap-3">
+          <Link href="/" className="mb-10 flex items-center gap-3">
             <LogoLockup />
           </Link>
 
@@ -190,6 +191,15 @@ export function RegisterForm({ consentText, inApp = null }: { consentText: strin
           )}
         </div>
       </div>
+      <AuthPanel
+        title="بعد التسجيل بدقايق، تشوف وين تروح فلوسك."
+        lines={[
+          'تربط حساب إعلانات قوقل من شاشة موافقة قوقل الرسمية.',
+          'يقرا حسابك ويتأكد منك: وش يهمك، طلبات ولا اتصالات.',
+          'تلقى الهدر الشهري التقديري وأول قرار، بدون بطاقة.',
+          'وإذا عجبك، تبدأ تجربة 14 يوم وتلغي متى ما بغيت.',
+        ]}
+      />
     </main>
   );
 }

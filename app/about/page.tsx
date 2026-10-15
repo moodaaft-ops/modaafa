@@ -3,6 +3,7 @@ import { headers } from 'next/headers';
 import { NONCE_HEADER } from '@/lib/security/csp';
 import { buttonClasses } from '@/lib/ui/button';
 import { SiteFooter, SiteHeader } from '@/lib/ui/site-chrome';
+import { Phone } from '@/app/landing/screens';
 import { JsonLd } from '@/lib/seo/json-ld';
 import {
   AGENCY_URL,
@@ -73,7 +74,7 @@ export default async function AboutPage() {
 
       <article className="mx-auto max-w-3xl px-4 pb-16 pt-10 sm:px-6 sm:pt-14">
         <header>
-          <h1 className="text-[2rem] font-bold leading-[1.3] sm:text-[2.6rem]">عن مُضاعِف</h1>
+          <h1 className="font-display text-[2.1rem] font-semibold leading-[1.28] sm:text-[2.8rem]">عن مُضاعِف</h1>
           <p className="mt-5 text-[1.05rem] leading-9">{POSITIONING_AR}</p>
         </header>
 
@@ -114,7 +115,7 @@ export default async function AboutPage() {
         </dl>
 
         <section className="mt-12" aria-labelledby="why">
-          <h2 id="why" className="text-2xl font-bold leading-[1.4]">
+          <h2 id="why" className="font-display text-[1.65rem] font-semibold leading-[1.4]">
             ليش انبنى مُضاعِف؟
           </h2>
           <p className="mt-3 leading-8">
@@ -128,13 +129,13 @@ export default async function AboutPage() {
         </section>
 
         <section className="mt-12" aria-labelledby="does">
-          <h2 id="does" className="text-2xl font-bold leading-[1.4]">
+          <h2 id="does" className="font-display text-[1.65rem] font-semibold leading-[1.4]">
             وش يسوي مُضاعِف بالضبط؟
           </h2>
           <ul className="mt-4 space-y-4 leading-8">
             <li>
-              <span className="font-semibold">يقرا حسابك كل يوم</span> ويطلع لك قراءة اليوم: وش صرفت أمس، ووش يحتاج منك
-              قرار.
+              <span className="font-semibold">يقرا حسابك كل يوم</span> ويبدأ معك برسالة فيها آخر 7 أيام بالريال، ووش
+              يحتاج منك قرار اليوم.
             </li>
             <li>
               كل قرار يجيك ومعه سببه من أرقام حسابك، مثل كلمة صرفت 30 يوم بدون تحويل أو حملة تخسر ظهورها لأن ميزانيتها
@@ -153,10 +154,21 @@ export default async function AboutPage() {
               .
             </li>
           </ul>
+          <figure className="mt-8">
+            <Phone
+              src="/landing/chat-home-mobile.png"
+              alt="الرئيسية في مُضاعِف على الجوال: رسالة اليوم وقرارات اليوم بزر اعتمد"
+              crop={2300}
+              className="max-w-[260px] rounded-[32px] border-[8px]"
+            />
+            <figcaption className="mt-3 text-center text-[13px] text-muted-foreground">
+              لقطة من المنصة نفسها، بحساب تجريبي.
+            </figcaption>
+          </figure>
         </section>
 
         <section className="mt-12 border-s-4 border-brand-signal ps-5" aria-labelledby="doesnt">
-          <h2 id="doesnt" className="text-2xl font-bold leading-[1.4]">
+          <h2 id="doesnt" className="font-display text-[1.65rem] font-semibold leading-[1.4]">
             وش ما يسويه مُضاعِف؟
           </h2>
           <p className="mt-3 leading-8">
@@ -169,7 +181,7 @@ export default async function AboutPage() {
         </section>
 
         <section className="mt-12" aria-labelledby="agency">
-          <h2 id="agency" className="text-2xl font-bold leading-[1.4]">
+          <h2 id="agency" className="font-display text-[1.65rem] font-semibold leading-[1.4]">
             مُضاعِف ووكالة مُضاعفة، وش الفرق؟
           </h2>
           <p className="mt-3 leading-8">
@@ -187,7 +199,7 @@ export default async function AboutPage() {
         </section>
 
         <section className="mt-12" aria-labelledby="pricing">
-          <h2 id="pricing" className="text-2xl font-bold leading-[1.4]">
+          <h2 id="pricing" className="font-display text-[1.65rem] font-semibold leading-[1.4]">
             كم سعر مُضاعِف؟
           </h2>
           <p className="mt-3 leading-8">
@@ -235,7 +247,7 @@ export default async function AboutPage() {
         </section>
 
         <section className="mt-12" aria-labelledby="contact">
-          <h2 id="contact" className="text-2xl font-bold leading-[1.4]">
+          <h2 id="contact" className="font-display text-[1.65rem] font-semibold leading-[1.4]">
             كيف تتواصل مع مُضاعِف؟
           </h2>
           <ul className="mt-4 space-y-3 leading-8">

@@ -25,6 +25,11 @@ const config: Config = {
         shimmer: {
           '100%': { transform: 'translateX(-100%)' },
         },
+        // The logo's yellow lamp on the public pages: on, a short dim, on.
+        lamp: {
+          '0%, 55%, 100%': { opacity: '1' },
+          '70%, 85%': { opacity: '0.25' },
+        },
         // the assistant's lamp: the yellow square of the symbol blinks while he thinks.
         'lamp-blink': {
           '0%, 100%': { opacity: '1' },
@@ -52,6 +57,7 @@ const config: Config = {
         'fade-up': 'fade-up 0.5s cubic-bezier(0.16,1,0.3,1) both',
         'typing-dot': 'typing-dot 1.2s ease-in-out infinite',
         shimmer: 'shimmer 1.6s ease-in-out infinite',
+        lamp: 'lamp 2.2s steps(1,end) infinite',
         'lamp-blink': 'lamp-blink 0.9s ease-in-out infinite',
         'square-step': 'square-step 1.1s ease-in-out infinite',
         'bubble-in': 'bubble-in 0.22s cubic-bezier(0.16,1,0.3,1) both',

@@ -67,7 +67,7 @@ export const PLAN_PRICES_SAR = [
 ] as const;
 
 export const OG_IMAGE = {
-  url: '/og-image.png',
+  url: '/og-image-v3.png',
   width: 1200,
   height: 630,
   alt: 'مُضاعِف - Modaafa Ads AI',
@@ -84,7 +84,7 @@ export const PAGE_DATES: Record<string, string> = {
   '/register': '2026-10-14',
   '/privacy': '2026-09-29',
   '/terms': '2026-10-07',
-  '/refund': '2026-10-07',
+  '/refund': '2026-10-14',
   '/data-deletion': '2026-07-21',
 };
 
