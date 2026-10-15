@@ -2,7 +2,7 @@ import Image from 'next/image';
 
 /**
  * The first decision the product shows, drawn in code so it stays sharp at any
- * size. The numbers match the demo account «متجر عطور (حساب تجريبي)».
+ * size. The numbers match the demo account «متجر عطور».
  */
 export function DecisionCard({ className }: { className?: string }) {
   return (
@@ -42,7 +42,7 @@ export function DecisionCard({ className }: { className?: string }) {
           </div>
         </div>
       </div>
-      <figcaption className="mt-4 text-[12.5px] text-brand-navy/60">الأرقام من حساب تجريبي لمتجر عطور، للتوضيح.</figcaption>
+      <figcaption className="mt-4 text-[12.5px] text-brand-navy/60">مثال من متجر عطور.</figcaption>
     </figure>
   );
 }
@@ -98,7 +98,7 @@ export function TodayDecisions({ className }: { className?: string }) {
         ))}
       </div>
       <figcaption className="mt-4 text-[13px] text-brand-slate dark:text-brand-paper/60">
-        من الشاشة الرئيسية في حساب تجريبي لمتجر عطور. الأرقام فيها للتوضيح.
+        مثال من الشاشة الرئيسية لمتجر عطور.
       </figcaption>
     </figure>
   );
