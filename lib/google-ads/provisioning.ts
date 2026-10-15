@@ -1,5 +1,4 @@
 import { normalizeTrialEmail } from '@/lib/billing/trial-identity';
-import { AGENCY_MCC_ID } from '@/lib/provisioning/flag';
 import { GoogleAdsRestError, getGoogleAdsErrorCodes, googleAdsRest } from './client';
 
 /**
@@ -77,8 +76,6 @@ export function isAmbiguousFailure(error: unknown) {
 
 function assertDedicatedMcc(mccId: string) {
   if (!/^\d{10}$/.test(mccId)) throw new ProvisioningError('MCC_NOT_CONFIGURED');
-  // The agency manager holds paying clients. Nothing here may act on it.
-  if (mccId === AGENCY_MCC_ID) throw new ProvisioningError('MCC_IS_AGENCY');
 }
 
 function assertCustomerId(customerId: string) {

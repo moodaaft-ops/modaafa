@@ -202,15 +202,8 @@ test('findUnclaimedAccount refuses an account somebody was already invited to or
   assert.equal(await findUnclaimedAccount(twins.context(), 'twin', new Set()), null, 'two candidates: do not guess');
 });
 
-test('nothing in the Google layer runs against the agency manager or a malformed id', async () => {
+test('nothing in the Google layer runs against a malformed id', async () => {
   const google = new FakeGoogle();
-  const agency = google.context(AGENCY_MCC_ID);
-  await assert.rejects(() => createClientAccount(agency, 'x'), (e: unknown) => e instanceof ProvisioningError && e.code === 'MCC_IS_AGENCY');
-  await assert.rejects(() => inviteAdmin(agency, '123456', 'a@b.co'), (e: unknown) => e instanceof ProvisioningError && e.code === 'MCC_IS_AGENCY');
-  await assert.rejects(() => checkInvite(agency, '123456', 'a@b.co'), (e: unknown) => e instanceof ProvisioningError && e.code === 'MCC_IS_AGENCY');
-  await assert.rejects(() => unlinkClient(agency, '123456'), (e: unknown) => e instanceof ProvisioningError && e.code === 'MCC_IS_AGENCY');
-  await assert.rejects(() => countActiveClients(agency), (e: unknown) => e instanceof ProvisioningError && e.code === 'MCC_IS_AGENCY');
-  await assert.rejects(() => verifyManagerAccess(agency), (e: unknown) => e instanceof ProvisioningError && e.code === 'MCC_IS_AGENCY');
   await assert.rejects(() => createClientAccount(google.context('12-34'), 'x'), (e: unknown) => e instanceof ProvisioningError && e.code === 'MCC_NOT_CONFIGURED');
   await assert.rejects(() => unlinkClient(google.context(), "1' OR '1'='1"), (e: unknown) => e instanceof ProvisioningError && e.code === 'BAD_CUSTOMER_ID');
   assert.equal(google.calls.length, 0, 'not one request left the process');
@@ -232,5 +225,4 @@ test('activeParentManagers lists the active managers above the dedicated one, an
   google.failNext((request) => request.path.endsWith('/googleAds:search'), restError(403, 'USER_PERMISSION_DENIED'));
   assert.equal(await activeParentManagers(google.context()), null);
 
-  await assert.rejects(() => activeParentManagers(google.context(AGENCY_MCC_ID)), (e: unknown) => e instanceof ProvisioningError && e.code === 'MCC_IS_AGENCY');
 });

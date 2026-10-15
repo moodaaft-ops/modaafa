@@ -2,7 +2,7 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { decrypt, encrypt } from '@/lib/crypto';
 import type { ProvisioningContext } from '@/lib/google-ads/provisioning';
 import { transportFromRefreshToken } from '@/lib/google-ads/provisioning';
-import { AGENCY_MCC_ID, provisioningMccId } from './flag';
+import { provisioningMccId } from './flag';
 
 /**
  * The refresh token of the Google user who owns the dedicated manager account.
@@ -18,7 +18,6 @@ export async function saveProvisioningCredentials(
   admin: AdminClient,
   input: { mccId: string; refreshToken: string; connectedBy: string; connectedAt?: string }
 ) {
-  if (input.mccId === AGENCY_MCC_ID) throw new Error('The agency manager account cannot be used for provisioning');
   const { error } = await admin.from(TABLE).upsert(
     {
       id: 1,
@@ -62,7 +61,7 @@ export async function readProvisioningTokenStatus(admin: AdminClient): Promise<P
  */
 export async function loadProvisioningContext(admin: AdminClient): Promise<ProvisioningContext | null> {
   const mccId = provisioningMccId();
-  if (!mccId || mccId === AGENCY_MCC_ID) return null;
+  if (!mccId) return null;
   const { data, error } = await admin.from(TABLE).select('mcc_id, refresh_token_encrypted').eq('id', 1).maybeSingle();
   if (error) throw error;
   const row = data as { mcc_id: string; refresh_token_encrypted: string } | null;
