@@ -3,6 +3,7 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypt
 import {
   prepareSpokenText,
   validateTtsText,
+  VOICE_LIMITS,
   type VoiceCaps,
   type VoiceConfig,
   type VoiceErrorCode,
@@ -486,7 +487,7 @@ export function grantSpeech(
   check: { ticketId: string; sessionId: string; accountKey?: string },
   replyText: string
 ): { spoken_text: string; speak_ticket: string } | null {
-  const spoken = prepareSpokenText(replyText);
+  const spoken = prepareSpokenText(replyText, VOICE_LIMITS.briefSpokenChars);
   if (!spoken || !deps.config.ticketSecret) return null;
   const speak_ticket = signVoiceToken(
     {

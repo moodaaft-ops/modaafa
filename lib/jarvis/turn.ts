@@ -24,7 +24,7 @@ import type { ToolContext } from './tools';
  */
 
 export type JarvisAnswer =
-  | { kind: 'answered'; result: JarvisTurnResult; budget: LlmBudgetState }
+  | { kind: 'answered'; result: JarvisTurnResult; budget: LlmBudgetState; loadMs: number }
   | { kind: 'budget_exhausted'; budget: LlmBudgetState };
 
 async function loadHistory(supabase: any, sessionId: string | null) {
@@ -95,6 +95,7 @@ export async function answerWithJarvis(args: {
   const { supabase, user, accountId, state, message, channel, sessionId } = args;
   const now = args.now ?? new Date();
   const isOperator = isModaafaOperator(user.email);
+  const loadStartedAt = Date.now();
 
   const subscription = await getSubscriptionAccess(supabase, user.id, user.email);
   // Closed to anyone without access, whatever called this. /api/chat/start has
@@ -114,21 +115,23 @@ export async function answerWithJarvis(args: {
   if (budget.level === 'exhausted') return { kind: 'budget_exhausted', budget };
 
   const admin = createAdminClient();
-  const accountRes = accountId
-    ? await supabase
-        .from('google_ads_accounts')
-        .select('id, business_id, customer_id, customer_name, manager_id, currency_code, time_zone, refresh_token_encrypted')
-        .eq('id', accountId)
-        .eq('status', 'active')
-        .maybeSingle()
-    : { data: null };
+  // Two independent reads, so they wait together instead of one after the other.
+  const [accountRes, businessRes] = await Promise.all([
+    accountId
+      ? supabase
+          .from('google_ads_accounts')
+          .select('id, business_id, customer_id, customer_name, manager_id, currency_code, time_zone, refresh_token_encrypted')
+          .eq('id', accountId)
+          .eq('status', 'active')
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
+    supabase
+      .from('businesses')
+      .select('id, name, sector, primary_goal, monthly_budget, target_regions, website')
+      .eq('user_id', user.id)
+      .maybeSingle(),
+  ]);
   const accountRow = accountRes.data ?? null;
-
-  const businessRes = await supabase
-    .from('businesses')
-    .select('id, name, sector, primary_goal, monthly_budget, target_regions, website')
-    .eq('user_id', user.id)
-    .maybeSingle();
   const businessRow = businessRes.data ?? null;
 
   let toolContext: ToolContext | null = null;
@@ -175,6 +178,8 @@ export async function answerWithJarvis(args: {
     });
   }
 
+  // Everything up to here is database work the model call waits on; the route logs it as brain_load.
+  const loadMs = Date.now() - loadStartedAt;
   const result = await runJarvisTurn({
     message,
     channel,
@@ -239,5 +244,5 @@ export async function answerWithJarvis(args: {
       })
     );
   }
-  return { kind: 'answered', result, budget };
+  return { kind: 'answered', result, budget, loadMs };
 }
