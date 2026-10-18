@@ -1,4 +1,4 @@
-import { buildTikTokEventId, resolveTikTokPixelId } from './tiktok';
+import { buildTikTokEventId, resolveTikTokPixelId, type TikTokConversionEvent } from './tiktok';
 
 /**
  * Server half of the TikTok conversion report (Events API 2.0).
@@ -40,7 +40,7 @@ export type TikTokServerPayload = {
   event_source_id: string;
   test_event_code?: string;
   data: Array<{
-    event: 'CompleteRegistration';
+    event: TikTokConversionEvent;
     event_time: number;
     event_id: string;
     user: { ttclid?: string; ttp?: string; ip?: string; user_agent?: string };
@@ -59,13 +59,19 @@ function compact<T extends Record<string, string | undefined>>(input: T) {
   return out as { [K in keyof T]?: string };
 }
 
-export function buildCompleteRegistrationPayload(
+/**
+ * One server event, CompleteRegistration or Subscribe (trial start). The
+ * event_id matches the browser pixel's (`reg_` / `sub_` + user id), so when
+ * both arrive TikTok keeps one.
+ */
+export function buildServerEventPayload(
+  event: TikTokConversionEvent,
   rawPixelId: string | null | undefined,
   ctx: ServerEventContext,
   testEventCode?: string | null,
 ): TikTokServerPayload | null {
   const pixelId = resolveTikTokPixelId(rawPixelId);
-  const eventId = buildTikTokEventId('CompleteRegistration', ctx.userId);
+  const eventId = buildTikTokEventId(event, ctx.userId);
   if (!pixelId || !eventId) return null;
 
   const payload: TikTokServerPayload = {
@@ -73,7 +79,7 @@ export function buildCompleteRegistrationPayload(
     event_source_id: pixelId,
     data: [
       {
-        event: 'CompleteRegistration',
+        event,
         event_time: ctx.eventTime ?? Math.floor(Date.now() / 1000),
         event_id: eventId,
         user: compact({
@@ -93,6 +99,14 @@ export function buildCompleteRegistrationPayload(
   return payload;
 }
 
+export function buildCompleteRegistrationPayload(
+  rawPixelId: string | null | undefined,
+  ctx: ServerEventContext,
+  testEventCode?: string | null,
+): TikTokServerPayload | null {
+  return buildServerEventPayload('CompleteRegistration', rawPixelId, ctx, testEventCode);
+}
+
 export type ServerEventOutcome =
   | { status: 'sent'; testMode: boolean }
   | { status: 'skipped'; reason: 'no_pixel' | 'no_token' }
@@ -102,17 +116,32 @@ export type ServerEventOutcome =
  * Never throws and never waits longer than `timeoutMs`: a registration must not
  * fail, or hang, because TikTok is slow.
  */
+type SendOptions = {
+  env?: Record<string, string | undefined>;
+  fetchImpl?: typeof fetch;
+  timeoutMs?: number;
+};
+
 export async function sendCompleteRegistration(
   ctx: ServerEventContext,
-  options: {
-    env?: Record<string, string | undefined>;
-    fetchImpl?: typeof fetch;
-    timeoutMs?: number;
-  } = {},
+  options: SendOptions = {},
+): Promise<ServerEventOutcome> {
+  return sendServerEvent('CompleteRegistration', ctx, options);
+}
+
+/** Trial started (card on file through Stripe). Same rules as the registration event. */
+export async function sendSubscribe(ctx: ServerEventContext, options: SendOptions = {}): Promise<ServerEventOutcome> {
+  return sendServerEvent('Subscribe', ctx, options);
+}
+
+export async function sendServerEvent(
+  event: TikTokConversionEvent,
+  ctx: ServerEventContext,
+  options: SendOptions = {},
 ): Promise<ServerEventOutcome> {
   const env = options.env ?? process.env;
   const token = env[TIKTOK_EVENTS_API_TOKEN_ENV]?.trim();
-  const payload = buildCompleteRegistrationPayload(env.TIKTOK_PIXEL_ID, ctx, env[TIKTOK_TEST_EVENT_CODE_ENV]);
+  const payload = buildServerEventPayload(event, env.TIKTOK_PIXEL_ID, ctx, env[TIKTOK_TEST_EVENT_CODE_ENV]);
   if (!payload) return { status: 'skipped', reason: 'no_pixel' };
   if (!token) return { status: 'skipped', reason: 'no_token' };
 

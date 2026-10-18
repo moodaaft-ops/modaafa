@@ -1,4 +1,5 @@
 import { createAdminClient } from '@/lib/supabase/server';
+import { reportTrialStartToTikTok } from '@/lib/analytics/tiktok-trial-event';
 import { partitionGoogleAdsAccounts, type AdsAccountSummary } from '@/lib/accounts/selection';
 import {
   isDisposableEmailDomain,
@@ -345,6 +346,16 @@ export async function recordTrialGrant({
     { onConflict: 'user_id', ignoreDuplicates: true }
   );
   if (error) throw error;
+
+  // The conversion the TikTok ad group optimises on. Best effort, never blocks the grant.
+  try {
+    const outcome = await reportTrialStartToTikTok({ admin: injectedAdmin ?? createAdminClient(), userId });
+    if (outcome.status !== 'skipped' || outcome.reason !== 'no_token') {
+      console.info('tiktok_subscribe', { source, status: outcome.status, ...('reason' in outcome ? { reason: outcome.reason } : {}), ...('detail' in outcome ? { detail: outcome.detail } : {}) });
+    }
+  } catch (tiktokError) {
+    console.error('tiktok_subscribe_failed', tiktokError instanceof Error ? tiktokError.name : 'error');
+  }
 
   const resolvedEmail = email ?? (await lookupUserEmail(supabase, userId));
   if (resolvedEmail) {
