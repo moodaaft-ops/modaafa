@@ -509,6 +509,9 @@ export default async function HomePage({
                 </div>
               </details>
             ))}
+            <Link href="/faq" className="inline-flex pt-3 text-[15.5px] font-semibold underline underline-offset-4">
+              كل أسئلة العملاء، مع الدول والسعر وما عندي حساب
+            </Link>
           </div>
         </div>
       </section>
