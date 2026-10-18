@@ -9,6 +9,7 @@ const SITEMAP_PATHS = [
   '/',
   '/about',
   '/google-ads-audit',
+  '/faq',
   '/register',
   '/privacy',
   '/terms',

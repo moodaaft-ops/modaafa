@@ -16,6 +16,7 @@ const NAV = [
   { href: '/#product', label: 'كيف يشتغل' },
   { href: '/#pricing', label: 'الأسعار' },
   { href: '/google-ads-audit', label: 'الفحص المجاني' },
+  { href: '/faq', label: 'الأسئلة' },
   { href: '/about', label: 'عن مُضاعِف' },
 ];
 
@@ -91,6 +92,9 @@ export function SiteFooter() {
           </Link>
           <Link href="/google-ads-audit" className={footerLink}>
             فحص حساب إعلانات جوجل مجاناً
+          </Link>
+          <Link href="/faq" className={footerLink}>
+            أسئلة العملاء
           </Link>
           <Link href="/about" className={footerLink}>
             عن مُضاعِف

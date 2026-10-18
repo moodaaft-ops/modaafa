@@ -18,9 +18,9 @@ function robotsRules() {
   return Array.isArray(rules) ? rules : [rules];
 }
 
-const EXPECTED_PATHS = ['/', '/about', '/google-ads-audit', '/register', '/privacy', '/terms', '/refund', '/data-deletion'];
+const EXPECTED_PATHS = ['/', '/about', '/google-ads-audit', '/faq', '/register', '/privacy', '/terms', '/refund', '/data-deletion'];
 
-test('sitemap lists exactly the eight public pages with absolute URLs', () => {
+test('sitemap lists exactly the nine public pages with absolute URLs', () => {
   const entries = sitemap();
   const urls = entries.map((entry) => entry.url);
 

@@ -81,6 +81,7 @@ export const PAGE_DATES: Record<string, string> = {
   '/': '2026-10-14',
   '/about': '2026-10-14',
   '/google-ads-audit': '2026-10-14',
+  '/faq': '2026-10-19',
   '/register': '2026-10-14',
   '/privacy': '2026-09-29',
   '/terms': '2026-10-07',
