@@ -336,7 +336,7 @@ export default async function HomePage({
                 الفحص مجاني. والاشتراك لما تبي تعتمد.
               </h2>
               <p className={leadClass}>
-                تشوف خطتك وأول قرار بدون بطاقة. الاشتراك يبدأ بتجربة 14 يوم، والأسعار بالريال قبل الضريبة.
+                تشوف خطتك وأول قرار بدون بطاقة. الاشتراك يبدأ بتجربة 14 يوم، والأسعار بالريال.
               </p>
             </div>
             <div className="inline-flex w-fit items-center border border-border p-1 text-[14px]" role="group" aria-label="فترة الفوترة">

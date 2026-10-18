@@ -57,7 +57,7 @@ export const POSITIONING_AR =
 export const POSITIONING_EN =
   "Modaafa (مُضاعِف) is a Saudi platform that reads a Google Ads account every day, prepares optimization decisions with the reason for each one from the account's own numbers, and changes nothing in the account without the owner's approval.";
 
-// Fallback list prices (SAR, before VAT). The homepage reads live prices from
+// Fallback list prices (SAR). The homepage reads live prices from
 // Stripe; app/page.tsx keeps its own copy of these three numbers and no shared
 // constant exists in lib/billing. Keep in sync with Stripe list prices.
 export const PLAN_PRICES_SAR = [

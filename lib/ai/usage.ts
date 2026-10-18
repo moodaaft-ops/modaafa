@@ -93,7 +93,7 @@ export async function recordLlmUsage(entry: LlmUsageEntry): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export const SAR_PER_USD = 3.75;
-/** The monthly LLM budget is this share of the plan price (before VAT). */
+/** The monthly LLM budget is this share of the plan price. */
 export const BUDGET_SHARE_OF_PLAN = 0.1;
 /** Day cap is the month cap spread over this many days, so one day cannot burn the month. */
 export const DAY_CAP_DIVISOR = 15;
