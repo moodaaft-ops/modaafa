@@ -52,6 +52,11 @@ export function categoryForAction(type: string) {
     create_shared_negative_list: 'keywords',
     add_shared_negative_keywords: 'keywords',
     attach_shared_negative_list: 'keywords',
+    replace_rsa_assets: 'ads',
+    add_sitelinks: 'ads',
+    add_callouts: 'ads',
+    add_structured_snippet: 'ads',
+    add_call_asset: 'ads',
   };
   return map[type] ?? 'structure';
 }

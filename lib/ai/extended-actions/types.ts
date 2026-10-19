@@ -11,6 +11,8 @@
  *   RecommendationSubscription (auto-apply)
  */
 
+import { ADS_STUDIO_OPERATIONS } from '../../ads/studio/types';
+
 export const EXTENDED_OPERATIONS = [
   'set_ad_schedule',
   'set_device_bid_modifier',
@@ -24,6 +26,8 @@ export const EXTENDED_OPERATIONS = [
   'apply_google_recommendation',
   'dismiss_google_recommendation',
   'pause_auto_apply',
+  // Ad copy and assets: also need ADS_STUDIO_ENABLED (see lib/ads/studio).
+  ...ADS_STUDIO_OPERATIONS,
 ] as const;
 
 export type ExtendedOperation = (typeof EXTENDED_OPERATIONS)[number];

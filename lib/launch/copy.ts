@@ -1,5 +1,6 @@
 import { mentionsGuarantee } from '@/lib/ai/builder-gates';
 import { cleanKeywordText } from './arabic';
+import { ASSET_LIMITS, RSA_LIMITS, buildGrounding, validateAssetText } from '@/lib/ads/validators';
 
 /**
  * Validation of ad text before it is sent to Google. Limits come from the
@@ -9,17 +10,17 @@ import { cleanKeywordText } from './arabic';
  * whole batch at validateOnly. Nothing here promises Google will approve a line.
  */
 
-export const RSA_MAX_HEADLINES = 15;
-export const RSA_MAX_DESCRIPTIONS = 4;
-export const RSA_MIN_HEADLINES = 3;
-export const RSA_MIN_DESCRIPTIONS = 2;
-export const HEADLINE_MAX = 30;
-export const DESCRIPTION_MAX = 90;
-export const PATH_MAX = 15;
-export const SITELINK_TEXT_MAX = 25;
-export const SITELINK_DESC_MAX = 35;
-export const CALLOUT_MAX = 25;
-export const SNIPPET_VALUE_MAX = 25;
+export const RSA_MAX_HEADLINES = RSA_LIMITS.maxHeadlines;
+export const RSA_MAX_DESCRIPTIONS = RSA_LIMITS.maxDescriptions;
+export const RSA_MIN_HEADLINES = RSA_LIMITS.minHeadlines;
+export const RSA_MIN_DESCRIPTIONS = RSA_LIMITS.minDescriptions;
+export const HEADLINE_MAX = ASSET_LIMITS.headline.max;
+export const DESCRIPTION_MAX = ASSET_LIMITS.description.max;
+export const PATH_MAX = ASSET_LIMITS.path.max;
+export const SITELINK_TEXT_MAX = ASSET_LIMITS.sitelink_text.max;
+export const SITELINK_DESC_MAX = ASSET_LIMITS.sitelink_description.max;
+export const CALLOUT_MAX = ASSET_LIMITS.callout.max;
+export const SNIPPET_VALUE_MAX = ASSET_LIMITS.snippet_value.max;
 export const SNIPPET_MIN_VALUES = 3;
 export const SNIPPET_MAX_VALUES = 10;
 
@@ -48,7 +49,9 @@ export type CopyIssueCode =
   | 'generic_cta'
   | 'guarantee'
   | 'wrong_language'
-  | 'leading_punctuation';
+  | 'leading_punctuation'
+  | 'house_style'
+  | 'too_short';
 
 export type CopyIssue = { code: CopyIssueCode; text: string };
 
@@ -141,6 +144,16 @@ export function copyIssues(raw: unknown, options: ValidateOptions): CopyIssue[] 
     const script = lineScript(text, options.brand);
     if (script !== 'none' && script !== options.language) add('wrong_language');
   }
+  // Shared ad-copy rules (lib/ads/validators.ts), only the ones that need no source text:
+  // hidden characters, dashes, Latin comma in Arabic, ornamental quotes, minimum length, machine phrases.
+  // The stricter of the two rule sets wins; the grounding rules stay with the Ads Studio writer.
+  if (issues.length === 0 && options.language) {
+    const shared = validateAssetText(text, options.kind, { language: options.language, grounding: buildGrounding([text]), keepExisting: true });
+    if (!shared.ok) {
+      if (shared.code === 'too_short') add('too_short');
+      else if (['hidden_characters', 'dash', 'latin_punctuation_in_arabic', 'ornamental_quotes', 'ai_phrase'].includes(shared.code)) add('house_style');
+    }
+  }
   return issues;
 }
 
@@ -158,6 +171,8 @@ export const COPY_ISSUE_AR: Record<CopyIssueCode, string> = {
   guarantee: 'وعد بنتيجة أو ضمان ما ذكرته أنت',
   wrong_language: 'لغة السطر غير لغة المجموعة',
   leading_punctuation: 'يبدأ بعلامة ترقيم',
+  house_style: 'فيه شرطة أو فاصلة لاتينية أو علامات اقتباس زخرفية أو عبارة آلية',
+  too_short: 'أقصر من الحد الأدنى',
 };
 
 export type CleanedList = { kept: string[]; dropped: Array<{ text: string; issues: CopyIssueCode[] }> };

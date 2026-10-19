@@ -13,6 +13,9 @@ import {
   type ExtendedOperation,
   type MinuteEnum,
 } from './types';
+import { isAdsStudioOperation } from '../../ads/studio/types';
+import { validateAdsStudioPayload } from '../../ads/studio/validate';
+import { isAdsStudioActive } from '../../ads/flag';
 
 /**
  * Pure payload validators for the extended action types. Each returns the
@@ -175,6 +178,13 @@ export function validateExtendedPayload(
   paramsInput: unknown,
   accountCustomerId?: string | null
 ): ExtendedValidation {
+  // Ad copy and assets: need ADS_STUDIO_ENABLED on top of the extended flag.
+  if (isAdsStudioOperation(operation)) {
+    return isAdsStudioActive()
+      ? validateAdsStudioPayload(operation, targetId, paramsInput, accountCustomerId)
+      : bad('ads_studio_disabled');
+  }
+
   const params = paramsInput && typeof paramsInput === 'object' ? (paramsInput as Record<string, unknown>) : {};
   const campaign = String(params.campaign_resource ?? '');
 

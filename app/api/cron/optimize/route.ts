@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createHash } from 'node:crypto';
+import { isAdsStudioActive, isAdsStudioEnabled } from '@/lib/ads/flag';
+import { runAdsStudioProposals } from '@/lib/ads/cron';
 import { actionFingerprint, categoryForAction, severityForAction } from '@/lib/ai/action-fingerprint';
 import { createAdminClient } from '@/lib/supabase/server';
 import { describeError } from '@/lib/supabase/query-errors';
@@ -438,6 +440,11 @@ async function runOptimizerCron(req: NextRequest) {
         economics
       );
       tallyTrackingVerdict(results.tracking_verdicts, snapshot.conversion_tracking?.status);
+      // Ad copy state for the optimizer, only with the studio flag on (byte-identical otherwise).
+      const adsStudioRead = isAdsStudioEnabled()
+        ? await runAdsStudioProposals.read(customer).catch(() => null)
+        : null;
+      if (adsStudioRead) snapshot.ad_assets = adsStudioRead.block;
 
       // Get AI decisions. An account with no spend and no evidence rows gives
       // the model nothing to act on, so we skip the paid call and record a
@@ -846,6 +853,25 @@ async function runOptimizerCron(req: NextRequest) {
           if (queued === 'renewed') results.recommendations_renewed++;
         } catch (opportunityError) {
           console.warn(`Campaign opportunity detection failed for ${account.customer_id}`, opportunityError);
+        }
+      }
+
+      // ---- Ad copy cards: replace LOW assets, add missing assets. Queued for approval only.
+      if (adsStudioRead && isAdsStudioActive() && !budget.expired()) {
+        try {
+          await runAdsStudioProposals.queue({
+            supabase,
+            read: adsStudioRead,
+            customer,
+            accountId: account.id,
+            customerId: account.customer_id,
+            businessId: account.business_id ?? null,
+            customerName: account.customer_name ?? null,
+            sector: businessContext?.sector ?? null,
+            convertingTermRows: snapshot.converting_search_terms ?? [],
+          });
+        } catch (adsError) {
+          console.warn(`Ad assets proposals failed for ${account.customer_id}`, adsError);
         }
       }
 

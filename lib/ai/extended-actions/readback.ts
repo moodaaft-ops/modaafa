@@ -2,6 +2,8 @@ import type { OptimizerAction } from '../optimizer-agent';
 import { readCampaignState, readNegativeLists, readSubscriptions } from './preflight';
 import { scheduleCriteriaFromRows } from './schedule';
 import { slotMinutes } from './validate';
+import { isAdsStudioOperation } from '../../ads/studio/types';
+import { readbackAdsStudioAction } from '../../ads/studio/readback';
 
 /**
  * Read the account back after a live mutate and say whether the change is
@@ -37,6 +39,7 @@ function criterionRows(rows: any[]) {
 }
 
 export async function readbackExtendedAction(action: OptimizerAction, customer: any): Promise<ReadbackResult> {
+  if (isAdsStudioOperation(action.type)) return readbackAdsStudioAction(action, customer);
   try {
     const params = action.params as Record<string, any>;
     const resolved = (params.resolved ?? {}) as Record<string, any>;

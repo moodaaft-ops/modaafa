@@ -69,6 +69,8 @@ export const MEASURED_ACTION_TYPES = [
   'set_location_bid_modifier',
   'set_geo_target_type',
   'set_network_settings',
+  // Ad copy swap: measured at ad group level (ADS_STUDIO_ENABLED).
+  'replace_rsa_assets',
 ];
 
 const MEASURE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;

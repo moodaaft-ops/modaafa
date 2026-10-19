@@ -40,7 +40,9 @@ export type EvidenceKind =
   | 'device'
   | 'pmax_category'
   | 'google_recommendation'
-  | 'auto_apply';
+  | 'auto_apply'
+  | 'rsa_ad'
+  | 'ad_test';
 
 export type EvidenceRow = { ref: string; kind: EvidenceKind; data: Record<string, unknown> };
 
