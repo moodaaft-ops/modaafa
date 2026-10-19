@@ -9,7 +9,7 @@ const NUMBER_ERRORS: Record<string, string> = {
   not_mobile: 'الرقم السعودي لازم يكون جوال يبدأ بـ 05',
 };
 
-export function appBaseUrl() {
+function appBaseUrl() {
   return (process.env.NEXT_PUBLIC_APP_URL || 'https://ai.modaafa.com').replace(/\/+$/, '');
 }
 

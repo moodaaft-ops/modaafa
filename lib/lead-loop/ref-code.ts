@@ -1,4 +1,3 @@
-import { randomBytes } from 'node:crypto';
 
 /**
  * Short reference code the visitor sends inside the WhatsApp message so the
@@ -18,6 +17,9 @@ const REF_IN_TEXT = new RegExp(`(?:^|[^A-Z0-9])M-\\s?(${REF_BODY}{4,${REF_MAX_LE
 const REF_BARE = new RegExp(`^M[-\\s]?(${REF_BODY}{4,${REF_MAX_LENGTH}})$`);
 
 export type RandomSource = (size: number) => Uint8Array;
+
+// Web Crypto (also in Node 20+): this module is imported by a client component, so no node:crypto.
+const randomBytes: RandomSource = (size) => globalThis.crypto.getRandomValues(new Uint8Array(size));
 
 /** Uniform pick from the alphabet (rejects the biased tail of the byte range). */
 export function generateRefCode(length = REF_DEFAULT_LENGTH, source: RandomSource = randomBytes): string {
