@@ -62,7 +62,7 @@ export default async function AboutPage() {
           name: plan.nameAr,
           price: plan.monthly,
           priceCurrency: 'SAR',
-          description: 'اشتراك شهري، السعر قبل ضريبة القيمة المضافة',
+          description: 'اشتراك شهري بالريال السعودي',
         })),
       },
     ],
@@ -109,7 +109,7 @@ export default async function AboutPage() {
           <div className="grid gap-1 py-4 sm:grid-cols-[11rem_1fr] sm:gap-6">
             <dt className="text-muted-foreground">السعر</dt>
             <dd className="leading-7">
-              يبدأ من {formatPrice(PLAN_PRICES_SAR[0].monthly)} ريال في الشهر قبل الضريبة، والفحص الأول مجاني
+              يبدأ من {formatPrice(PLAN_PRICES_SAR[0].monthly)} ريال في الشهر، والفحص الأول مجاني
             </dd>
           </div>
         </dl>
@@ -203,7 +203,7 @@ export default async function AboutPage() {
             كم سعر مُضاعِف؟
           </h2>
           <p className="mt-3 leading-8">
-            الفحص الأول مجاني وبدون بطاقة. والاشتراك له ثلاث خطط شهرية بالريال السعودي قبل ضريبة القيمة المضافة، واللي
+            الفحص الأول مجاني وبدون بطاقة. والاشتراك له ثلاث خطط شهرية بالريال السعودي، واللي
             ما جرب قبل ياخذ تجربة 14 يوم ويقدر يلغي قبل أول خصم.
           </p>
           <div className="mt-5 overflow-hidden border border-border">
