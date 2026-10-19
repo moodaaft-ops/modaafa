@@ -604,7 +604,12 @@ function PaymentArea(props: {
 
   return (
     <div>
-      <div hidden={!wallets} aria-hidden={!wallets}>
+      {/* Collapsed, never display:none. Stripe only works out which wallets this browser has once its
+          iframe is laid out, so a display:none wrapper keeps the buttons hidden for good. */}
+      <div
+        aria-hidden={!wallets}
+        className={wallets ? undefined : 'pointer-events-none h-0 overflow-hidden opacity-0'}
+      >
         <ExpressCheckoutElement
           options={expressOptions(props)}
           // `ready` can fire before the wallets are worked out, with nothing listed yet, and then
