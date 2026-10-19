@@ -13,6 +13,7 @@ export const OPERATION_LABELS_AR: Record<string, string> = {
   add_keyword: 'إضافة كلمة رابحة من عبارات البحث',
   pause_campaign: 'إيقاف حملة',
   enable_campaign: 'تشغيل حملة',
+  launch_campaign: 'بناء حملة موقوفة',
   add_negative_keywords_batch: 'منع عبارات بحث (دفعة)',
 };
 

@@ -20,6 +20,8 @@ import {
   type LockRow,
 } from './optimizer-gates';
 import { evaluateProposalEvidence } from './optimizer-proposal-gates';
+import { executeLaunchRollback } from '../launch/execute';
+import { runLaunchAction } from '../launch/action';
 
 /**
  * Optimizer Agent - the heart of the platform.
@@ -231,7 +233,8 @@ export interface OptimizerAction {
     | 'pause_ad'
     | 'pause_campaign'
     | 'enable_campaign'
-    | 'add_negative_keywords_batch';
+    | 'add_negative_keywords_batch'
+    | 'launch_campaign';
   target_id: string;
   params: Record<string, unknown>;
   reason_ar: string;
@@ -962,6 +965,10 @@ export async function executeAction(
       ], options);
     }
 
+    case 'launch_campaign': {
+      return runLaunchAction(action.params, client, options);
+    }
+
     case 'enable_campaign': {
       return client.campaigns.update([
         { resource_name: action.target_id, status: 'ENABLED' },
@@ -1039,6 +1046,9 @@ export async function executeRollback(
       }
       return client.campaignCriteria.remove(names, options);
     }
+    case 'remove_launched_campaign':
+      // Undo of the campaign launcher (lib/launch). Refuses while the campaign is enabled.
+      return executeLaunchRollback(rollback, client, options);
     default:
       throw new Error('This action does not have a supported rollback operation');
   }

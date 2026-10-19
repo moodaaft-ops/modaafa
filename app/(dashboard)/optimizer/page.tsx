@@ -18,6 +18,7 @@ import { loadPlanLock, type PlanLockData } from '@/lib/plan/load';
 import { PlanLock } from '@/lib/plan/plan-lock';
 import { dropStalePending } from '@/lib/recommendations/staleness';
 import { Alert } from '@/lib/ui/alert';
+import { LaunchPlanPreview } from '@/lib/launch/launch-plan-preview';
 
 export const metadata = {
   title: 'مركز الموافقات',
@@ -370,6 +371,7 @@ function ChangePreview({
 
   const operation = String(payload.operation ?? '');
   const params = payload.params ?? {};
+  if (operation === 'launch_campaign') return <LaunchPlanPreview plan={params.plan} />;
   const rows: Array<{ label: string; value: string; ltr?: boolean }> = [];
 
   const operationLabels: Record<string, string> = {
@@ -381,6 +383,7 @@ function ChangePreview({
     add_keyword: 'إضافة كلمة رابحة من عبارات البحث',
     pause_campaign: 'إيقاف حملة',
     enable_campaign: 'تشغيل حملة',
+    launch_campaign: 'بناء حملة موقوفة',
     add_negative_keywords_batch: 'منع عبارات بحث (دفعة)',
     build_campaign_opportunity: 'عبارات بحث رابحة (تُراجع في المساعد)',
     manual_campaign_draft: 'مسودة حملة جديدة (تحتاج مراجعة يدوية)',
@@ -555,6 +558,8 @@ function actionTypeLabel(value?: string | null) {
     add_keyword: 'إضافة كلمة رابحة',
     pause_campaign: 'إيقاف حملة',
     enable_campaign: 'تشغيل حملة',
+    launch_campaign: 'بناء حملة موقوفة',
+    remove_launched_campaign: 'التراجع عن بناء حملة',
     add_negative_keywords_batch: 'منع عبارات بحث (دفعة)',
     approval_queued: 'اعتماد توصية',
     execution_blocked: 'محجوب: يحتاج مراجعة',

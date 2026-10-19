@@ -1,5 +1,6 @@
 import type { OptimizerAction } from './optimizer-agent';
 import { BUDGET_STEP_MAX_PCT, BUDGET_STEP_MIN_PCT } from './optimizer-gates';
+import { buildLaunchAction } from '../launch/executable';
 
 /**
  * Translate a stored recommendation payload into an executable OptimizerAction.
@@ -17,6 +18,7 @@ export function buildExecutableAction(
   accountCustomerId?: string | null
 ): OptimizerAction | null {
   const operation = String(payload?.operation ?? '');
+  if (operation === 'launch_campaign') return buildLaunchAction(payload, recommendation, accountCustomerId);
   const allowed = [
     'pause_keyword',
     'add_negative_keyword',

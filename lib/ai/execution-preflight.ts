@@ -204,6 +204,9 @@ export async function prepareActionForExecution(action: OptimizerAction, custome
       action_type: 'remove_created_negative_keyword',
       resource_name_from_result: true,
     };
+  } else if (action.type === 'launch_campaign') {
+    // The created resources only exist after the mutate; the rollback is filled from its result.
+    rollbackPayload = { reversible: true, action_type: 'remove_launched_campaign', launch_result_rollback: true };
   } else if (action.type === 'pause_campaign' || action.type === 'enable_campaign') {
     const campaignResource = action.target_id;
     const rows = await customer.query(`

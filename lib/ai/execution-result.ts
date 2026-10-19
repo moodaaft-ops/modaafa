@@ -23,6 +23,12 @@ export function firstResultResourceName(result: any): string | null {
 }
 
 export function finalizeRollbackPayload(payload: Record<string, unknown>, result: any) {
+  if (payload.action_type === 'remove_launched_campaign') {
+    const built = result?.rollback_payload;
+    return built && typeof built === 'object'
+      ? built
+      : { reversible: false, resource_names: [], note: 'created_resources_unavailable' };
+  }
   if (
     payload.action_type === 'remove_created_negative_keyword' ||
     payload.action_type === 'remove_created_keyword'

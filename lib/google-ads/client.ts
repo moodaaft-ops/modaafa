@@ -644,6 +644,20 @@ export function getCustomer(
           options
         ),
     },
+    // GoogleAdsService:mutate, one atomic batch of MutateOperations with
+    // temporary resource names. Used only by the campaign launcher
+    // (lib/launch), behind CAMPAIGN_LAUNCH_ENABLED. Never retried: see googleAdsRest.
+    mutate: (operations: unknown[], options?: { validateOnly?: boolean }) =>
+      googleAdsRest({
+        refreshToken,
+        path: `/customers/${normalizedCustomerId}/googleAds:mutate`,
+        method: 'POST',
+        loginCustomerId: normalizedLoginCustomerId,
+        body: {
+          mutateOperations: camelizeKeys(operations),
+          ...(options?.validateOnly ? { validateOnly: true } : {}),
+        },
+      }),
     // Campaign status only (pause / enable). The field mask is fixed to
     // `status` so no other campaign field can ride along on this path.
     campaigns: {
