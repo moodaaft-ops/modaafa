@@ -10,6 +10,7 @@ import {
   Megaphone,
   Menu,
   MessageCircle,
+  PlayCircle,
   Settings,
   SquarePen,
   X,
@@ -36,6 +37,7 @@ const ITEMS: Item[] = [
   { href: '/campaigns', label: 'حملاتي', icon: Megaphone },
   { href: '/reports', label: 'التقارير', icon: BarChart3 },
   { href: '/billing', label: 'الاشتراك', icon: CreditCard },
+  { href: '/guide', label: 'كيف أستخدم مُضاعِف', icon: PlayCircle },
   { href: '/settings', label: 'الإعدادات', icon: Settings },
 ];
 

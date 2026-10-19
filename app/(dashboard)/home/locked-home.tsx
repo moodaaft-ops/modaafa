@@ -12,7 +12,9 @@ import {
   PlanSheet,
   PlanTrust,
 } from '@/lib/plan/plan-paywall';
+import { PLATFORM_GUIDE_AFTER_START_SECONDS } from '@/lib/onboarding/platform-guide';
 import { AssistantAvatar } from '@/lib/ui/assistant-avatar';
+import { PlatformGuideDialog } from '@/lib/ui/platform-guide';
 import { cn } from '@/lib/utils';
 
 /**
@@ -128,6 +130,9 @@ export function LockedHome({
         {!suspended && (
           <div className="mt-2 space-y-1 px-2">
             {cta?.kind !== 'billing' && <PlanCancelLine trialEligible={trialEligible} className="text-[11.5px] leading-5" />}
+            {cta?.kind !== 'billing' && (
+              <PlatformGuideDialog start={PLATFORM_GUIDE_AFTER_START_SECONDS} label="وش يصير بعد ما أبدأ؟" className="pt-1" />
+            )}
             <PlanTrust className="text-[11.5px] leading-5" />
           </div>
         )}

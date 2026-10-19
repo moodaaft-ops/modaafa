@@ -19,6 +19,7 @@ import { formatAmount, isAdaptiveKey, type SetupKey } from '@/lib/setup/question
 import { healthWord } from '@/lib/setup/stage';
 import { PLAN_COPY, PLAN_LATER_PATH, type Plan } from '@/lib/plan/plan';
 import { PlanCard, PlanCta } from '@/lib/plan/plan-paywall';
+import { PlatformGuideDialog } from '@/lib/ui/platform-guide';
 import type { SetupAccount, SetupFinding, SetupState } from '@/lib/setup/load';
 import type { AdaptiveQuestion, FirstCampaignPlan, Opener, ScenarioDecision, UnderstoodRow } from '@/lib/setup/adaptive/types';
 import { useFirstAudit } from './use-first-audit';
@@ -1334,6 +1335,7 @@ function DockView({
     case 'connect':
       return (
         <div className="space-y-2.5">
+          <PlatformGuideDialog variant="card" label="شوف كيف تبدأ" hint="4 دقايق، من التسجيل لين أول قرار" />
           <ConnectButton label={state.revokedCount > 0 ? 'جدّد ربط حساب قوقل' : undefined} />
           <AnswerTile label="ما عندي حساب إعلانات" icon="help" onClick={onNoAccount} />
           <p className="flex items-center justify-center gap-1.5 pt-1 text-[12.5px] text-muted-foreground">
@@ -1455,7 +1457,7 @@ function DockView({
         <div className="space-y-1">
           {/* The agency ending executes nothing, so the trust line about what «مُضاعِف» changes is left out of it. Every other ending is the plain button. */}
           {state.adaptive?.ending === 'agency' ? (
-            <PlanCta trialEligible={state.trialEligible} cta={state.cta} hideTrust />
+            <PlanCta trialEligible={state.trialEligible} cta={state.cta} hideTrust hideGuide />
           ) : (
             <PlanCta trialEligible={state.trialEligible} cta={state.cta} />
           )}
