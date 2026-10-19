@@ -406,6 +406,7 @@ function ChangePreview({
     create_lead_conversion_action: 'إنشاء تحويل "زبون فعلي" لرفع الزبائن لقوقل',
     set_conversion_primary: 'اجعل الزبون الفعلي تحويلاً أساسياً',
     build_campaign_opportunity: 'عبارات بحث رابحة (تُراجع في المساعد)',
+    expansion_idea: 'فرصة توسع (تُراجع في المساعد)',
     manual_campaign_draft: 'مسودة حملة جديدة (تحتاج مراجعة يدوية)',
     ...(isExtendedOperation(operation) ? { [operation]: EXTENDED_OPERATION_LABELS_AR[operation] } : {}),
   };
@@ -552,7 +553,8 @@ function ChangePreview({
 }
 
 function isCampaignOpportunity(item: any) {
-  return String(item?.action_payload?.operation ?? '') === 'build_campaign_opportunity';
+  const operation = String(item?.action_payload?.operation ?? '');
+  return operation === 'build_campaign_opportunity' || operation === 'expansion_idea';
 }
 
 /**

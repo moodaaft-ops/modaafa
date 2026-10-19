@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { buildExpansionRecommendation, detectExpansionIdeas, EXPANSION_OPERATION, expansionIdeasEnabled, objectiveFromGoal } from '@/lib/ai/expansion';
+import { loadBuilderSignals } from '@/lib/ai/builder-signals';
 import { createHash } from 'node:crypto';
 import { isAdsStudioActive, isAdsStudioEnabled } from '@/lib/ads/flag';
 import { runAdsStudioProposals } from '@/lib/ads/cron';
@@ -930,6 +932,25 @@ async function runOptimizerCron(req: NextRequest) {
         }
       }
 
+      // ---- Horizontal expansion ideas (EXPANSION_IDEAS_ENABLED, default off).
+      // Recommendation only: the CTA opens the assistant with a brief.
+      if (expansionIdeasEnabled() && !budget.expired()) {
+        try {
+          const queued = await maybeQueueExpansionIdea({
+            supabase,
+            accountId: account.id,
+            snapshot,
+            terms: mapConvertingTermRows(snapshot.converting_search_terms ?? []),
+            goal: businessContext?.primary_goal ?? null,
+            currencyCode: account.currency_code ?? 'SAR',
+          });
+          if (queued) results.opportunities_queued++;
+          if (queued === 'renewed') results.recommendations_renewed++;
+        } catch (expansionError) {
+          console.warn(`Expansion idea detection failed for ${account.customer_id}`, expansionError);
+        }
+      }
+
       // ---- Ad copy cards: replace LOW assets, add missing assets. Queued for approval only.
       if (adsStudioRead && isAdsStudioActive() && !budget.expired()) {
         try {
@@ -1570,6 +1591,58 @@ const OPPORTUNITY_COOLDOWN_MS = 14 * 24 * 60 * 60 * 1000;
  *
  * Returns 'created', 'renewed', or false when nothing was queued.
  */
+async function maybeQueueExpansionIdea({
+  supabase,
+  accountId,
+  snapshot,
+  terms,
+  goal,
+  currencyCode,
+}: {
+  supabase: any;
+  accountId: string;
+  snapshot: any;
+  terms: ReturnType<typeof mapConvertingTermRows>;
+  goal: string | null;
+  currencyCode: string;
+}): Promise<'created' | 'renewed' | false> {
+  // Geo rows are not read by the nightly snapshot yet: the geo idea needs the
+  // geo report plus the targeted-location list, so it stays off until that read
+  // is verified live (docs/mb-upgrade/uxgaps.md).
+  const signals = await loadBuilderSignals({ supabase, admin: supabase, accountId });
+  const ideas = detectExpansionIdeas({ snapshot, geo: null, terms, signals, objective: objectiveFromGoal(goal) });
+  const idea = ideas[0];
+  if (!idea) return false;
+
+  const { data: recent } = await supabase
+    .from('recommendations')
+    .select('id')
+    .eq('account_id', accountId)
+    .gte('created_at', new Date(Date.now() - OPPORTUNITY_COOLDOWN_MS).toISOString())
+    .contains('action_payload', { operation: EXPANSION_OPERATION })
+    .limit(1)
+    .maybeSingle();
+  if (recent) return false;
+
+  const fingerprint = createHash('sha256').update(`${accountId}:${EXPANSION_OPERATION}:${idea.kind}:${idea.key}`).digest('hex');
+  const row = buildExpansionRecommendation(idea, currencyCode);
+  const { error } = await supabase.from('recommendations').insert({ account_id: accountId, fingerprint, ...row, status: 'pending' });
+  if (error) {
+    if (error.code !== '23505') throw error;
+    const { data: held } = await supabase
+      .from('recommendations')
+      .select('id')
+      .eq('account_id', accountId)
+      .eq('fingerprint', fingerprint)
+      .eq('status', 'pending')
+      .limit(1)
+      .maybeSingle();
+    if (!held?.id) return false;
+    return (await renewStalePendingRecommendation(supabase, held.id, row)) ? 'renewed' : false;
+  }
+  return 'created';
+}
+
 async function maybeQueueCampaignOpportunity({
   supabase,
   accountId,

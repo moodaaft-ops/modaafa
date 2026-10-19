@@ -59,6 +59,7 @@ export const OPTIMIZER_OPERATIONS: readonly string[] = [
   'pause_ad',
   'shift_budget_pair',
   'build_campaign_opportunity',
+  'expansion_idea',
 ];
 
 /**

@@ -188,7 +188,6 @@ test('call asset: the number is the one in the ph_ row, never a typed one', asyn
 test('a waiting nightly card for the same thing is returned instead of a second one', async () => {
   await withFlags('true', 'true', async () => {
     const c = ctx([campaign]);
-    c.deps = { checkGuardrails: async (a) => a, findBlocking: async (_a, _b, fp) => (fp.length ? { id: 'cron-card', status: 'pending', created_at: new Date().toISOString() } : null) } as any;
     // Only the cron fingerprint is reported as waiting: the first lookup (chat fingerprint) is a different value.
     let calls = 0;
     c.deps = { checkGuardrails: async (a) => a, findBlocking: async () => (++calls === 2 ? ({ id: 'cron-card', status: 'pending', created_at: new Date().toISOString() } as any) : null) };
