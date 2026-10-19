@@ -25,6 +25,10 @@ import { getNgramAnalysisTool } from './get-ngram-analysis';
 import { getAuctionInsightsTool } from './get-auction-insights';
 import { getQualityScoreTool } from './get-quality-score';
 import { isMonthlyReviewEnabled, isNgramEnabled } from '@/lib/loops/flags';
+import { getLandingCheckTool } from './get-landing-check';
+import { landingCheckEnabled } from '@/lib/landing-check/flag';
+import { getResponseCoachingTool } from './get-response-coaching';
+import { offerCoachingEnabled } from '@/lib/coaching/flag';
 
 export type { EvidenceKind, EvidenceRow, GaqlCustomer, JarvisReadTool, ToolContext, ToolResult } from './types';
 export { conversionVerdict } from './get-conversion-health';
@@ -56,10 +60,16 @@ const LOOP_READ_TOOLS: readonly JarvisReadTool[] = [
   ...(isMonthlyReviewEnabled() ? [getAuctionInsightsTool, getQualityScoreTool] : []),
 ];
 
-export const JARVIS_READ_TOOLS: readonly JarvisReadTool[] = [...BASE_READ_TOOLS, ...LOOP_READ_TOOLS];
+// Behind LANDING_CHECK_ENABLED and OFFER_COACHING_ENABLED (default off): flag off adds nothing.
+const TRUST_READ_TOOLS: readonly JarvisReadTool[] = [
+  ...(landingCheckEnabled() ? [getLandingCheckTool] : []),
+  ...(offerCoachingEnabled() ? [getResponseCoachingTool] : []),
+];
+
+export const JARVIS_READ_TOOLS: readonly JarvisReadTool[] = [...BASE_READ_TOOLS, ...LOOP_READ_TOOLS, ...TRUST_READ_TOOLS];
 
 const TOOLS_BY_NAME: ReadonlyMap<string, JarvisReadTool> = new Map(
-  [...BASE_READ_TOOLS, getNgramAnalysisTool, getAuctionInsightsTool, getQualityScoreTool].map((tool) => [tool.name, tool])
+  [...BASE_READ_TOOLS, getNgramAnalysisTool, getAuctionInsightsTool, getQualityScoreTool, getLandingCheckTool, getResponseCoachingTool].map((tool) => [tool.name, tool])
 );
 
 /**

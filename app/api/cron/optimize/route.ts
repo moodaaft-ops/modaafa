@@ -22,7 +22,16 @@ import { loadEconomics } from '@/lib/economics/load';
 import { isStalePendingRecommendation } from '@/lib/recommendations/staleness';
 import type { BreakEven } from '@/lib/economics/break-even';
 import { consumeFeatureUsage } from '@/lib/billing/entitlements';
+import { applyAutonomyLevel, autonomyLevelsEnabled } from '@/lib/autopilot/autonomy';
+import { notifyAutoAction } from '@/lib/autopilot/autonomy-notify';
+import { loadAutonomyLevels } from '@/lib/autopilot/autonomy-store';
 import { executeAutopilotAction } from '@/lib/autopilot/executor';
+import { agencyHandoffEnabled } from '@/lib/handoff/flag';
+import { refreshHandoff } from '@/lib/handoff/store';
+import { loadHandoffSignals } from '@/lib/handoff/signals';
+import { loadShadowAccountIds } from '@/lib/shadow/guard';
+import { shadowModeEnabled } from '@/lib/shadow/flag';
+import { recordShadowDecisions } from '@/lib/shadow/store';
 import {
   findBlockingAutopilotRecommendation,
   findPendingDuplicate,
@@ -334,6 +343,12 @@ async function runOptimizerCron(req: NextRequest) {
 
   const accountIds = accounts.map((account) => account.id);
   const settingsByAccount = await loadAutopilotSettings(supabase, accountIds);
+  // AUTONOMY_LEVELS_ENABLED off: null, and the policy verdict below is untouched.
+  // SHADOW_MODE_ENABLED off: null, and no account is treated differently.
+  const shadowAccountIds = shadowModeEnabled() ? await loadShadowAccountIds(supabase, accountIds) : null;
+  const autonomyByAccount = autonomyLevelsEnabled()
+    ? await loadAutonomyLevels(supabase, accountIds)
+    : null;
   const decisionHistoryState = await loadAutopilotDecisionHistory(supabase, accountIds);
   const decisionHistory = decisionHistoryState.byAccount;
 
@@ -470,6 +485,31 @@ async function runOptimizerCron(req: NextRequest) {
           });
       if (idle) results.skipped_idle++;
       else results.model_calls++;
+
+      // Agency shadow account: the proposals are kept for the operator's review
+      // and stop here. They never reach the policy gate, the approval queue or
+      // an executor (checkGuardrails also refuses a shadow account).
+      if (shadowAccountIds?.has(account.id)) {
+        await recordShadowDecisions({
+          admin: supabase,
+          accountId: account.id,
+          jobRunId: job.id,
+          cards: proposedActions.slice(0, 8) as any[],
+        });
+        results.processed++;
+        return;
+      }
+
+      // Bigger-than-the-platform check (AGENCY_HANDOFF_ENABLED). Best effort.
+      if (agencyHandoffEnabled()) {
+        const handoffInput = await loadHandoffSignals({
+          customer: customer as any,
+          snapshot,
+          currencyCode: account.currency_code,
+          suspended: false,
+        });
+        await refreshHandoff({ admin: supabase, accountId: account.id, input: handoffInput });
+      }
 
       const settings =
         settingsByAccount.get(account.id) ?? normalizeAutopilotSettings(account.id);
@@ -620,7 +660,7 @@ async function runOptimizerCron(req: NextRequest) {
         );
         const executedToday =
           executedBeforeRun + (executedThisRun.get(account.id) ?? 0);
-        const verdict = evaluateAutopilotPolicy({
+        const policyContext = {
           settings,
           action,
           trackingStatus: snapshot.conversion_tracking?.status ?? 'unknown',
@@ -630,7 +670,15 @@ async function runOptimizerCron(req: NextRequest) {
           globalExecutionEnabled: allowLiveExecution && decisionHistoryState.available,
           executedToday,
           sameTargetExecutedWithinCooldown,
-        });
+        };
+        const baseVerdict = evaluateAutopilotPolicy({ ...policyContext });
+        const verdict = autonomyByAccount
+          ? applyAutonomyLevel(baseVerdict, {
+              ...policyContext,
+              level: autonomyByAccount.get(account.id) ?? 'ask_all',
+              snapshot,
+            })
+          : baseVerdict;
         const fingerprint = actionFingerprint(account.id, action);
 
         if (verdict.outcome === 'block') {
@@ -768,6 +816,15 @@ async function runOptimizerCron(req: NextRequest) {
             target_id: targetKey,
             created_at: new Date().toISOString(),
           });
+          if (autonomyByAccount && verdict.code === 'autonomy_approved') {
+            await notifyAutoAction(ownerEmail, {
+              actionType: action.type,
+              subject: String(action.params.keyword_text ?? action.params.keyword ?? 'كلمة مفتاحية'),
+              campaignName: String(action.params.campaign_name ?? '') || null,
+              reasonAr: action.reason_ar,
+              appUrl: process.env.NEXT_PUBLIC_APP_URL ?? 'https://ai.modaafa.com',
+            });
+          }
           await safeRecordAutopilotDecision(results, {
             supabase,
             accountId: account.id,

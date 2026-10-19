@@ -1,3 +1,4 @@
+import { isShadowAccount } from '@/lib/shadow/guard';
 import { cachedSystemBlock, createMessageForAgent, hasAIBackend } from './client';
 import type { Customer } from 'google-ads-api';
 import { createAdminClient } from '../supabase/server';
@@ -575,6 +576,9 @@ export async function checkGuardrails(
   // both apply the executed-history locks; only queue time has the pending-card locks.
   const appliesExecutedLocks = Boolean(context || execution);
   const excludeOwnRows = execution?.recommendationId ?? null;
+
+  // Agency shadow accounts are never executable (SHADOW_MODE_ENABLED; a no-op when off).
+  if (await isShadowAccount(accountId, { admin: () => createAdminClient() })) return reject('shadow_account');
 
   // Extended targeting/recommendation actions have their own gate. Flag off: they never get here.
   if (isExtendedOperation(action.type)) {

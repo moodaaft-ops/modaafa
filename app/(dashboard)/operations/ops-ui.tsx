@@ -3,6 +3,8 @@ import { ArrowDownLeft, ArrowUpLeft, Mail, MessageCircle, Minus } from 'lucide-r
 import { cn, formatNumberAr } from '@/lib/utils';
 import { STAGES, STAGE_LABELS, type AccessState, type CustomerStage } from '@/lib/platform/operator-insights';
 import { contactHref } from '@/lib/platform/operator-page';
+import { agencyHandoffEnabled } from '@/lib/handoff/flag';
+import { shadowModeEnabled } from '@/lib/shadow/flag';
 
 /**
  * Shared pieces of the operations center. Server components only; the one
@@ -13,7 +15,7 @@ export function OpsTabs({
   active,
   updatedAt,
 }: {
-  active: 'overview' | 'customers' | 'costs' | 'signals' | 'provisioning';
+  active: 'overview' | 'customers' | 'costs' | 'signals' | 'provisioning' | 'handoff' | 'shadow';
   updatedAt: string;
 }) {
   const tabs = [
@@ -22,7 +24,10 @@ export function OpsTabs({
     { key: 'costs', href: '/operations/costs', label: 'التكلفة' },
     { key: 'signals', href: '/operations/onboarding-signals', label: 'قراءة الحساب' },
     { key: 'provisioning', href: '/operations/provisioning', label: 'فتح الحسابات' },
-  ] as const;
+    // Both tabs exist only while their flag is on.
+    ...(agencyHandoffEnabled() ? [{ key: 'handoff', href: '/operations/handoff', label: 'يبون فريق' }] : []),
+    ...(shadowModeEnabled() ? [{ key: 'shadow', href: '/operations/shadow', label: 'وضع الظل' }] : []),
+  ] as ReadonlyArray<{ key: string; href: string; label: string }>;
   return (
     <div className="flex flex-wrap items-end justify-between gap-3 border-b border-border px-4 sm:px-6 lg:px-8">
       <nav className="-mb-px flex gap-1" aria-label="أقسام مركز التشغيل">

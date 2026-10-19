@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import { autopilotDecisionDisplayDetails } from '@/lib/autopilot/display';
+import { autonomyLevelsEnabled, normalizeAutonomyLevel } from '@/lib/autopilot/autonomy';
 import { normalizeAutopilotSettings } from '@/lib/autopilot/settings';
 import { autopilotExecutionGloballyEnabled, type AutopilotDecision } from '@/lib/autopilot/types';
 import { getSubscriptionAccess } from '@/lib/billing/entitlements';
@@ -67,6 +68,15 @@ export default async function AutopilotPage() {
   assertSupabaseRead(decisionsResult.error, 'load autopilot decision ledger');
 
   const settings = normalizeAutopilotSettings(account.id, settingsResult.data);
+  let autonomy: { level: ReturnType<typeof normalizeAutonomyLevel> } | undefined;
+  if (autonomyLevelsEnabled()) {
+    const levelResult = await supabase
+      .from('autopilot_autonomy')
+      .select('level')
+      .eq('account_id', account.id)
+      .maybeSingle();
+    autonomy = { level: normalizeAutonomyLevel(levelResult.data?.level) };
+  }
   const accountName = googleAdsAccountDisplayName(account);
   const decisions = (decisionsResult.data ?? []) as DecisionRow[];
   const globalExecutionEnabled = autopilotExecutionGloballyEnabled();
@@ -100,6 +110,7 @@ export default async function AutopilotPage() {
             initialSettings={settings}
             subscriptionActive={subscription.active}
             globalExecutionEnabled={globalExecutionEnabled}
+            autonomy={autonomy}
           />
         </section>
 
