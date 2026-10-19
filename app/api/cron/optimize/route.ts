@@ -24,6 +24,12 @@ import { applyAutonomyLevel, autonomyLevelsEnabled } from '@/lib/autopilot/auton
 import { notifyAutoAction } from '@/lib/autopilot/autonomy-notify';
 import { loadAutonomyLevels } from '@/lib/autopilot/autonomy-store';
 import { executeAutopilotAction } from '@/lib/autopilot/executor';
+import { agencyHandoffEnabled } from '@/lib/handoff/flag';
+import { refreshHandoff } from '@/lib/handoff/store';
+import { loadHandoffSignals } from '@/lib/handoff/signals';
+import { loadShadowAccountIds } from '@/lib/shadow/guard';
+import { shadowModeEnabled } from '@/lib/shadow/flag';
+import { recordShadowDecisions } from '@/lib/shadow/store';
 import {
   findBlockingAutopilotRecommendation,
   findPendingDuplicate,
@@ -333,6 +339,8 @@ async function runOptimizerCron(req: NextRequest) {
   const accountIds = accounts.map((account) => account.id);
   const settingsByAccount = await loadAutopilotSettings(supabase, accountIds);
   // AUTONOMY_LEVELS_ENABLED off: null, and the policy verdict below is untouched.
+  // SHADOW_MODE_ENABLED off: null, and no account is treated differently.
+  const shadowAccountIds = shadowModeEnabled() ? await loadShadowAccountIds(supabase, accountIds) : null;
   const autonomyByAccount = autonomyLevelsEnabled()
     ? await loadAutonomyLevels(supabase, accountIds)
     : null;
@@ -454,6 +462,31 @@ async function runOptimizerCron(req: NextRequest) {
           });
       if (idle) results.skipped_idle++;
       else results.model_calls++;
+
+      // Agency shadow account: the proposals are kept for the operator's review
+      // and stop here. They never reach the policy gate, the approval queue or
+      // an executor (checkGuardrails also refuses a shadow account).
+      if (shadowAccountIds?.has(account.id)) {
+        await recordShadowDecisions({
+          admin: supabase,
+          accountId: account.id,
+          jobRunId: job.id,
+          cards: actions.slice(0, 8) as any[],
+        });
+        results.processed++;
+        return;
+      }
+
+      // Bigger-than-the-platform check (AGENCY_HANDOFF_ENABLED). Best effort.
+      if (agencyHandoffEnabled()) {
+        const handoffInput = await loadHandoffSignals({
+          customer: customer as any,
+          snapshot,
+          currencyCode: account.currency_code,
+          suspended: false,
+        });
+        await refreshHandoff({ admin: supabase, accountId: account.id, input: handoffInput });
+      }
 
       const settings =
         settingsByAccount.get(account.id) ?? normalizeAutopilotSettings(account.id);
@@ -598,7 +631,7 @@ async function runOptimizerCron(req: NextRequest) {
           executedToday,
           sameTargetExecutedWithinCooldown,
         };
-        const baseVerdict = evaluateAutopilotPolicy(policyContext);
+        const baseVerdict = evaluateAutopilotPolicy({ ...policyContext });
         const verdict = autonomyByAccount
           ? applyAutonomyLevel(baseVerdict, {
               ...policyContext,

@@ -90,6 +90,18 @@ export const ownerConfig = {
     ],
     approved: true,
   } as Guarantee,
+
+  /**
+   * When an account is bigger than the platform (AGENCY_HANDOFF_ENABLED). A
+   * starting point set from the code, not measured: Ayman decides the numbers.
+   * null turns that rule off.
+   */
+  handoff: {
+    /** Spend over the last 30 days, in SAR. Above it the card offers the team. */
+    monthlySpendThresholdSar: 15000 as number | null,
+    /** Ads that Google marks as not approved at the same time. At or above it the policy rule fires. */
+    policyFlaggedAdsThreshold: 3 as number | null,
+  },
 };
 
 /** True when a draft-only block may render (preview and local builds, never production). */

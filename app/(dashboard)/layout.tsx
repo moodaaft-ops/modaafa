@@ -7,6 +7,8 @@ import { isModaafaOperator } from '@/lib/platform/operators';
 import { isChatFirstEnabled } from '@/lib/chat-first/flag';
 import { readAccessOverrides } from '@/lib/billing/access-overrides';
 import { SuspendedBanner } from './suspended-banner';
+import { AgencyHandoffCard } from './agency-handoff-card';
+import { agencyHandoffEnabled } from '@/lib/handoff/flag';
 import { InstallPrompt } from './install-prompt';
 import { SimpleChrome } from './simple-chrome';
 import { isSimpleExperience } from '@/lib/setup/mode';
@@ -42,6 +44,15 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // business for them.
   if (!business) redirect('/onboarding');
 
+  // AGENCY_HANDOFF_ENABLED off: null, and nothing below changes.
+  const handoffCard = agencyHandoffEnabled() ? (
+    <AgencyHandoffCard
+      supabase={supabase}
+      account={accounts.find((account) => account.customer_id === selectedCustomerId) ?? null}
+      suspended={overrides.suspended}
+    />
+  ) : null;
+
   // The simple experience: a ChatGPT-style sidebar and «مُضاعِف» as the home screen.
   if (isSimpleExperience(process.env, user.email)) {
     const selectedAccount = accounts.find((account) => account.customer_id === selectedCustomerId) ?? null;
@@ -58,6 +69,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         recentChats={recentChats}
       >
         {overrides.suspended && <SuspendedBanner />}
+        {handoffCard}
         <InstallPrompt />
         {children}
       </SimpleChrome>
@@ -76,6 +88,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       chatFirst={isChatFirstEnabled(process.env, user.email)}
     >
       {overrides.suspended && <SuspendedBanner />}
+      {handoffCard}
       <InstallPrompt />
       {children}
     </DashboardChrome>
