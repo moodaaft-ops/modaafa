@@ -8,6 +8,7 @@ import { planLabel, subscriptionStatusLabel } from '@/lib/ui/labels';
 import { PendingSubmitButton } from '@/lib/ui/pending-submit-button';
 import { CARD, CalmHeading, CalmNote, CalmPage, CalmTitle, StatusWord, Tag, pill } from '../calm-page';
 import { getBillingCheckoutContext } from '@/lib/billing/checkout-policy';
+import { ARABIC_CHECKOUT_PATH, isArabicCheckoutAvailable } from '@/lib/billing/arabic-checkout/flag';
 import {
   ADS_ACCOUNT_TRIAL_USED_MESSAGE,
   CARD_TRIAL_USED_MESSAGE,
@@ -136,6 +137,9 @@ export default async function BillingPage({
   assertSupabaseRead(invoicesResult.error, 'load billing invoices');
   const invoices = invoicesResult.data ?? [];
   const trialEligible = checkout.trialEligible;
+  // With the Arabic checkout on, the plan buttons open /billing/pay instead of the
+  // hosted Stripe page. Off (or no browser key), the forms below are used as before.
+  const arabicCheckout = isArabicCheckoutAvailable();
   // The eligibility check could not run: say so and offer a retry, never a
   // paid start (the checkout routes refuse it too).
   const checkFailed = checkout.trialIneligibleReason === 'check_failed';
@@ -278,6 +282,10 @@ export default async function BillingPage({
             <Link href="/onboarding/connect" className={cn(pill.primary, 'py-2.5 text-center leading-6')}>
               اربط حساب إعلانات Google أولاً عشان تبدأ التجربة
             </Link>
+          ) : !hasLiveSubscription && arabicCheckout ? (
+            <a href={`${ARABIC_CHECKOUT_PATH}?plan=growth&period=${period}`} className={cn(pill.primary, 'inline-block text-center')}>
+              {checkFailed ? 'حاول من جديد' : trialEligible ? 'ابدأ تجربة خطة النمو' : 'اشترك في خطة النمو'}
+            </a>
           ) : !hasLiveSubscription ? (
             <form action="/api/billing/checkout" method="post">
               <input type="hidden" name="plan" value="growth" />
@@ -475,7 +483,14 @@ export default async function BillingPage({
                             التبديل عبر بوابة Stripe
                           </PendingSubmitButton>
                         </form>
-                      ) : needsAccount ? null : (
+                      ) : needsAccount ? null : arabicCheckout ? (
+                        <a
+                          href={`${ARABIC_CHECKOUT_PATH}?plan=${plan.id}&period=${period}`}
+                          className={cn(primaryLook ? pill.primary : pill.quiet, 'inline-block w-full text-center')}
+                        >
+                          {checkFailed ? 'حاول من جديد' : trialEligible ? 'ابدأ تجربة 14 يوم' : 'اشترك الآن'}
+                        </a>
+                      ) : (
                         <form action="/api/billing/checkout" method="post">
                           <input type="hidden" name="plan" value={plan.id} />
                           <input type="hidden" name="period" value={period} />

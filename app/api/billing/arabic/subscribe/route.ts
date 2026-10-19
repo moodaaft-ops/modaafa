@@ -1,0 +1,69 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { arabicCheckoutStripe, ensureStripeCustomer } from '@/lib/billing/stripe';
+import { resolvePromotionCode, startArabicSubscription } from '@/lib/billing/arabic-checkout/flow';
+import { checkoutFailure, describeFailure, fullGate } from '@/lib/billing/arabic-checkout/gate';
+import { finishArabicActivation } from '@/lib/billing/arabic-checkout/finish';
+
+export const runtime = 'nodejs';
+
+/**
+ * POST /api/billing/arabic/subscribe
+ * Body: { setup_intent_id: "seti_...", promo_code?: string, return_to?: "onboarding" }
+ *
+ * Step 2: the browser has saved the card. Create the subscription from it.
+ * Plan, period and price come from the SetupIntent this server made, and the trial
+ * length is decided again here, so nothing the browser sends can change either.
+ */
+export async function POST(req: NextRequest) {
+  const gate = await fullGate(req, 'billing_arabic_subscribe', 10);
+  if (!gate.ok) return gate.response;
+
+  let body: { setup_intent_id?: unknown; promo_code?: unknown; return_to?: unknown } = {};
+  try {
+    body = await req.json();
+  } catch {
+    // Falls through to setup_not_completed.
+  }
+  const setupIntentId = typeof body.setup_intent_id === 'string' ? body.setup_intent_id : '';
+  if (!/^seti_[A-Za-z0-9]+$/.test(setupIntentId)) return checkoutFailure('setup_not_completed', 400);
+  const promoCode = typeof body.promo_code === 'string' ? body.promo_code.trim() : '';
+
+  try {
+    const customerId = await ensureStripeCustomer({
+      userId: gate.user.id,
+      email: gate.user.email,
+      existingCustomerId: gate.stripeCustomerId,
+    });
+    const promotion = promoCode
+      ? await resolvePromotionCode(arabicCheckoutStripe, promoCode, { customerId })
+      : null;
+
+    const outcome = await startArabicSubscription(arabicCheckoutStripe, {
+      userId: gate.user.id,
+      customerId,
+      setupIntentId,
+      trialDays: gate.trialDays,
+      promotionCodeId: promotion?.id ?? null,
+    });
+
+    if (outcome.kind === 'requires_action') {
+      // Only the pay-now path gets here: the bank wants a 3D Secure check on the
+      // first charge. The browser runs it and calls /finalize.
+      return NextResponse.json({
+        status: 'requires_action',
+        client_secret: outcome.clientSecret,
+        subscription_id: outcome.subscriptionId,
+      });
+    }
+
+    return await finishArabicActivation({
+      userId: gate.user.id,
+      subscription: outcome.subscription,
+      returnTo: body.return_to,
+    });
+  } catch (error) {
+    const failure = describeFailure(error);
+    console.error('Arabic checkout subscribe failed', { code: failure.input.code, decline: failure.input.decline_code });
+    return checkoutFailure(failure.input, failure.status);
+  }
+}

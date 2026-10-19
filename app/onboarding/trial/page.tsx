@@ -24,6 +24,7 @@ import { buttonClasses } from '@/lib/ui/button';
 import { PendingSubmitButton } from '@/lib/ui/pending-submit-button';
 import { formatCurrency, formatDateAr } from '@/lib/utils';
 import { daysLabel, firstChargeDate } from '@/lib/onboarding/trial';
+import { ARABIC_CHECKOUT_PATH, isArabicCheckoutAvailable } from '@/lib/billing/arabic-checkout/flag';
 
 export const metadata = {
   title: 'ابدأ تجربتك',
@@ -151,6 +152,15 @@ export default async function TrialPage({
             <Link href="/onboarding/first-audit" className={buttonClasses({ variant: 'ghost' })}>
               رجوع للنتائج
             </Link>
+            {isArabicCheckoutAvailable() ? (
+              <a
+                href={`${ARABIC_CHECKOUT_PATH}?plan=${TRIAL_PLAN}&period=monthly&return_to=${ONBOARDING_CHECKOUT_RETURN}`}
+                className={buttonClasses({ variant: 'primary', size: 'lg' })}
+              >
+                {checkFailed ? 'حاول من جديد' : trialEligible ? 'ابدأ التجربة' : 'اشترك الآن'}
+                <ArrowLeft className="h-4 w-4" />
+              </a>
+            ) : (
             <form action="/api/billing/start-trial" method="post">
               <input type="hidden" name="plan" value={TRIAL_PLAN} />
               <input type="hidden" name="period" value="monthly" />
@@ -163,6 +173,7 @@ export default async function TrialPage({
                 <ArrowLeft className="h-4 w-4" />
               </PendingSubmitButton>
             </form>
+            )}
           </div>
         </section>
       </div>

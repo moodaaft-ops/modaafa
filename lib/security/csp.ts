@@ -32,16 +32,29 @@
  * guide on the privacy-enhanced YouTube host, so that one host is allowed.
  * No wildcard and no youtube.com: nothing else may be framed.
  */
-export function buildContentSecurityPolicy(nonce: string): string {
+export type ContentSecurityPolicyOptions = {
+  /**
+   * Stripe Elements (the Arabic checkout page, and only that page). Names the
+   * hosts Stripe documents for its card field: the script, the frames it draws
+   * the field and the 3D Secure check in, the API it talks to and its images.
+   * Every other page keeps the closed policy.
+   */
+  stripe?: boolean;
+};
+
+export function buildContentSecurityPolicy(nonce: string, options: ContentSecurityPolicyOptions = {}): string {
+  const stripe = options.stripe === true;
   return [
     "default-src 'self'",
     "base-uri 'self'",
     "form-action 'self' https://accounts.google.com https://checkout.stripe.com",
     "frame-ancestors 'none'",
     "object-src 'none'",
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
+    // The host is only the fallback for browsers without 'strict-dynamic'; the
+    // ones that have it trust Stripe.js because our own nonced bundle loads it.
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${stripe ? ' https://js.stripe.com https://*.js.stripe.com' : ''}`,
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob: https://lh3.googleusercontent.com https://modaafa.com https://analytics.tiktok.com",
+    `img-src 'self' data: blob: https://lh3.googleusercontent.com https://modaafa.com https://analytics.tiktok.com${stripe ? ' https://*.stripe.com' : ''}`,
     "font-src 'self' data:",
     "media-src 'self' blob:",
     // Written out on purpose for the install worker (/sw.js, see public/sw.js).
@@ -54,8 +67,8 @@ export function buildContentSecurityPolicy(nonce: string): string {
     // default-src 'self' anyway; it is spelled out so the intent is visible.
     "worker-src 'self'",
     "manifest-src 'self'",
-    'frame-src https://www.youtube-nocookie.com',
-    "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://analytics.tiktok.com https://analytics-ipv6.tiktokw.us",
+    `frame-src https://www.youtube-nocookie.com${stripe ? ' https://js.stripe.com https://*.js.stripe.com https://hooks.stripe.com' : ''}`,
+    `connect-src 'self' https://*.supabase.co wss://*.supabase.co https://analytics.tiktok.com https://analytics-ipv6.tiktokw.us${stripe ? ' https://api.stripe.com https://fonts.googleapis.com' : ''}`,
     'upgrade-insecure-requests',
   ].join('; ');
 }

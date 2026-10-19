@@ -27,6 +27,11 @@ import {
   subscriptionEventWasApplied,
 } from '@/lib/billing/subscription-events';
 import { recordPaidInvoice } from '@/lib/billing/invoices';
+import {
+  arabicWelcomeIdempotencyKey,
+  isArabicWelcomeMoment,
+  isUnactivatedArabicSubscription,
+} from '@/lib/billing/arabic-checkout/source';
 import { recordUserEvent } from '@/lib/stages/events';
 import {
   claimStripeWebhookEvent,
@@ -204,6 +209,11 @@ export function createStripeWebhookHandler(
           const subscription = await dependencies.retrieveStripeSubscription(
             eventSubscription.id,
           );
+          // A subscription from the Arabic checkout whose first payment is still
+          // with the bank is not a customer yet. `incomplete` would be written as
+          // past_due, which this table counts as live. The row is written when the
+          // payment clears: by the finalize route or by the update event after it.
+          if (isUnactivatedArabicSubscription(subscription)) break;
           const userId =
             subscription.metadata?.userId ?? eventSubscription.metadata?.userId;
           const resolved = dependencies.planFromSubscription(subscription);
@@ -262,6 +272,31 @@ export function createStripeWebhookHandler(
               stripeSubscriptionId: subscription.id,
               source: 'stripe_webhook',
             });
+          }
+          // The Arabic checkout has no checkout.session.completed, so its welcome
+          // email is sent from here, once, when the subscription first goes live.
+          if (
+            userId &&
+            !trialBlocked &&
+            dependencies.subscriptionEventWasApplied(writeResult) &&
+            isArabicWelcomeMoment({
+              eventType: event.type,
+              subscription,
+              previousAttributes: (event.data as { previous_attributes?: { status?: string | null } })
+                .previous_attributes,
+            })
+          ) {
+            await safeUserEmail(
+              dependencies,
+              supabase,
+              userId,
+              (recipient) =>
+                dependencies.subscriptionWelcomeEmail(
+                  recipient,
+                  subscription.trial_end ? stripeTimestamp(subscription.trial_end) : null,
+                ),
+              arabicWelcomeIdempotencyKey(subscription.id),
+            );
           }
           break;
         }
@@ -382,6 +417,15 @@ export function createStripeWebhookHandler(
           const subscriptionId = invoiceSubscriptionId(invoice);
           if (!subscriptionId) break;
           const subscription = await dependencies.retrieveStripeSubscription(subscriptionId);
+          if (isUnactivatedArabicSubscription(subscription)) {
+            // A paid invoice on a subscription Stripe has not yet marked active: the
+            // timing gap right after 3D Secure. Skipping would lose the invoice
+            // record for good, so the event is retried until the row exists.
+            if (invoice.status === 'paid') {
+              throw new Error('Arabic subscription is not active yet; retrying so the paid invoice is recorded');
+            }
+            break;
+          }
           await dependencies.applySubscriptionEvent(
             supabase,
             subscriptionSnapshotRow(dependencies, subscription, eventCreatedAt),
@@ -417,6 +461,10 @@ export function createStripeWebhookHandler(
           const subscriptionId = invoiceSubscriptionId(invoice);
           if (!subscriptionId) break;
           const subscription = await dependencies.retrieveStripeSubscription(subscriptionId);
+          // The first payment of a pay-now subscription failing is answered on the
+          // page itself (and the subscription is closed), not by a past_due row
+          // and a payment-failed email.
+          if (isUnactivatedArabicSubscription(subscription)) break;
           const writeResult = await dependencies.applySubscriptionEvent(
             supabase,
             subscriptionSnapshotRow(dependencies, subscription, eventCreatedAt),
@@ -478,6 +526,7 @@ async function safeUserEmail(
   supabase: ReturnType<typeof createAdminClient>,
   userId: string,
   build: (recipient: TransactionalRecipient) => TransactionalMail | null,
+  idempotencyKey?: string,
 ) {
   try {
     let { data: profile, error } = await supabase
@@ -501,7 +550,11 @@ async function safeUserEmail(
       console.error('Stripe lifecycle email has no content', { userId });
       return;
     }
-    await dependencies.sendEmail({ to: profile.email, ...mail });
+    await dependencies.sendEmail({
+      to: profile.email,
+      ...mail,
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+    });
   } catch (error) {
     console.error('Failed to send Stripe lifecycle email', { userId, error });
   }
