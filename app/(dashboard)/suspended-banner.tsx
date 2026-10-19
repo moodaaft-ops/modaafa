@@ -1,4 +1,5 @@
 import { ShieldAlert } from 'lucide-react';
+import { SUPPORT_WHATSAPP_NUMBER } from '@/lib/support/contact';
 
 /**
  * Shown on every dashboard page while an operator has the account suspended.
@@ -16,13 +17,13 @@ export function SuspendedBanner() {
         <span className="font-semibold">حسابك موقوف مؤقتاً.</span> ما راح نحدّث بيانات إعلاناتك ولا ننفذ أي توصية لين
         نرجّع التفعيل. تواصل معنا على واتساب{' '}
         <a
-          href="https://wa.me/966541004029"
+          href={`https://wa.me/${SUPPORT_WHATSAPP_NUMBER}`}
           className="font-semibold underline underline-offset-4"
           dir="ltr"
           target="_blank"
           rel="noreferrer"
         >
-          0541004029
+          {`0${SUPPORT_WHATSAPP_NUMBER.slice(3)}`}
         </a>
       </div>
     </div>

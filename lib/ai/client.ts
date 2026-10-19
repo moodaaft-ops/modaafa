@@ -13,7 +13,8 @@ export type AgentRole =
   | 'reporter'
   | 'jarvis'
   | 'jarvis_fast'
-  | 'jarvis_deep';
+  | 'jarvis_deep'
+  | 'support';
 
 /**
  * Optional attribution for the llm_usage ledger. Every field is optional so
@@ -324,8 +325,21 @@ export function freeAuditTier(env: Record<string, string | undefined> = process.
   return 'sonnet';
 }
 
+/**
+ * The customer-service bot answers from a short knowledge base and never calls
+ * a tool that touches an account, so it starts on the cheap tier. If Haiku
+ * turns out weak on Najdi phrasing, flip SUPPORT_BOT_TIER=sonnet in Vercel and
+ * redeploy: no code change.
+ */
+export function supportBotTier(env: Record<string, string | undefined> = process.env): ModelTier {
+  const value = env.SUPPORT_BOT_TIER?.trim().toLowerCase();
+  if (value === 'opus' || value === 'sonnet' || value === 'haiku') return value;
+  return 'haiku';
+}
+
 export function tierForAgent(agent: AgentRole): ModelTier {
   if (agent === 'audit') return freeAuditTier();
+  if (agent === 'support') return supportBotTier();
   if (agent === 'jarvis_deep') return 'opus';
   if (agent === 'jarvis_fast') return 'haiku';
   return 'sonnet';

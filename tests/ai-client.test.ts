@@ -8,12 +8,14 @@ import {
   getModelName,
   modelCandidatesForAgent,
   rankModelCandidates,
+  supportBotTier,
   tierForAgent,
   type AgentRole,
 } from '../lib/ai/client';
 
 const MODEL_ENV = [
   'FREE_AUDIT_MODEL_TIER',
+  'SUPPORT_BOT_TIER',
   'ANTHROPIC_MODEL_OPUS',
   'ANTHROPIC_MODEL_AUDIT',
   'ANTHROPIC_MODEL_BUILDER',
@@ -78,6 +80,7 @@ function tiersCheck() {
     optimizer: 'sonnet',
     reporter: 'sonnet',
     jarvis_fast: 'haiku',
+    support: 'haiku',
   };
   for (const [role, tier] of Object.entries(expected) as Array<[AgentRole, 'opus' | 'sonnet' | 'haiku']>) {
     assert.equal(tierForAgent(role), tier, role);
@@ -302,4 +305,20 @@ test('a failing usage insert never breaks the answer', async () => {
       else process.env[name] = value;
     }
   }
+});
+
+test('the support bot starts on Haiku and SUPPORT_BOT_TIER moves only that role', async () => {
+  await withCleanModelEnv(() => {
+    assert.equal(supportBotTier({}), 'haiku');
+    assert.equal(supportBotTier({ SUPPORT_BOT_TIER: 'nonsense' }), 'haiku');
+    assert.equal(supportBotTier({ SUPPORT_BOT_TIER: ' Sonnet ' }), 'sonnet');
+    assert.equal(getModelForAgent('support'), 'claude-haiku-5-5');
+
+    process.env.SUPPORT_BOT_TIER = 'sonnet';
+    assert.equal(tierForAgent('support'), 'sonnet');
+    assert.equal(getModelForAgent('support'), 'claude-sonnet-5-5');
+    assert.equal(modelCandidatesForAgent('support')[0], 'claude-sonnet-5-5');
+    assert.equal(tierForAgent('jarvis_fast'), 'haiku');
+    assert.equal(tierForAgent('assistant'), 'sonnet');
+  });
 });
