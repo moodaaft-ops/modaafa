@@ -9,6 +9,25 @@ import {
 } from '@/lib/google-ads/click-conversions';
 import { getGoogleAdsErrorCodes } from '@/lib/google-ads/client';
 import type { FoundLeadAction } from '@/lib/measurement/conversion-actions';
+import {
+  buildIngestRequest,
+  consentFromEnv,
+  DataManagerError,
+  ISOLATE_LIMIT,
+  interpretIngestResponse,
+  isDataManagerAccessError,
+  isDataManagerInvalidRequest,
+  type DataManagerConsent,
+  type DataManagerSender,
+} from '@/lib/google-ads/data-manager';
+import {
+  isLegacyBlockedError,
+  LEGACY_BLOCKED_CODE,
+  planChannels,
+  responseSaysLegacyBlocked,
+  type ChannelPreference,
+  type UploadChannel,
+} from './transports';
 
 /**
  * Sends the leads the merchant marked "صار زبون" to Google as offline click
@@ -20,6 +39,10 @@ import type { FoundLeadAction } from '@/lib/measurement/conversion-actions';
  *  - partial_failure is on and every row gets its own recorded result;
  *  - a failure of the whole request leaves the leads waiting (attempts are not
  *    burned by a problem that is not theirs) and is reported to the caller.
+ *
+ * Channels (DATA_MANAGER_UPLOAD_ENABLED): without `channels` the only way out is
+ * the legacy transport, exactly as before. With it the Data Manager API goes
+ * first and legacy is the fallback; see ./transports.ts for the switching rules.
  */
 type Db = any;
 
@@ -28,8 +51,23 @@ export const MAX_UPLOAD_ATTEMPTS = 8;
 export const CLICK_MAX_AGE_DAYS = 89;
 const DAY_MS = 86_400_000;
 
+export type UploadChannels = {
+  /** The merchant has a Data Manager grant (a stored, active `datamanager` refresh token). */
+  dataManagerAvailable: boolean;
+  /** Mints the sender (access token) lazily; a throw counts as an access failure of that channel. */
+  makeDataManagerSender: () => Promise<DataManagerSender>;
+  preference?: ChannelPreference;
+  /** lead_loop_settings.legacy_blocked_at is set. */
+  legacyBlocked?: boolean;
+  consent?: DataManagerConsent;
+};
+
 export type UploadSummary = {
-  status: 'ok' | 'nothing_to_upload' | 'no_conversion_action' | 'request_failed';
+  status: 'ok' | 'nothing_to_upload' | 'no_conversion_action' | 'request_failed' | 'needs_data_manager_grant';
+  /** Present only when channels were in play. */
+  channel?: UploadChannel;
+  /** The legacy API refused this run with the allowlist error. */
+  legacyBlocked?: boolean;
   claimed: number;
   uploaded: number;
   duplicates: number;
@@ -47,6 +85,7 @@ export async function uploadLeadConversions({
   settings,
   transport,
   findConversionAction,
+  channels,
   now = new Date(),
   limit = UPLOAD_MAX_BATCH,
 }: {
@@ -56,11 +95,24 @@ export async function uploadLeadConversions({
   transport: ClickConversionTransport;
   /** GAQL lookup of "مُضاعِف | زبون فعلي"; only called while the resource is not stored yet. */
   findConversionAction: () => Promise<FoundLeadAction | null>;
+  /** Only passed while DATA_MANAGER_UPLOAD_ENABLED is on. */
+  channels?: UploadChannels;
   now?: Date;
   limit?: number;
 }): Promise<UploadSummary> {
   // Agency shadow accounts never get an upload (SHADOW_MODE_ENABLED; no lookup when it is off).
   if (await isShadowAccount(account.id, { admin: () => db })) return { status: 'nothing_to_upload', ...EMPTY };
+  // Which channels may be tried is decided before any lead is claimed, so a
+  // merchant who must grant the Data Manager scope loses nothing and nothing is held.
+  const order: UploadChannel[] = channels
+    ? planChannels({
+        dataManagerAvailable: channels.dataManagerAvailable,
+        preference: channels.preference ?? 'auto',
+        legacyBlocked: channels.legacyBlocked === true,
+      })
+    : ['legacy'];
+  if (order.length === 0) return { status: 'needs_data_manager_grant', ...EMPTY };
+
   let resource = settings.conversion_action_resource;
   if (!resource) {
     const found = await findConversionAction();
@@ -123,18 +175,57 @@ export async function uploadLeadConversions({
     logs.push(log(account.id, skipped.leadId, attemptsOf.get(skipped.leadId)!, 'failed', skipped.reason.toUpperCase(), 'Could not be built'));
   }
 
+  let channelExtras: Record<string, unknown> | null = null;
   if (built.leadIds.length > 0) {
     let outcomes: RowOutcome[] | null = null;
-    try {
-      const response = await transport({
-        customerId: account.customerId,
-        loginCustomerId: account.loginCustomerId,
-        body: built.body,
-      });
-      outcomes = interpretUploadResponse(response, built.leadIds);
-    } catch (error) {
-      const message = describe(error);
-      summary.status = 'request_failed';
+    let requestId: string | null = null;
+    let sawLegacyBlocked = false;
+    let lastError: unknown = null;
+    const leadsToSend = sendable.filter((lead) => built.leadIds.includes(lead.id));
+
+    for (const channel of order) {
+      try {
+        if (channel === 'legacy') {
+          const response = await transport({
+            customerId: account.customerId,
+            loginCustomerId: account.loginCustomerId,
+            body: built.body,
+          });
+          if (channels && responseSaysLegacyBlocked(response)) {
+            throw Object.assign(new Error(LEGACY_BLOCKED_CODE), { code: LEGACY_BLOCKED_CODE });
+          }
+          outcomes = interpretUploadResponse(response, built.leadIds);
+        } else {
+          const sent = await sendViaDataManager({
+            channels: channels!,
+            account,
+            resource: resource!,
+            leads: leadsToSend,
+          });
+          outcomes = sent.outcomes;
+          requestId = sent.requestId;
+        }
+        if (channels) summary.channel = channel;
+        lastError = null;
+        break;
+      } catch (error) {
+        lastError = error;
+        if (channel === 'legacy' && channels && isLegacyBlockedError(error)) {
+          sawLegacyBlocked = true;
+          summary.legacyBlocked = true;
+          continue;
+        }
+        if (channel === 'data_manager' && isDataManagerAccessError(error)) continue;
+        break;
+      }
+    }
+
+    if (!outcomes) {
+      const reasonError = lastError ?? new Error('No upload channel is available');
+      // Nothing can be sent until the merchant grants (or re-grants) the Data Manager scope.
+      const needsGrant = Boolean(channels) && (isLegacyBlockedError(reasonError) || isDataManagerAccessError(reasonError));
+      const message = needsGrant ? `${isLegacyBlockedError(reasonError) ? LEGACY_BLOCKED_CODE : 'DATA_MANAGER_ACCESS'}: grant the Data Manager scope` : describe(reasonError);
+      summary.status = needsGrant ? 'needs_data_manager_grant' : 'request_failed';
       summary.error = message;
       // The leads were not at fault: put them back untouched and say why.
       await db
@@ -147,6 +238,12 @@ export async function uploadLeadConversions({
         logs.push(log(account.id, id, attemptsOf.get(id)! + 1, 'request_failed', 'REQUEST_FAILED', message));
       }
     }
+
+    if (channels && (sawLegacyBlocked || summary.channel)) {
+      await recordChannelState(db, account.id, { legacyBlocked: sawLegacyBlocked, channel: summary.channel ?? null, now });
+    }
+    if (requestId) channelExtras = { channel: 'data_manager', request_id: requestId };
+    else if (summary.channel) channelExtras = { channel: summary.channel };
 
     if (outcomes) {
       const doneIds: string[] = [];
@@ -193,8 +290,113 @@ export async function uploadLeadConversions({
     }
   }
 
-  if (logs.length > 0) await db.from('lead_conversion_uploads').insert(logs);
+  if (logs.length > 0) {
+    // The channel columns exist only after the channel migration; they are written only while channels are in play.
+    const sent = new Set(built.leadIds);
+    const rows = channelExtras
+      ? logs.map((row) => (sent.has(String(row.lead_click_id)) ? { ...row, ...channelExtras } : row))
+      : logs;
+    await db.from('lead_conversion_uploads').insert(rows);
+  }
   return summary;
+}
+
+/**
+ * Data Manager ingest for the leads that survived the build. A whole-request
+ * refusal as invalid (400) is isolated: up to ISOLATE_LIMIT rows are re-sent one
+ * by one so a single unreadable click id cannot hold back the others; the rest
+ * wait for the next run. Access errors (401/403) and everything else propagate
+ * to the channel loop.
+ */
+async function sendViaDataManager({
+  channels,
+  account,
+  resource,
+  leads,
+}: {
+  channels: UploadChannels;
+  account: { customerId: string; loginCustomerId?: string | null; timeZone?: string | null };
+  resource: string;
+  leads: UploadableLead[];
+}): Promise<{ outcomes: RowOutcome[]; requestId: string | null }> {
+  const buildFor = (subset: UploadableLead[]) =>
+    buildIngestRequest(subset, {
+      customerId: account.customerId,
+      loginCustomerId: account.loginCustomerId,
+      conversionAction: resource,
+      timeZone: account.timeZone,
+      consent: channels.consent === undefined ? consentFromEnv() : channels.consent,
+    });
+
+  const built = buildFor(leads);
+  if ('error' in built) {
+    return {
+      requestId: null,
+      outcomes: leads.map((lead): RowOutcome => ({ leadId: lead.id, outcome: 'failed', code: built.error.toUpperCase(), message: 'Request could not be built' })),
+    };
+  }
+  const sender = await channels.makeDataManagerSender().catch((error) => {
+    throw isDataManagerAccessError(error)
+      ? error
+      : new DataManagerError(401, 'UNAUTHENTICATED', `Data Manager token could not be minted: ${error instanceof Error ? error.message : String(error)}`);
+  });
+
+  try {
+    const response = await sender(built.request);
+    return { outcomes: interpretIngestResponse(response, built.leadIds), requestId: response?.requestId ?? null };
+  } catch (error) {
+    if (!isDataManagerInvalidRequest(error) || built.leadIds.length <= 1) {
+      if (isDataManagerInvalidRequest(error)) {
+        return {
+          requestId: null,
+          outcomes: built.leadIds.map((leadId): RowOutcome => ({ leadId, outcome: 'failed', code: 'INVALID_ARGUMENT', message: describe(error).slice(0, 300) })),
+        };
+      }
+      throw error;
+    }
+    const outcomes: RowOutcome[] = [];
+    for (const [index, leadId] of built.leadIds.entries()) {
+      if (index >= ISOLATE_LIMIT) {
+        outcomes.push({ leadId, outcome: 'retry', code: 'BATCH_REFUSED', message: 'Waiting for the bad row in the batch to be isolated' });
+        continue;
+      }
+      const one = buildFor(leads.filter((lead) => lead.id === leadId));
+      if ('error' in one) {
+        outcomes.push({ leadId, outcome: 'failed', code: one.error.toUpperCase(), message: 'Request could not be built' });
+        continue;
+      }
+      try {
+        await sender(one.request);
+        outcomes.push({ leadId, outcome: 'uploaded' });
+      } catch (rowError) {
+        if (isDataManagerInvalidRequest(rowError)) {
+          outcomes.push({ leadId, outcome: 'failed', code: 'INVALID_ARGUMENT', message: describe(rowError).slice(0, 300) });
+        } else if (isDataManagerAccessError(rowError)) {
+          throw rowError;
+        } else {
+          outcomes.push({ leadId, outcome: 'retry', code: 'TRANSIENT_ERROR', message: describe(rowError).slice(0, 300) });
+        }
+      }
+    }
+    return { outcomes, requestId: null };
+  }
+}
+
+/** Remembers what worked (best effort: the columns come with the channel migration). */
+async function recordChannelState(
+  db: Db,
+  accountId: string,
+  state: { legacyBlocked: boolean; channel: UploadChannel | null; now: Date }
+) {
+  const patch: Record<string, unknown> = {};
+  if (state.legacyBlocked) patch.legacy_blocked_at = state.now.toISOString();
+  if (state.channel) patch.last_upload_channel = state.channel;
+  if (Object.keys(patch).length === 0) return;
+  try {
+    await db.from('lead_loop_settings').update(patch).eq('account_id', accountId);
+  } catch {
+    // The upload itself is already recorded; a missed note only costs one more legacy attempt.
+  }
 }
 
 function log(

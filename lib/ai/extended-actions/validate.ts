@@ -16,6 +16,8 @@ import {
 import { isAdsStudioOperation } from '../../ads/studio/types';
 import { validateAdsStudioPayload } from '../../ads/studio/validate';
 import { isAdsStudioActive } from '../../ads/flag';
+import { isValueRuleOperation } from '../../value-rules/types';
+import { validateValueRulePayload } from '../../value-rules/validate';
 
 /**
  * Pure payload validators for the extended action types. Each returns the
@@ -184,6 +186,9 @@ export function validateExtendedPayload(
       ? validateAdsStudioPayload(operation, targetId, paramsInput, accountCustomerId)
       : bad('ads_studio_disabled');
   }
+
+  // Conversion value rules: no flag of their own, they ship with the extended actions.
+  if (isValueRuleOperation(operation)) return validateValueRulePayload(operation, targetId, paramsInput, accountCustomerId);
 
   const params = paramsInput && typeof paramsInput === 'object' ? (paramsInput as Record<string, unknown>) : {};
   const campaign = String(params.campaign_resource ?? '');

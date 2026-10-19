@@ -43,6 +43,7 @@ export type EvidenceKind =
   | 'pmax_category'
   | 'google_recommendation'
   | 'auto_apply'
+  | 'value_rule_set'
   | 'rsa_ad'
   | 'ad_test';
 

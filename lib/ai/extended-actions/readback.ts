@@ -4,6 +4,8 @@ import { scheduleCriteriaFromRows } from './schedule';
 import { slotMinutes } from './validate';
 import { isAdsStudioOperation } from '../../ads/studio/types';
 import { readbackAdsStudioAction } from '../../ads/studio/readback';
+import { isValueRuleOperation } from '../../value-rules/types';
+import { readbackValueRuleAction } from '../../value-rules/readback';
 
 /**
  * Read the account back after a live mutate and say whether the change is
@@ -40,6 +42,7 @@ function criterionRows(rows: any[]) {
 
 export async function readbackExtendedAction(action: OptimizerAction, customer: any): Promise<ReadbackResult> {
   if (isAdsStudioOperation(action.type)) return readbackAdsStudioAction(action, customer);
+  if (isValueRuleOperation(action.type)) return readbackValueRuleAction(action, customer);
   try {
     const params = action.params as Record<string, any>;
     const resolved = (params.resolved ?? {}) as Record<string, any>;

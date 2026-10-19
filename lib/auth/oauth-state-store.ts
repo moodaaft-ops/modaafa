@@ -24,7 +24,13 @@ const STATE_TTL_MINUTES = 60;
  * and the callback with `google_ads_connect`; the callback tells them apart by
  * which purpose the state was issued for.
  */
-export type OAuthStatePurpose = 'google_ads_connect' | 'provisioning_mcc';
+export type OAuthStatePurpose =
+  | 'google_ads_connect'
+  | 'provisioning_mcc'
+  // Separate consents for Data Manager upload, GA4 read and Business Profile read (lib/google-auth).
+  | 'google_scope_data_manager'
+  | 'google_scope_ga4'
+  | 'google_scope_gbp';
 
 export type ConsumeOAuthStateResult =
   | 'ok'

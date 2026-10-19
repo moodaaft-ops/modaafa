@@ -12,6 +12,7 @@
  */
 
 import { ADS_STUDIO_OPERATIONS } from '../../ads/studio/types';
+import { VALUE_RULE_OPERATIONS } from '../../value-rules/types';
 
 export const EXTENDED_OPERATIONS = [
   'set_ad_schedule',
@@ -28,6 +29,8 @@ export const EXTENDED_OPERATIONS = [
   'pause_auto_apply',
   // Ad copy and assets: also need ADS_STUDIO_ENABLED (see lib/ads/studio).
   ...ADS_STUDIO_OPERATIONS,
+  // Conversion value rules: create a rule set (geo, device or audience) and edit a rule's multiplier or status.
+  ...VALUE_RULE_OPERATIONS,
 ] as const;
 
 export type ExtendedOperation = (typeof EXTENDED_OPERATIONS)[number];

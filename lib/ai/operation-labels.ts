@@ -23,6 +23,8 @@ export const EXTENDED_OPERATION_LABELS_AR: Record<string, string> = {
   add_callouts: 'إضافة نصوص مميزة للحملة',
   add_structured_snippet: 'إضافة مقتطف منظم للحملة',
   add_call_asset: 'إضافة رقم اتصال للحملة',
+  create_value_rule_set: 'قواعد قيمة التحويل (حسب الموقع أو الجهاز أو الجمهور)',
+  update_value_rule: 'تعديل قاعدة قيمة تحويل',
 };
 
 export const OPERATION_LABELS_AR: Record<string, string> = {

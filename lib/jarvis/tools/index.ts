@@ -19,6 +19,7 @@ import { getChangeHistoryTool } from './get-change-history';
 import { getPmaxCategoriesTool } from './get-pmax-categories';
 import { getGoogleRecommendationsTool } from './get-google-recommendations';
 import { getAdAssetsTool } from './get-ad-assets';
+import { getValueRulesTool } from './get-value-rules';
 import { isAdsStudioEnabled } from '@/lib/ads/flag';
 import { isExtendedActionsEnabled } from '@/lib/ai/extended-actions/flag';
 import { getNgramAnalysisTool } from './get-ngram-analysis';
@@ -45,7 +46,7 @@ const BASE_READ_TOOLS: readonly JarvisReadTool[] = [
   getChangeHistoryTool,
   getPmaxCategoriesTool,
   // Behind EXTENDED_ACTIONS_ENABLED (read at load): flag off keeps the tool list byte-identical.
-  ...(isExtendedActionsEnabled() ? [getGoogleRecommendationsTool] : []),
+  ...(isExtendedActionsEnabled() ? [getGoogleRecommendationsTool, getValueRulesTool] : []),
   // Behind ADS_STUDIO_ENABLED (read at load): read-only, so it does not need the extended flag.
   ...(isAdsStudioEnabled() ? [getAdAssetsTool] : []),
 ];

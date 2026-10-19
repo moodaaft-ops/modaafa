@@ -57,6 +57,8 @@ export function categoryForAction(type: string) {
     add_callouts: 'ads',
     add_structured_snippet: 'ads',
     add_call_asset: 'ads',
+    create_value_rule_set: 'bidding',
+    update_value_rule: 'bidding',
   };
   return map[type] ?? 'structure';
 }

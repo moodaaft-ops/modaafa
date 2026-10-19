@@ -2,6 +2,8 @@ import { DAYS_OF_WEEK } from './types';
 import { modifierToPct } from './validate';
 import { adsStudioPreviewRows } from '../../ads/studio/preview';
 import { isAdsStudioOperation } from '../../ads/studio/types';
+import { isValueRuleOperation } from '../../value-rules/types';
+import { valueRulePreviewRows } from '../../value-rules/preview';
 
 /**
  * Approval-card rows for the extended operations. Pure, so the optimizer page
@@ -35,6 +37,7 @@ function pad(n: number) {
 }
 
 export function extendedPreviewRows(operation: string, params: Record<string, any>, targetId?: string): PreviewRow[] {
+  if (isValueRuleOperation(operation)) return valueRulePreviewRows(operation, params, targetId);
   if (isAdsStudioOperation(operation)) {
     const target = (params.campaign_resource ?? targetId) as string | undefined;
     const head: PreviewRow[] =

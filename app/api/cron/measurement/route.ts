@@ -3,6 +3,11 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { describeError } from '@/lib/supabase/query-errors';
 import { getCustomer } from '@/lib/google-ads/client';
 import { googleAdsClickConversionTransport } from '@/lib/google-ads/click-conversions';
+import { dataManagerSender } from '@/lib/google-ads/data-manager';
+import { isDataManagerUploadEnabled } from '@/lib/google-auth/features';
+import { extraAccessToken } from '@/lib/google-auth/incremental';
+import { loadGrantForAccount, markGrantFailed } from '@/lib/google-auth/store';
+import { normalizePreference } from '@/lib/lead-loop/transports';
 import { decrypt } from '@/lib/crypto';
 import { hasValidCronAuthorization } from '@/lib/security/cron-auth';
 import { excludeShadowAccounts } from '@/lib/shadow/guard';
@@ -57,6 +62,7 @@ export async function GET(req: NextRequest) {
   const budget = createTimeBudget(BUDGET_MS);
   const errors: unknown[] = [];
   const uploads: Record<string, UploadSummary['status'] | 'error'> = {};
+  const dataManagerOn = isDataManagerUploadEnabled();
   let uploaded = 0;
   let scanned = 0;
   let proposed = 0;
@@ -77,10 +83,35 @@ export async function GET(req: NextRequest) {
       try {
         const [{ data: account }, { data: settings }] = await Promise.all([
           supabase.from('google_ads_accounts').select(ACCOUNT_COLUMNS).eq('id', accountId).eq('status', 'active').maybeSingle(),
-          supabase.from('lead_loop_settings').select('conversion_action_resource').eq('account_id', accountId).maybeSingle(),
+          supabase
+            .from('lead_loop_settings')
+            // The channel columns come with the Data Manager migration: read them only while the flag is on.
+            .select((dataManagerOn ? 'conversion_action_resource, upload_channel, legacy_blocked_at' : 'conversion_action_resource') as string)
+            .eq('account_id', accountId)
+            .maybeSingle(),
         ]);
         if (!account || account.is_manager || !settings) return;
         const refreshToken = decrypt(account.refresh_token_encrypted);
+        let channels;
+        if (dataManagerOn) {
+          const grant = await loadGrantForAccount(supabase, accountId, 'data_manager').catch(() => null);
+          channels = {
+            dataManagerAvailable: Boolean(grant),
+            makeDataManagerSender: async () => {
+              try {
+                return dataManagerSender(await extraAccessToken(grant!.refreshToken));
+              } catch (error) {
+                // A revoked grant must not be retried every hour: mark it so the merchant is asked again.
+                if (grant && /invalid_grant/i.test(error instanceof Error ? error.message : '')) {
+                  await markGrantFailed(supabase, grant.user_id, 'data_manager', 'revoked', 'invalid_grant');
+                }
+                throw error;
+              }
+            },
+            preference: normalizePreference((settings as any).upload_channel),
+            legacyBlocked: Boolean((settings as any).legacy_blocked_at),
+          };
+        }
         const customer = getCustomer(account.customer_id, refreshToken, account.manager_id ?? undefined);
         const summary = await uploadLeadConversions({
           db: supabase,
@@ -90,9 +121,10 @@ export async function GET(req: NextRequest) {
             loginCustomerId: account.manager_id,
             timeZone: account.time_zone,
           },
-          settings,
+          settings: settings as unknown as { conversion_action_resource: string | null },
           transport: googleAdsClickConversionTransport(refreshToken),
           findConversionAction: async () => parseFoundLeadAction(await customer.query(findLeadActionQuery())),
+          ...(channels ? { channels } : {}),
         });
         uploads[accountId] = summary.status;
         uploaded += summary.uploaded + summary.duplicates;

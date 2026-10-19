@@ -13,6 +13,8 @@ import type { SharedKeyword } from './validate';
 import { isAdsStudioOperation } from '../../ads/studio/types';
 import { prepareAdsStudioAction } from '../../ads/studio/preflight';
 import { isAdsStudioActive } from '../../ads/flag';
+import { isValueRuleOperation } from '../../value-rules/types';
+import { prepareValueRuleAction } from '../../value-rules/preflight';
 
 /**
  * Pre-execution reads for the extended actions. Everything the live mutate
@@ -146,6 +148,8 @@ export async function prepareExtendedAction(
     if (!isAdsStudioActive()) refuse('ads_studio_disabled', 'Ad assets actions are disabled');
     return prepareAdsStudioAction(action, customer, deps);
   }
+
+  if (isValueRuleOperation(operation)) return prepareValueRuleAction(action, customer);
 
   switch (operation) {
     case 'set_ad_schedule': {
