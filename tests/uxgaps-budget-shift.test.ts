@@ -212,6 +212,7 @@ const ctx = (over: Record<string, unknown> = {}): any => ({
   sameTargetExecutedWithinCooldown: false,
   level: 'small_and_notify',
   snapshot: GOOD,
+  budgetShiftAuto: true,
   ...over,
 });
 
@@ -231,6 +232,21 @@ test('small level: a valid pair executes, anything off the rules queues', () => 
   const base: any = { outcome: 'queue', code: 'manual_action_type', reason_ar: '', checks: [] };
   assert.equal(applyAutonomyLevel(base, ctx()).outcome, 'execute');
   assert.equal(applyAutonomyLevel(base, ctx({ level: 'ask_all' })).outcome, 'queue');
+});
+
+test('review: without its own switch the small level never moves money by itself', () => {
+  const previous = process.env.AUTONOMY_BUDGET_SHIFT_AUTO_ENABLED;
+  delete process.env.AUTONOMY_BUDGET_SHIFT_AUTO_ENABLED;
+  try {
+    const verdict = evaluateAutonomy(ctx({ budgetShiftAuto: undefined }));
+    assert.equal(verdict.outcome, 'queue');
+    assert.equal(verdict.code, 'manual_action_type');
+    const base: any = { outcome: 'queue', code: 'manual_action_type', reason_ar: '', checks: [] };
+    assert.equal(applyAutonomyLevel(base, ctx({ budgetShiftAuto: undefined })).outcome, 'queue');
+  } finally {
+    if (previous === undefined) delete process.env.AUTONOMY_BUDGET_SHIFT_AUTO_ENABLED;
+    else process.env.AUTONOMY_BUDGET_SHIFT_AUTO_ENABLED = previous;
+  }
 });
 
 // ---- guardrails -----------------------------------------------------------
@@ -391,4 +407,26 @@ test('dedupe: a waiting single change or pair on either budget blocks the pair, 
   assert.equal(findPendingDuplicate([rowOf(BUDGET_SHIFT_OPERATION, pairParams)], pairAction(), NOW.getTime()).skip, true);
   assert.equal(findPendingDuplicate([rowOf(BUDGET_SHIFT_OPERATION, pairParams)], { type: 'adjust_budget', params: { budget_resource: A } } as any, NOW.getTime()).skip, true);
   assert.equal(findPendingDuplicate([rowOf('adjust_budget', { budget_resource: `customers/${CID}/campaignBudgets/77` })], pairAction(), NOW.getTime()).skip, false);
+});
+
+test('review: the shift rollback and growth rollbacks are scope-checked on every executed resource', async () => {
+  const { rollbackResourcesScoped } = await import('../lib/ai/rollback-scope');
+  const good = {
+    reversible: true,
+    action_type: 'shift_budget_pair',
+    resource_names: ['customers/123/campaignBudgets/1', 'customers/123/campaignBudgets/2'],
+    changes: [
+      { budget_resource: 'customers/123/campaignBudgets/1', amount_micros: 10_000_000 },
+      { budget_resource: 'customers/123/campaignBudgets/2', amount_micros: 20_000_000 },
+    ],
+  };
+  assert.equal(rollbackResourcesScoped(good, '123'), true);
+  const crafted = { ...good, changes: [good.changes[0], { budget_resource: 'customers/999/campaignBudgets/7', amount_micros: 1 }] };
+  assert.equal(rollbackResourcesScoped(crafted, '123'), false);
+  assert.equal(rollbackResourcesScoped({ ...good, changes: [] }, '123'), false);
+  const experiment = { action_type: 'growth_end_experiment', experiment_resource: 'customers/999/experiments/5', resource_names: ['customers/123/experiments/5'] };
+  assert.equal(rollbackResourcesScoped(experiment, '123'), false);
+  assert.equal(rollbackResourcesScoped({ ...experiment, experiment_resource: 'customers/123/experiments/5' }, '123'), true);
+  const list = { action_type: 'growth_close_user_list', user_list_resource: 'customers/999/userLists/5', resource_names: ['customers/123/userLists/5'] };
+  assert.equal(rollbackResourcesScoped(list, '123'), false);
 });

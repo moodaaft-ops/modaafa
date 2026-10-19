@@ -41,7 +41,17 @@ CREATE INDEX IF NOT EXISTS idx_store_orders_conn_date ON public.store_orders(con
 ALTER TABLE public.store_connections ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.store_orders ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS store_connections_owner_select ON public.store_connections;
-CREATE POLICY store_connections_owner_select ON public.store_connections FOR SELECT USING (user_id = auth.uid());
+CREATE POLICY store_connections_owner_select ON public.store_connections FOR SELECT TO authenticated
+  USING (user_id = (SELECT auth.uid()));
 DROP POLICY IF EXISTS store_orders_owner_select ON public.store_orders;
-CREATE POLICY store_orders_owner_select ON public.store_orders FOR SELECT
-  USING (EXISTS (SELECT 1 FROM public.store_connections c WHERE c.id = connection_id AND c.user_id = auth.uid()));
+CREATE POLICY store_orders_owner_select ON public.store_orders FOR SELECT TO authenticated
+  USING (EXISTS (SELECT 1 FROM public.store_connections c WHERE c.id = connection_id AND c.user_id = (SELECT auth.uid())));
+
+-- Writes are service role only (RLS has no write policy; the grants say so too).
+REVOKE INSERT, UPDATE, DELETE ON public.store_connections FROM anon, authenticated;
+REVOKE INSERT, UPDATE, DELETE ON public.store_orders FROM anon, authenticated;
+REVOKE ALL ON public.store_orders FROM anon;
+-- The encrypted store tokens never reach the browser: the owner may read only the non-secret columns.
+REVOKE SELECT ON public.store_connections FROM anon, authenticated;
+GRANT SELECT (id, user_id, account_id, platform, external_store_id, status, last_error, created_at, updated_at)
+  ON public.store_connections TO authenticated;

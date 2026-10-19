@@ -14,6 +14,8 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
  * authentication is optional Basic Auth (username/password given when the
  * webhook is created). We additionally require a secret in the target URL.
  * This is weaker than HMAC (no body integrity) and is flagged as a limitation.
+ * The URL secret is per store (HMAC of the env secret and the store id), so a
+ * merchant who can read their own webhook URL cannot post orders for another store.
  */
 
 function safeEqual(a: string, b: string): boolean {
@@ -51,14 +53,23 @@ export function sallaSignature(secret: string, rawBody: string): string {
   return createHmac('sha256', secret).update(rawBody, 'utf8').digest('hex');
 }
 
+/** The `s=` value for one Zid store's webhook URL: hex HMAC-SHA256(ZID_WEBHOOK_URL_SECRET, "zid:<store id>"). */
+export function zidStoreUrlSecret(urlSecret: string, storeId: string): string {
+  return createHmac('sha256', urlSecret).update(`zid:${storeId}`, 'utf8').digest('hex');
+}
+
 export function verifyZidWebhook(args: {
   urlSecret: string;
   presentedUrlSecret: string | null;
+  /** The ?store= value. The URL secret is bound to it. */
+  storeId: string | null;
   username: string;
   password: string;
   authorization: string | null;
 }): VerifyResult {
-  if (!args.presentedUrlSecret || !safeEqual(args.presentedUrlSecret, args.urlSecret)) {
+  if (!args.storeId || !/^[A-Za-z0-9_-]{1,64}$/.test(args.storeId)) return { ok: false, reason: 'store_missing' };
+  const expected = zidStoreUrlSecret(args.urlSecret, args.storeId);
+  if (!args.presentedUrlSecret || !safeEqual(args.presentedUrlSecret.toLowerCase(), expected)) {
     return { ok: false, reason: 'url_secret_mismatch' };
   }
   const m = /^Basic\s+(.+)$/i.exec(args.authorization ?? '');

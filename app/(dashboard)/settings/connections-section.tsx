@@ -1,6 +1,6 @@
 import { createAdminClient, createServerClient } from '@/lib/supabase/server';
 import { grantStatuses } from '@/lib/google-auth/store';
-import { buildConnectionsView, type StoreRow } from '@/lib/settings/connections';
+import { buildConnectionsView, connectionsReads, type StoreRow } from '@/lib/settings/connections';
 import { CARD, CalmHeading, CalmNote, StatusWord, pill } from '../calm-page';
 import { cn } from '@/lib/utils';
 
@@ -16,19 +16,26 @@ export async function ConnectionsSection({
   userId: string;
   params: { extra?: string; feature?: string; store?: string; platform?: string } | undefined;
 }) {
+  // Every related flag off: no query at all (the tables may not exist yet).
+  const reads = connectionsReads();
+  if (!reads.grants && !reads.stores) return null;
   let grants = null;
   let stores: StoreRow[] = [];
-  try {
-    grants = await grantStatuses(createAdminClient(), userId);
-  } catch {
-    grants = null;
+  if (reads.grants) {
+    try {
+      grants = await grantStatuses(createAdminClient(), userId);
+    } catch {
+      grants = null;
+    }
   }
-  try {
-    const supabase = await createServerClient();
-    const { data } = await supabase.from('store_connections').select('platform, external_store_id, status, last_error');
-    stores = (data ?? []) as StoreRow[];
-  } catch {
-    stores = [];
+  if (reads.stores) {
+    try {
+      const supabase = await createServerClient();
+      const { data } = await supabase.from('store_connections').select('platform, external_store_id, status, last_error');
+      stores = (data ?? []) as StoreRow[];
+    } catch {
+      stores = [];
+    }
   }
   const view = buildConnectionsView({ params, grants, stores });
   if (!view.show) return null;

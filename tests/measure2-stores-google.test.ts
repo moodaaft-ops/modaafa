@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { sallaSignature, verifySallaWebhook, verifyZidWebhook } from '../lib/stores/signature';
+import { sallaSignature, verifySallaWebhook, verifyZidWebhook, zidStoreUrlSecret } from '../lib/stores/signature';
 import { compareRevenue, matchOrderToClick, normalizeOrderEvent } from '../lib/stores/orders';
 import { buildStoreAuthUrl, storeOAuthConfig } from '../lib/stores/oauth';
 import { isStoreSyncEnabled } from '../lib/stores/flags';
@@ -23,11 +23,23 @@ test('salla signature: valid, tampered, missing, none strategy', () => {
 
 test('zid: needs url secret and basic auth', () => {
   const auth = 'Basic ' + Buffer.from('u:p').toString('base64');
-  const a = { urlSecret: 'k', username: 'u', password: 'p' };
-  assert.equal(verifyZidWebhook({ ...a, presentedUrlSecret: 'k', authorization: auth }).ok, true);
+  const a = { urlSecret: 'k', username: 'u', password: 'p', storeId: '123' };
+  const s = zidStoreUrlSecret('k', '123');
+  assert.equal(verifyZidWebhook({ ...a, presentedUrlSecret: s, authorization: auth }).ok, true);
   assert.equal(verifyZidWebhook({ ...a, presentedUrlSecret: 'bad', authorization: auth }).ok, false);
-  assert.equal(verifyZidWebhook({ ...a, presentedUrlSecret: 'k', authorization: null }).ok, false);
-  assert.equal(verifyZidWebhook({ ...a, presentedUrlSecret: 'k', authorization: 'Basic ' + Buffer.from('u:x').toString('base64') }).ok, false);
+  assert.equal(verifyZidWebhook({ ...a, presentedUrlSecret: s, authorization: null }).ok, false);
+  assert.equal(verifyZidWebhook({ ...a, presentedUrlSecret: s, authorization: 'Basic ' + Buffer.from('u:x').toString('base64') }).ok, false);
+});
+
+test('review: a Zid URL secret is bound to its store (no cross-store order injection)', () => {
+  const auth = 'Basic ' + Buffer.from('u:p').toString('base64');
+  const a = { urlSecret: 'k', username: 'u', password: 'p' };
+  const mine = zidStoreUrlSecret('k', '111');
+  // The global env secret alone no longer works, and store 111's secret cannot post for 222.
+  assert.equal(verifyZidWebhook({ ...a, storeId: '111', presentedUrlSecret: 'k', authorization: auth }).ok, false);
+  assert.equal(verifyZidWebhook({ ...a, storeId: '222', presentedUrlSecret: mine, authorization: auth }).ok, false);
+  assert.equal(verifyZidWebhook({ ...a, storeId: null, presentedUrlSecret: mine, authorization: auth }).ok, false);
+  assert.equal(verifyZidWebhook({ ...a, storeId: '111', presentedUrlSecret: mine, authorization: auth }).ok, true);
 });
 
 test('order normalisation and matching', () => {

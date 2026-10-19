@@ -178,3 +178,22 @@ test('gbp evidence: answering span, and nothing at all while the flag is off', a
   delete process.env.GBP_READ_ENABLED;
   assert.equal(await loadGbpHoursEvidence({ db: {}, userId: 'u', callHoursChoice: 'day_8_23' }), null);
 });
+
+test('review: Settings connections reads nothing while every flag is off', async () => {
+  const { connectionsReads } = await import('../lib/settings/connections');
+  assert.deepEqual(connectionsReads({}), { grants: false, stores: false });
+  assert.deepEqual(connectionsReads({ STORE_SYNC_ENABLED: 'true' }), { grants: false, stores: true });
+  assert.deepEqual(connectionsReads({ GA4_READ_ENABLED: 'true' }), { grants: true, stores: false });
+});
+
+test('review: store and grant tables keep tokens and writes server side', async () => {
+  const { readFileSync } = await import('node:fs');
+  const orders = readFileSync('db/migrations/20261020_store_orders.sql', 'utf8');
+  assert.match(orders, /REVOKE INSERT, UPDATE, DELETE ON public\.store_connections FROM anon, authenticated/);
+  assert.match(orders, /REVOKE SELECT ON public\.store_connections FROM anon, authenticated/);
+  const grant = /GRANT SELECT \(([^)]*)\)\s+ON public\.store_connections TO authenticated/.exec(orders);
+  assert.ok(grant, 'column grant present');
+  assert.ok(!/token|lease/.test(grant![1]), 'no token column in the owner grant');
+  const scopes = readFileSync('db/migrations/20261020_google_scope_grants_and_channels.sql', 'utf8');
+  assert.match(scopes, /REVOKE ALL ON public\.google_scope_grants FROM anon, authenticated/);
+});

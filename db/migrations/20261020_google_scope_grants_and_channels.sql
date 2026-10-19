@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS public.google_scope_grants (
 );
 ALTER TABLE public.google_scope_grants ENABLE ROW LEVEL SECURITY;
 -- No policies: service role only (tokens never reach the browser).
+REVOKE ALL ON public.google_scope_grants FROM anon, authenticated;
 
 ALTER TABLE public.lead_loop_settings
   ADD COLUMN IF NOT EXISTS upload_channel TEXT,

@@ -36,6 +36,17 @@ export function autonomyLevelsEnabled(env: NodeJS.ProcessEnv = process.env) {
   return env.AUTONOMY_LEVELS_ENABLED === 'true';
 }
 
+/**
+ * The small level was offered to merchants as "negatives and keyword pauses,
+ * everything else asks you" (AUTONOMY_LEVEL_LABELS_AR). A paired budget shift
+ * moves money, so it only runs by itself when this separate switch is on (and
+ * the level copy and consent are updated to say so). Off: the shift is still
+ * proposed, but as a card that waits for the merchant's approval.
+ */
+export function autonomyBudgetShiftAutoEnabled(env: NodeJS.ProcessEnv = process.env) {
+  return env.AUTONOMY_BUDGET_SHIFT_AUTO_ENABLED === 'true';
+}
+
 /** Anything unknown or missing is the safest level. */
 export function normalizeAutonomyLevel(value: unknown): AutonomyLevel {
   return AUTONOMY_LEVELS.includes(value as AutonomyLevel) ? (value as AutonomyLevel) : DEFAULT_AUTONOMY_LEVEL;
@@ -142,6 +153,8 @@ export type { BudgetChange, BudgetShiftVerdict } from './budget-math';
 
 export type AutonomyContext = AutopilotPolicyContext & {
   level: AutonomyLevel;
+  /** Defaults to AUTONOMY_BUDGET_SHIFT_AUTO_ENABLED. */
+  budgetShiftAuto?: boolean;
   snapshot: Pick<
     OptimizerSnapshot,
     'campaigns' | 'economics' | 'underperforming_keywords' | 'conversion_tracking'
@@ -178,6 +191,14 @@ export function evaluateAutonomy(context: AutonomyContext): AutopilotPolicyVerdi
     !check('action_allowlist', settings.allowed_actions.includes(action.type), `action=${action.type}`)
   ) {
     return queue('manual_action_type', 'هذا النوع من التعديل يحتاج موافقتك دائماً.', checks);
+  }
+
+  // A money move needs its own opt-in: the merchant agreed to negatives and pauses only.
+  if (
+    action.type === BUDGET_SHIFT_OPERATION &&
+    !check('budget_shift_auto', context.budgetShiftAuto ?? autonomyBudgetShiftAutoEnabled(), 'AUTONOMY_BUDGET_SHIFT_AUTO_ENABLED')
+  ) {
+    return queue('manual_action_type', 'نقل الميزانية بين الحملات ينتظر موافقتك.', checks);
   }
 
   const violations = hardCeilingViolations(action);

@@ -21,9 +21,30 @@ export function rollbackResourcesScoped(rollback: Record<string, any>, customerI
   }
 
   const resources: string[] = [];
-  for (const key of ['budget_resource', 'resource_name', 'ad_group_resource', 'campaign_resource']) {
+  // The growth executors (experiments, audiences) name their resource under their own key.
+  for (const key of [
+    'budget_resource',
+    'resource_name',
+    'ad_group_resource',
+    'campaign_resource',
+    'experiment_resource',
+    'user_list_resource',
+    'criterion_resource',
+  ]) {
     const value = rollback[key];
-    if (typeof value === 'string' && value.length > 0) resources.push(value);
+    if (value === undefined || value === null) continue;
+    if (typeof value !== 'string' || value.length === 0) return false;
+    resources.push(value);
+  }
+  // A paired budget shift restores from `changes`: every budget named there is executed, so every one is checked.
+  if (rollback.changes !== undefined) {
+    const list = rollback.changes;
+    if (!Array.isArray(list) || list.length === 0) return false;
+    for (const entry of list) {
+      const value = entry?.budget_resource;
+      if (typeof value !== 'string' || value.length === 0) return false;
+      resources.push(value);
+    }
   }
   if (rollback.resource_names !== undefined) {
     const list = rollback.resource_names;

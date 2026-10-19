@@ -7,9 +7,10 @@ import { normalizeOrderEvent } from '@/lib/stores/orders';
 import { recordOrder } from '@/lib/stores/store';
 
 /**
- * Zid order webhooks. Zid documents no HMAC signature: we require a secret in
- * the target URL (?s=) AND Basic Auth. Store id comes from ?store= (set when
- * we create the webhook) because the payload shape is unverified.
+ * Zid order webhooks. Zid documents no HMAC signature: we require a per-store
+ * secret in the target URL (?s=, see zidStoreUrlSecret) AND Basic Auth. Store id
+ * comes from ?store= (set when we create the webhook) because the payload shape
+ * is unverified; the secret is bound to it, so one store cannot post for another.
  */
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -22,8 +23,10 @@ export async function POST(req: NextRequest) {
   if (!isConfiguredEnv(urlSecret) || !isConfiguredEnv(username) || !isConfiguredEnv(password)) {
     return NextResponse.json({ error: 'webhook_secret_missing' }, { status: 503 });
   }
+  const storeId = req.nextUrl.searchParams.get('store');
   const verified = verifyZidWebhook({
     urlSecret, username, password,
+    storeId,
     presentedUrlSecret: req.nextUrl.searchParams.get('s'),
     authorization: req.headers.get('authorization'),
   });
@@ -32,7 +35,6 @@ export async function POST(req: NextRequest) {
   let payload: unknown;
   try { payload = JSON.parse(await req.text()); } catch { return NextResponse.json({ error: 'invalid_json' }, { status: 400 }); }
 
-  const storeId = req.nextUrl.searchParams.get('store');
   const order = normalizeOrderEvent('zid', payload);
   if (!storeId || !order) return NextResponse.json({ received: true, ignored: 'unreadable' });
   try {

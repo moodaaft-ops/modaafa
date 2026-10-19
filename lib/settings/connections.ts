@@ -31,6 +31,11 @@ export function outcomeMessage(outcome: unknown): { tone: 'success' | 'danger' |
   return typeof outcome === 'string' ? (EXTRA_OUTCOME_AR[outcome] ?? { tone: 'danger', text: 'تعذر إكمال الربط.' }) : null;
 }
 
+/** Which reads the Settings section needs. All false (every flag off): no read at all. */
+export function connectionsReads(env: Env = process.env): { grants: boolean; stores: boolean } {
+  return { grants: EXTRA_FEATURES.some((f) => isExtraFeatureEnabled(f, env)), stores: isStoreSyncEnabled(env) };
+}
+
 export type ConnectionsView = {
   show: boolean;
   notice: { tone: 'success' | 'danger' | 'warning'; text: string } | null;

@@ -2,6 +2,7 @@
 -- token and disconnect the store. A short database lease makes one caller win.
 ALTER TABLE public.store_connections
   ADD COLUMN IF NOT EXISTS refresh_lease_until TIMESTAMPTZ;
+-- Not added to the owner's column grant (20261020_store_orders.sql): server only.
 
 -- Atomic: a single UPDATE takes the row lock, so exactly one caller sees TRUE
 -- until the lease expires or is released. Service role only.
