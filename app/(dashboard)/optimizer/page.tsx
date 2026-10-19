@@ -22,6 +22,8 @@ import { extendedPreviewRows } from '@/lib/ai/extended-actions/preview';
 import { isExtendedOperation } from '@/lib/ai/extended-actions/types';
 import { EXTENDED_OPERATION_LABELS_AR } from '@/lib/ai/operation-labels';
 import { LaunchPlanPreview } from '@/lib/launch/launch-plan-preview';
+import { GROWTH_LABELS_AR, isGrowthOperation } from '@/lib/growth/flags';
+import { growthPreviewRows } from '@/lib/growth/preview';
 
 export const metadata = {
   title: 'مركز الموافقات',
@@ -394,6 +396,7 @@ function ChangePreview({
     build_campaign_opportunity: 'عبارات بحث رابحة (تُراجع في المساعد)',
     manual_campaign_draft: 'مسودة حملة جديدة (تحتاج مراجعة يدوية)',
     ...(isExtendedOperation(operation) ? { [operation]: EXTENDED_OPERATION_LABELS_AR[operation] } : {}),
+    ...GROWTH_LABELS_AR,
   };
 
   if (operation === 'build_campaign_opportunity') {
@@ -410,6 +413,8 @@ function ChangePreview({
         value: `${formatNumberAr(payload.totals.conversions)} تحويل · ${formatCurrency(payload.totals.cost ?? 0, currencyCode)}`,
       });
     }
+  } else if (isGrowthOperation(operation)) {
+    rows.push(...growthPreviewRows(operation, params));
   } else if (operation === 'add_keyword') {
     if (params.keyword_text) rows.push({ label: 'الكلمة الجديدة', value: String(params.keyword_text) });
     if (params.match_type) rows.push({ label: 'نوع المطابقة', value: String(params.match_type), ltr: true });
@@ -590,6 +595,11 @@ function actionTypeLabel(value?: string | null) {
     enable_campaign: 'تشغيل حملة',
     launch_campaign: 'بناء حملة موقوفة',
     remove_launched_campaign: 'التراجع عن بناء حملة',
+    ...GROWTH_LABELS_AR,
+    growth_remove_demand_gen: 'التراجع عن بناء حملة ديماند جن',
+    growth_close_user_list: 'إغلاق قائمة الجمهور',
+    growth_remove_audience_criterion: 'فك ربط الجمهور',
+    growth_end_experiment: 'إيقاف التجربة',
     add_negative_keywords_batch: 'منع عبارات بحث (دفعة)',
     ...EXTENDED_OPERATION_LABELS_AR,
     add_data_exclusion: 'استبعاد أيام تتبع مكسور',
