@@ -585,6 +585,34 @@ const weekly_report: EmailCopy = {
 };
 
 // ---------------------------------------------------------------------------
+// Recurring: monthly money report (the monthly review cron; waits for Ayman)
+// ---------------------------------------------------------------------------
+
+const monthly_report: EmailCopy = {
+  key: 'monthly_report',
+  category: 'weekly_report',
+  approved: false,
+  build: (facts) => {
+    const month = facts.monthly;
+    if (!month || month.moneyLines.length === 0) return null;
+    const blocks: Block[] = month.moneyLines.map((text) => ({ type: 'p', text: clean(text) }) as Block);
+    const plan = month.planLines.map(clean).filter(Boolean).slice(0, 4);
+    if (plan.length > 0) {
+      blocks.push({ type: 'p', text: 'وش أقترح الشهر الجاي:' });
+      blocks.push({ type: 'list', items: plan });
+    }
+    blocks.push({ type: 'note', text: 'الأرقام من حساب إعلانات قوقل حقك. الوفر والهدر تقدير، مو رقم محاسبي.' });
+    return {
+      subject: `تقرير ${month.monthNameAr} لإعلاناتك في قوقل`,
+      preheader: 'كم صرفت، كم رجع، وكم راح هدر',
+      blocks,
+      cta: { label: 'افتح مُضاعِف', path: '/home' },
+      signer: 'team',
+    };
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Transactional (sent from the Stripe webhook; already live, not gated)
 // ---------------------------------------------------------------------------
 
@@ -722,6 +750,7 @@ export const EMAIL_COPY: Record<CopyKey, EmailCopy> = {
   canceled_30d,
   past_due_3d,
   weekly_report,
+  monthly_report,
   tx_subscription_welcome,
   tx_trial_ending,
   tx_payment_failed,

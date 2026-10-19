@@ -63,6 +63,12 @@ const STOPWORDS = new Set(
   })
 );
 
+/** True for filler words (Arabic and English) in any spelling the grouping treats as one word. */
+export function isStopwordToken(word: string): boolean {
+  const folded = foldWord(word);
+  return STOPWORDS.has(folded) || STOPWORDS.has(groupKey(folded));
+}
+
 /** Splits on anything that is not a letter, digit or combining mark (drops punctuation). */
 export function tokenize(text: string): string[] {
   return text

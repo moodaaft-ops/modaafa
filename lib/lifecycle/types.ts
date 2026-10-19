@@ -55,6 +55,8 @@ export const COPY_KEYS = [
   'past_due_3d',
   // recurring: trialing + active subscribers
   'weekly_report',
+  // recurring: monthly money report (MONTHLY_REVIEW_ENABLED, sent by the monthly review cron)
+  'monthly_report',
   // transactional, sent from the Stripe webhook (not by the journey runner)
   'tx_subscription_welcome',
   'tx_trial_ending',
@@ -109,6 +111,18 @@ export type WeeklyFacts = {
   pendingCount: number;
 };
 
+/** The monthly money report; present only for the mail the monthly review cron sends. */
+export type MonthlyFacts = {
+  /** YYYY-MM of the reviewed month. */
+  month: string;
+  /** Month name in Arabic, for the subject. */
+  monthNameAr: string;
+  /** Money lines, already worded and computed on the server (spent, returned, wasted, protected). */
+  moneyLines: string[];
+  /** Plan lines from the monthly session, already cleaned. Max 4. */
+  planLines: string[];
+};
+
 export type BillingFacts = {
   planName: string | null;
   trialEndsAt: string | null;
@@ -122,6 +136,8 @@ export type EmailFacts = {
   trial: TrialFacts | null;
   weekly: WeeklyFacts | null;
   billing: BillingFacts | null;
+  /** Optional so every existing EmailFacts literal stays valid. */
+  monthly?: MonthlyFacts | null;
 };
 
 export type FactNeed = 'plan' | 'trial' | 'weekly' | 'billing';

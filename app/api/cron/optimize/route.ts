@@ -97,6 +97,9 @@ import {
   OPTIMIZE_ACCOUNT_LIMIT,
 } from '@/lib/platform/job-capacity';
 import { isSnapshotIdle, optimizerCooldownCutoffIso, optimizerCursorStampIso } from '@/lib/ai/optimizer-cost-guards';
+import { applyLoopFilters, EMPTY_LOOPS_CONTEXT } from '@/lib/loops/filter';
+import { isOutcomeMemoryEnabled } from '@/lib/loops/flags';
+import { prepareOptimizerLoops } from '@/lib/loops/snapshot';
 
 /**
  * Cron endpoint - runs hourly via Vercel Cron.
@@ -440,7 +443,20 @@ async function runOptimizerCron(req: NextRequest) {
       // the model nothing to act on, so we skip the paid call and record a
       // plain no-action instead.
       const idle = isSnapshotIdle(snapshot);
-      const actions = idle
+      // Weekly and monthly loop blocks (n-grams, past outcomes, season calendar,
+      // merchant facts). Every one is behind its own switch; with all of them
+      // off this does no I/O and the snapshot is untouched.
+      const loopsContext = idle
+        ? EMPTY_LOOPS_CONTEXT
+        : await prepareOptimizerLoops({
+            snapshot,
+            customer,
+            supabase,
+            accountId: account.id,
+            businessId: account.business_id,
+            protectedTexts: [account.customer_name, businessContext?.sector],
+          });
+      const proposedActions = idle
         ? []
         : await decideOptimizations(snapshot, {
             userId: businessContext?.user_id ?? null,
@@ -457,6 +473,23 @@ async function runOptimizerCron(req: NextRequest) {
       const executedBeforeRun = accountHistory.filter(
         (item) => item.decision === 'executed' && item.created_at >= startOfToday
       ).length;
+
+      // Proposals that repeat a change that measured negative, or that a season
+      // or a fact the owner told us holds back. No-op when the loop switches are off.
+      const loopFilter = applyLoopFilters(proposedActions, loopsContext);
+      for (const dropped of loopFilter.dropped) {
+        tallyReason(results.gate_rejections, { code: dropped.code, action_type: dropped.action.type });
+        await safeRecordAutopilotDecision(results, {
+          supabase,
+          accountId: account.id,
+          jobRunId: job.id,
+          mode: settings.mode,
+          action: dropped.action as AutopilotCandidate,
+          decision: 'blocked',
+          verdict: blockedVerdict(dropped.code, dropped.reason_ar),
+        });
+      }
+      const actions = loopFilter.kept;
 
       if (actions.length === 0) {
         await safeRecordAutopilotDecision(results, {
@@ -819,7 +852,13 @@ async function runOptimizerCron(req: NextRequest) {
       // ---- Learning loop: measure the real effect of past executed actions.
       if (!budget.expired()) {
         try {
-          const impact = await measureObservedImpacts({ supabase, customer, accountId: account.id, limit: 5 });
+          const impact = await measureObservedImpacts({
+            supabase,
+            customer,
+            accountId: account.id,
+            limit: 5,
+            withBaseline: isOutcomeMemoryEnabled(),
+          });
           results.impacts_measured += impact.measured;
         } catch (impactError) {
           console.warn(`Observed-impact measurement failed for ${account.customer_id}`, impactError);

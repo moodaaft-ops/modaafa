@@ -9,6 +9,9 @@
     "app/api/cron/optimize/route.ts": {
       "maxDuration": 300
     },
+    "app/api/cron/monthly-review/route.ts": {
+      "maxDuration": 300
+    },
     "app/api/chat/builder/route.ts": {
       "maxDuration": 120
     },
