@@ -665,7 +665,10 @@ function expressOptions(props: {
     buttonType: { applePay: 'subscribe', googlePay: 'subscribe' },
     buttonHeight: 52,
     // Only the two wallets. Link and the rest are other sign-ups, not one tap.
-    paymentMethods: { applePay: 'auto', googlePay: 'auto', link: 'never', paypal: 'never', amazonPay: 'never', klarna: 'never' },
+    // 'always' is what Stripe's docs require for Apple Pay outside Safari on a computer
+    // (it shows a QR code the customer scans with an iPhone) and for Google Pay when the
+    // browser has no saved card yet. It never forces a wallet onto a platform that can't run it.
+    paymentMethods: { applePay: 'always', googlePay: 'always', link: 'never', paypal: 'never', amazonPay: 'never', klarna: 'never' },
     layout: { maxColumns: 1, maxRows: 2, overflow: 'never' },
     applePay: {
       // Apple shows the customer exactly what the trial and the renewal are, in the sheet itself.

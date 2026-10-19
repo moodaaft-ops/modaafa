@@ -215,7 +215,7 @@ export default async function BillingPage({
   );
 
   return (
-    <CalmPage>
+    <CalmPage wide>
       <CalmTitle title="الفوترة والاشتراك" description="إدارة الخطة والتجربة والفواتير." />
 
       {(params?.error || params?.canceled || params?.cancel === 'resumed' || noTrialNotice) && (
@@ -232,10 +232,14 @@ export default async function BillingPage({
       )}
 
       {/* Current plan: the page. */}
-      <section className={cn(CARD, 'mt-6 p-6 sm:p-8')} aria-labelledby="current-plan-title">
+      <section
+        className={cn(CARD, 'mt-6 p-6 sm:flex sm:items-center sm:justify-between sm:gap-10 sm:p-8')}
+        aria-labelledby="current-plan-title"
+      >
+        <div className="min-w-0 sm:max-w-[620px]">
         <p className="text-[13px] text-muted-foreground">الخطة الحالية</p>
         <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1">
-          <h2 id="current-plan-title" className="text-[30px] font-bold leading-[3rem]">
+          <h2 id="current-plan-title" className="text-[26px] font-bold leading-[2.75rem]">
             {currentPlan ? planLabel(currentPlan) : 'لا يوجد اشتراك نشط'}
           </h2>
           {(hasLiveSubscription || hasInternalAccess) && access.status && (
@@ -269,7 +273,8 @@ export default async function BillingPage({
             {TRIAL_STARTER_LIMITS_NOTE}
           </p>
         )}
-        <div className="mt-6">
+        </div>
+        <div className="mt-6 flex-shrink-0 sm:mt-0">
           {hasInternalAccess || compOnly ? (
             <StatusWord tone="success">لا تحتاج اشتراكاً</StatusWord>
           ) : hasLiveSubscription && checkout.stripeCustomerId ? (
@@ -283,7 +288,7 @@ export default async function BillingPage({
               اربط حساب إعلانات Google أولاً عشان تبدأ التجربة
             </Link>
           ) : !hasLiveSubscription && arabicCheckout ? (
-            <a href={`${ARABIC_CHECKOUT_PATH}?plan=growth&period=${period}`} className={cn(pill.primary, 'inline-block text-center')}>
+            <a href={`${ARABIC_CHECKOUT_PATH}?plan=growth&period=${period}`} className={pill.primary}>
               {checkFailed ? 'حاول من جديد' : trialEligible ? 'ابدأ تجربة خطة النمو' : 'اشترك في خطة النمو'}
             </a>
           ) : !hasLiveSubscription ? (
@@ -387,7 +392,7 @@ export default async function BillingPage({
           </div>
         </div>
 
-        <ul className={cn(CARD, 'divide-y divide-border/70 overflow-hidden')}>
+        <ul className="grid gap-4 lg:grid-cols-3">
           {plans.map((plan) => {
             const isCurrent = currentPlan === plan.id;
             const isChosen = chosenPlan === plan.id && !isCurrent;
@@ -399,112 +404,118 @@ export default async function BillingPage({
               period === 'yearly' && livePrice && displayCurrency === 'SAR'
                 ? Math.max(0, monthlyAmount * 12 - livePrice.amount)
                 : 0;
-            const primaryLook = plan.highlighted || isChosen;
-            const shaded = isCurrent || isChosen || (plan.highlighted && !chosenPlan && !currentPlan);
+            // One dark card per list: the customer's own pick, else the recommended plan
+            // (never on top of the plan they already have).
+            const featured = !isCurrent && (chosenPlan ? isChosen : Boolean(plan.highlighted) && !currentPlan);
+            const cta = cn(featured ? cn(pill.primary, 'bg-background text-foreground hover:bg-background/90') : pill.quiet, 'w-full');
 
             return (
-              <li key={plan.id} className={cn('px-5 py-6 sm:px-7', shaded && 'bg-muted/50')}>
-                <div className="grid gap-5 sm:grid-cols-[1fr_232px] sm:gap-10">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
-                      <h3 className="text-[20px] font-bold leading-8">{plan.name}</h3>
-                      <span className="text-[12px] font-medium uppercase text-muted-foreground" dir="ltr">
-                        {plan.nameEn}
-                      </span>
-                      {isCurrent ? (
-                        <Tag tone="strong">{hasInternalAccess ? 'مفعلة داخلياً' : 'خطتك الحالية'}</Tag>
-                      ) : isChosen ? (
-                        <Tag tone="strong">اختيارك</Tag>
-                      ) : plan.highlighted ? (
-                        <Tag>الأنسب</Tag>
-                      ) : null}
-                    </div>
-                    <p className="mt-0.5 text-[14px] leading-7 text-muted-foreground">{plan.limit}</p>
-                    <ul className="mt-3 space-y-1 text-[14px] text-foreground">
-                      {plan.features.map((feature) => (
-                        <li key={feature} className="flex items-start gap-2.5 leading-7">
-                          <Check className="mt-1.5 h-4 w-4 flex-shrink-0 text-muted-foreground" aria-hidden />
-                          {feature}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-
-                  <div>
-                    <div className="flex flex-wrap items-baseline gap-x-1.5">
-                      {displayAmount !== null ? (
-                        <>
-                          <span className="numeric text-[30px] font-bold leading-[2.75rem]">
-                            {formatCurrency(displayAmount, displayCurrency)}
-                          </span>
-                          <span className="text-[14px] text-muted-foreground">
-                            / {period === 'yearly' ? 'سنة' : 'شهر'}
-                          </span>
-                        </>
-                      ) : (
-                        <span className="text-[14px] font-semibold leading-7 text-muted-foreground">
-                          فوترة سنوية، ويظهر المبلغ النهائي في صفحة الدفع
-                        </span>
-                      )}
-                    </div>
-                    {yearlySavings > 0 && (
-                      <p className="mt-0.5 text-[13px] font-medium text-success">
-                        وفّر {formatCurrency(yearlySavings, 'SAR')} مقارنة بالدفع الشهري
-                      </p>
-                    )}
-
-                    <div className="mt-4">
-                      {hasInternalAccess ? (
-                        <div aria-disabled="true" className={cn(isCurrent ? pill.primary : pill.quiet, 'w-full')}>
-                          {isCurrent ? 'مفعلة بصلاحية المالك' : 'متاحة للعملاء'}
-                        </div>
-                      ) : isCurrent && compOnly ? (
-                        // A free plan from the team has no Stripe customer, so no portal to open.
-                        <div aria-disabled="true" className={cn(pill.primary, 'w-full')}>
-                          مفعلة من فريق مُضاعِف
-                        </div>
-                      ) : isCurrent ? (
-                        <form action="/api/billing/portal" method="post">
-                          <PendingSubmitButton pendingLabel="جاري فتح Stripe..." className={cn(pill.quiet, 'w-full')}>
-                            إدارة هذه الخطة
-                          </PendingSubmitButton>
-                        </form>
-                      ) : hasLiveSubscription ? (
-                        /* Plan changes for live subscribers go through the Stripe
-                           portal. The old button posted to /api/billing/checkout,
-                           which unconditionally rejects live subscribers with
-                           `already_subscribed` — every switch click dead-ended in
-                           an error banner. */
-                        <form action="/api/billing/portal" method="post">
-                          <PendingSubmitButton
-                            pendingLabel="جاري فتح Stripe..."
-                            className={cn(plan.highlighted ? pill.primary : pill.quiet, 'w-full')}
-                          >
-                            التبديل عبر بوابة Stripe
-                          </PendingSubmitButton>
-                        </form>
-                      ) : needsAccount ? null : arabicCheckout ? (
-                        <a
-                          href={`${ARABIC_CHECKOUT_PATH}?plan=${plan.id}&period=${period}`}
-                          className={cn(primaryLook ? pill.primary : pill.quiet, 'inline-block w-full text-center')}
-                        >
-                          {checkFailed ? 'حاول من جديد' : trialEligible ? 'ابدأ تجربة 14 يوم' : 'اشترك الآن'}
-                        </a>
-                      ) : (
-                        <form action="/api/billing/checkout" method="post">
-                          <input type="hidden" name="plan" value={plan.id} />
-                          <input type="hidden" name="period" value={period} />
-                          <PendingSubmitButton
-                            pendingLabel="جاري فتح الدفع..."
-                            className={cn(primaryLook ? pill.primary : pill.quiet, 'w-full')}
-                          >
-                            {checkFailed ? 'حاول من جديد' : trialEligible ? 'ابدأ تجربة 14 يوم' : 'اشترك الآن'}
-                          </PendingSubmitButton>
-                        </form>
-                      )}
-                    </div>
-                  </div>
+              <li
+                key={plan.id}
+                className={cn(
+                  'flex flex-col rounded-[18px] border p-6 sm:p-7',
+                  featured ? 'border-foreground bg-foreground text-background' : 'border-border/80 bg-card',
+                  isCurrent && 'border-foreground'
+                )}
+              >
+                <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                  <h3 className="text-[20px] font-bold leading-8">{plan.name}</h3>
+                  {isCurrent ? (
+                    <Tag tone="strong">{hasInternalAccess ? 'مفعلة داخلياً' : 'خطتك الحالية'}</Tag>
+                  ) : isChosen ? (
+                    <span className="inline-flex items-center rounded-full bg-signal px-2.5 py-0.5 text-[12.5px] font-semibold text-signal-foreground">
+                      اختيارك
+                    </span>
+                  ) : plan.highlighted && !chosenPlan && !currentPlan ? (
+                    <span className="inline-flex items-center rounded-full bg-signal px-2.5 py-0.5 text-[12.5px] font-semibold text-signal-foreground">
+                      الأنسب
+                    </span>
+                  ) : null}
                 </div>
+                <p className={cn('mt-0.5 text-[14px] leading-7', featured ? 'text-background/70' : 'text-muted-foreground')}>
+                  {plan.limit}
+                </p>
+
+                <div className="mt-5 flex flex-wrap items-baseline gap-x-1.5">
+                  {displayAmount !== null ? (
+                    <>
+                      <span className="numeric text-[34px] font-bold leading-[2.75rem]">
+                        {formatCurrency(displayAmount, displayCurrency)}
+                      </span>
+                      <span className={cn('text-[14px]', featured ? 'text-background/70' : 'text-muted-foreground')}>
+                        / {period === 'yearly' ? 'سنة' : 'شهر'}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="text-[14px] font-semibold leading-7">
+                      فوترة سنوية، ويظهر المبلغ النهائي في صفحة الدفع
+                    </span>
+                  )}
+                </div>
+                {yearlySavings > 0 && (
+                  <p className={cn('mt-0.5 text-[13px] font-medium', featured ? 'text-signal' : 'text-success')}>
+                    وفّر {formatCurrency(yearlySavings, 'SAR')} مقارنة بالدفع الشهري
+                  </p>
+                )}
+
+                <div className="mt-5">
+                  {hasInternalAccess ? (
+                    <div aria-disabled="true" className={cn(isCurrent ? pill.primary : pill.quiet, 'w-full')}>
+                      {isCurrent ? 'مفعلة بصلاحية المالك' : 'متاحة للعملاء'}
+                    </div>
+                  ) : isCurrent && compOnly ? (
+                    // A free plan from the team has no Stripe customer, so no portal to open.
+                    <div aria-disabled="true" className={cn(pill.primary, 'w-full')}>
+                      مفعلة من فريق مُضاعِف
+                    </div>
+                  ) : isCurrent ? (
+                    <form action="/api/billing/portal" method="post">
+                      <PendingSubmitButton pendingLabel="جاري فتح Stripe..." className={cn(pill.quiet, 'w-full')}>
+                        إدارة هذه الخطة
+                      </PendingSubmitButton>
+                    </form>
+                  ) : hasLiveSubscription ? (
+                    /* Plan changes for live subscribers go through the Stripe
+                       portal. The old button posted to /api/billing/checkout,
+                       which unconditionally rejects live subscribers with
+                       `already_subscribed` — every switch click dead-ended in
+                       an error banner. */
+                    <form action="/api/billing/portal" method="post">
+                      <PendingSubmitButton pendingLabel="جاري فتح Stripe..." className={cta}>
+                        التبديل عبر بوابة Stripe
+                      </PendingSubmitButton>
+                    </form>
+                  ) : needsAccount ? null : arabicCheckout ? (
+                    <a href={`${ARABIC_CHECKOUT_PATH}?plan=${plan.id}&period=${period}`} className={cta}>
+                      {checkFailed ? 'حاول من جديد' : trialEligible ? 'ابدأ تجربة 14 يوم' : 'اشترك الآن'}
+                    </a>
+                  ) : (
+                    <form action="/api/billing/checkout" method="post">
+                      <input type="hidden" name="plan" value={plan.id} />
+                      <input type="hidden" name="period" value={period} />
+                      <PendingSubmitButton pendingLabel="جاري فتح الدفع..." className={cta}>
+                        {checkFailed ? 'حاول من جديد' : trialEligible ? 'ابدأ تجربة 14 يوم' : 'اشترك الآن'}
+                      </PendingSubmitButton>
+                    </form>
+                  )}
+                </div>
+
+                <ul
+                  className={cn(
+                    'mt-6 space-y-1 border-t pt-5 text-[14px]',
+                    featured ? 'border-background/20' : 'border-border/70'
+                  )}
+                >
+                  {plan.features.map((feature) => (
+                    <li key={feature} className="flex items-start gap-2.5 leading-7">
+                      <Check
+                        className={cn('mt-1.5 h-4 w-4 flex-shrink-0', featured ? 'text-signal' : 'text-muted-foreground')}
+                        aria-hidden
+                      />
+                      {feature}
+                    </li>
+                  ))}
+                </ul>
               </li>
             );
           })}
