@@ -69,7 +69,7 @@ export const SAVE_BUSINESS_FACT_TOOL = {
   },
 } satisfies Anthropic.Tool;
 
-function clean(value: unknown, max = 160) {
+export function clean(value: unknown, max = 160) {
   return typeof value === 'string' ? sanitizePromptText(value, max).trim() : '';
 }
 
@@ -175,10 +175,10 @@ export async function recallMemory(supabase: any, businessId: string | null, inp
 }
 
 /** Words that turn a "fact" into an instruction about permissions; those are never stored (spec 6.2). */
-const FORBIDDEN_FACT = /(نفذ|نفّذ|بدون ما تسأل|بدون اذن|بدون إذن|لا تسألني|صلاحي|وافق عني|execute|approve|permission)/i;
-const DIGIT_RUN = /[0-9\u0660-\u0669\u06f0-\u06f9][0-9\u0660-\u0669\u06f0-\u06f9\s-]{7,}[0-9\u0660-\u0669\u06f0-\u06f9]/; // card, account or phone numbers in any digits
+export const FORBIDDEN_FACT = /(نفذ|نفّذ|بدون ما تسأل|بدون اذن|بدون إذن|لا تسألني|صلاحي|وافق عني|execute|approve|permission)/i;
+export const DIGIT_RUN = /[0-9\u0660-\u0669\u06f0-\u06f9][0-9\u0660-\u0669\u06f0-\u06f9\s-]{7,}[0-9\u0660-\u0669\u06f0-\u06f9]/; // card, account or phone numbers in any digits
 
-function normalizeForQuote(value: string) {
+export function normalizeForQuote(value: string) {
   return value
     // Harakat (U+064B..U+065F), dagger alef and tatweel only; Arabic digits stay.
     .replace(/[\u064b-\u065f\u0670\u0640]/g, '')

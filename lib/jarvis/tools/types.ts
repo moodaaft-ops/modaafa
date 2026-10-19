@@ -22,6 +22,8 @@ export type ToolContext = {
   currencyCode: string; // e.g. 'SAR'
   business: { name: string | null; sector: string | null; keywords?: string[] } | null;
   connectedEmail?: string | null;
+  /** The owner's break-even, when the caller loaded it. The n-gram tool uses it for the waste limit. */
+  economics?: import('@/lib/economics/break-even').BreakEven | null;
   now: Date;
 };
 

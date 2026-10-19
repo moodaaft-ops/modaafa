@@ -37,6 +37,11 @@ import {
 } from '../measurement/conversion-actions';
 import { executeLaunchRollback } from '../launch/execute';
 import { runLaunchAction } from '../launch/action';
+import { loopsPromptAddendum } from '../loops/prompt';
+import type { NgramPromptBlock } from '../loops/ngram-source';
+import type { WhatWorkedBlock } from '../loops/outcome-memory';
+import type { MerchantContextBlock } from '../loops/merchant-context';
+import type { SeasonContext } from '../loops/seasons';
 
 /**
  * Optimizer Agent - the heart of the platform.
@@ -230,6 +235,15 @@ export interface OptimizerSnapshot {
   target_roas: number | null;
   /** The client's break-even CPA (null when unknown). See target_roas. */
   target_cpa: number | null;
+  /**
+   * Weekly and monthly loop blocks (lib/loops). Each exists only when its
+   * switch is on (NGRAM_ENABLED, OUTCOME_MEMORY_ENABLED, SEASONS_ENABLED,
+   * BUSINESS_MEMORY_ENABLED) and the read produced something.
+   */
+  ngram_analysis?: NgramPromptBlock;
+  outcome_memory?: WhatWorkedBlock;
+  season_context?: SeasonContext;
+  merchant_context?: MerchantContextBlock;
 }
 
 export interface OptimizerAction {
@@ -307,7 +321,7 @@ export async function decideOptimizations(
         // that triggers the advertiser's broad keywords writes text straight
         // into this prompt — and the model's `reason_ar` output becomes the
         // approval label the account owner reads.
-        content: `Account ${snapshot.customer_id} snapshot.\n<account_data>\n${sanitizeSnapshotForPrompt(snapshot)}\n</account_data>`,
+        content: `Account ${snapshot.customer_id} snapshot.\n<account_data>\n${sanitizeSnapshotForPrompt(snapshot)}\n</account_data>${loopsPromptAddendum(snapshot)}`,
       },
     ],
   }, undefined, {

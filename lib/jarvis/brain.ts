@@ -1,4 +1,6 @@
 import { ASSISTANT } from '@/lib/assistant/persona';
+import { isBusinessMemoryEnabled } from '@/lib/loops/flags';
+import { SAVE_MERCHANT_CONTEXT_TOOL, saveMerchantContext } from '@/lib/loops/merchant-context';
 import type Anthropic from '@anthropic-ai/sdk';
 import type { AgentRole, LlmCallMeta } from '@/lib/ai/client';
 import { sanitizePromptText } from '@/lib/ai/optimizer-agent';
@@ -223,6 +225,7 @@ function toolsFor(input: JarvisTurnInput): Anthropic.Tool[] {
   }
   if (input.account) tools.push(GET_PLATFORM_HISTORY_TOOL);
   if (input.business) tools.push(RECALL_MEMORY_TOOL, SAVE_BUSINESS_FACT_TOOL);
+  if (input.business && isBusinessMemoryEnabled()) tools.push(SAVE_MERCHANT_CONTEXT_TOOL as Anthropic.Tool);
   if (input.playbook.lines) tools.push(READ_PLAYBOOK_TOOL);
   if (input.account) tools.push(isExtendedActionsEnabled() ? prepareChangeToolFor(true) : PREPARE_CHANGE_TOOL);
   if (tools.length) {
@@ -399,6 +402,25 @@ export async function runJarvisTurn(input: JarvisTurnInput): Promise<JarvisTurnR
       });
       trace.push({ name, ok: saved.ok });
       if (saved.ok) cards.push(saved.card);
+      return { content: saved.modelText, isError: !saved.ok };
+    }
+    if (name === 'save_merchant_context' && isBusinessMemoryEnabled()) {
+      // Same rule as save_business_fact: nothing is saved once tool data is in the turn.
+      if (dataSeen) {
+        trace.push({ name, ok: false, code: 'after_tool_data' });
+        return { content: 'الحفظ يصير قبل قراءة أي بيانات في الدور، فما انحفظ شي. احفظ في الرسالة الجاية لو العميل أكدها.', isError: true };
+      }
+      const saved = await saveMerchantContext({
+        admin: deps.admin,
+        businessId: input.business?.id ?? null,
+        accountId: input.account?.id ?? null,
+        userMessage: input.message,
+        channel,
+        sessionId: input.sessionId,
+        input: block.input,
+        now: input.now,
+      });
+      trace.push({ name, ok: saved.ok });
       return { content: saved.modelText, isError: !saved.ok };
     }
     if (name === 'prepare_change' && input.account) {
