@@ -54,6 +54,7 @@ export function SimpleChrome({
   pausedAccounts = [],
   selectedCustomerId,
   isOperator = false,
+  showLeads = false,
   recentChats = [],
   children,
 }: {
@@ -64,6 +65,8 @@ export function SimpleChrome({
   pausedAccounts?: AdsAccountSummary[];
   selectedCustomerId: string | null;
   isOperator?: boolean;
+  /** LEAD_LOOP_ENABLED: adds the leads entry; off keeps the list exactly as it was. */
+  showLeads?: boolean;
   recentChats?: RecentChat[];
   children: React.ReactNode;
 }) {
@@ -116,7 +119,10 @@ export function SimpleChrome({
       accounts={accounts}
       revokedAccounts={revokedAccounts}
       selectedCustomerId={selectedCustomerId}
-      items={isOperator ? [...ITEMS, { href: '/operations', label: 'مركز التشغيل', icon: Activity }] : ITEMS}
+      items={[
+        ...(showLeads ? [ITEMS[0], { href: '/leads', label: 'ليدز هالأسبوع', icon: MessageCircle }, ...ITEMS.slice(1)] : ITEMS),
+        ...(isOperator ? [{ href: '/operations', label: 'مركز التشغيل', icon: Activity }] : []),
+      ]}
       pathname={pathname}
       activeChat={activeChat}
       recentChats={recentChats}

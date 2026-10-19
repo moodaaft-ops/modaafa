@@ -24,6 +24,17 @@ import {
   type LockRow,
 } from './optimizer-gates';
 import { evaluateProposalEvidence } from './optimizer-proposal-gates';
+import {
+  buildDataExclusionCreate,
+  MAX_EXCLUSIONS_PER_30_DAYS,
+  validateDataExclusionParams,
+} from '../measurement/data-exclusion';
+import {
+  buildLeadConversionActionCreate,
+  buildSetPrimaryItems,
+  validateCreateLeadActionParams,
+  validateSetPrimaryParams,
+} from '../measurement/conversion-actions';
 
 /**
  * Optimizer Agent - the heart of the platform.
@@ -237,7 +248,11 @@ export interface OptimizerAction {
     | 'enable_campaign'
     | 'add_negative_keywords_batch'
     /** Behind EXTENDED_ACTIONS_ENABLED; never proposed by the nightly optimizer. */
-    | ExtendedOperation;
+    | ExtendedOperation
+    // Measurement layer (LEAD_LOOP_ENABLED), approval-only like the three above.
+    | 'add_data_exclusion'
+    | 'create_lead_conversion_action'
+    | 'set_conversion_primary';
   target_id: string;
   params: Record<string, unknown>;
   reason_ar: string;
@@ -867,6 +882,29 @@ export async function checkGuardrails(
     }
   }
 
+  // Guardrail 8 (measurement layer): a data exclusion names a bounded, past
+  // window; campaigns belong to this account; and exclusions stay rare because
+  // frequent use hurts Smart Bidding (Google's own guide).
+  if (action.type === 'add_data_exclusion') {
+    // The start-in-the-past check needs the account's clock and runs in the preflight.
+    const exclusion = validateDataExclusionParams(action.params);
+    if (!exclusion.ok) return reject(`data_exclusion_${exclusion.code}`);
+    for (const campaign of exclusion.value.campaigns ?? []) {
+      if (!(await campaignResourceInAccount(supabase, accountId, campaign))) return reject('campaign_not_in_account');
+    }
+    const { data: recentExclusions, error: recentExclusionsError } = await recentExecutedRows(
+      supabase,
+      accountId,
+      'add_data_exclusion',
+      nowMs - 30 * DAY_MS
+    );
+    if (recentExclusionsError) return reject('data_exclusion_history_unreadable');
+    const applied = (recentExclusions ?? []).filter(
+      (row: any) => !excludeOwnRows || row?.recommendation_id !== excludeOwnRows
+    );
+    if (applied.length >= MAX_EXCLUSIONS_PER_30_DAYS) return reject('data_exclusion_too_frequent');
+  }
+
   // Evidence gate (queue time): the pause, promotion and negative rules the
   // prompt states, re-derived from the snapshot row the proposal names. After
   // the structural checks above, so a malformed proposal is refused for what
@@ -989,6 +1027,24 @@ export async function executeAction(
       ], options);
     }
 
+    case 'add_data_exclusion': {
+      const exclusion = validateDataExclusionParams(action.params);
+      if (!exclusion.ok) throw new Error(`Data exclusion is malformed (${exclusion.code})`);
+      return client.biddingDataExclusions.create([buildDataExclusionCreate(exclusion.value)], options);
+    }
+
+    case 'create_lead_conversion_action': {
+      const parsed = validateCreateLeadActionParams(action.params);
+      if (!parsed.ok) throw new Error('Lead conversion action is malformed');
+      return client.conversionActions.create([buildLeadConversionActionCreate(parsed.currency_code)], options);
+    }
+
+    case 'set_conversion_primary': {
+      const parsed = validateSetPrimaryParams(action.params);
+      if (!parsed.ok) throw new Error('Conversion primary change is malformed');
+      return client.conversionActions.update(buildSetPrimaryItems(parsed.value), options);
+    }
+
     case 'add_negative_keywords_batch': {
       // ONE mutate call with N create operations. Without partialFailure the
       // request is atomic: either every negative is added or none is.
@@ -1056,6 +1112,24 @@ export async function executeRollback(
         [{ resource_name: rollback.campaign_resource, status: rollback.status }],
         options
       );
+    case 'remove_created_data_exclusion':
+      if (!rollback.resource_name) throw new Error('Created data exclusion resource is unavailable');
+      return client.biddingDataExclusions.remove([rollback.resource_name], options);
+    case 'remove_created_conversion_action':
+      if (!rollback.resource_name) throw new Error('Created conversion action resource is unavailable');
+      return client.conversionActions.remove([rollback.resource_name], options);
+    case 'restore_conversion_primary': {
+      const items: Array<{ resource_name: unknown; primary_for_goal: unknown }> = Array.isArray(rollback.items)
+        ? rollback.items
+        : [];
+      if (
+        items.length === 0 ||
+        items.some((item) => typeof item?.resource_name !== 'string' || typeof item?.primary_for_goal !== 'boolean')
+      ) {
+        throw new Error('Previous conversion primary flags are unavailable');
+      }
+      return client.conversionActions.update(items, options);
+    }
     case 'remove_created_negative_keywords': {
       const names = Array.isArray(rollback.resource_names)
         ? rollback.resource_names.filter((name: unknown) => typeof name === 'string' && name.length > 0)

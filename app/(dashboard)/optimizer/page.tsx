@@ -385,6 +385,9 @@ function ChangePreview({
     pause_campaign: 'إيقاف حملة',
     enable_campaign: 'تشغيل حملة',
     add_negative_keywords_batch: 'منع عبارات بحث (دفعة)',
+    add_data_exclusion: 'استبعاد أيام التتبع المكسور من تعلم المزايدة',
+    create_lead_conversion_action: 'إنشاء تحويل "زبون فعلي" لرفع الزبائن لقوقل',
+    set_conversion_primary: 'اجعل الزبون الفعلي تحويلاً أساسياً',
     build_campaign_opportunity: 'عبارات بحث رابحة (تُراجع في المساعد)',
     manual_campaign_draft: 'مسودة حملة جديدة (تحتاج مراجعة يدوية)',
     ...(isExtendedOperation(operation) ? { [operation]: EXTENDED_OPERATION_LABELS_AR[operation] } : {}),
@@ -468,6 +471,27 @@ function ChangePreview({
     });
   } else if (isExtendedOperation(operation)) {
     rows.push(...extendedPreviewRows(operation, params, payload.target_id ? String(payload.target_id) : undefined));
+  } else if (operation === 'add_data_exclusion') {
+    if (params.start_date_time && params.end_date_time) {
+      rows.push({ label: 'الفترة المستبعدة', value: `${params.start_date_time} إلى ${params.end_date_time}`, ltr: true });
+    }
+    rows.push({
+      label: 'وش يصير',
+      value: 'المزايدة الذكية تتجاهل أرقام هالأيام وما تتعلم منها. ما يتغير شي ثاني في الحملات',
+    });
+  } else if (operation === 'create_lead_conversion_action') {
+    rows.push({
+      label: 'وش يصير',
+      value: 'ينشأ تحويل ثانوي لرفع الزبائن الفعليين. ما يغيّر شي في المزايدة لين تجعله أساسي',
+    });
+  } else if (operation === 'set_conversion_primary') {
+    if (params.lead_conversions_30d) {
+      rows.push({ label: 'تحويلات الزبون الفعلي (30 يوم)', value: formatNumberAr(Number(params.lead_conversions_30d)) });
+    }
+    const demote: unknown[] = Array.isArray(params.demote_resources) ? params.demote_resources : [];
+    if (demote.length > 0) {
+      rows.push({ label: 'نقرات الواتساب تتحول إلى ثانوية', value: formatNumberAr(demote.length) });
+    }
   } else if (payload.target_id) {
     rows.push({ label: 'المورد المستهدف', value: String(payload.target_id), ltr: true });
   }
@@ -563,6 +587,9 @@ function actionTypeLabel(value?: string | null) {
     enable_campaign: 'تشغيل حملة',
     add_negative_keywords_batch: 'منع عبارات بحث (دفعة)',
     ...EXTENDED_OPERATION_LABELS_AR,
+    add_data_exclusion: 'استبعاد أيام تتبع مكسور',
+    create_lead_conversion_action: 'إنشاء تحويل الزبون الفعلي',
+    set_conversion_primary: 'تحويل الزبون الفعلي إلى أساسي',
     approval_queued: 'اعتماد توصية',
     execution_blocked: 'محجوب: يحتاج مراجعة',
     blocked_by_guardrails: 'محجوب بحواجز الأمان',

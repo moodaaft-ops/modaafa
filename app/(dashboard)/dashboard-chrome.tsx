@@ -75,6 +75,7 @@ export function DashboardChrome({
   selectedCustomerId,
   isOperator = false,
   chatFirst = false,
+  showLeads = false,
   children,
 }: {
   brandName: string;
@@ -86,6 +87,8 @@ export function DashboardChrome({
   isOperator?: boolean;
   /** CHAT_FIRST_ENTRY: adds the single /start entry; off keeps the shell exactly as it was. */
   chatFirst?: boolean;
+  /** LEAD_LOOP_ENABLED: adds the «ليدز هالأسبوع» entry; off keeps the shell exactly as it was. */
+  showLeads?: boolean;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -98,13 +101,20 @@ export function DashboardChrome({
           : group
       )
     : navGroups;
-  const visibleNavGroups = isOperator
+  const withLeads = showLeads
     ? withStart.map((group) =>
+        group.label === 'البيانات' && !group.items.some((item) => item.href === '/leads')
+          ? { ...group, items: [...group.items, { href: '/leads', label: 'ليدز هالأسبوع', icon: MessageCircle } as NavItem] }
+          : group
+      )
+    : withStart;
+  const visibleNavGroups = isOperator
+    ? withLeads.map((group) =>
         group.label === 'الحساب'
           ? { ...group, items: [...group.items, { href: '/operations', label: 'مركز التشغيل', icon: Activity } as NavItem] }
           : group
       )
-    : withStart;
+    : withLeads;
   const [mobileOpen, setMobileOpen] = useState(false);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
