@@ -8,6 +8,16 @@ import { findBlockingAutopilotRecommendation } from '@/lib/autopilot/recommendat
 import type { ChatCard } from '@/lib/chat-first/contracts';
 import type { EvidenceRegistry } from './evidence';
 import type { EvidenceRow } from './tools/types';
+import { isExtendedActionsEnabled } from '@/lib/ai/extended-actions/flag';
+import { isExtendedOperation } from '@/lib/ai/extended-actions/types';
+import { lockFamilyMembers } from '@/lib/ai/extended-actions/guardrails';
+import {
+  EXTENDED_CHOICES_SCHEMA,
+  EXTENDED_PREPARE_OPERATIONS,
+  EXTENDED_TOOL_NOTE,
+  isExtendedPrepareOperation,
+  resolveExtended,
+} from './prepare-change-extended';
 
 /**
  * prepare_change (spec 83, section 4.4).
@@ -38,7 +48,7 @@ export const MAX_OPEN_CHAT_PROPOSALS = 10;
 const SAME_TARGET_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const REPROPOSE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 
-export const PREPARE_CHANGE_TOOL = {
+const BASE_PREPARE_CHANGE_TOOL = {
   name: 'prepare_change',
   description:
     'Prepare ONE change for the customer to approve. It never changes the account: it creates a pending proposal card ' +
@@ -78,6 +88,32 @@ export const PREPARE_CHANGE_TOOL = {
     additionalProperties: false,
   },
 } satisfies Anthropic.Tool;
+
+export const PREPARE_CHANGE_TOOL: Anthropic.Tool = BASE_PREPARE_CHANGE_TOOL;
+
+/**
+ * The tool the brain offers. Flag off returns the base tool object itself, so
+ * the schema is unchanged; flag on adds the extended operations and choices.
+ */
+export function prepareChangeToolFor(extended: boolean): Anthropic.Tool {
+  if (!extended) return PREPARE_CHANGE_TOOL;
+  const base = BASE_PREPARE_CHANGE_TOOL;
+  return {
+    ...base,
+    description: base.description + EXTENDED_TOOL_NOTE,
+    input_schema: {
+      ...base.input_schema,
+      properties: {
+        ...base.input_schema.properties,
+        operation: { type: 'string', enum: [...PREPARE_OPERATIONS, ...EXTENDED_PREPARE_OPERATIONS] },
+        choices: {
+          ...base.input_schema.properties.choices,
+          properties: { ...base.input_schema.properties.choices.properties, ...EXTENDED_CHOICES_SCHEMA },
+        },
+      },
+    },
+  } as Anthropic.Tool;
+}
 
 export type PrepareContext = {
   registry: EvidenceRegistry;
@@ -262,8 +298,12 @@ function resolveNegatives(ctx: PrepareContext, rows: EvidenceRow[], choices: Rec
   };
 }
 
-function resolve(ctx: PrepareContext, operation: PrepareOperation, rows: EvidenceRow[], choices: Record<string, unknown>): Resolved {
+function resolve(ctx: PrepareContext, operation: PrepareOperation | string, rows: EvidenceRow[], choices: Record<string, unknown>): Resolved {
   const currency = ctx.currencyCode;
+  if (isExtendedPrepareOperation(operation)) {
+    if (!isExtendedActionsEnabled()) fail('unknown_operation', 'العملية غير معروفة.');
+    return resolveExtended(operation, rows, choices, { fail, numberOf, text }) as Resolved;
+  }
   switch (operation) {
     case 'add_negative_keywords':
       return resolveNegatives(ctx, rows, choices);
@@ -418,7 +458,14 @@ async function changedRecently(ctx: PrepareContext, resolved: Resolved): Promise
     .from('ai_actions')
     .select('action_type, payload')
     .eq('account_id', ctx.accountId)
-    .in('action_type', ['adjust_budget', 'pause_campaign', 'enable_campaign'])
+    .in('action_type', [
+      'adjust_budget',
+      'pause_campaign',
+      'enable_campaign',
+      ...(isExtendedActionsEnabled() && isExtendedOperation(resolved.payload.operation)
+        ? lockFamilyMembers(resolved.payload.operation)
+        : []),
+    ])
     .gte('created_at', since)
     .limit(50);
   if (error || !Array.isArray(data)) return false;
@@ -426,7 +473,10 @@ async function changedRecently(ctx: PrepareContext, resolved: Resolved): Promise
     const action = row?.payload?.action ?? {};
     const params = action.params ?? {};
     return (
-      row.action_type === resolved.payload.operation &&
+      (row.action_type === resolved.payload.operation ||
+        (isExtendedActionsEnabled() &&
+          isExtendedOperation(resolved.payload.operation) &&
+          lockFamilyMembers(resolved.payload.operation).includes(row.action_type))) &&
       (action.target_id === resolved.sameTargetKey || params.budget_resource === resolved.sameTargetKey)
     );
   });
@@ -461,7 +511,8 @@ export async function prepareChange(input: unknown, ctx: PrepareContext): Promis
     }
     const args = input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
     const operation = String(args.operation ?? '') as PrepareOperation;
-    if (!PREPARE_OPERATIONS.includes(operation)) fail('unknown_operation', 'العملية غير معروفة.');
+    const extendedOperation = isExtendedActionsEnabled() && isExtendedPrepareOperation(operation);
+    if (!PREPARE_OPERATIONS.includes(operation) && !extendedOperation) fail('unknown_operation', 'العملية غير معروفة.');
     const why = text(args.why_ar, 400);
     if (!why) fail('why_required', 'اكتب سبب التعديل في why_ar.');
 

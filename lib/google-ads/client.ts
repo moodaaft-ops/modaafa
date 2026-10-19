@@ -644,6 +644,51 @@ export function getCustomer(
           options
         ),
     },
+    // Extended actions (EXTENDED_ACTIONS_ENABLED). One atomic googleAds:mutate
+    // call that can mix resource types and use temporary resource names (-1),
+    // which is what a shared negative list with its keywords and campaign
+    // links needs. Mutations are never retried (the path carries ':mutate').
+    // `results` mirrors the per-service shape (one {resourceName} per
+    // operation, in order) so result handling is shared with the other mutates.
+    mutateOperations: async (operations: unknown[], options?: { validateOnly?: boolean }) => {
+      const data = await googleAdsRest<{ mutateOperationResponses?: Array<Record<string, any>> }>({
+        refreshToken,
+        path: `/customers/${normalizedCustomerId}/googleAds:mutate`,
+        method: 'POST',
+        loginCustomerId: normalizedLoginCustomerId,
+        body: {
+          mutateOperations: camelizeKeys(operations),
+          ...(options?.validateOnly ? { validateOnly: true } : {}),
+        },
+      });
+      const results = (data.mutateOperationResponses ?? []).map((entry) => {
+        const first = Object.values(entry ?? {})[0] as { resourceName?: string } | undefined;
+        return { resourceName: first?.resourceName };
+      });
+      return { ...data, results };
+    },
+    // RecommendationService. There is no validateOnly on these two calls and
+    // apply is not idempotent, so they are sent once (maxAttempts 1).
+    recommendations: {
+      apply: (operations: unknown[]) =>
+        googleAdsRest({
+          refreshToken,
+          path: `/customers/${normalizedCustomerId}/recommendations:apply`,
+          method: 'POST',
+          loginCustomerId: normalizedLoginCustomerId,
+          body: { operations: camelizeKeys(operations) },
+          maxAttempts: 1,
+        }),
+      dismiss: (operations: unknown[]) =>
+        googleAdsRest({
+          refreshToken,
+          path: `/customers/${normalizedCustomerId}/recommendations:dismiss`,
+          method: 'POST',
+          loginCustomerId: normalizedLoginCustomerId,
+          body: { operations: camelizeKeys(operations) },
+          maxAttempts: 1,
+        }),
+    },
     // Campaign status only (pause / enable). The field mask is fixed to
     // `status` so no other campaign field can ride along on this path.
     campaigns: {

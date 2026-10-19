@@ -17,6 +17,8 @@ import { getDevicesTool } from './get-devices';
 import { getAdsStatusTool } from './get-ads-status';
 import { getChangeHistoryTool } from './get-change-history';
 import { getPmaxCategoriesTool } from './get-pmax-categories';
+import { getGoogleRecommendationsTool } from './get-google-recommendations';
+import { isExtendedActionsEnabled } from '@/lib/ai/extended-actions/flag';
 
 export type { EvidenceKind, EvidenceRow, GaqlCustomer, JarvisReadTool, ToolContext, ToolResult } from './types';
 export { conversionVerdict } from './get-conversion-health';
@@ -32,6 +34,8 @@ export const JARVIS_READ_TOOLS: readonly JarvisReadTool[] = [
   getAdsStatusTool,
   getChangeHistoryTool,
   getPmaxCategoriesTool,
+  // Behind EXTENDED_ACTIONS_ENABLED (read at load): flag off keeps the tool list byte-identical.
+  ...(isExtendedActionsEnabled() ? [getGoogleRecommendationsTool] : []),
 ];
 
 const TOOLS_BY_NAME: ReadonlyMap<string, JarvisReadTool> = new Map(

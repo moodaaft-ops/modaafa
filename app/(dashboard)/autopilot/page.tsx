@@ -15,6 +15,7 @@ import { EmptyState } from '@/lib/ui/empty-state';
 import { PageHeader } from '@/lib/ui/page-header';
 import { StatusBadge, type StatusTone } from '@/lib/ui/status-badge';
 import { timeAgoAr } from '@/lib/utils';
+import { EXTENDED_OPERATION_LABELS_AR } from '@/lib/ai/operation-labels';
 import { AutopilotSettingsForm } from './autopilot-settings-form';
 
 export const metadata = { title: 'الطيار الآلي' };
@@ -208,6 +209,7 @@ function actionLabel(actionType: string) {
   if (actionType === 'pause_campaign') return 'إيقاف حملة';
   if (actionType === 'enable_campaign') return 'تشغيل حملة';
   if (actionType === 'add_negative_keywords_batch') return 'منع عبارات بحث (دفعة)';
+  if (EXTENDED_OPERATION_LABELS_AR[actionType]) return EXTENDED_OPERATION_LABELS_AR[actionType];
   if (actionType === 'budget') return 'تعديل ميزانية';
   if (actionType === 'status') return 'تغيير حالة';
   if (actionType === 'bidding') return 'تعديل مزايدة';

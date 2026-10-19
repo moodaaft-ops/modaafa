@@ -14,7 +14,8 @@ import {
   type MemoryFact,
 } from './db-tools';
 import { JARVIS_CORE_RULES_AR, READ_PLAYBOOK_TOOL, type PlaybookIndex } from './playbook';
-import { PREPARE_CHANGE_TOOL, prepareChange, type PrepareContext } from './prepare-change';
+import { PREPARE_CHANGE_TOOL, prepareChange, prepareChangeToolFor, type PrepareContext } from './prepare-change';
+import { isExtendedActionsEnabled } from '@/lib/ai/extended-actions/flag';
 import { JARVIS_READ_TOOLS, runReadTool, type ToolContext } from './tools';
 
 /**
@@ -220,7 +221,7 @@ function toolsFor(input: JarvisTurnInput): Anthropic.Tool[] {
   if (input.account) tools.push(GET_PLATFORM_HISTORY_TOOL);
   if (input.business) tools.push(RECALL_MEMORY_TOOL, SAVE_BUSINESS_FACT_TOOL);
   if (input.playbook.lines) tools.push(READ_PLAYBOOK_TOOL);
-  if (input.account) tools.push(PREPARE_CHANGE_TOOL);
+  if (input.account) tools.push(isExtendedActionsEnabled() ? prepareChangeToolFor(true) : PREPARE_CHANGE_TOOL);
   if (tools.length) {
     // Cache breakpoint on the last tool: system prefix + tools are identical for every customer.
     const last = tools.length - 1;

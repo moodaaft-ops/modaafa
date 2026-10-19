@@ -1,6 +1,10 @@
 import { cachedSystemBlock, createMessageForAgent, hasAIBackend } from './client';
 import type { Customer } from 'google-ads-api';
 import { createAdminClient } from '../supabase/server';
+import { isExtendedActionsEnabled } from './extended-actions/flag';
+import { isExtendedOperation, type ExtendedOperation } from './extended-actions/types';
+import { executeExtendedAction, executeExtendedRollback, isExtendedRollback } from './extended-actions/execute';
+import { checkExtendedGuardrails } from './extended-actions/guardrails';
 import { JARVIS_CORE_RULES_AR } from '../jarvis/playbook/core-rules';
 import type { AllowableCpa, BreakEven } from '../economics/break-even';
 import { holdsTargetLock } from '../recommendations/staleness';
@@ -231,7 +235,9 @@ export interface OptimizerAction {
     | 'pause_ad'
     | 'pause_campaign'
     | 'enable_campaign'
-    | 'add_negative_keywords_batch';
+    | 'add_negative_keywords_batch'
+    /** Behind EXTENDED_ACTIONS_ENABLED; never proposed by the nightly optimizer. */
+    | ExtendedOperation;
   target_id: string;
   params: Record<string, unknown>;
   reason_ar: string;
@@ -534,6 +540,16 @@ export async function checkGuardrails(
   // both apply the executed-history locks; only queue time has the pending-card locks.
   const appliesExecutedLocks = Boolean(context || execution);
   const excludeOwnRows = execution?.recommendationId ?? null;
+
+  // Extended targeting/recommendation actions have their own gate. Flag off: they never get here.
+  if (isExtendedOperation(action.type)) {
+    if (!isExtendedActionsEnabled()) return reject('extended_actions_disabled');
+    const verdict = await checkExtendedGuardrails(action, accountId, supabase, {
+      applyLocks: appliesExecutedLocks,
+      nowMs,
+    });
+    return verdict.ok ? action : reject(verdict.code);
+  }
 
   // Tracking gate (queue time): every action that reads conversion numbers.
   if (context) {
@@ -900,6 +916,11 @@ export async function executeAction(
 ) {
   const client = customer as any;
 
+  if (isExtendedOperation(action.type)) {
+    if (!isExtendedActionsEnabled()) throw new Error('Extended actions are disabled');
+    return executeExtendedAction(action, customer, options);
+  }
+
   switch (action.type) {
     case 'pause_keyword': {
       return client.adGroupCriteria.update([
@@ -990,6 +1011,11 @@ export async function executeRollback(
   options?: { validateOnly?: boolean }
 ) {
   const client = customer as any;
+
+  if (isExtendedRollback(rollback)) {
+    if (!isExtendedActionsEnabled()) throw new Error('Extended actions are disabled');
+    return executeExtendedRollback(rollback, customer, options);
+  }
 
   switch (rollback.action_type) {
     case 'adjust_budget':

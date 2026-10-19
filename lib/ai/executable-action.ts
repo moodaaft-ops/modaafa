@@ -1,4 +1,7 @@
 import type { OptimizerAction } from './optimizer-agent';
+import { isExtendedActionsEnabled } from './extended-actions/flag';
+import { isExtendedOperation } from './extended-actions/types';
+import { validateExtendedPayload } from './extended-actions/validate';
 import { BUDGET_STEP_MAX_PCT, BUDGET_STEP_MIN_PCT } from './optimizer-gates';
 
 /**
@@ -17,6 +20,31 @@ export function buildExecutableAction(
   accountCustomerId?: string | null
 ): OptimizerAction | null {
   const operation = String(payload?.operation ?? '');
+
+  // Extended operations: flag off means the same null as any unknown operation.
+  if (isExtendedOperation(operation)) {
+    if (!isExtendedActionsEnabled()) return null;
+    const checked = validateExtendedPayload(
+      operation,
+      String(payload?.target_id ?? ''),
+      payload?.params ?? {},
+      accountCustomerId
+    );
+    if (!checked.ok) return null;
+    return {
+      type: operation,
+      target_id: checked.target_id,
+      params: checked.params,
+      reason_ar: recommendation.description ?? recommendation.title,
+      reason_en: recommendation.title,
+      expected_impact: {
+        metric: String(recommendation.expected_impact?.metric ?? 'performance'),
+        delta_pct: Number(recommendation.expected_impact?.delta_pct ?? 0),
+        delta_sar_per_month: Number(recommendation.expected_impact?.delta_sar_per_month ?? 0),
+      },
+    };
+  }
+
   const allowed = [
     'pause_keyword',
     'add_negative_keyword',
