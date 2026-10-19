@@ -35,6 +35,15 @@
     },
     "app/api/actions/rollback/route.ts": {
       "maxDuration": 120
+    },
+    "app/api/cron/partner-reconcile/route.ts": {
+      "maxDuration": 60
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/partner-reconcile",
+      "schedule": "30 3 * * *"
+    }
+  ]
 }

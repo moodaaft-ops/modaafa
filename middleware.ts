@@ -11,6 +11,7 @@ import {
   hasMarketingSignal,
   serializeAttribution,
 } from '@/lib/registration/attribution';
+import { normalizePartnerCode, partnersEnabled, REF_COOKIE, REF_COOKIE_OPTIONS } from '@/lib/partners/config';
 
 /**
  * Refreshes the user's Supabase session on every request, gates the
@@ -18,7 +19,7 @@ import {
  * nonce-based Content-Security-Policy.
  */
 export async function middleware(req: NextRequest) {
-  const protectedPaths = ['/dashboard', '/home', '/assistant', '/start', '/audit', '/campaigns', '/optimizer', '/reports', '/billing', '/settings', '/onboarding', '/autopilot', '/operations', '/welcome', '/guide'];
+  const protectedPaths = ['/dashboard', '/home', '/assistant', '/start', '/audit', '/campaigns', '/optimizer', '/reports', '/billing', '/settings', '/onboarding', '/autopilot', '/operations', '/welcome', '/guide', '/partners'];
   const isProtected = protectedPaths.some((p) => req.nextUrl.pathname.startsWith(p));
   const isLogin = req.nextUrl.pathname === '/login';
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -34,7 +35,15 @@ export async function middleware(req: NextRequest) {
   // parameters never touches the cookie. See lib/registration/attribution.ts.
   const incomingAttribution =
     req.method === 'GET' ? extractAttribution(req.nextUrl.searchParams, req.nextUrl.pathname) : {};
+  // A partner's ?ref=<code> link on any page. The code is only checked for shape
+  // here (the edge cannot reach the database); the database decides at sign-up
+  // whether it belongs to an active partner. The most recent link wins.
+  const incomingRef =
+    req.method === 'GET' && partnersEnabled() ? normalizePartnerCode(req.nextUrl.searchParams.get('ref')) : null;
   const rememberAttribution = <T extends NextResponse>(res: T): T => {
+    if (incomingRef) {
+      res.cookies.set({ name: REF_COOKIE, value: incomingRef, ...REF_COOKIE_OPTIONS, secure: process.env.NODE_ENV === 'production' });
+    }
     if (hasMarketingSignal(incomingAttribution)) {
       res.cookies.set({
         name: ATTRIBUTION_COOKIE,

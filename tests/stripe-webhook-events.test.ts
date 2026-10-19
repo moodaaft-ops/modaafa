@@ -12,7 +12,7 @@ const read = (p: string) => readFileSync(new URL(`../${p}`, import.meta.url), 'u
 
 test('the dispute event is recommended, never required (it must not flip launch_ready)', () => {
   assert.ok(!(REQUIRED_WEBHOOK_EVENTS as readonly string[]).includes('charge.dispute.created'));
-  assert.deepEqual([...RECOMMENDED_WEBHOOK_EVENTS], ['charge.dispute.created']);
+  assert.deepEqual([...RECOMMENDED_WEBHOOK_EVENTS], ['charge.dispute.created', 'charge.refunded']);
 });
 
 test('the required list is the pre-dispute list, unchanged', () => {
@@ -30,10 +30,10 @@ test('the required list is the pre-dispute list, unchanged', () => {
   );
 });
 
-test('an endpoint that sends every required event but not disputes is webhook ok', () => {
+test('an endpoint that sends every required event but not disputes or refunds is webhook ok', () => {
   const enabled = [...REQUIRED_WEBHOOK_EVENTS];
   assert.deepEqual(missingWebhookEvents(REQUIRED_WEBHOOK_EVENTS, enabled), []);
-  assert.deepEqual(missingWebhookEvents(RECOMMENDED_WEBHOOK_EVENTS, enabled), ['charge.dispute.created']);
+  assert.deepEqual(missingWebhookEvents(RECOMMENDED_WEBHOOK_EVENTS, enabled), ['charge.dispute.created', 'charge.refunded']);
 });
 
 test('a wildcard endpoint misses nothing, and a bare endpoint misses everything', () => {
@@ -54,4 +54,9 @@ test('readiness: only the required events decide webhookOk, the recommended ones
 
 test('the handler still handles the dispute event', () => {
   assert.match(read('lib/billing/stripe-webhook-handler.ts'), /case 'charge\.dispute\.created':/);
+});
+
+test('the handler handles refunds, and refunds are recommended, never required', () => {
+  assert.match(read('lib/billing/stripe-webhook-handler.ts'), /case 'charge\.refunded':/);
+  assert.ok(!(REQUIRED_WEBHOOK_EVENTS as readonly string[]).includes('charge.refunded'));
 });

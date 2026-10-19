@@ -3,6 +3,8 @@ import { arabicCheckoutStripe, ensureStripeCustomer } from '@/lib/billing/stripe
 import { resolvePromotionCode, startArabicSubscription } from '@/lib/billing/arabic-checkout/flow';
 import { checkoutFailure, describeFailure, fullGate } from '@/lib/billing/arabic-checkout/gate';
 import { finishArabicActivation } from '@/lib/billing/arabic-checkout/finish';
+import { refereeGiftPromotion } from '@/lib/partners/gift';
+import { createAdminClient } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
 
@@ -34,9 +36,14 @@ export async function POST(req: NextRequest) {
       email: gate.user.email,
       existingCustomerId: gate.stripeCustomerId,
     });
+    // A code the customer typed wins. With none, a customer who came through a
+    // partner link gets the welcome discount (null whenever it cannot apply).
     const promotion = promoCode
       ? await resolvePromotionCode(arabicCheckoutStripe, promoCode, { customerId })
-      : null;
+      : await refereeGiftPromotion(
+          { getDb: createAdminClient, stripe: arabicCheckoutStripe },
+          { userId: gate.user.id, customerId },
+        );
 
     const outcome = await startArabicSubscription(arabicCheckoutStripe, {
       userId: gate.user.id,

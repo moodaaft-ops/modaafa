@@ -318,8 +318,11 @@ export const REQUIRED_WEBHOOK_EVENTS = [
  * `charge.dispute.created` cancels the subscription of a customer who disputes a
  * payment (stripe-webhook-handler.ts). If the endpoint does not send it,
  * disputes go unhandled silently, so enable it in the Stripe dashboard.
+ *
+ * `charge.refunded` voids the partner commission on a refunded invoice (only used
+ * once PARTNERS_ENABLED=true; harmless to enable before).
  */
-export const RECOMMENDED_WEBHOOK_EVENTS = ['charge.dispute.created'] as const;
+export const RECOMMENDED_WEBHOOK_EVENTS = ['charge.dispute.created', 'charge.refunded'] as const;
 
 /** The events in `wanted` that an endpoint with `enabledEvents` does not send. `*` sends everything. */
 export function missingWebhookEvents<T extends string>(

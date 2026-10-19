@@ -47,12 +47,14 @@ export function detectInAppBrowser(userAgent: string | null | undefined): InAppB
  * travel; with the parameters in the URL, middleware captures them again in
  * the new browser, so the signup still counts for the ad that earned it.
  */
-export function buildReopenUrl(appUrl: string, path: string, attribution: Attribution): URL {
+export function buildReopenUrl(appUrl: string, path: string, attribution: Attribution, ref?: string | null): URL {
   const url = new URL(path, appUrl);
   for (const key of [...UTM_KEYS, ...CLICK_ID_KEYS]) {
     const value = attribution[key];
     if (value) url.searchParams.set(key, value);
   }
+  // A partner's code travels the same way, for the same reason.
+  if (ref) url.searchParams.set('ref', ref);
   return url;
 }
 

@@ -27,6 +27,8 @@ import {
   subscriptionEventWasApplied,
 } from '@/lib/billing/subscription-events';
 import { recordPaidInvoice } from '@/lib/billing/invoices';
+import { partnersEnabled } from '@/lib/partners/config';
+import { accrueInvoiceCommission, voidInvoiceCommission } from '@/lib/partners/store';
 import {
   arabicWelcomeIdempotencyKey,
   isArabicWelcomeMoment,
@@ -58,6 +60,8 @@ const defaultDependencies = {
   applySubscriptionEvent,
   subscriptionEventWasApplied,
   recordPaidInvoice,
+  accrueInvoiceCommission,
+  voidInvoiceCommission,
   recordUserEvent,
   claimStripeWebhookEvent,
   completeStripeWebhookEvent,
@@ -356,6 +360,14 @@ export function createStripeWebhookHandler(
             break;
           }
 
+          // A real dispute takes the money back, so the commission on it goes too.
+          if (partnersEnabled()) {
+            await partnerStep('void disputed commission', async () => {
+              const key = await chargeInvoiceKey(dependencies, dispute?.charge);
+              if (key) await dependencies.voidInvoiceCommission(supabase, key, 'dispute', true);
+            });
+          }
+
           const subscriptionId = await resolveDisputedSubscriptionId(dependencies, dispute);
           if (!subscriptionId) {
             // No subscription on the invoice (or no invoice): a one-off charge
@@ -451,8 +463,30 @@ export function createStripeWebhookHandler(
                 admin: supabase,
                 metadata: { stripe_invoice_id: invoice.id ?? null },
               });
+              // The partner's commission for this payment. Never fails the event:
+              // billing must not depend on the affiliate programme, and the
+              // /api/cron/partner-reconcile sweep earns anything missed here.
+              if (partnersEnabled()) {
+                await partnerStep('accrue commission', () =>
+                  dependencies.accrueInvoiceCommission(supabase, { userId: localSubscription.user_id, invoice }),
+                );
+              }
             }
           }
+          break;
+        }
+
+        // A refund. Only listed when the endpoint sends it: without it, a refunded
+        // invoice keeps its commission until someone voids it by hand from ops
+        // (the dispute path below is unaffected).
+        case 'charge.refunded': {
+          if (!partnersEnabled()) break;
+          const charge = event.data.object as any;
+          const full = charge?.refunded === true || (typeof charge?.amount === 'number' && charge.amount_refunded >= charge.amount);
+          await partnerStep('void refunded commission', async () => {
+            const key = await chargeInvoiceKey(dependencies, charge);
+            if (key) await dependencies.voidInvoiceCommission(supabase, key, 'refund', full);
+          });
           break;
         }
 
@@ -593,6 +627,30 @@ async function resolveDisputedSubscriptionId(
       ? charge.invoice
       : await dependencies.retrieveStripeInvoice(invoiceId);
   return invoiceSubscriptionId(invoice);
+}
+
+/** A partner-programme step that must never fail the billing event around it. */
+async function partnerStep(label: string, step: () => Promise<unknown>) {
+  try {
+    await step();
+  } catch (error) {
+    console.error(`[partners] ${label} failed`, error instanceof Error ? error.message : 'unknown');
+  }
+}
+
+/** The key a commission is stored under for the invoice a charge paid: `number ?? id`, as recordPaidInvoice stores it. */
+async function chargeInvoiceKey(dependencies: StripeWebhookDependencies, chargeOrId: unknown) {
+  const chargeId = stripeObjectId(chargeOrId);
+  if (!chargeId) return null;
+  const charge =
+    chargeOrId && typeof chargeOrId === 'object' && 'invoice' in (chargeOrId as object)
+      ? (chargeOrId as any)
+      : await dependencies.retrieveStripeCharge(chargeId);
+  const invoiceId = stripeObjectId(charge?.invoice);
+  if (!invoiceId) return null;
+  const invoice =
+    charge.invoice && typeof charge.invoice === 'object' ? charge.invoice : await dependencies.retrieveStripeInvoice(invoiceId);
+  return (invoice?.number ?? invoice?.id ?? invoiceId) as string;
 }
 
 async function safeOpsAlert(
