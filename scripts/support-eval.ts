@@ -13,7 +13,7 @@
  */
 import { cachedSystemBlock, getAnthropicClient, getModelName, hasAIBackend, type ModelTier } from '../lib/ai/client';
 import { costUsd, type AnthropicUsage } from '../lib/ai/pricing';
-import { answerSupport, extractReplyInput, numberTokens, type SupportModelCall, type SupportReply } from '../lib/support/bot';
+import { answerSupport, extractReplyInput, supportToolChoice, numberTokens, type SupportModelCall, type SupportReply } from '../lib/support/bot';
 
 type Expect = 'answer' | 'handoff' | 'assistant' | 'refuse';
 type Case = { text: string; expect: Expect; nums?: string[]; lacks?: string[] };
@@ -97,7 +97,7 @@ async function runTier(tier: ModelTier) {
         max_tokens: maxTokens,
         system: cachedSystemBlock(system),
         tools: [tool],
-        tool_choice: { type: 'tool', name: tool.name },
+        tool_choice: supportToolChoice(tier),
         messages: [{ role: 'user', content: user }],
       });
       lastUsage = res.usage as AnthropicUsage;

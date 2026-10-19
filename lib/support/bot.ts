@@ -87,7 +87,18 @@ const RULES = `أنت «الدعم» في منصة مُضاعِف (ai.modaafa.co
 - ردك دايماً عن طريق أداة reply، ولا شي غيرها.`;
 
 export function buildSupportSystemPrompt(): string {
-  return `${RULES}\n\n<knowledge>\n${buildSupportKnowledge()}\n</knowledge>`;
+  return `${RULES}\n\nرد دائماً باستدعاء أداة reply مرة وحدة، ولا ترد بنص حر خارجها.\n\n<knowledge>\n${buildSupportKnowledge()}\n</knowledge>`;
+}
+
+/**
+ * Haiku accepts a forced tool call. Sonnet and Opus 5.5 reject
+ * `tool_choice: { type: 'tool' }` with a 400, so for them the call is left to
+ * the model (the system prompt tells it to use `reply`). A reply that comes
+ * back without the tool call is already handled: finalizeReply gives the
+ * guarded fallback with the WhatsApp link.
+ */
+export function supportToolChoice(tier: string): { type: 'tool'; name: 'reply' } | { type: 'auto' } {
+  return tier === 'haiku' ? { type: 'tool', name: 'reply' } : { type: 'auto' };
 }
 
 export function supportReplyTool() {

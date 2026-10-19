@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { cachedSystemBlock, createMessageForAgent, hasAIBackend } from '@/lib/ai/client';
+import { cachedSystemBlock, createMessageForAgent, hasAIBackend, supportBotTier } from '@/lib/ai/client';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 import { isSameOriginRequest } from '@/lib/security/origin';
 import { createServerClient } from '@/lib/supabase/server';
 import { isSupportBotEnabled } from '@/lib/support/flag';
-import { answerSupport, extractReplyInput, normalizeTurns, sanitizePage, type SupportModelCall } from '@/lib/support/bot';
+import { answerSupport, extractReplyInput, normalizeTurns, sanitizePage, supportToolChoice, type SupportModelCall } from '@/lib/support/bot';
 import { supportBotHandoffUrl } from '@/lib/support/contact';
 
 /**
@@ -79,7 +79,7 @@ export async function POST(req: NextRequest) {
         max_tokens: maxTokens,
         system: cachedSystemBlock(system),
         tools: [tool],
-        tool_choice: { type: 'tool', name: tool.name },
+        tool_choice: supportToolChoice(supportBotTier()),
         messages: [{ role: 'user', content: user }],
       },
       { timeout: 20_000, maxRetries: 1 },

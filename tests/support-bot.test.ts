@@ -177,3 +177,15 @@ test('a model failure is left to the route, which turns it into a WhatsApp link'
   };
   await assert.rejects(() => answerSupport({ turns: ask('هلا'), signedIn: false }, boom), /overloaded/);
 });
+
+test('supportToolChoice forces the reply tool only for haiku', async () => {
+  const { supportToolChoice } = await import('../lib/support/bot');
+  assert.deepEqual(supportToolChoice('haiku'), { type: 'tool', name: 'reply' });
+  assert.deepEqual(supportToolChoice('sonnet'), { type: 'auto' });
+  assert.deepEqual(supportToolChoice('opus'), { type: 'auto' });
+});
+
+test('system prompt tells the model to answer through the reply tool', async () => {
+  const { buildSupportSystemPrompt } = await import('../lib/support/bot');
+  assert.match(buildSupportSystemPrompt(), /أداة reply/);
+});
