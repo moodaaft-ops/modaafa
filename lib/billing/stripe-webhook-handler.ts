@@ -417,7 +417,15 @@ export function createStripeWebhookHandler(
           const subscriptionId = invoiceSubscriptionId(invoice);
           if (!subscriptionId) break;
           const subscription = await dependencies.retrieveStripeSubscription(subscriptionId);
-          if (isUnactivatedArabicSubscription(subscription)) break;
+          if (isUnactivatedArabicSubscription(subscription)) {
+            // A paid invoice on a subscription Stripe has not yet marked active: the
+            // timing gap right after 3D Secure. Skipping would lose the invoice
+            // record for good, so the event is retried until the row exists.
+            if (invoice.status === 'paid') {
+              throw new Error('Arabic subscription is not active yet; retrying so the paid invoice is recorded');
+            }
+            break;
+          }
           await dependencies.applySubscriptionEvent(
             supabase,
             subscriptionSnapshotRow(dependencies, subscription, eventCreatedAt),

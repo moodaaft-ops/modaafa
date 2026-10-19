@@ -124,6 +124,8 @@ function statusForCode(code: string) {
   if (code.startsWith('promo_')) return 400;
   if (code === 'already_subscribed' || code === 'terms_changed') return 409;
   if (code === 'payment_processing') return 202;
+  if (code === 'payment_in_progress') return 409;
+  if (code === 'payment_status_unknown') return 502;
   if (code === 'setup_not_completed') return 409;
   if (code === 'checkout_failed') return 500;
   return 402;

@@ -67,7 +67,12 @@ async function post(path: string, body: Record<string, unknown>): Promise<ApiRes
     }
     return { ok: response.ok, status: response.status, json };
   } catch (error) {
-    const view = arabicCheckoutError(isNetworkFailure(error) ? 'network_error' : 'checkout_failed');
+    // Once the subscription may exist (the last two steps), a lost answer does not
+    // mean "nothing was charged", and the hosted page must not be offered as a retry.
+    const mayHaveCharged = path.endsWith('/subscribe') || path.endsWith('/finalize');
+    const view = arabicCheckoutError(
+      mayHaveCharged ? 'payment_status_unknown' : isNetworkFailure(error) ? 'network_error' : 'checkout_failed',
+    );
     return { ok: false, status: 0, json: { error: view.code, message: view.message, action: view.action } };
   }
 }
@@ -602,7 +607,7 @@ function FailureView(props: {
         {failureHeading(failure)}
       </h1>
       <div className="mt-4" role="alert">
-        <Alert tone={failure.action === 'continue' && failure.code === 'payment_processing' ? 'info' : 'danger'}>
+        <Alert tone={failure.action === 'continue' && ['payment_processing', 'payment_in_progress', 'payment_status_unknown'].includes(failure.code) ? 'info' : 'danger'}>
           {failure.message}
         </Alert>
       </div>

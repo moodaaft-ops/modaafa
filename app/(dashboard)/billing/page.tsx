@@ -283,9 +283,9 @@ export default async function BillingPage({
               اربط حساب إعلانات Google أولاً عشان تبدأ التجربة
             </Link>
           ) : !hasLiveSubscription && arabicCheckout ? (
-            <Link href={`${ARABIC_CHECKOUT_PATH}?plan=growth&period=${period}`} className={cn(pill.primary, 'inline-block text-center')}>
+            <a href={`${ARABIC_CHECKOUT_PATH}?plan=growth&period=${period}`} className={cn(pill.primary, 'inline-block text-center')}>
               {checkFailed ? 'حاول من جديد' : trialEligible ? 'ابدأ تجربة خطة النمو' : 'اشترك في خطة النمو'}
-            </Link>
+            </a>
           ) : !hasLiveSubscription ? (
             <form action="/api/billing/checkout" method="post">
               <input type="hidden" name="plan" value="growth" />
@@ -484,12 +484,12 @@ export default async function BillingPage({
                           </PendingSubmitButton>
                         </form>
                       ) : needsAccount ? null : arabicCheckout ? (
-                        <Link
+                        <a
                           href={`${ARABIC_CHECKOUT_PATH}?plan=${plan.id}&period=${period}`}
                           className={cn(primaryLook ? pill.primary : pill.quiet, 'inline-block w-full text-center')}
                         >
                           {checkFailed ? 'حاول من جديد' : trialEligible ? 'ابدأ تجربة 14 يوم' : 'اشترك الآن'}
-                        </Link>
+                        </a>
                       ) : (
                         <form action="/api/billing/checkout" method="post">
                           <input type="hidden" name="plan" value={plan.id} />

@@ -139,6 +139,18 @@ test('an unactivated subscription records no invoice either', async () => {
   assert.deepEqual(invoices, []);
 });
 
+test('a paid invoice on a not-yet-active subscription is retried, not dropped', async () => {
+  const live = subscription({ status: 'incomplete', trial_end: null });
+  const { send, writes, invoices } = harness(
+    event('invoice.payment_succeeded', { id: 'in_2', subscription: 'sub_arabic', status: 'paid', amount_paid: 50000 }, 'evt_inv_paid_early'),
+    live,
+  );
+  const response = await send();
+  assert.ok((response as Response).status >= 500, 'a failure status makes Stripe deliver the event again');
+  assert.equal(writes.length, 0);
+  assert.deepEqual(invoices, []);
+});
+
 test('a failed renewal after the trial is a normal past_due and still reaches the customer', async () => {
   const live = subscription({ status: 'past_due', trial_end: CREATED_AT - 86400 });
   const { send, writes, mails } = harness(

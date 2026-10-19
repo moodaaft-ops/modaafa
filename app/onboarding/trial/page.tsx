@@ -153,13 +153,13 @@ export default async function TrialPage({
               رجوع للنتائج
             </Link>
             {isArabicCheckoutAvailable() ? (
-              <Link
+              <a
                 href={`${ARABIC_CHECKOUT_PATH}?plan=${TRIAL_PLAN}&period=monthly&return_to=${ONBOARDING_CHECKOUT_RETURN}`}
                 className={buttonClasses({ variant: 'primary', size: 'lg' })}
               >
                 {checkFailed ? 'حاول من جديد' : trialEligible ? 'ابدأ التجربة' : 'اشترك الآن'}
                 <ArrowLeft className="h-4 w-4" />
-              </Link>
+              </a>
             ) : (
             <form action="/api/billing/start-trial" method="post">
               <input type="hidden" name="plan" value={TRIAL_PLAN} />

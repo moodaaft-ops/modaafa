@@ -95,7 +95,7 @@ test('no message uses a long dash, a Latin comma, or a banned phrase', () => {
   const codes = [
     'insufficient_funds', 'expired_card', 'incorrect_cvc', 'incomplete_number', 'network_error', 'rate_limit',
     'already_subscribed', 'card_trial_used', 'terms_changed', 'promo_invalid', 'promo_expired', 'setup_not_completed',
-    'payment_processing', 'subscription_conflict', 'checkout_failed', 'activation_failed', 'invalid_origin',
+    'payment_processing', 'payment_in_progress', 'payment_status_unknown', 'subscription_conflict', 'checkout_failed', 'activation_failed', 'invalid_origin',
     'google_ads_account_required', 'account_suspended', 'internal_access', 'trial_check_failed',
   ];
   for (const code of codes) {
@@ -103,5 +103,14 @@ test('no message uses a long dash, a Latin comma, or a banned phrase', () => {
     assert.doesNotMatch(message, /[—–]/, code);
     assert.doesNotMatch(message, /,/, code);
     assert.doesNotMatch(message, /باختصار|في النهاية|لا تفوت|علاوة على ذلك/, code);
+  }
+});
+
+test('an unknown outcome never claims nothing was charged and sends the customer to the billing page', () => {
+  for (const code of ['payment_status_unknown', 'payment_in_progress', 'payment_processing']) {
+    const view = arabicCheckoutError(code);
+    assert.equal(view.action, 'continue', code);
+    assert.doesNotMatch(view.message, /ما انخصم شي/, code);
+    assert.match(view.message, /لا تعيد الدفع/, code);
   }
 });

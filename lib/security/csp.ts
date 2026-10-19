@@ -52,7 +52,7 @@ export function buildContentSecurityPolicy(nonce: string, options: ContentSecuri
     "object-src 'none'",
     // The host is only the fallback for browsers without 'strict-dynamic'; the
     // ones that have it trust Stripe.js because our own nonced bundle loads it.
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${stripe ? ' https://js.stripe.com' : ''}`,
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${stripe ? ' https://js.stripe.com https://*.js.stripe.com' : ''}`,
     "style-src 'self' 'unsafe-inline'",
     `img-src 'self' data: blob: https://lh3.googleusercontent.com https://modaafa.com https://analytics.tiktok.com${stripe ? ' https://*.stripe.com' : ''}`,
     "font-src 'self' data:",
@@ -67,7 +67,7 @@ export function buildContentSecurityPolicy(nonce: string, options: ContentSecuri
     // default-src 'self' anyway; it is spelled out so the intent is visible.
     "worker-src 'self'",
     "manifest-src 'self'",
-    `frame-src https://www.youtube-nocookie.com${stripe ? ' https://js.stripe.com https://hooks.stripe.com' : ''}`,
+    `frame-src https://www.youtube-nocookie.com${stripe ? ' https://js.stripe.com https://*.js.stripe.com https://hooks.stripe.com' : ''}`,
     `connect-src 'self' https://*.supabase.co wss://*.supabase.co https://analytics.tiktok.com https://analytics-ipv6.tiktokw.us${stripe ? ' https://api.stripe.com' : ''}`,
     'upgrade-insecure-requests',
   ].join('; ');

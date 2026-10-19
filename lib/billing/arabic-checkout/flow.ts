@@ -28,6 +28,8 @@ export interface ArabicCheckoutStripeApi {
   retrieveSubscription(id: string): Promise<Loose>;
   listCustomerSubscriptions(customerId: string): Promise<Loose[]>;
   cancelSubscription(id: string): Promise<Loose>;
+  /** Voids an open invoice (which also cancels its payment attempt). Best effort. */
+  voidInvoice?(id: string): Promise<Loose>;
   findPromotionCode(code: string): Promise<Loose | null>;
 }
 
@@ -45,6 +47,34 @@ export class ArabicCheckoutError extends Error {
 }
 
 const LIVE_STRIPE_STATUSES = new Set(['trialing', 'active', 'past_due', 'unpaid', 'paused']);
+
+/**
+ * After the bank says "paid", Stripe moves the subscription from `incomplete` to
+ * `active` a moment later. The subscription is read again a few times before the
+ * customer is told it is still pending. Replaceable so tests do not sleep.
+ */
+export const settleControl = {
+  delaysMs: [600, 1200, 2400],
+  wait: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+};
+
+/** A payment attempt that may still turn into a charge. */
+const PAYMENT_IN_PROGRESS_WINDOW_MS = 30 * 60 * 1000;
+
+function paymentIntentOf(subscription: Loose): Loose | null {
+  const intent = subscription?.latest_invoice?.payment_intent;
+  return intent && typeof intent === 'object' ? intent : null;
+}
+
+function invoiceIsPaid(subscription: Loose) {
+  const invoice = subscription?.latest_invoice;
+  return !!invoice && typeof invoice === 'object' && invoice.status === 'paid';
+}
+
+/** Money has been taken (or is certain to be) for the first invoice. */
+function firstPaymentWentThrough(subscription: Loose) {
+  return paymentIntentOf(subscription)?.status === 'succeeded' || invoiceIsPaid(subscription);
+}
 
 export function planPriceId(plan: PlanKey, period: PeriodKey) {
   const priceId = PLAN_PRICE_IDS[plan]?.[period];
@@ -234,16 +264,23 @@ export async function startArabicSubscription(
     return interpretSubscription(stripe, await stripe.retrieveSubscription(sameIntent.id), { afterAction: false });
   }
   // A leftover `incomplete` subscription (an abandoned 3D Secure) holds no money
-  // but would sit beside the new one. It is closed first.
-  for (const candidate of existing) {
-    if (candidate.status === 'incomplete') {
-      try {
-        await stripe.cancelSubscription(candidate.id);
-      } catch (error) {
-        console.warn('Could not close a leftover incomplete subscription', { id: candidate.id, error });
-      }
+  // and is closed so it cannot sit beside the new one. But one whose payment is
+  // still moving (another tab in the middle of 3D Secure, a payment the bank has
+  // not answered, or one that already went through) is left alone: closing it
+  // could kill a charge that is about to succeed and then charge a second time.
+  const leftovers = existing.filter((candidate) => candidate !== sameIntent && candidate.status === 'incomplete');
+  for (const candidate of leftovers) {
+    const intent = paymentIntentOf(candidate);
+    const ageMs = Date.now() - Number(candidate.created ?? 0) * 1000;
+    if (firstPaymentWentThrough(candidate)) throw new ArabicCheckoutError('payment_processing');
+    if (
+      (intent?.status === 'processing' || intent?.status === 'requires_action') &&
+      ageMs < PAYMENT_IN_PROGRESS_WINDOW_MS
+    ) {
+      throw new ArabicCheckoutError('payment_in_progress');
     }
   }
+  for (const candidate of leftovers) await closeUnpaidSubscription(stripe, candidate);
 
   const params: Loose = {
     customer: input.customerId,
@@ -265,10 +302,28 @@ export async function startArabicSubscription(
   if (input.promotionCodeId) params.discounts = [{ promotion_code: input.promotionCodeId }];
 
   // Keyed on the SetupIntent: the same card cannot become two subscriptions.
-  const created = await stripe.createSubscription(params, `modaafa-arabic-sub:${input.setupIntentId}`);
-  // Read it again rather than trust the response: Stripe replays the first
-  // response for a repeated key, and that snapshot can be out of date.
-  return interpretSubscription(stripe, await stripe.retrieveSubscription(created.id), { afterAction: false });
+  let created: Loose;
+  try {
+    created = await stripe.createSubscription(params, `modaafa-arabic-sub:${input.setupIntentId}`);
+  } catch (error) {
+    // A card decline or a rejected request means nothing was charged. A lost
+    // connection or a Stripe server error may mean the subscription exists, so the
+    // customer is told the truth: the state is unknown, do not pay again.
+    const type = (error as { type?: string } | null)?.type;
+    if (type === 'StripeCardError' || type === 'StripeInvalidRequestError' || type === 'StripeRateLimitError') throw error;
+    console.error('Arabic checkout: subscription create result unknown', { setupIntentId: input.setupIntentId, error });
+    throw new ArabicCheckoutError('payment_status_unknown');
+  }
+  // From here a subscription exists. Any failure below must not claim nothing was charged.
+  try {
+    // Read it again rather than trust the response: Stripe replays the first
+    // response for a repeated key, and that snapshot can be out of date.
+    return await interpretSubscription(stripe, await stripe.retrieveSubscription(created.id), { afterAction: false });
+  } catch (error) {
+    if (error instanceof ArabicCheckoutError) throw error;
+    console.error('Arabic checkout: could not read the subscription after creating it', { id: created?.id, error });
+    throw new ArabicCheckoutError('payment_status_unknown');
+  }
 }
 
 /**
@@ -277,14 +332,19 @@ export async function startArabicSubscription(
  */
 export async function finalizeArabicSubscription(
   stripe: ArabicCheckoutStripeApi,
-  input: { userId: string; customerId: string; subscriptionId: string },
+  /**
+   * Ownership comes from the metadata this server wrote on the subscription. The
+   * customer is not looked up again: a second lookup can land on a different
+   * Stripe customer than the one the subscription was made on.
+   */
+  input: { userId: string; subscriptionId: string; customerId?: string },
 ) {
   const subscription = await stripe.retrieveSubscription(input.subscriptionId);
   const customer = typeof subscription.customer === 'string' ? subscription.customer : subscription.customer?.id;
   if (
     subscription.metadata?.source !== ARABIC_CHECKOUT_SOURCE ||
     subscription.metadata?.userId !== input.userId ||
-    customer !== input.customerId
+    (input.customerId !== undefined && customer !== input.customerId)
   ) {
     throw new ArabicCheckoutError('setup_not_completed');
   }
@@ -295,33 +355,58 @@ export async function finalizeArabicSubscription(
 
 async function interpretSubscription(
   stripe: ArabicCheckoutStripeApi,
-  subscription: Loose,
+  initial: Loose,
   options: { afterAction: boolean },
 ): Promise<SubscriptionOutcome> {
+  let subscription = initial;
   if (subscription.status === 'trialing' || subscription.status === 'active') {
     return { kind: 'ready', subscription };
   }
 
-  const intent = subscription.latest_invoice?.payment_intent;
-  const intentObject = intent && typeof intent === 'object' ? intent : null;
-
   if (subscription.status === 'incomplete') {
-    if (intentObject?.status === 'requires_action' && !options.afterAction && intentObject.client_secret) {
+    const firstIntent = paymentIntentOf(subscription);
+    if (firstIntent?.status === 'requires_action' && !options.afterAction && firstIntent.client_secret) {
       return {
         kind: 'requires_action',
         subscriptionId: String(subscription.id),
-        clientSecret: String(intentObject.client_secret),
+        clientSecret: String(firstIntent.client_secret),
       };
     }
-    if (intentObject?.status === 'processing') {
-      // The bank has not answered. Cancelling now could race a charge that is
-      // about to succeed, so it is left alone and the webhook finishes it.
+
+    // The bank already said yes, but Stripe has not moved the subscription to
+    // `active` yet. Read it again a few times; cancelling here would take a
+    // payment that went through and leave the customer with no plan.
+    if (firstPaymentWentThrough(subscription)) {
+      for (const delay of settleControl.delaysMs) {
+        await settleControl.wait(delay);
+        subscription = await stripe.retrieveSubscription(String(initial.id));
+        if (subscription.status === 'trialing' || subscription.status === 'active') {
+          return { kind: 'ready', subscription };
+        }
+        if (!firstPaymentWentThrough(subscription)) break;
+      }
+      if (subscription.status === 'incomplete' && firstPaymentWentThrough(subscription)) {
+        // Paid, not yet active. The update event from Stripe finishes it.
+        throw new ArabicCheckoutError('payment_processing');
+      }
+    }
+
+    const intent = paymentIntentOf(subscription);
+    const lastError = intent?.last_payment_error;
+    const definitelyNotPaid =
+      intent?.status === 'requires_payment_method' ||
+      intent?.status === 'canceled' ||
+      // The browser ran the 3D Secure prompt and it is still waiting: abandoned.
+      (intent?.status === 'requires_action' && options.afterAction);
+    if (!definitelyNotPaid) {
+      // Processing, or a state this code does not know. Not closed: a charge may
+      // be about to succeed, and the webhook finishes it either way.
       throw new ArabicCheckoutError('payment_processing');
     }
-    // Declined, or a 3D Secure prompt that was not completed. Nothing was
-    // charged, and the half-made subscription is closed so it cannot linger.
-    await cancelQuietly(stripe, String(subscription.id));
-    const lastError = intentObject?.last_payment_error;
+
+    // Declined, or a 3D Secure prompt that was not completed. Nothing was charged,
+    // and the half-made subscription is closed so it cannot linger.
+    await closeUnpaidSubscription(stripe, subscription);
     throw new ArabicCheckoutError(
       lastError?.code ?? (options.afterAction ? 'payment_intent_authentication_failure' : 'card_declined'),
       lastError?.decline_code ?? null,
@@ -329,7 +414,7 @@ async function interpretSubscription(
   }
 
   if (subscription.status === 'canceled' || subscription.status === 'incomplete_expired') {
-    const lastError = intentObject?.last_payment_error;
+    const lastError = paymentIntentOf(subscription)?.last_payment_error;
     throw new ArabicCheckoutError(lastError?.code ?? 'card_declined', lastError?.decline_code ?? null);
   }
 
@@ -337,10 +422,25 @@ async function interpretSubscription(
   throw new ArabicCheckoutError('processing_error');
 }
 
-async function cancelQuietly(stripe: ArabicCheckoutStripeApi, subscriptionId: string) {
+/**
+ * Closes a subscription whose first payment did not happen. The open invoice is
+ * voided first (that also cancels its payment attempt), so a 3D Secure window
+ * left open somewhere cannot still collect money for a cancelled subscription.
+ * Both steps are best effort; a failure is logged, never thrown.
+ */
+async function closeUnpaidSubscription(stripe: ArabicCheckoutStripeApi, subscription: Loose) {
+  const invoice = subscription?.latest_invoice;
+  const invoiceId = typeof invoice === 'string' ? invoice : invoice?.id;
+  if (invoiceId && stripe.voidInvoice && (typeof invoice === 'string' || invoice.status === 'open')) {
+    try {
+      await stripe.voidInvoice(String(invoiceId));
+    } catch (error) {
+      console.warn('Could not void the open invoice of an unpaid subscription', { invoiceId, error });
+    }
+  }
   try {
-    await stripe.cancelSubscription(subscriptionId);
+    await stripe.cancelSubscription(String(subscription.id));
   } catch (error) {
-    console.error('Could not cancel an unpaid subscription after a failed first payment', { subscriptionId, error });
+    console.error('Could not cancel an unpaid subscription', { subscriptionId: subscription.id, error });
   }
 }

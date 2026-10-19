@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { arabicCheckoutStripe, ensureStripeCustomer } from '@/lib/billing/stripe';
+import { arabicCheckoutStripe } from '@/lib/billing/stripe';
 import { finalizeArabicSubscription } from '@/lib/billing/arabic-checkout/flow';
 import { checkoutFailure, describeFailure, lightGate } from '@/lib/billing/arabic-checkout/gate';
 import { finishArabicActivation } from '@/lib/billing/arabic-checkout/finish';
@@ -22,7 +22,6 @@ export const runtime = 'nodejs';
 export async function POST(req: NextRequest) {
   const gate = await lightGate(req, 'billing_arabic_finalize', 12);
   if (!gate.ok) return gate.response;
-  if (!gate.user.email) return checkoutFailure('unauthorized', 401);
 
   let body: { subscription_id?: unknown; return_to?: unknown } = {};
   try {
@@ -34,10 +33,11 @@ export async function POST(req: NextRequest) {
   if (!/^sub_[A-Za-z0-9]+$/.test(subscriptionId)) return checkoutFailure('setup_not_completed', 400);
 
   try {
-    const customerId = await ensureStripeCustomer({ userId: gate.user.id, email: gate.user.email });
+    // Ownership is read from the metadata this server wrote on the subscription.
+    // The customer is not looked up again: the lookup can land on another Stripe
+    // customer than the one the subscription was made on.
     const subscription = await finalizeArabicSubscription(arabicCheckoutStripe, {
       userId: gate.user.id,
-      customerId,
       subscriptionId,
     });
     return await finishArabicActivation({ userId: gate.user.id, subscription, returnTo: body.return_to });

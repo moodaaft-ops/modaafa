@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { arabicCheckoutStripe, ensureStripeCustomer, getPlanPriceAmounts } from '@/lib/billing/stripe';
 import { firstChargeAfterDiscount, resolvePromotionCode } from '@/lib/billing/arabic-checkout/flow';
 import { checkoutFailure, describeFailure, lightGate } from '@/lib/billing/arabic-checkout/gate';
+import { getBillingCheckoutContext } from '@/lib/billing/checkout-policy';
 
 export const runtime = 'nodejs';
 
@@ -28,7 +29,14 @@ export async function POST(req: NextRequest) {
   if (period !== 'monthly' && period !== 'yearly') return checkoutFailure('invalid_period', 400);
 
   try {
-    const customerId = await ensureStripeCustomer({ userId: gate.user.id, email: gate.user.email });
+    // The same customer record /subscribe uses, so the code is judged for the
+    // customer that will actually be charged.
+    const billing = await getBillingCheckoutContext(gate.supabase, gate.user.id, gate.user.email);
+    const customerId = await ensureStripeCustomer({
+      userId: gate.user.id,
+      email: gate.user.email,
+      existingCustomerId: billing.stripeCustomerId,
+    });
     const promotion = await resolvePromotionCode(arabicCheckoutStripe, String(body.code ?? ''), { customerId });
     const price = (await getPlanPriceAmounts())?.[plan]?.[period] ?? null;
     return NextResponse.json({

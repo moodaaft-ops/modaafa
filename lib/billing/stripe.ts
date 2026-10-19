@@ -392,8 +392,18 @@ export const arabicCheckoutStripe = {
     getStripe().subscriptions.create(params, { idempotencyKey }),
   retrieveSubscription: (id: string) =>
     getStripe().subscriptions.retrieve(id, { expand: ['latest_invoice.payment_intent'] }),
-  listCustomerSubscriptions: async (customerId: string) =>
-    (await getStripe().subscriptions.list({ customer: customerId, status: 'all', limit: 20 })).data,
+  // Every subscription of the customer (not just the first page), with the first
+  // payment attempt attached so a payment still in motion can be recognised.
+  listCustomerSubscriptions: (customerId: string) =>
+    getStripe()
+      .subscriptions.list({
+        customer: customerId,
+        status: 'all',
+        limit: 100,
+        expand: ['data.latest_invoice.payment_intent'],
+      })
+      .autoPagingToArray({ limit: 500 }),
+  voidInvoice: (id: string) => getStripe().invoices.voidInvoice(id),
   // No proration and no final invoice: the same spelled-out defaults as the
   // abuse cancellation above.
   cancelSubscription: (id: string) => getStripe().subscriptions.cancel(id, { invoice_now: false, prorate: false }),

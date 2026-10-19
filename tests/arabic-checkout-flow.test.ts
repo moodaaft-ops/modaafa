@@ -8,11 +8,14 @@ import {
   finalizeArabicSubscription,
   firstChargeAfterDiscount,
   resolvePromotionCode,
+  settleControl,
   startArabicSubscription,
   type ArabicCheckoutStripeApi,
 } from '../lib/billing/arabic-checkout/flow';
 
 PLAN_PRICE_IDS.growth.monthly = 'price_growth_monthly_test';
+settleControl.delaysMs = [0, 0, 0];
+settleControl.wait = async () => {};
 
 const USER = 'user-1';
 const CUSTOMER = 'cus_1';
@@ -317,4 +320,163 @@ test('a code made for this customer works, and the first charge after a discount
   assert.equal(firstChargeAfterDiscount(50, 'sar', { percentOff: null, amountOff: 100, currency: 'sar' }), 0);
   assert.equal(firstChargeAfterDiscount(500, 'sar', { percentOff: null, amountOff: 10, currency: 'usd' }), 500);
   assert.equal(firstChargeAfterDiscount(500, 'sar', null), 500);
+});
+
+// ---- Independent review findings --------------------------------------------
+
+test('paid but not yet active: finalize waits for Stripe and never cancels a payment that went through', async () => {
+  const paidButIncomplete = subscription({
+    status: 'incomplete',
+    latest_invoice: { status: 'paid', payment_intent: { status: 'succeeded' } },
+  });
+  let reads = 0;
+  const { stripe, calls } = fakeStripe({
+    retrieveSubscription: async () => {
+      reads += 1;
+      // The first read is the early one; the second already shows the activation.
+      return reads >= 2 ? subscription({ status: 'active' }) : paidButIncomplete;
+    },
+  });
+  const result = await finalizeArabicSubscription(stripe, { userId: USER, subscriptionId: 'sub_1' });
+  assert.equal(result.status, 'active');
+  assert.deepEqual(calls.canceled, []);
+});
+
+test('paid but still not active after the waits: told to wait, never cancelled, never "declined"', async () => {
+  const stuck = subscription({
+    status: 'incomplete',
+    latest_invoice: { status: 'paid', payment_intent: { status: 'succeeded' } },
+  });
+  const { stripe, calls } = fakeStripe({ sub: stuck });
+  const failure = await codeOf(finalizeArabicSubscription(stripe, { userId: USER, subscriptionId: 'sub_1' }));
+  assert.equal(failure.code, 'payment_processing');
+  assert.deepEqual(calls.canceled, []);
+});
+
+test('the same state straight after creating the subscription is also left alone', async () => {
+  const stuck = subscription({
+    status: 'incomplete',
+    latest_invoice: { status: 'paid', payment_intent: { status: 'succeeded' } },
+  });
+  const { stripe, calls } = fakeStripe({ sub: stuck });
+  assert.equal((await codeOf(start(stripe))).code, 'payment_processing');
+  assert.deepEqual(calls.canceled, []);
+});
+
+test('an unknown payment state is not cancelled either', async () => {
+  const odd = subscription({ status: 'incomplete', latest_invoice: { payment_intent: { status: 'requires_capture' } } });
+  const { stripe, calls } = fakeStripe({ sub: odd });
+  assert.equal((await codeOf(start(stripe))).code, 'payment_processing');
+  assert.deepEqual(calls.canceled, []);
+});
+
+test('closing an unpaid subscription voids its open invoice first', async () => {
+  const voided: string[] = [];
+  const declined = subscription({
+    status: 'incomplete',
+    latest_invoice: { id: 'in_1', status: 'open', payment_intent: { status: 'requires_payment_method' } },
+  });
+  const { stripe, calls } = fakeStripe({
+    sub: declined,
+    voidInvoice: async (id: string) => {
+      voided.push(id);
+      return {};
+    },
+  });
+  await codeOf(start(stripe));
+  assert.deepEqual(voided, ['in_1']);
+  assert.deepEqual(calls.canceled, ['sub_1']);
+});
+
+test('a failed void does not stop the cancel', async () => {
+  const declined = subscription({
+    status: 'incomplete',
+    latest_invoice: { id: 'in_1', status: 'open', payment_intent: { status: 'requires_payment_method' } },
+  });
+  const { stripe, calls } = fakeStripe({
+    sub: declined,
+    voidInvoice: async () => {
+      throw new Error('already void');
+    },
+  });
+  await codeOf(start(stripe));
+  assert.deepEqual(calls.canceled, ['sub_1']);
+});
+
+test('another tab in the middle of 3D Secure is not cancelled, and no second subscription is made', async () => {
+  const other = {
+    id: 'sub_other',
+    status: 'incomplete',
+    created: Math.floor(Date.now() / 1000) - 60,
+    metadata: { source: 'arabic_checkout', setup_intent: 'seti_other' },
+    latest_invoice: { payment_intent: { status: 'requires_action' } },
+  };
+  const { stripe, calls } = fakeStripe({ existing: [other] });
+  assert.equal((await codeOf(start(stripe))).code, 'payment_in_progress');
+  assert.deepEqual(calls.canceled, []);
+  assert.equal(calls.created.length, 0);
+});
+
+test('an old abandoned 3D Secure (hours ago) is closed as before', async () => {
+  const old = {
+    id: 'sub_old',
+    status: 'incomplete',
+    created: Math.floor(Date.now() / 1000) - 5 * 3600,
+    metadata: { source: 'arabic_checkout', setup_intent: 'seti_old' },
+    latest_invoice: { payment_intent: { status: 'requires_action' } },
+  };
+  const { stripe, calls } = fakeStripe({ existing: [old] });
+  await start(stripe);
+  assert.deepEqual(calls.canceled, ['sub_old']);
+});
+
+test('a leftover whose payment already went through blocks a new subscription instead of being cancelled', async () => {
+  const paid = {
+    id: 'sub_paid',
+    status: 'incomplete',
+    created: Math.floor(Date.now() / 1000) - 120,
+    metadata: { source: 'arabic_checkout', setup_intent: 'seti_other' },
+    latest_invoice: { status: 'paid', payment_intent: { status: 'succeeded' } },
+  };
+  const { stripe, calls } = fakeStripe({ existing: [paid] });
+  assert.equal((await codeOf(start(stripe))).code, 'payment_processing');
+  assert.deepEqual(calls.canceled, []);
+  assert.equal(calls.created.length, 0);
+});
+
+test('a lost connection while creating the subscription says the state is unknown, not "nothing charged"', async () => {
+  const { stripe } = fakeStripe({
+    createSubscription: async () => {
+      throw Object.assign(new Error('socket hang up'), { type: 'StripeConnectionError' });
+    },
+  });
+  assert.equal((await codeOf(start(stripe))).code, 'payment_status_unknown');
+});
+
+test('a rejected request or a card error while creating is passed through as before', async () => {
+  const cardError = Object.assign(new Error('declined'), { type: 'StripeCardError', code: 'card_declined' });
+  const { stripe } = fakeStripe({
+    createSubscription: async () => {
+      throw cardError;
+    },
+  });
+  await assert.rejects(start(stripe), (error) => error === cardError);
+});
+
+test('a failure reading the subscription after it was created also says the state is unknown', async () => {
+  let reads = 0;
+  const { stripe } = fakeStripe({
+    retrieveSubscription: async () => {
+      reads += 1;
+      throw new Error('timeout');
+    },
+  });
+  assert.equal((await codeOf(start(stripe))).code, 'payment_status_unknown');
+  assert.equal(reads, 1);
+});
+
+test('finalize does not depend on a second customer lookup', async () => {
+  const { stripe } = fakeStripe({ sub: subscription({ status: 'active', customer: 'cus_made_on_other_record' }) });
+  const result = await finalizeArabicSubscription(stripe, { userId: USER, subscriptionId: 'sub_1' });
+  assert.equal(result.status, 'active');
 });
