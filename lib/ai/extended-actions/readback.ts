@@ -3,6 +3,8 @@ import { readCampaignState, readNegativeLists, readSubscriptions } from './prefl
 import { scheduleCriteriaFromRows } from './schedule';
 import { slotMinutes } from './validate';
 import { isAdsStudioOperation } from '../../ads/studio/types';
+import { isStructureOperation } from '../../structure/types';
+import { readbackStructureAction } from '../../structure/readback';
 import { readbackAdsStudioAction } from '../../ads/studio/readback';
 
 /**
@@ -40,6 +42,7 @@ function criterionRows(rows: any[]) {
 
 export async function readbackExtendedAction(action: OptimizerAction, customer: any): Promise<ReadbackResult> {
   if (isAdsStudioOperation(action.type)) return readbackAdsStudioAction(action, customer);
+  if (isStructureOperation(action.type)) return readbackStructureAction(action, customer);
   try {
     const params = action.params as Record<string, any>;
     const resolved = (params.resolved ?? {}) as Record<string, any>;

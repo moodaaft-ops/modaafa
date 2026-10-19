@@ -12,6 +12,7 @@
  */
 
 import { ADS_STUDIO_OPERATIONS } from '../../ads/studio/types';
+import { STRUCTURE_OPERATIONS, STRUCTURE_TARGETING_FAMILY } from '../../structure/types';
 
 export const EXTENDED_OPERATIONS = [
   'set_ad_schedule',
@@ -28,6 +29,8 @@ export const EXTENDED_OPERATIONS = [
   'pause_auto_apply',
   // Ad copy and assets: also need ADS_STUDIO_ENABLED (see lib/ads/studio).
   ...ADS_STUDIO_OPERATIONS,
+  // Account structure (AI Max, placement exclusions, shared budgets, portfolio strategies, listing groups).
+  ...STRUCTURE_OPERATIONS,
 ] as const;
 
 export type ExtendedOperation = (typeof EXTENDED_OPERATIONS)[number];
@@ -46,6 +49,7 @@ export const CAMPAIGN_TARGETING_FAMILY: Readonly<Record<string, string>> = {
   set_location_bid_modifier: 'location',
   set_geo_target_type: 'geo_type',
   set_network_settings: 'network',
+  ...STRUCTURE_TARGETING_FAMILY,
 };
 
 export const DAYS_OF_WEEK = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'] as const;

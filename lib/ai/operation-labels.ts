@@ -23,6 +23,16 @@ export const EXTENDED_OPERATION_LABELS_AR: Record<string, string> = {
   add_callouts: 'إضافة نصوص مميزة للحملة',
   add_structured_snippet: 'إضافة مقتطف منظم للحملة',
   add_call_asset: 'إضافة رقم اتصال للحملة',
+  set_ai_max: 'تغيير إعداد ذكاء ماكس للبحث',
+  add_placement_exclusions: 'استبعاد مواقع ومحتوى من الإعلانات المصورة',
+  create_shared_budget: 'إنشاء ميزانية مشتركة بين حملات',
+  attach_shared_budget: 'ضم حملات إلى ميزانية مشتركة',
+  detach_shared_budget: 'فصل حملة عن الميزانية المشتركة',
+  create_portfolio_strategy: 'إنشاء استراتيجية مزايدة مشتركة',
+  attach_portfolio_strategy: 'ضم حملات إلى استراتيجية مزايدة مشتركة',
+  detach_portfolio_strategy: 'فصل حملة عن استراتيجية المزايدة المشتركة',
+  subdivide_shopping_listing_group: 'تقسيم منتجات حملة التسوق',
+  subdivide_pmax_listing_group: 'تقسيم منتجات الحملة الأقصى',
 };
 
 export const OPERATION_LABELS_AR: Record<string, string> = {

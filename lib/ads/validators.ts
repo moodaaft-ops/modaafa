@@ -18,7 +18,10 @@ export type AssetTextKind =
   | 'sitelink_text'
   | 'sitelink_description'
   | 'snippet_value'
-  | 'path';
+  | 'path'
+  // Performance Max asset group text (CAMPAIGN_LAUNCH_PMAX_ENABLED).
+  | 'long_headline'
+  | 'business_name';
 
 export const ASSET_LIMITS: Readonly<Record<AssetTextKind, { min: number; max: number }>> = {
   headline: { min: 3, max: 30 },
@@ -28,6 +31,8 @@ export const ASSET_LIMITS: Readonly<Record<AssetTextKind, { min: number; max: nu
   sitelink_description: { min: 5, max: 35 },
   snippet_value: { min: 2, max: 25 },
   path: { min: 1, max: 15 },
+  long_headline: { min: 10, max: 90 },
+  business_name: { min: 2, max: 25 },
 };
 
 export const RSA_LIMITS = {
@@ -278,14 +283,22 @@ export function validateAssetText(raw: unknown, kind: AssetTextKind, options: Va
 
   // Punctuation discipline (Google also refuses "!" in headlines).
   const exclaims = (text.match(/[!！]/g) ?? []).length;
-  if (kind === 'headline' || kind === 'callout' || kind === 'sitelink_text' || kind === 'snippet_value' || kind === 'path') {
+  if (
+    kind === 'headline' ||
+    kind === 'callout' ||
+    kind === 'sitelink_text' ||
+    kind === 'snippet_value' ||
+    kind === 'path' ||
+    kind === 'long_headline' ||
+    kind === 'business_name'
+  ) {
     if (exclaims > 0) return fail('exclamation');
   } else if (exclaims > 1) {
     return fail('too_many_exclamations');
   }
   if (/[!?؟.،:؛…]{2,}/u.test(text.replace(/\s/g, '')) || /\.{2,}|…/.test(text)) return fail('repeated_punctuation');
   const marks = (text.match(/[!?؟.،:؛]/g) ?? []).length;
-  const maxMarks = kind === 'description' || kind === 'sitelink_description' ? 3 : 1;
+  const maxMarks = kind === 'description' || kind === 'sitelink_description' ? 3 : kind === 'long_headline' ? 2 : 1;
   if (marks > maxMarks) return fail('too_much_punctuation');
   if (/^[^\p{L}\p{N}]/u.test(text)) return fail('starts_with_symbol');
   if (kind !== 'description' && kind !== 'sitelink_description' && /[.]$/.test(text)) return fail('trailing_period');

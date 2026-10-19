@@ -69,6 +69,14 @@ export const MEASURED_ACTION_TYPES = [
   'set_location_bid_modifier',
   'set_geo_target_type',
   'set_network_settings',
+  // Account structure: a campaign-level before/after window.
+  'set_ai_max',
+  'create_shared_budget',
+  'attach_shared_budget',
+  'detach_shared_budget',
+  'create_portfolio_strategy',
+  'attach_portfolio_strategy',
+  'detach_portfolio_strategy',
   // Ad copy swap: measured at ad group level (ADS_STUDIO_ENABLED).
   'replace_rsa_assets',
 ];

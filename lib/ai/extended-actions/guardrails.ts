@@ -1,6 +1,12 @@
 import type { OptimizerAction } from '../optimizer-agent';
 import { CAMPAIGN_TARGETING_FAMILY, isExtendedOperation } from './types';
 import { validateExtendedPayload } from './validate';
+import {
+  BIDDING_STRUCTURE_LOCK_DAYS,
+  BUDGET_STRUCTURE_LOCK_DAYS,
+  STRUCTURE_BIDDING_OPERATIONS,
+  STRUCTURE_BUDGET_OPERATIONS,
+} from '../../structure/types';
 
 /**
  * Last gate before the live mutate for the extended actions, called from
@@ -63,6 +69,28 @@ export async function checkExtendedGuardrails(
       (row: any) => String(row?.payload?.action?.params?.campaign_resource ?? '') === campaign
     );
     if (locked) return { ok: false, code: 'targeting_locked_recent_change' };
+  }
+  // Shared budgets and portfolio strategies: one change per campaign per week
+  // (budget) or per two weeks (bidding), counted across the structure actions
+  // of the same kind. Fails closed when the history is unreadable.
+  const isBudget = STRUCTURE_BUDGET_OPERATIONS.has(action.type);
+  const isBidding = STRUCTURE_BIDDING_OPERATIONS.has(action.type);
+  if (applyLocks && (isBudget || isBidding)) {
+    const params = action.params as Record<string, unknown>;
+    const campaignsOf = (p: Record<string, unknown>): string[] =>
+      Array.isArray(p.campaign_resources) ? (p.campaign_resources as string[]) : p.campaign_resource ? [String(p.campaign_resource)] : [];
+    const mine = new Set<string>(campaignsOf(params));
+    const days = isBudget ? BUDGET_STRUCTURE_LOCK_DAYS : BIDDING_STRUCTURE_LOCK_DAYS;
+    const types = [...(isBudget ? STRUCTURE_BUDGET_OPERATIONS : STRUCTURE_BIDDING_OPERATIONS)];
+    const { data, error: historyError } = await supabase
+      .from('ai_actions')
+      .select('action_type, payload, created_at')
+      .eq('account_id', accountId)
+      .in('action_type', types)
+      .gte('created_at', new Date(nowMs - days * DAY_MS).toISOString());
+    if (historyError) return { ok: false, code: 'structure_history_unreadable' };
+    const locked = (data ?? []).some((row: any) => campaignsOf(row?.payload?.action?.params ?? {}).some((c) => mine.has(c)));
+    if (locked) return { ok: false, code: isBudget ? 'budget_locked_recent_change' : 'bidding_locked_recent_change' };
   }
   return { ok: true };
 }

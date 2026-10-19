@@ -2,6 +2,8 @@ import { DAYS_OF_WEEK } from './types';
 import { modifierToPct } from './validate';
 import { adsStudioPreviewRows } from '../../ads/studio/preview';
 import { isAdsStudioOperation } from '../../ads/studio/types';
+import { isStructureOperation } from '../../structure/types';
+import { structurePreviewRows } from '../../structure/preview';
 
 /**
  * Approval-card rows for the extended operations. Pure, so the optimizer page
@@ -41,6 +43,7 @@ export function extendedPreviewRows(operation: string, params: Record<string, an
       operation !== 'replace_rsa_assets' && target ? [{ label: 'الحملة', value: String(target), ltr: true }] : [];
     return [...head, ...adsStudioPreviewRows(operation, params, targetId)];
   }
+  if (isStructureOperation(operation)) return structurePreviewRows(operation, params, targetId);
   const rows: PreviewRow[] = [];
   const campaign = params.campaign_resource ?? targetId;
   if (campaign && !String(operation).includes('shared') && !String(operation).includes('recommendation') && operation !== 'pause_auto_apply') {

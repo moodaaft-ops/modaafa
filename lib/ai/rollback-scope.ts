@@ -48,6 +48,8 @@ const EXTENDED_NAME_LISTS = [
   'pause_ads',
   'reenable_ads',
   'remove_campaign_assets',
+  // Account structure (steps' resource names)
+  'struct_names',
 ];
 
 function extendedRollbackScoped(rollback: Record<string, any>, prefix: string): boolean {

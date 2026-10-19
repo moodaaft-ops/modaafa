@@ -13,6 +13,8 @@ import type { SharedKeyword } from './validate';
 import { isAdsStudioOperation } from '../../ads/studio/types';
 import { prepareAdsStudioAction } from '../../ads/studio/preflight';
 import { isAdsStudioActive } from '../../ads/flag';
+import { isStructureOperation } from '../../structure/types';
+import { prepareStructureAction } from '../../structure/preflight';
 
 /**
  * Pre-execution reads for the extended actions. Everything the live mutate
@@ -146,6 +148,8 @@ export async function prepareExtendedAction(
     if (!isAdsStudioActive()) refuse('ads_studio_disabled', 'Ad assets actions are disabled');
     return prepareAdsStudioAction(action, customer, deps);
   }
+
+  if (isStructureOperation(operation)) return prepareStructureAction(action, customer, deps);
 
   switch (operation) {
     case 'set_ad_schedule': {

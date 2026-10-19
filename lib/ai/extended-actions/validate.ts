@@ -16,6 +16,8 @@ import {
 import { isAdsStudioOperation } from '../../ads/studio/types';
 import { validateAdsStudioPayload } from '../../ads/studio/validate';
 import { isAdsStudioActive } from '../../ads/flag';
+import { isStructureOperation } from '../../structure/types';
+import { validateStructurePayload } from '../../structure/validate';
 
 /**
  * Pure payload validators for the extended action types. Each returns the
@@ -184,6 +186,8 @@ export function validateExtendedPayload(
       ? validateAdsStudioPayload(operation, targetId, paramsInput, accountCustomerId)
       : bad('ads_studio_disabled');
   }
+
+  if (isStructureOperation(operation)) return validateStructurePayload(operation, targetId, paramsInput, accountCustomerId);
 
   const params = paramsInput && typeof paramsInput === 'object' ? (paramsInput as Record<string, unknown>) : {};
   const campaign = String(params.campaign_resource ?? '');
