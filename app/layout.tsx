@@ -4,6 +4,7 @@ import { IBM_Plex_Mono, IBM_Plex_Sans_Arabic, Readex_Pro } from 'next/font/googl
 import { NONCE_HEADER } from '@/lib/security/csp';
 import './globals.css';
 import { SiteStructuredData } from '@/lib/seo/json-ld';
+import { SupportWidgetGate } from '@/lib/support/support-widget-gate';
 
 const arabic = IBM_Plex_Sans_Arabic({
   // Load the Latin subset too: customer IDs, emails, URLs and plan names are
@@ -131,6 +132,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <script nonce={nonce} dangerouslySetInnerHTML={{ __html: installCaptureScript }} />
         <SiteStructuredData nonce={nonce} />
         {children}
+        {/* The support bubble follows the customer on every page. Renders nothing unless SUPPORT_BOT_ENABLED=true. */}
+        <SupportWidgetGate />
       </body>
     </html>
   );

@@ -3,7 +3,6 @@ import Link from 'next/link';
 import { ThemeToggle } from '@/lib/ui/theme-toggle';
 import { AGENCY_URL, BRAND } from '@/lib/seo/site';
 import { CTA_TEXT, WHATSAPP } from '@/lib/landing/owner-config';
-import { SupportWidgetGate } from '@/lib/support/support-widget-gate';
 import { SupportLink } from '@/lib/support/open-support';
 
 /**
@@ -140,7 +139,6 @@ export function SiteFooter() {
           </p>
         </div>
       </footer>
-      <SupportWidgetGate />
     </>
   );
 }
