@@ -6,12 +6,15 @@ import { FINAL_URLS_GAQL, KEYWORDS_GAQL, selectTargets } from '@/lib/landing-che
 import { supabaseLandingCheckStore } from '@/lib/landing-check/store';
 import { pinnedHttpsTransport, systemResolver } from '@/lib/landing-check/transport';
 import type { FetchDeps } from '@/lib/landing-check/fetch';
+import { landingCheckEnabled } from '@/lib/landing-check/flag';
 
 const FINDINGS_PER_PAGE = 5;
 
 export type LandingToolDeps = {
   store: () => LandingCheckStore | null;
   fetchDeps: FetchDeps;
+  /** Defaults to LANDING_CHECK_ENABLED, read on every run. */
+  enabled?: () => boolean;
 };
 
 function defaultDeps(): LandingToolDeps {
@@ -77,6 +80,8 @@ export function createLandingCheckTool(deps: LandingToolDeps = defaultDeps()): J
       "Checks the account's top landing pages (by clicks): HTTP status, server speed, mobile setup, whether the title and H1 match the ad group's keywords, which tracking tags and WhatsApp or phone buttons the page code shows. Run at most once a week per account (a newer result is reused). Use it when conversions are low despite clicks, before judging tracking, or when asked about the website.",
     input_schema: { type: 'object', properties: {}, additionalProperties: false },
     async run(input, ctx) {
+      // Re-checked at run time like the loop tools (the list is fixed at start-up).
+      if (!(deps.enabled ?? landingCheckEnabled)()) return { ok: false, error: 'disabled', message_ar: 'فحص صفحة الهبوط مو مفعّل الحين' };
       parseArgs(input, []);
       const store = deps.store();
       if (!store) throw new Error('landing check store unavailable');

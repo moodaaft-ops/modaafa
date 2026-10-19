@@ -1096,8 +1096,10 @@ export async function executeRollback(
 ) {
   const client = customer as any;
 
+  // Undo stays available after the flag is turned off: a rollback only reverses
+  // a change that was already approved and applied (same rule as the rollback
+  // route, which never gates a compensating operation).
   if (isExtendedRollback(rollback)) {
-    if (!isExtendedActionsEnabled()) throw new Error('Extended actions are disabled');
     return executeExtendedRollback(rollback, customer, options);
   }
 

@@ -219,6 +219,14 @@ export function evaluateAutonomy(context: AutonomyContext): AutopilotPolicyVerdi
     return queue('global_execution_disabled', 'التنفيذ التلقائي مقفول حالياً، فالتعديل ينتظر موافقتك.', checks);
   }
 
+  // The merchant's own action list still applies (the older gate checks it too).
+  if (
+    action.type === 'add_negative_keyword' &&
+    !check('action_allowlist', settings.allowed_actions.includes(action.type), `action=${action.type}`)
+  ) {
+    return queue('manual_action_type', 'هذا النوع من التعديل يحتاج موافقتك دائماً.', checks);
+  }
+
   const violations = hardCeilingViolations(action);
   if (!check('hard_ceilings', violations.length === 0, violations.join(',') || 'none')) {
     return queue('manual_action_type', 'هذا النوع من التعديل يحتاج موافقتك دائماً.', checks);
@@ -291,10 +299,16 @@ function smallRule(
   if (action.type === 'add_negative_keyword') {
     const evidence = action.evidence;
     const cost = evidence ? evidence.cost_micros / 1_000_000 : 0;
+    // Never looser than the older conservative gate the merchant opted into
+    // (lib/autopilot/policy.ts evidence_threshold): 14+ days, 8+ clicks and a
+    // term the model judged clearly irrelevant, on top of the cost rule.
     return check(
       'negative_waste_rule',
       Boolean(
         evidence &&
+          evidence.window_days >= 14 &&
+          evidence.clicks >= 8 &&
+          evidence.relevance === 'clearly_irrelevant' &&
           evidence.conversions === 0 &&
           evidence.cost_micros > 0 &&
           cost >= AUTONOMY_NEGATIVE_COST_IN_CPAS * cpa &&

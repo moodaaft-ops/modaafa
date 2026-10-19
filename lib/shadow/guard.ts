@@ -42,8 +42,12 @@ export async function loadShadowAccountIds(admin: any, accountIds: string[]): Pr
   if (accountIds.length === 0) return out;
   const { data, error } = await admin.from('shadow_accounts').select('account_id').in('account_id', accountIds);
   if (error) {
-    if (!isMissingTable(error)) console.error('Shadow accounts unreadable', error.message);
-    return out;
+    if (isMissingTable(error)) return out;
+    // Unreadable (not missing): hold every account back this run, the same
+    // fail-closed rule as excludeShadowAccounts. The optimizer then records
+    // shadow decisions only: no card is queued and nothing executes.
+    console.error('Shadow accounts unreadable; every account is held back this run', error.message);
+    return new Set(accountIds);
   }
   for (const row of data ?? []) out.add(row.account_id);
   return out;

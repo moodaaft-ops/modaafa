@@ -182,11 +182,16 @@ test('flag off: extended operations are not executable and have no tool surface'
   });
 });
 
-test('flag off: execute, rollback and prepare refuse extended types', async () => {
+test('flag off: execute and prepare refuse extended types; undo of an applied change is not gated', async () => {
   await withFlagAsync(undefined, async () => {
     await assert.rejects(executeAction(act('set_network_settings', {}), fakeCustomer()), /disabled/);
-    await assert.rejects(executeRollback({ action_type: 'ext_restore_campaign_fields' }, fakeCustomer()), /disabled/);
     await assert.rejects(prepareActionForExecution(act('set_network_settings', {}), fakeCustomer()), /disabled/);
+    // A rollback only reverses a change the merchant already approved; turning the
+    // flag off must not strand it (REVIEW.md). A malformed descriptor still fails.
+    await assert.rejects(
+      executeRollback({ action_type: 'ext_restore_campaign_fields' }, fakeCustomer()),
+      (error: Error) => !/disabled/.test(error.message)
+    );
   });
 });
 

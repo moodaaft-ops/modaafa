@@ -146,6 +146,7 @@ export async function answerWithJarvis(args: {
         customerId: String(accountRow.customer_id).replace(/\D/g, ''),
         currencyCode: accountRow.currency_code || 'SAR',
         business: businessRow ? { name: businessRow.name ?? null, sector: businessRow.sector ?? null } : null,
+        ownerEmail: user.email ?? null,
         now,
       };
     } catch {

@@ -353,7 +353,7 @@ export async function executeExtendedRollback(
   customer: any,
   options?: { validateOnly?: boolean }
 ) {
-  if (isAdsStudioRollback(rollback) && !isAdsStudioActive()) throw new Error('Ad assets actions are disabled');
+  // No flag check: undoing an applied change must keep working after a flag goes off.
   const operations = buildRollbackOperations(rollback);
   if (operations.length === 0) throw new Error('Rollback produced no operations');
   return customer.mutateOperations(operations, options);

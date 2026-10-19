@@ -358,3 +358,9 @@ test('the monthly copy exists, waits for Ayman, and stays in house style', () =>
   const all = [built.subject, built.preheader, ...built.blocks.map((b) => ('text' in b ? b.text : b.type === 'list' ? b.items.join(' ') : ''))].join(' ');
   assert.doesNotMatch(all, /[—–]/);
 });
+
+test('review: the cost cap is priced at the priciest model the call can fall back to', async () => {
+  const { priciestModel } = await import('../lib/loops/monthly-run');
+  assert.equal(priciestModel(['claude-opus-5-5', 'claude-opus-4-1-20250805', 'claude-sonnet-5-5']), 'claude-opus-4-1-20250805');
+  assert.equal(priciestModel(['claude-sonnet-5-5']), 'claude-sonnet-5-5');
+});

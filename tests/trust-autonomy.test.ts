@@ -275,3 +275,24 @@ test('notice: Arabic, with the undo path and no dashes', () => {
   assert.equal(mail.undoUrl, 'https://ai.modaafa.com/home');
   assert.doesNotMatch(mail.text + mail.subject, /[–—]/);
 });
+
+// -- review fixes (docs/mb-upgrade/REVIEW.md) ---------------------------------------
+
+test('review: the small level is never looser than the older negative gate (window, clicks, relevance)', () => {
+  const base = negative().evidence!;
+  for (const evidence of [
+    { ...base, window_days: 7 },
+    { ...base, clicks: 3 },
+    { ...base, relevance: 'uncertain' as const },
+  ]) {
+    const verdict = evaluateAutonomy(ctx(negative({ evidence })));
+    assert.notEqual(verdict.outcome, 'execute', JSON.stringify(evidence));
+  }
+});
+
+test('review: a negative the merchant removed from allowed_actions is queued at the small level', () => {
+  const narrowed = { ...settings, allowed_actions: [] as string[] };
+  const verdict = evaluateAutonomy(ctx(negative(), { settings: narrowed }));
+  assert.equal(verdict.outcome, 'queue');
+  assert.equal(verdict.code, 'manual_action_type');
+});

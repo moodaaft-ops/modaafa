@@ -21,8 +21,8 @@ import { loadCoachingInput } from '../coaching/load';
 import { coachingLinesForReport, detectCoaching } from '../coaching/response-coaching';
 import { shadowModeEnabled } from '../shadow/flag';
 import { isShadowAccount } from '../shadow/guard';
-import { createMessageForAgent, getModelForAgent } from '../ai/client';
-import { costUsd } from '../ai/pricing';
+import { createMessageForAgent, getModelForAgent, modelCandidatesForAgent } from '../ai/client';
+import { costUsd, priceFor } from '../ai/pricing';
 import { allowableCpaCut, allowableCpaScale, type BreakEven } from '../economics/break-even';
 import { loadEconomics } from '../economics/load';
 import { EMAIL_COPY } from '../lifecycle/copy';
@@ -279,8 +279,21 @@ export function defaultDeps(supabase: any): MonthlyDeps {
       return coachingLinesForReport(detectCoaching(input));
     },
     isShadow: (accountId) => isShadowAccount(accountId, { admin: () => supabase }),
-    modelName: () => getModelForAgent('jarvis_deep'),
+    // The cap is checked against the priciest model the call may fall back to
+    // (createMessageForAgent walks a candidate list), not only the preferred one.
+    modelName: () => priciestModel([getModelForAgent('jarvis_deep'), ...modelCandidatesForAgent('jarvis_deep')]),
   };
+}
+
+/** The candidate with the highest output rate (unknown ids price at the conservative fallback). */
+export function priciestModel(models: string[]): string {
+  let best = models[0] ?? '';
+  for (const model of models) {
+    const a = priceFor(model);
+    const b = priceFor(best);
+    if (a.output > b.output || (a.output === b.output && a.input > b.input)) best = model;
+  }
+  return best;
 }
 
 function planLinesOf(plan: MonthlyPlan): string[] {

@@ -196,3 +196,8 @@ test('action types map to categories, unknown ones to other', () => {
   assert.equal(categoryForActionType('adjust_bid'), 'bidding');
   assert.equal(categoryForActionType('something_new'), 'other');
 });
+
+test('review: loadShadowAccountIds fails closed when the state is unreadable (not just missing)', async () => {
+  const broken = { from: () => ({ select: () => ({ in: async () => ({ data: null, error: { code: '57014', message: 'timeout' } }) }) }) };
+  assert.deepEqual([...(await loadShadowAccountIds(broken, ['a', 'b']))].sort(), ['a', 'b']);
+});

@@ -6,7 +6,7 @@ import { googleAdsClickConversionTransport } from '@/lib/google-ads/click-conver
 import { decrypt } from '@/lib/crypto';
 import { hasValidCronAuthorization } from '@/lib/security/cron-auth';
 import { excludeShadowAccounts } from '@/lib/shadow/guard';
-import { isLeadLoopServing } from '@/lib/lead-loop/flag';
+import { isLeadLoopEnabled, isLeadLoopServing } from '@/lib/lead-loop/flag';
 import { uploadLeadConversions, type UploadSummary } from '@/lib/lead-loop/upload-service';
 import { findLeadActionQuery, parseFoundLeadAction } from '@/lib/measurement/conversion-actions';
 import { scanAccountMeasurement } from '@/lib/measurement/scan';
@@ -111,7 +111,9 @@ export async function GET(req: NextRequest) {
       const done = new Set((recent ?? []).map((row: any) => String(row.account_id)));
       // Agency shadow accounts get no proposal cards (SHADOW_MODE_ENABLED; a no-op when off).
       const notDone = allowedAccountIds.filter((id) => !done.has(id));
-      const due = (await excludeShadowAccounts(supabase, notDone.map((id) => ({ id })))).map((row) => row.id).slice(0, SCAN_ACCOUNTS_PER_RUN);
+      // LEAD_LOOP_ENABLED=operators: only accounts of allowed owners get cards (same rule as the routes).
+      const permitted = await filterLeadLoopOwners(supabase, notDone);
+      const due = (await excludeShadowAccounts(supabase, permitted.map((id) => ({ id })))).map((row) => row.id).slice(0, SCAN_ACCOUNTS_PER_RUN);
 
       await mapLimit(due, 2, async (accountId) => {
         if (budget.expired(20_000)) return;
@@ -156,4 +158,30 @@ export async function GET(req: NextRequest) {
     console.error('measurement cron failed', error);
     return NextResponse.json({ error: 'measurement_failed', message: describeError(error) }, { status: 500 });
   }
+}
+
+/**
+ * In "true" mode every account passes. In "operators" mode an account passes
+ * only when its owner's email is allowed; an unreadable owner fails closed.
+ */
+async function filterLeadLoopOwners(supabase: any, accountIds: string[]): Promise<string[]> {
+  if (process.env.LEAD_LOOP_ENABLED === 'true' || accountIds.length === 0) return accountIds;
+  const { data: accounts, error } = await supabase.from('google_ads_accounts').select('id, business_id').in('id', accountIds);
+  if (error || !accounts) return [];
+  const businessIds = [...new Set(accounts.map((row: any) => row.business_id).filter(Boolean))];
+  if (businessIds.length === 0) return [];
+  const { data: businesses, error: businessError } = await supabase.from('businesses').select('id, user_id').in('id', businessIds);
+  if (businessError || !businesses) return [];
+  const userIds = [...new Set(businesses.map((row: any) => row.user_id).filter(Boolean))];
+  if (userIds.length === 0) return [];
+  const { data: users, error: usersError } = await supabase.from('users').select('id, email').in('id', userIds);
+  if (usersError || !users) return [];
+  const emailByUser = new Map<string, string | null>(users.map((row: any) => [String(row.id), row.email ?? null]));
+  const userByBusiness = new Map<string, string>(businesses.map((row: any) => [String(row.id), String(row.user_id)]));
+  const allowed = new Set(
+    accounts
+      .filter((row: any) => isLeadLoopEnabled(process.env, emailByUser.get(userByBusiness.get(String(row.business_id)) ?? '') ?? null))
+      .map((row: any) => String(row.id))
+  );
+  return accountIds.filter((id) => allowed.has(id));
 }

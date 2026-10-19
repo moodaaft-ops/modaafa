@@ -178,6 +178,7 @@ test('the Jarvis tool reads the account URLs and keywords through GAQL and retur
   const tool = createLandingCheckTool({
     store: () => store,
     fetchDeps: fetchDeps({ 'https://shop.example.com/ac': PAGE }).deps,
+    enabled: () => true,
   });
   const result = await tool.run(
     {},
@@ -196,7 +197,7 @@ test('the Jarvis tool reads the account URLs and keywords through GAQL and retur
 });
 
 test('the Jarvis tool refuses unexpected input', async () => {
-  const tool = createLandingCheckTool({ store: () => null, fetchDeps: fetchDeps({}).deps });
+  const tool = createLandingCheckTool({ store: () => null, fetchDeps: fetchDeps({}).deps, enabled: () => true });
   await assert.rejects(
     tool.run({ url: 'https://169.254.169.254/' }, { customer: { query: async () => [] }, accountId: 'a', customerId: '1', currencyCode: 'SAR', business: null, now: new Date() }),
     /unknown field/
@@ -209,4 +210,16 @@ test('flag off: the tool is not in the Jarvis tool list', () => {
   if (process.env.LANDING_CHECK_ENABLED !== 'true') {
     assert.equal(JARVIS_READ_TOOLS.some((tool) => tool.name === 'get_landing_check'), false);
   }
+});
+
+test('review: flag off at run time, the tool fetches nothing even if it was listed at start-up', async () => {
+  let fetched = 0;
+  const tool = createLandingCheckTool({
+    store: () => { fetched += 1; return null; },
+    fetchDeps: fetchDeps({}).deps,
+    enabled: () => false,
+  });
+  const result = await tool.run({}, { customer: { query: async () => { fetched += 1; return []; } }, accountId: 'a', customerId: '1', currencyCode: 'SAR', business: null, now: new Date() });
+  assert.equal(result.ok, false);
+  assert.equal(fetched, 0);
 });

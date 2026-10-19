@@ -314,7 +314,7 @@ export const getConversionHealthTool: JarvisReadTool = {
 
     // Measurement review (conversion goals, enhanced conversions, tracking gaps). Flag off: not read, not returned.
     let measurement: Record<string, unknown> | null = null;
-    if (isLeadLoopEnabled(process.env, ctx.connectedEmail)) {
+    if (isLeadLoopEnabled(process.env, ctx.ownerEmail ?? null)) {
       const extra = await loadMeasurementInputs((gaql) => runQuery(ctx, gaql));
       const findings = extra.actions
         ? reviewConversionGoals({ actions: extra.actions, goals: extra.goals, tracking: extra.tracking, leadLoopOn: true })

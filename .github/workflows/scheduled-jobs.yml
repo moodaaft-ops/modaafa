@@ -51,7 +51,7 @@ jobs:
             -H "Authorization: Bearer $CRON_SECRET" \
             https://ai.modaafa.com/api/cron/optimize
       - name: Lead loop (offline conversion upload and tracking scan)
-        # Harmless while LEAD_LOOP_ENABLED is off: the route answers 404 and does nothing.
+        # Harmless while LEAD_LOOP_ENABLED is off: the route answers 200 {"skipped":"disabled"} and does nothing.
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
