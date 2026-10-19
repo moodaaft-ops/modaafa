@@ -262,7 +262,7 @@ function Sidebar({
       <div className="flex-shrink-0 space-y-1 border-t border-border/60 p-2">
         <SupportLink href={`https://wa.me/${SUPPORT_WHATSAPP_NUMBER}`} className={cn(ROW, ROW_IDLE)}>
           <MessageCircle className="h-[18px] w-[18px] text-muted-foreground" />
-          كلّم فريقنا على الواتساب
+          تحتاج مساعدة؟
         </SupportLink>
         <AccountMenu
           userEmail={userEmail}

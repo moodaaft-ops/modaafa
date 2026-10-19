@@ -37,6 +37,18 @@ type Message = {
   assistantUrl?: string | null;
 };
 
+// Screens that have a chat box or a bottom bar. On a phone the bubble sits above
+// them instead of covering the send button.
+const APP_PREFIXES = [
+  '/home', '/assistant', '/campaigns', '/reports', '/billing', '/settings', '/start',
+  '/guide', '/operations', '/optimizer', '/audit', '/autopilot', '/dashboard', '/onboarding',
+];
+
+function isAppScreen(pathname: string | null) {
+  if (!pathname) return false;
+  return APP_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+}
+
 const MAX_USER_MESSAGES = 12;
 const MAX_CHARS = 500;
 
@@ -44,7 +56,7 @@ const GREETING = 'هلا فيك. اختر سؤالك من تحت أو اكتبه
 const ERROR_TEXT = 'تعذّر الرد الحين. اضغط الزر تحت وكلّم فريق مُضاعفة على الواتساب.';
 const LIMIT_TEXT = 'وصلت حد الرسائل مع الدعم الآلي. كمّل مع فريق مُضاعفة على الواتساب.';
 
-export function SupportWidget({ quick, hideLauncher = false }: { quick: QuickQuestion[]; hideLauncher?: boolean }) {
+export function SupportWidget({ quick }: { quick: QuickQuestion[] }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -58,6 +70,7 @@ export function SupportWidget({ quick, hideLauncher = false }: { quick: QuickQue
   const launcherRef = useRef<HTMLButtonElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
 
+  const raised = isAppScreen(pathname);
   const userCount = messages.filter((m) => m.role === 'user').length;
   const atLimit = userCount >= MAX_USER_MESSAGES;
 
@@ -177,13 +190,16 @@ export function SupportWidget({ quick, hideLauncher = false }: { quick: QuickQue
   }
 
   return (
-    <div className="fixed bottom-4 end-4 z-50 flex flex-col items-end gap-3 print:hidden">
+    <div className={cn('fixed end-4 z-50 flex flex-col items-end gap-3 print:hidden', raised ? 'bottom-24 lg:bottom-4' : 'bottom-4')}>
       {open ? (
         <section
           id="support-widget-panel"
           role="dialog"
           aria-label="الدعم"
-          className="flex h-[min(34rem,calc(100dvh-6rem))] w-[min(23rem,calc(100vw-2rem))] flex-col border border-border-strong bg-card text-foreground shadow-pop"
+          className={cn(
+            'flex w-[min(23rem,calc(100vw-2rem))] flex-col border border-border-strong bg-card text-foreground shadow-pop',
+            raised ? 'h-[min(34rem,calc(100dvh-8rem))] lg:h-[min(34rem,calc(100dvh-6rem))]' : 'h-[min(34rem,calc(100dvh-6rem))]'
+          )}
         >
           <header className="flex items-start justify-between gap-3 border-b border-border px-4 py-3">
             <div>
@@ -294,19 +310,17 @@ export function SupportWidget({ quick, hideLauncher = false }: { quick: QuickQue
         </section>
       ) : null}
 
-      {hideLauncher ? null : (
-        <button
-          ref={launcherRef}
-          type="button"
-          onClick={() => setOpen((value) => !value)}
-          aria-expanded={open}
-          aria-controls="support-widget-panel"
-          className={cn(buttonClasses({ variant: 'primary', size: 'lg' }), 'shadow-pop')}
-        >
-          <MessageCircle className="h-5 w-5" aria-hidden />
-          الدعم
-        </button>
-      )}
+      <button
+        ref={launcherRef}
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        aria-controls="support-widget-panel"
+        className={cn(buttonClasses({ variant: 'primary', size: 'lg' }), 'shadow-pop')}
+      >
+        <MessageCircle className="h-5 w-5" aria-hidden />
+        الدعم
+      </button>
     </div>
   );
 }

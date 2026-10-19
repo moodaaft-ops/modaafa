@@ -40,8 +40,7 @@ function quickQuestions(): QuickQuestion[] {
 }
 
 /** Renders nothing unless SUPPORT_BOT_ENABLED=true. */
-/** `hideLauncher`: no floating button, the window opens only from a SupportLink (used inside the dashboard). */
-export function SupportWidgetGate({ hideLauncher = false }: { hideLauncher?: boolean }) {
+export function SupportWidgetGate() {
   if (!isSupportBotEnabled()) return null;
-  return <SupportWidget quick={quickQuestions()} hideLauncher={hideLauncher} />;
+  return <SupportWidget quick={quickQuestions()} />;
 }
