@@ -9,6 +9,8 @@ import {
   parseAutopilotSettingsInput,
   toAutopilotSettingsRow,
 } from '@/lib/autopilot/settings';
+import { autonomyLevelsEnabled, AUTONOMY_LEVELS, type AutonomyLevel } from '@/lib/autopilot/autonomy';
+import { saveAutonomyLevel } from '@/lib/autopilot/autonomy-store';
 import { getSubscriptionAccess } from '@/lib/billing/entitlements';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 import { isSameOriginRequest } from '@/lib/security/origin';
@@ -120,6 +122,25 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Autonomy level: read only when the flag is on, otherwise the field is ignored.
+  let autonomyLevel: AutonomyLevel | null = null;
+  if (autonomyLevelsEnabled() && payload.autonomy_level !== undefined) {
+    const requested = String(payload.autonomy_level);
+    if (!AUTONOMY_LEVELS.includes(requested as AutonomyLevel)) {
+      return NextResponse.json(
+        { error: 'invalid_autonomy_level', message: 'اختر مستوى صحيح من الخيارات.' },
+        { status: 400 }
+      );
+    }
+    autonomyLevel = requested as AutonomyLevel;
+    if (autonomyLevel === 'small_and_notify' && input.mode !== 'conservative') {
+      return NextResponse.json(
+        { error: 'autonomy_needs_conservative', message: 'هذا المستوى يشتغل مع التنفيذ المحافظ فقط.' },
+        { status: 400 }
+      );
+    }
+  }
+
   const previous = normalizeAutopilotSettings(linked.account.id, previousResult.data);
   const nextRow = toAutopilotSettingsRow(linked.account.id, input, previous);
 
@@ -132,6 +153,7 @@ export async function POST(req: NextRequest) {
       p_policy_version: AUTOPILOT_POLICY_VERSION,
     });
     if (error) throw error;
+    if (autonomyLevel) await saveAutonomyLevel(admin, linked.account.id, user.id, autonomyLevel);
   } catch (error) {
     console.error('Failed to save autopilot settings', error);
     return NextResponse.json(

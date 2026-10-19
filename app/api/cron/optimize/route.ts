@@ -20,6 +20,9 @@ import { loadEconomics } from '@/lib/economics/load';
 import { isStalePendingRecommendation } from '@/lib/recommendations/staleness';
 import type { BreakEven } from '@/lib/economics/break-even';
 import { consumeFeatureUsage } from '@/lib/billing/entitlements';
+import { applyAutonomyLevel, autonomyLevelsEnabled } from '@/lib/autopilot/autonomy';
+import { notifyAutoAction } from '@/lib/autopilot/autonomy-notify';
+import { loadAutonomyLevels } from '@/lib/autopilot/autonomy-store';
 import { executeAutopilotAction } from '@/lib/autopilot/executor';
 import {
   findBlockingAutopilotRecommendation,
@@ -329,6 +332,10 @@ async function runOptimizerCron(req: NextRequest) {
 
   const accountIds = accounts.map((account) => account.id);
   const settingsByAccount = await loadAutopilotSettings(supabase, accountIds);
+  // AUTONOMY_LEVELS_ENABLED off: null, and the policy verdict below is untouched.
+  const autonomyByAccount = autonomyLevelsEnabled()
+    ? await loadAutonomyLevels(supabase, accountIds)
+    : null;
   const decisionHistoryState = await loadAutopilotDecisionHistory(supabase, accountIds);
   const decisionHistory = decisionHistoryState.byAccount;
 
@@ -580,7 +587,7 @@ async function runOptimizerCron(req: NextRequest) {
         );
         const executedToday =
           executedBeforeRun + (executedThisRun.get(account.id) ?? 0);
-        const verdict = evaluateAutopilotPolicy({
+        const policyContext = {
           settings,
           action,
           trackingStatus: snapshot.conversion_tracking?.status ?? 'unknown',
@@ -590,7 +597,15 @@ async function runOptimizerCron(req: NextRequest) {
           globalExecutionEnabled: allowLiveExecution && decisionHistoryState.available,
           executedToday,
           sameTargetExecutedWithinCooldown,
-        });
+        };
+        const baseVerdict = evaluateAutopilotPolicy(policyContext);
+        const verdict = autonomyByAccount
+          ? applyAutonomyLevel(baseVerdict, {
+              ...policyContext,
+              level: autonomyByAccount.get(account.id) ?? 'ask_all',
+              snapshot,
+            })
+          : baseVerdict;
         const fingerprint = actionFingerprint(account.id, action);
 
         if (verdict.outcome === 'block') {
@@ -728,6 +743,15 @@ async function runOptimizerCron(req: NextRequest) {
             target_id: targetKey,
             created_at: new Date().toISOString(),
           });
+          if (autonomyByAccount && verdict.code === 'autonomy_approved') {
+            await notifyAutoAction(ownerEmail, {
+              actionType: action.type,
+              subject: String(action.params.keyword_text ?? action.params.keyword ?? 'كلمة مفتاحية'),
+              campaignName: String(action.params.campaign_name ?? '') || null,
+              reasonAr: action.reason_ar,
+              appUrl: process.env.NEXT_PUBLIC_APP_URL ?? 'https://ai.modaafa.com',
+            });
+          }
           await safeRecordAutopilotDecision(results, {
             supabase,
             accountId: account.id,

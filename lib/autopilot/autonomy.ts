@@ -1,0 +1,348 @@
+import {
+  accountCpa30dFromSnapshot,
+} from '@/lib/ai/optimizer-gates';
+import { evaluatePauseKeyword } from '@/lib/ai/optimizer-proposal-gates';
+import type { OptimizerSnapshot } from '@/lib/ai/optimizer-agent';
+import { allowableCpaCut } from '@/lib/economics/break-even';
+import {
+  AUTOPILOT_POLICY_VERSION,
+  type AutopilotCandidate,
+  type AutopilotPolicyCheck,
+  type AutopilotPolicyContext,
+  type AutopilotPolicyVerdict,
+} from './types';
+
+/**
+ * Autonomy levels. Behind AUTONOMY_LEVELS_ENABLED (default off). With the flag
+ * off nothing in this file is reached and the autopilot behaves exactly as
+ * before. With it on, the existing kill switch AUTOPILOT_EXECUTION_ENABLED and
+ * the existing settings (mode, daily limit, cooldown, confidence) still apply.
+ *
+ *   ask_all           "يستأذن في كل شي": nothing runs by itself, every proposal
+ *                     waits for the merchant's approval. The default.
+ *   small_and_notify  "ينفذ الصغير ويبلّغ": exact negatives and keyword pauses
+ *                     on a proven waste rule, nothing else, and the merchant is
+ *                     told about each one with an undo.
+ *
+ * The hard ceilings below are not a setting. They are checked on every action
+ * whatever the level is.
+ */
+
+export const AUTONOMY_LEVELS = ['ask_all', 'small_and_notify'] as const;
+export type AutonomyLevel = (typeof AUTONOMY_LEVELS)[number];
+export const DEFAULT_AUTONOMY_LEVEL: AutonomyLevel = 'ask_all';
+
+export const AUTONOMY_LEVEL_LABELS_AR: Record<AutonomyLevel, { title: string; body: string }> = {
+  ask_all: {
+    title: 'يستأذن في كل شي',
+    body: 'ما يتغير شي في حسابك إلا بعد ما توافق أنت.',
+  },
+  small_and_notify: {
+    title: 'ينفذ الصغير ويبلّغ',
+    body: 'يمنع الكلمات اللي صرفت وما جابت شي، ويوقف الكلمة اللي تصرف بلا نتيجة، ويبلغك بكل تعديل مع زر تراجع. أي شي ثاني يستأذنك فيه.',
+  },
+};
+
+export function autonomyLevelsEnabled(env: NodeJS.ProcessEnv = process.env) {
+  return env.AUTONOMY_LEVELS_ENABLED === 'true';
+}
+
+/** Anything unknown or missing is the safest level. */
+export function normalizeAutonomyLevel(value: unknown): AutonomyLevel {
+  return AUTONOMY_LEVELS.includes(value as AutonomyLevel) ? (value as AutonomyLevel) : DEFAULT_AUTONOMY_LEVEL;
+}
+
+/** An exact negative must have cost this many allowable CPAs with 0 conversions. */
+export const AUTONOMY_NEGATIVE_COST_IN_CPAS = 2;
+/** A budget move may shift at most this share of the total, and never raise the total. */
+export const AUTONOMY_BUDGET_SHIFT_MAX_PCT = 10;
+
+/** The only action types the small level can ever execute by itself. */
+export const AUTONOMY_SMALL_ACTIONS = ['add_negative_keyword', 'pause_keyword'] as const;
+
+// ---------------------------------------------------------------------------
+// Hard ceilings
+// ---------------------------------------------------------------------------
+
+/** Action types that would create or enable something, change targets, or touch money rules. Never automatic. */
+const NEVER_AUTOMATIC_TYPES = new Set([
+  'enable_campaign',
+  'create_campaign',
+  'adjust_bid',
+  'add_keyword',
+  'pause_campaign',
+  'pause_ad',
+  'add_negative_keywords_batch',
+]);
+
+const TARGET_KEYS = [
+  'target_cpa_micros',
+  'target_cpa',
+  'target_roas',
+  'bidding_strategy',
+  'bidding_strategy_type',
+  'maximize_conversions',
+  'maximize_conversion_value',
+];
+const BILLING_POLICY_KEYS = [
+  'billing',
+  'billing_setup',
+  'payments_account',
+  'payment',
+  'policy',
+  'policy_exemption',
+  'exemption_request',
+  'ignorable_policy_topics',
+];
+
+export type CeilingViolation =
+  | 'type_not_allowed'
+  | 'creates_or_enables_campaign'
+  | 'changes_targets'
+  | 'touches_billing_or_policy'
+  | 'negative_not_exact'
+  | 'raises_total_spend';
+
+/**
+ * Pure. Says which hard ceilings an action would break. An empty list means the
+ * action is inside the small-action surface; it does not mean it is approved.
+ */
+export function hardCeilingViolations(action: {
+  type: string;
+  params?: Record<string, unknown> | null;
+}): CeilingViolation[] {
+  const out = new Set<CeilingViolation>();
+  const params = action.params ?? {};
+  const type = String(action.type ?? '');
+
+  if (type === 'enable_campaign' || type === 'create_campaign') out.add('creates_or_enables_campaign');
+  if (type === 'adjust_bid') out.add('changes_targets');
+  if (NEVER_AUTOMATIC_TYPES.has(type)) out.add('type_not_allowed');
+  if (!(AUTONOMY_SMALL_ACTIONS as readonly string[]).includes(type)) out.add('type_not_allowed');
+
+  const keys = Object.keys(params).map((key) => key.toLowerCase());
+  if (keys.some((key) => TARGET_KEYS.includes(key))) out.add('changes_targets');
+  if (keys.some((key) => BILLING_POLICY_KEYS.includes(key))) out.add('touches_billing_or_policy');
+
+  if (type === 'add_negative_keyword' && String(params.match_type ?? '').toUpperCase() !== 'EXACT') {
+    out.add('negative_not_exact');
+  }
+  return [...out];
+}
+
+export type BudgetChange = {
+  budget_resource: string;
+  current_amount_micros: number;
+  new_amount_micros: number;
+};
+
+export type BudgetShiftVerdict =
+  | { ok: true; total_micros: number; moved_micros: number }
+  | { ok: false; code: 'raises_total_spend' | 'shift_too_large' | 'shape_invalid' };
+
+/**
+ * A budget move between campaigns is automatic only when it is a pure shift:
+ * the new total is not above the old total, no single budget moves by more than
+ * 10% of the total, at least one budget goes up and one goes down. Any change
+ * that raises the total is rejected, however it is split. Pure.
+ */
+export function evaluateBudgetShift(changes: BudgetChange[]): BudgetShiftVerdict {
+  if (!Array.isArray(changes) || changes.length < 2 || changes.length > 6) {
+    return { ok: false, code: 'shape_invalid' };
+  }
+  const seen = new Set<string>();
+  let oldTotal = 0;
+  let newTotal = 0;
+  for (const change of changes) {
+    const resource = String(change?.budget_resource ?? '');
+    const before = Number(change?.current_amount_micros);
+    const after = Number(change?.new_amount_micros);
+    if (!resource || seen.has(resource)) return { ok: false, code: 'shape_invalid' };
+    seen.add(resource);
+    if (!Number.isFinite(before) || !Number.isFinite(after) || before <= 0 || after <= 0) {
+      return { ok: false, code: 'shape_invalid' };
+    }
+    oldTotal += before;
+    newTotal += after;
+  }
+  // The ceiling: compare exact micros, no tolerance. A shift that adds even one
+  // micro to the total is a raise.
+  if (newTotal > oldTotal) return { ok: false, code: 'raises_total_spend' };
+
+  const hasUp = changes.some((c) => c.new_amount_micros > c.current_amount_micros);
+  const hasDown = changes.some((c) => c.new_amount_micros < c.current_amount_micros);
+  if (!hasUp || !hasDown) return { ok: false, code: 'shape_invalid' };
+
+  const maxMove = (oldTotal * AUTONOMY_BUDGET_SHIFT_MAX_PCT) / 100;
+  let moved = 0;
+  for (const change of changes) {
+    const delta = Math.abs(change.new_amount_micros - change.current_amount_micros);
+    if (delta > maxMove) return { ok: false, code: 'shift_too_large' };
+    if (change.new_amount_micros > change.current_amount_micros) moved += delta;
+  }
+  return { ok: true, total_micros: oldTotal, moved_micros: moved };
+}
+
+// ---------------------------------------------------------------------------
+// Policy
+// ---------------------------------------------------------------------------
+
+export type AutonomyContext = AutopilotPolicyContext & {
+  level: AutonomyLevel;
+  snapshot: Pick<
+    OptimizerSnapshot,
+    'campaigns' | 'economics' | 'underperforming_keywords' | 'conversion_tracking'
+  >;
+};
+
+/**
+ * Decide an action under the small level. Pure and independent of the older
+ * conservative gate, so it re-checks tracking, confidence, the daily limit and
+ * the cooldown itself. Never returns execute for a type outside
+ * AUTONOMY_SMALL_ACTIONS.
+ */
+export function evaluateAutonomy(context: AutonomyContext): AutopilotPolicyVerdict {
+  const { settings, action } = context;
+  const checks: AutopilotPolicyCheck[] = [];
+  const check = (code: string, passed: boolean, detail: string) => {
+    checks.push({ code, passed, detail });
+    return passed;
+  };
+
+  if (!check('autonomy_level', context.level === 'small_and_notify', `level=${context.level}`)) {
+    return queue('autonomy_ask_all', 'اخترت أن يستأذنك في كل شي، فالتعديل ينتظر موافقتك.', checks);
+  }
+  if (!check('mode_enabled', settings.mode === 'conservative', `mode=${settings.mode}`)) {
+    return queue('autopilot_not_conservative', 'الطيار الآلي مو في الوضع المحافظ، فالتعديل ينتظر موافقتك.', checks);
+  }
+  if (!check('global_kill_switch', context.globalExecutionEnabled, 'AUTOPILOT_EXECUTION_ENABLED')) {
+    return queue('global_execution_disabled', 'التنفيذ التلقائي مقفول حالياً، فالتعديل ينتظر موافقتك.', checks);
+  }
+
+  const violations = hardCeilingViolations(action);
+  if (!check('hard_ceilings', violations.length === 0, violations.join(',') || 'none')) {
+    return queue('manual_action_type', 'هذا النوع من التعديل يحتاج موافقتك دائماً.', checks);
+  }
+
+  if (!check('tracking_healthy', context.trackingStatus === 'healthy', `tracking=${context.trackingStatus}`)) {
+    return queue('anomaly_pause', 'قياس التحويلات يحتاج مراجعة، فما ننفذ شي بنفسنا.', checks);
+  }
+
+  const confidence = Number(action.confidence ?? 0);
+  if (
+    !check(
+      'confidence_threshold',
+      Number.isFinite(confidence) && confidence >= settings.min_confidence,
+      `confidence=${confidence};min=${settings.min_confidence}`
+    )
+  ) {
+    return queue('confidence_below_threshold', 'الثقة أقل من الحد اللي اخترته، فالتعديل ينتظر موافقتك.', checks);
+  }
+
+  // The yardstick must be the owner's own break-even. The account's own CPA is
+  // history, not a target, and is not enough for a change nobody approved.
+  const limit = allowableCpaCut(
+    context.snapshot.economics ?? null,
+    accountCpa30dFromSnapshot(context.snapshot)
+  );
+  if (
+    !check('cost_reference', limit?.source === 'break_even_cpa', `source=${limit?.source ?? 'none'}`) ||
+    !limit
+  ) {
+    return queue(
+      'no_break_even',
+      'ما عندنا تكلفة العميل المقبولة منك، فالتعديل ينتظر موافقتك.',
+      checks
+    );
+  }
+
+  const ruleOk = smallRule(action, limit.value, context.snapshot, check);
+  if (!ruleOk) {
+    return queue('insufficient_evidence', 'الأرقام ما توصل لقاعدة التنفيذ التلقائي، فالتعديل ينتظر موافقتك.', checks);
+  }
+
+  if (
+    !check(
+      'daily_change_limit',
+      context.executedToday < settings.max_daily_changes,
+      `executed=${context.executedToday};max=${settings.max_daily_changes}`
+    )
+  ) {
+    return block('daily_limit_reached', 'وصلنا لحد التعديلات اليومي.', checks);
+  }
+  if (!check('target_cooldown', !context.sameTargetExecutedWithinCooldown, `cooldown_hours=${settings.cooldown_hours}`)) {
+    return block('target_in_cooldown', 'هذا الهدف انعدل قريب وما زال في فترة الانتظار.', checks);
+  }
+
+  return {
+    outcome: 'execute',
+    code: 'autonomy_approved',
+    reason_ar: 'التعديل صغير وداخل القاعدة اللي اخترتها، نفذناه وبلغناك وتقدر تتراجع عنه.',
+    checks,
+  };
+}
+
+function smallRule(
+  action: AutopilotCandidate,
+  cpa: number,
+  snapshot: AutonomyContext['snapshot'],
+  check: (code: string, passed: boolean, detail: string) => boolean
+) {
+  if (action.type === 'add_negative_keyword') {
+    const evidence = action.evidence;
+    const cost = evidence ? evidence.cost_micros / 1_000_000 : 0;
+    return check(
+      'negative_waste_rule',
+      Boolean(
+        evidence &&
+          evidence.conversions === 0 &&
+          evidence.cost_micros > 0 &&
+          cost >= AUTONOMY_NEGATIVE_COST_IN_CPAS * cpa &&
+          Boolean(String(action.params.campaign_resource ?? '').trim()) &&
+          Boolean(String(action.params.keyword_text ?? '').trim())
+      ),
+      evidence ? `cost=${cost};cpa=${cpa};conv=${evidence.conversions}` : 'no_evidence'
+    );
+  }
+  if (action.type === 'pause_keyword') {
+    // The proposal gate reads the keyword from the snapshot (never from the
+    // model's numbers): 0 conversions, 20+ clicks, cost >= 2 allowable CPAs.
+    const verdict = evaluatePauseKeyword(action, { snapshot: snapshot as any } as any);
+    return check('pause_keyword_rule', verdict.ok === true, verdict.ok ? 'ok' : String((verdict as any).code ?? 'no'));
+  }
+  return check('small_action', false, `type=${action.type}`);
+}
+
+/**
+ * Combine the level with the verdict of the older gate. Level ask_all can only
+ * make a verdict more cautious. Level small_and_notify replaces the verdict
+ * with evaluateAutonomy, except that the old gate's switches (autopilot off,
+ * observe only, kill switch) are respected as they were.
+ */
+export function applyAutonomyLevel(
+  base: AutopilotPolicyVerdict,
+  context: AutonomyContext
+): AutopilotPolicyVerdict {
+  if (context.level !== 'small_and_notify') {
+    if (base.outcome !== 'execute') return base;
+    return queue(
+      'autonomy_ask_all',
+      'اخترت أن يستأذنك في كل شي، فالتعديل ينتظر موافقتك.',
+      [...base.checks, { code: 'autonomy_level', passed: false, detail: `level=${context.level}` }]
+    );
+  }
+  if (['autopilot_off', 'observe_only', 'global_execution_disabled'].includes(base.code)) return base;
+  return evaluateAutonomy(context);
+}
+
+export function autonomyPolicyNote() {
+  return { policy_version: AUTOPILOT_POLICY_VERSION, autonomy: true };
+}
+
+function queue(code: string, reason_ar: string, checks: AutopilotPolicyCheck[]) {
+  return { outcome: 'queue' as const, code, reason_ar, checks };
+}
+
+function block(code: string, reason_ar: string, checks: AutopilotPolicyCheck[]) {
+  return { outcome: 'block' as const, code, reason_ar, checks };
+}

@@ -17,11 +17,15 @@ import { getDevicesTool } from './get-devices';
 import { getAdsStatusTool } from './get-ads-status';
 import { getChangeHistoryTool } from './get-change-history';
 import { getPmaxCategoriesTool } from './get-pmax-categories';
+import { getLandingCheckTool } from './get-landing-check';
+import { landingCheckEnabled } from '@/lib/landing-check/flag';
+import { getResponseCoachingTool } from './get-response-coaching';
+import { offerCoachingEnabled } from '@/lib/coaching/flag';
 
 export type { EvidenceKind, EvidenceRow, GaqlCustomer, JarvisReadTool, ToolContext, ToolResult } from './types';
 export { conversionVerdict } from './get-conversion-health';
 
-export const JARVIS_READ_TOOLS: readonly JarvisReadTool[] = [
+const BASE_READ_TOOLS: readonly JarvisReadTool[] = [
   getCampaignsTool,
   getSearchTermsTool,
   getKeywordsTool,
@@ -32,6 +36,13 @@ export const JARVIS_READ_TOOLS: readonly JarvisReadTool[] = [
   getAdsStatusTool,
   getChangeHistoryTool,
   getPmaxCategoriesTool,
+];
+
+// Behind LANDING_CHECK_ENABLED and OFFER_COACHING_ENABLED (default off): with both off the list is exactly the base list.
+export const JARVIS_READ_TOOLS: readonly JarvisReadTool[] = [
+  ...BASE_READ_TOOLS,
+  ...(landingCheckEnabled() ? [getLandingCheckTool] : []),
+  ...(offerCoachingEnabled() ? [getResponseCoachingTool] : []),
 ];
 
 const TOOLS_BY_NAME: ReadonlyMap<string, JarvisReadTool> = new Map(
