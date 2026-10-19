@@ -5,6 +5,7 @@ import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { DashboardChrome } from './dashboard-chrome';
 import { isModaafaOperator } from '@/lib/platform/operators';
 import { isChatFirstEnabled } from '@/lib/chat-first/flag';
+import { partnersEnabled } from '@/lib/partners/config';
 import { readAccessOverrides } from '@/lib/billing/access-overrides';
 import { SuspendedBanner } from './suspended-banner';
 import { InstallPrompt } from './install-prompt';
@@ -55,6 +56,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         pausedAccounts={pausedAccounts}
         selectedCustomerId={selectedCustomerId}
         isOperator={isModaafaOperator(user.email)}
+        partnersOn={partnersEnabled()}
         recentChats={recentChats}
       >
         {overrides.suspended && <SuspendedBanner />}
@@ -73,6 +75,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       pausedAccounts={pausedAccounts}
       selectedCustomerId={selectedCustomerId}
       isOperator={isModaafaOperator(user.email)}
+      partnersOn={partnersEnabled()}
       chatFirst={isChatFirstEnabled(process.env, user.email)}
     >
       {overrides.suspended && <SuspendedBanner />}
