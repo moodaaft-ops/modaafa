@@ -57,6 +57,8 @@ export type AdaptiveViewInput = {
   currency?: string | null;
   /** What the platform knows about the account's activity when the read failed (see ClassifyInput). Null when unknown. */
   activityHint?: 'spends' | 'empty' | null;
+  /** Business Profile hours as one line (GBP_READ_ENABLED), attached to the call-hours decision as evidence. */
+  gbpEvidence?: string | null;
   /** The kind the customer agreed with on the opener, from the ledger (see ClassifyInput). */
   confirmed?: { kind: BusinessKind; outcome: DominantOutcome | null } | null;
   /** For tests: the clock the stored read's age is judged by. */
@@ -142,9 +144,11 @@ export function scenarioLead(args: {
   plan: Plan | null;
   /** False when there is no account flow to speak for (no rules decision, no «ليش أول شي»). */
   active: boolean;
+  /** Business Profile hours line (GBP_READ_ENABLED). Evidence only. */
+  gbpEvidence?: string | null;
 }): { plan: Plan | null; decision: ScenarioDecision | null; firstWhy: string | null } {
   const { scenario, signals, answered, labels, currency, active } = args;
-  const decision = active ? scenarioDecision({ scenario, signals, answered, currency }) : null;
+  const decision = active ? scenarioDecision({ scenario, signals, answered, currency, gbpEvidence: args.gbpEvidence }) : null;
 
   let plan = args.plan;
   if (plan) {
@@ -262,6 +266,7 @@ export function buildAdaptiveView(input: AdaptiveViewInput): AdaptiveViewResult 
     currency,
     plan: input.plan,
     active: flowActive,
+    gbpEvidence: input.gbpEvidence ?? null,
   });
 
   const auditDecisions = input.plan

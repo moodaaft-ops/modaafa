@@ -75,6 +75,7 @@ const LOST_CALL: Record<'clinic' | 'services' | 'local', string> = {
 };
 
 function callHoursDecision(args: {
+  gbpEvidence?: string | null;
   kind: 'clinic' | 'services' | 'local';
   hours: HourSignal[];
   choice: string;
@@ -126,6 +127,7 @@ function callHoursDecision(args: {
     ],
     amount: Math.round(outsideCost),
     currency: args.currency,
+    ...(args.gbpEvidence ? { evidence: args.gbpEvidence } : {}),
   };
 }
 
@@ -273,6 +275,8 @@ export function scenarioDecision(args: {
   signals: AccountSignals | null;
   answered: Partial<Record<string, string | null>>;
   currency: string;
+  /** Business Profile hours as one Arabic line (GBP_READ_ENABLED). Evidence only. */
+  gbpEvidence?: string | null;
 }): ScenarioDecision | null {
   const { scenario, signals, answered, currency } = args;
   if (scenario.state === 'no_tracking' || scenario.state === 'tracking_suspect') return trackingDecision(args);
@@ -283,7 +287,7 @@ export function scenarioDecision(args: {
     const hours = sigValue(signals?.hours);
     const choice = answeredChoice(answered, 'call_hours');
     if (!hours || !choice) return null;
-    return callHoursDecision({ kind, hours, choice, currency });
+    return callHoursDecision({ kind, hours, choice, currency, gbpEvidence: args.gbpEvidence });
   }
   if (kind === 'ecommerce') {
     const products = sigValue(signals?.products);

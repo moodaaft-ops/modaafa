@@ -17,6 +17,7 @@
 import { priceFor } from '../ai/pricing';
 import type { CompetitionFinding } from './auction-insights';
 import type { MerchantContextBlock } from './merchant-context';
+import { storeRevenueLine } from '../stores/revenue';
 import type { OutcomeRecord } from './outcome-memory';
 import type { QualityFinding } from './quality-score';
 import { addDays, riyadhDay, type SeasonContext } from './seasons';
@@ -134,6 +135,8 @@ export type MoneyReport = {
   protected: number | null;
   protected_actions: number;
   prior_spent: number | null;
+  /** Store orders vs Google value (STORE_SYNC_ENABLED). Absent or null when the flag is off or data is thin. */
+  store_revenue?: import('../stores/revenue').StoreRevenueBlock | null;
 };
 
 const round2 = (value: number) => Math.round(value * 100) / 100;
@@ -172,6 +175,7 @@ export function buildMoneyReport(args: {
   prior: MonthTotals | null;
   wasted: number | null;
   protectedOutcome: { amount: number; actions: number };
+  storeRevenue?: import('../stores/revenue').StoreRevenueBlock | null;
 }): MoneyReport {
   const { current, prior } = args;
   return {
@@ -185,6 +189,7 @@ export function buildMoneyReport(args: {
     protected: args.protectedOutcome.actions > 0 ? args.protectedOutcome.amount : null,
     protected_actions: args.protectedOutcome.actions,
     prior_spent: prior ? round2(prior.cost) : null,
+    ...(args.storeRevenue ? { store_revenue: args.storeRevenue } : {}),
   };
 }
 
@@ -227,6 +232,7 @@ export function moneyReportLines(report: MoneyReport): string[] {
   } else {
     lines.push('الوفر: ما فيه تعديل هالشهر انقاس أثره بعد، فما أحسب لك وفر.');
   }
+  if (report.store_revenue) lines.push(storeRevenueLine(report.store_revenue, report.currency));
   return lines;
 }
 

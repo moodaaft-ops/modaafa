@@ -72,3 +72,36 @@ export async function readGbpProfile(args: { accessToken: string; locationId: st
   }
   return parseGbpLocation(await locRes.json(), reviews);
 }
+
+/**
+ * Finds the one location of the signed-in Google user, or null when there are
+ * none or several (we never guess which place is the merchant's). Needs the
+ * approved GBP API project; any failure returns null.
+ *  accounts:  mybusinessaccountmanagement.googleapis.com/v1/accounts
+ *  locations: mybusinessbusinessinformation.googleapis.com/v1/accounts/{a}/locations?readMask=name
+ */
+export async function discoverGbpLocation(accessToken: string, fetchImpl: typeof fetch = fetch): Promise<{ accountId: string; locationId: string } | null> {
+  const headers = { Authorization: `Bearer ${accessToken}` };
+  try {
+    const a = await fetchImpl('https://mybusinessaccountmanagement.googleapis.com/v1/accounts?pageSize=5', { headers });
+    if (!a.ok) return null;
+    const accounts = ((await a.json()) as { accounts?: { name?: string }[] }).accounts ?? [];
+    if (accounts.length !== 1) return null;
+    const accountId = /^accounts\/(\d{5,25})$/.exec(accounts[0].name ?? '')?.[1];
+    if (!accountId) return null;
+    const l = await fetchImpl(`https://mybusinessbusinessinformation.googleapis.com/v1/accounts/${accountId}/locations?readMask=name&pageSize=3`, { headers });
+    if (!l.ok) return null;
+    const locations = ((await l.json()) as { locations?: { name?: string }[] }).locations ?? [];
+    if (locations.length !== 1) return null;
+    const locationId = /^locations\/(\d{5,25})$/.exec(locations[0].name ?? '')?.[1];
+    return locationId ? { accountId, locationId } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Answering windows from the setup answer, as one span [open, close). */
+export function answeringSpan(windows: Array<[number, number]> | undefined): { open: number; close: number } | null {
+  if (!windows || windows.length === 0) return null;
+  return { open: Math.min(...windows.map((w) => w[0])), close: Math.max(...windows.map((w) => w[1])) };
+}

@@ -66,3 +66,35 @@ export function verifyZidWebhook(args: {
   const decoded = Buffer.from(m[1], 'base64').toString('utf8');
   return safeEqual(decoded, `${args.username}:${args.password}`) ? { ok: true } : { ok: false, reason: 'basic_mismatch' };
 }
+
+/**
+ * Shopify: X-Shopify-Hmac-Sha256 = base64 HMAC-SHA256(app client secret, raw body).
+ * (Documented by Shopify; compare constant-time on the raw bytes.)
+ */
+export function verifyShopifyWebhook(args: { secret: string; hmacHeader: string | null; rawBody: string }): VerifyResult {
+  const presented = (args.hmacHeader ?? '').trim();
+  if (!presented) return { ok: false, reason: 'signature_missing' };
+  const expected = createHmac('sha256', args.secret).update(args.rawBody, 'utf8').digest('base64');
+  return safeEqual(presented, expected) ? { ok: true } : { ok: false, reason: 'signature_mismatch' };
+}
+
+export function shopifyHmac(secret: string, rawBody: string): string {
+  return createHmac('sha256', secret).update(rawBody, 'utf8').digest('base64');
+}
+
+/**
+ * Shopify OAuth redirect: `hmac` = hex HMAC-SHA256(client secret, the other
+ * query params sorted by key, joined as key=value with &). Verified before the
+ * code is used, so a forged redirect cannot start an install.
+ */
+export function verifyShopifyQuery(secret: string, params: URLSearchParams): VerifyResult {
+  const hmac = params.get('hmac');
+  if (!hmac || !/^[0-9a-f]{64}$/i.test(hmac)) return { ok: false, reason: 'hmac_missing' };
+  const message = [...params.entries()]
+    .filter(([k]) => k !== 'hmac')
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([k, v]) => `${k}=${v}`)
+    .join('&');
+  const expected = createHmac('sha256', secret).update(message, 'utf8').digest('hex');
+  return safeEqual(hmac.toLowerCase(), expected) ? { ok: true } : { ok: false, reason: 'hmac_mismatch' };
+}

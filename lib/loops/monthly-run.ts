@@ -57,6 +57,8 @@ import {
   type MonthTotals,
   type MonthWindow,
 } from './monthly';
+import { isStoreSyncEnabled } from '../stores/flags';
+import { loadStoreRevenue, storeRevenueBlock, type StoreRevenueBlock } from '../stores/revenue';
 import { analyzeNgrams, type NgramAnalysis } from './ngram';
 import { fetchSearchTermStats } from './ngram-source';
 import { loadOutcomeRecords, type OutcomeRecord } from './outcome-memory';
@@ -95,6 +97,8 @@ export type MonthlyDeps = {
   send(account: MonthlyAccount, window: MonthWindow, money: string[], plan: string[], coaching?: string[]): Promise<SendTemplateResult | { status: 'no_owner' }>;
   /** Offer and response coaching lines (OFFER_COACHING_ENABLED). Optional so older callers and tests stay valid. */
   loadCoaching?(account: MonthlyAccount, now: Date): Promise<string[]>;
+  /** Store orders vs Google value for the month (STORE_SYNC_ENABLED). Optional: absent means no comparison. */
+  loadStoreRevenue?(account: MonthlyAccount, window: MonthWindow, googleValue: number): Promise<StoreRevenueBlock | null>;
   /** True for an agency shadow account (SHADOW_MODE_ENABLED). Optional: absent means not shadow. */
   isShadow?(accountId: string): Promise<boolean>;
   modelName(): string;
@@ -205,6 +209,18 @@ export function defaultDeps(supabase: any): MonthlyDeps {
       if (!account.business_id) return null;
       const facts = await loadActiveMerchantContext(supabase, account.business_id, now);
       return merchantContextBlock(facts, riyadhDay(now));
+    },
+    loadStoreRevenue: async (account, window, googleValue) => {
+      if (!isStoreSyncEnabled()) return null;
+      const cmp = await loadStoreRevenue(
+        supabase,
+        account.id,
+        `${window.from}T00:00:00+03:00`,
+        new Date(Date.parse(`${window.to}T00:00:00+03:00`) + 86400000).toISOString(),
+        googleValue
+      );
+      const days = Math.max(1, Math.round((Date.parse(window.to) - Date.parse(window.from)) / 86400000) + 1);
+      return storeRevenueBlock(cmp, days);
     },
     hasReport: async (accountId, window) => {
       const { data } = await supabase
@@ -358,6 +374,9 @@ export async function reviewAccount(args: {
       prior: prior ? { cost: prior.cost, conversions: prior.conversions, conversion_value: prior.conversion_value } : null,
       wasted: ngram && ngram.note === 'ok' ? ngram.wasteful_terms_cost : null,
       protectedOutcome: protectedFromOutcomes(outcomes, window),
+      storeRevenue: deps.loadStoreRevenue
+        ? await deps.loadStoreRevenue(account, window, current.conversion_value).catch(() => null)
+        : null,
     });
 
     const season = isSeasonsEnabled(env) ? seasonContext(riyadhDay(now)) : null;

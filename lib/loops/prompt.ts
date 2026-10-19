@@ -16,6 +16,7 @@ type LoopBlocks = {
   outcome_memory?: unknown;
   season_context?: unknown;
   merchant_context?: unknown;
+  store_revenue?: unknown;
 };
 
 export function loopsPromptAddendum(snapshot: LoopBlocks): string {
@@ -44,6 +45,13 @@ export function loopsPromptAddendum(snapshot: LoopBlocks): string {
   if (snapshot.merchant_context) {
     lines.push(
       '- merchant_context: what the owner told us about the coming days (offer, stock-out, price change, busy hours). Respect it in reason_ar and in what you propose.'
+    );
+  }
+  if (snapshot.store_revenue) {
+    lines.push(
+      '- store_revenue: real orders from the merchant store against the value Google reports for the same 30 days. ' +
+        'google_to_store_ratio above 1.25 means Google over-reports: do not scale budget or loosen targets on Google value alone. ' +
+        'Below 0.6 means tracking misses sales. Evidence only; every rule and server check above still applies.'
     );
   }
   if (lines.length === 0) return '';

@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS public.store_connections (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   account_id UUID REFERENCES public.google_ads_accounts(id) ON DELETE SET NULL,
-  platform TEXT NOT NULL CHECK (platform IN ('salla', 'zid')),
+  platform TEXT NOT NULL CHECK (platform IN ('salla', 'zid', 'shopify')),
   external_store_id TEXT NOT NULL,
   access_token_encrypted TEXT,
   refresh_token_encrypted TEXT,
@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS public.store_connections (
 CREATE TABLE IF NOT EXISTS public.store_orders (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   connection_id UUID NOT NULL REFERENCES public.store_connections(id) ON DELETE CASCADE,
-  platform TEXT NOT NULL CHECK (platform IN ('salla', 'zid')),
+  platform TEXT NOT NULL CHECK (platform IN ('salla', 'zid', 'shopify')),
   external_id TEXT NOT NULL,
   status TEXT,
   total NUMERIC(14, 2) NOT NULL CHECK (total >= 0),

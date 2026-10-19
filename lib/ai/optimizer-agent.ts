@@ -247,6 +247,8 @@ export interface OptimizerSnapshot {
   outcome_memory?: WhatWorkedBlock;
   season_context?: SeasonContext;
   merchant_context?: MerchantContextBlock;
+  /** Real store revenue vs Google-reported value (STORE_SYNC_ENABLED). Compact; absent until enough orders. */
+  store_revenue?: import('../stores/revenue').StoreRevenueBlock;
 }
 
 export interface OptimizerAction {

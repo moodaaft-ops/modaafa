@@ -4,7 +4,7 @@
  * so every field is read defensively and an unreadable order is dropped, not guessed.
  */
 
-export type StorePlatform = 'salla' | 'zid';
+export type StorePlatform = 'salla' | 'zid' | 'shopify';
 
 export type NormalizedOrder = {
   platform: StorePlatform;
@@ -144,5 +144,49 @@ export function compareRevenue(args: {
     google_reported_value: args.googleReportedValue,
     google_to_store_ratio: ratio === null ? null : Math.round(ratio * 100) / 100,
     verdict,
+  };
+}
+
+/**
+ * Shopify order webhook (topics orders/create, orders/updated, orders/cancelled,
+ * orders/paid). The body IS the order. Documented fields: id, total_price
+ * (string), currency, created_at, cancelled_at, financial_status, landing_site
+ * (path with the query string of the first visit, so gclid and utm_* arrive
+ * there), note_attributes. Tracking is read from landing_site and note.
+ */
+export function normalizeShopifyOrder(topic: string, payload: unknown): NormalizedOrder | null {
+  const o = obj(payload);
+  if (!o) return null;
+  const id = str(o.id);
+  const total = num(o.total_price);
+  if (!id || total === null || total < 0) return null;
+  const params = new URLSearchParams((str(o.landing_site) ?? '').split('?')[1] ?? '');
+  const gclid = params.get('gclid');
+  const attrs = Array.isArray(o.note_attributes) ? (o.note_attributes as unknown[]) : [];
+  const attr = (name: string) => {
+    for (const a of attrs) {
+      const r = obj(a);
+      if (r && r.name === name) return str(r.value);
+    }
+    return null;
+  };
+  const note = `${str(o.note) ?? ''} ${attr('ref_code') ?? ''}`;
+  const ref = /\bM-[2-9A-HJKMNP-Z]{4,6}\b/.exec(note)?.[0] ?? null;
+  const status = str(o.financial_status);
+  const currency = (str(o.currency) ?? 'SAR').toUpperCase();
+  const lowered = `${topic} ${status ?? ''}`.toLowerCase();
+  return {
+    platform: 'shopify',
+    external_id: id,
+    event: topic,
+    status,
+    total,
+    currency: /^[A-Z]{3}$/.test(currency) ? currency : 'SAR',
+    placed_at: iso(o.created_at),
+    cancelled: Boolean(str(o.cancelled_at)) || lowered.includes('cancel') || lowered.includes('refunded'),
+    gclid: gclid && GCLID.test(gclid) ? gclid : null,
+    utm_source: params.get('utm_source'),
+    utm_campaign: params.get('utm_campaign'),
+    ref_code: ref,
   };
 }

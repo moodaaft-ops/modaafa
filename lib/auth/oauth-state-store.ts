@@ -30,7 +30,11 @@ export type OAuthStatePurpose =
   // Separate consents for Data Manager upload, GA4 read and Business Profile read (lib/google-auth).
   | 'google_scope_data_manager'
   | 'google_scope_ga4'
-  | 'google_scope_gbp';
+  | 'google_scope_gbp'
+  // Store connections (lib/stores): Salla and Zid.
+  | 'store_salla'
+  | 'store_zid'
+  | 'store_shopify';
 
 export type ConsumeOAuthStateResult =
   | 'ok'

@@ -18,6 +18,8 @@ import {
 import { loadActiveMerchantContext, merchantContextBlock } from './merchant-context';
 import { loadOutcomeRecords, whatWorkedBlock } from './outcome-memory';
 import { riyadhDay, seasonContext } from './seasons';
+import { isStoreSyncEnabled } from '../stores/flags';
+import { loadStoreRevenue, readGoogleConversionValue, storeRevenueBlock } from '../stores/revenue';
 
 type Env = Record<string, string | undefined>;
 
@@ -38,7 +40,8 @@ export async function prepareOptimizerLoops(args: {
   const outcomes = isOutcomeMemoryEnabled(env);
   const seasons = isSeasonsEnabled(env);
   const business = isBusinessMemoryEnabled(env);
-  if (!ngram && !outcomes && !seasons && !business) return EMPTY_LOOPS_CONTEXT;
+  const storeSync = isStoreSyncEnabled(env);
+  if (!ngram && !outcomes && !seasons && !business && !storeSync) return EMPTY_LOOPS_CONTEXT;
 
   const today = riyadhDay(now);
   const context: LoopsContext = { outcomes: null, season: null, merchantFacts: null, today };
@@ -54,6 +57,18 @@ export async function prepareOptimizerLoops(args: {
       if (block) args.snapshot.ngram_analysis = block;
     } catch {
       // The block is an extra; the run goes on without it.
+    }
+  }
+
+  if (storeSync) {
+    try {
+      const googleValue = await readGoogleConversionValue(args.customer, 30);
+      const to = now.toISOString();
+      const from = new Date(now.getTime() - 30 * 86400000).toISOString();
+      const block = storeRevenueBlock(await loadStoreRevenue(args.supabase, args.accountId, from, to, googleValue), 30);
+      if (block) args.snapshot.store_revenue = block;
+    } catch {
+      // The comparison is an extra; the run goes on without it.
     }
   }
 

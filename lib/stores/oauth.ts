@@ -55,3 +55,29 @@ export async function exchangeStoreCode(cfg: StoreOAuthConfig, code: string, fet
   if (!res.ok) throw new Error(`store_token_exchange_${res.status}`);
   return (await res.json()) as { access_token?: string; refresh_token?: string; expires_in?: number; authorization?: string };
 }
+
+/** Shopify: per-shop install. The shop domain is validated before any URL is built from it. */
+export const SHOPIFY_SHOP_PATTERN = /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/;
+
+export function normalizeShopDomain(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const shop = raw.trim().toLowerCase();
+  return SHOPIFY_SHOP_PATTERN.test(shop) ? shop : null;
+}
+
+export function shopifyConfig(env: Record<string, string | undefined> = process.env) {
+  const clientId = env.SHOPIFY_CLIENT_ID;
+  const clientSecret = env.SHOPIFY_CLIENT_SECRET;
+  const redirectUri = env.SHOPIFY_REDIRECT_URI;
+  if (!isConfiguredEnv(clientId) || !isConfiguredEnv(clientSecret) || !isConfiguredEnv(redirectUri)) return null;
+  return { clientId, clientSecret, redirectUri, scope: env.SHOPIFY_SCOPE || 'read_orders' };
+}
+
+export function buildShopifyAuthUrl(cfg: NonNullable<ReturnType<typeof shopifyConfig>>, shop: string, state: string): string {
+  const u = new URL(`https://${shop}/admin/oauth/authorize`);
+  u.searchParams.set('client_id', cfg.clientId);
+  u.searchParams.set('scope', cfg.scope);
+  u.searchParams.set('redirect_uri', cfg.redirectUri);
+  u.searchParams.set('state', state);
+  return u.toString();
+}
