@@ -58,6 +58,20 @@ const nextConfig = {
         source: '/:path*',
         headers: securityHeaders,
       },
+      {
+        // Apple Pay and Google Pay run inside Stripe's frames on the payment page.
+        // The site-wide payment=(self) would deny those frames the Payment Request
+        // API, so this one path lets Stripe's origins use it. Listed after the
+        // catch-all on purpose: for the same header key the later entry wins.
+        source: '/billing/pay',
+        headers: [
+          {
+            key: 'Permissions-Policy',
+            value:
+              'camera=(), microphone=(self), geolocation=(), payment=(self "https://js.stripe.com" "https://*.js.stripe.com"), usb=(), browsing-topics=()',
+          },
+        ],
+      },
     ];
   },
 };

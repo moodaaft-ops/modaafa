@@ -67,10 +67,11 @@ export default async function PayPage({
   if (!price) redirect(backPath);
 
   const trialDays = decision.trialDays;
-  const chargeDate = formatDateAr(firstChargeDate(trialDays));
+  const firstCharge = firstChargeDate(trialDays);
+  const chargeDate = formatDateAr(firstCharge);
 
   return (
-    <main className="px-4 py-8 sm:px-6 sm:py-12">
+    <main className="px-4 pb-16 pt-8 sm:px-6 sm:pt-14">
       <PayClient
         publishableKey={publishableKey}
         plan={plan}
@@ -83,6 +84,7 @@ export default async function PayPage({
         trialDays={trialDays}
         trialLabel={daysLabel(trialDays)}
         chargeDateText={chargeDate}
+        chargeDateIso={firstCharge.toISOString()}
         returnTo={fromOnboarding ? ONBOARDING_CHECKOUT_RETURN : null}
         backPath={backPath}
         fallbackAction={trialDays > 0 ? '/api/billing/start-trial' : '/api/billing/checkout'}

@@ -68,7 +68,7 @@ export function buildContentSecurityPolicy(nonce: string, options: ContentSecuri
     "worker-src 'self'",
     "manifest-src 'self'",
     `frame-src https://www.youtube-nocookie.com${stripe ? ' https://js.stripe.com https://*.js.stripe.com https://hooks.stripe.com' : ''}`,
-    `connect-src 'self' https://*.supabase.co wss://*.supabase.co https://analytics.tiktok.com https://analytics-ipv6.tiktokw.us${stripe ? ' https://api.stripe.com' : ''}`,
+    `connect-src 'self' https://*.supabase.co wss://*.supabase.co https://analytics.tiktok.com https://analytics-ipv6.tiktokw.us${stripe ? ' https://api.stripe.com https://fonts.googleapis.com' : ''}`,
     'upgrade-insecure-requests',
   ].join('; ');
 }

@@ -70,3 +70,32 @@ test('the payment page is the only place the policy opens to Stripe', () => {
   assert.ok(open.includes("object-src 'none'"));
   assert.ok(open.includes("default-src 'self'"));
 });
+
+test('the payment page lets Stripe frames use Apple Pay and Google Pay, and nowhere else', async () => {
+  const config = require('../next.config.js');
+  const rules: Array<{ source: string; headers: Array<{ key: string; value: string }> }> = await config.headers();
+  const policyFor = (source: string) =>
+    rules
+      .filter((rule) => rule.source === source)
+      .flatMap((rule) => rule.headers)
+      .filter((header) => header.key === 'Permissions-Policy')
+      .map((header) => header.value);
+
+  const everywhere = policyFor('/:path*');
+  const payPage = policyFor('/billing/pay');
+  assert.equal(everywhere.length, 1);
+  assert.equal(payPage.length, 1);
+  assert.match(everywhere[0], /payment=\(self\)/);
+  assert.match(payPage[0], /payment=\(self "https:\/\/js\.stripe\.com" "https:\/\/\*\.js\.stripe\.com"\)/);
+  // The page-specific rule must come after the catch-all: for one header key, the later rule wins.
+  const order = rules.map((rule) => rule.source);
+  assert.ok(order.indexOf('/billing/pay') > order.indexOf('/:path*'));
+  // Nothing else is loosened on the payment page.
+  assert.match(payPage[0], /camera=\(\)/);
+  assert.match(payPage[0], /geolocation=\(\)/);
+});
+
+test('the card field may load its Arabic font, only on the payment page', () => {
+  assert.ok(buildContentSecurityPolicy('n', { stripe: true }).includes('https://fonts.googleapis.com'));
+  assert.ok(!buildContentSecurityPolicy('n').includes('https://fonts.googleapis.com'));
+});

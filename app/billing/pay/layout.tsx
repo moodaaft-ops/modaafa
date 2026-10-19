@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 import { ThemeToggle } from '@/lib/ui/theme-toggle';
 import { createAdminClient, getRequestAuthContext } from '@/lib/supabase/server';
 import { isRegistrationComplete, REGISTRATION_COMPLETE_PATH } from '@/lib/registration/gate';
+import { Lock } from 'lucide-react';
 import { LogoMark } from '@/lib/ui/logo';
 
 export const metadata: Metadata = {
@@ -30,7 +31,13 @@ export default async function PayLayout({ children }: { children: React.ReactNod
             <LogoMark size={32} alt="" />
             <span className="text-[15px] font-bold text-foreground">مُضاعِف</span>
           </Link>
-          <ThemeToggle />
+          <div className="flex items-center gap-4">
+            <span className="hidden items-center gap-1.5 text-[12.5px] font-medium text-muted-foreground sm:flex">
+              <Lock aria-hidden className="h-3.5 w-3.5" />
+              صفحة دفع آمنة
+            </span>
+            <ThemeToggle />
+          </div>
         </div>
       </header>
       {children}
