@@ -1,3 +1,4 @@
+import { GROWTH_LABELS_AR } from '../growth/flags';
 /**
  * Arabic names for executable operations, shown wherever a user approves or
  * reviews a change. One map so the approval card, the action log and the
@@ -48,6 +49,7 @@ export const OPERATION_LABELS_AR: Record<string, string> = {
   pause_campaign: 'إيقاف حملة',
   enable_campaign: 'تشغيل حملة',
   launch_campaign: 'بناء حملة موقوفة',
+  ...GROWTH_LABELS_AR,
   add_negative_keywords_batch: 'منع عبارات بحث (دفعة)',
   ...EXTENDED_OPERATION_LABELS_AR,
   add_data_exclusion: 'استبعاد أيام التتبع المكسور من تعلم المزايدة',

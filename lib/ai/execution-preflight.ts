@@ -3,6 +3,8 @@ import type { OptimizerAction } from './optimizer-agent';
 import { isExtendedActionsEnabled } from './extended-actions/flag';
 import { isExtendedOperation } from './extended-actions/types';
 import { prepareExtendedAction } from './extended-actions/preflight';
+import { isGrowthOperation, growthOperationEnabled } from '../growth/flags';
+import { prepareGrowthAction } from '../growth/registry';
 import { cleanNegativeKeywordBatch, NEGATIVE_BATCH_MATCH_TYPES } from './executable-action';
 import { validateDataExclusionParams } from '../measurement/data-exclusion';
 import {
@@ -82,6 +84,10 @@ export async function prepareActionForExecution(action: OptimizerAction, custome
       readSevenDayMetrics,
       normalizeKeywordText,
     });
+  }
+  if (isGrowthOperation(action.type)) {
+    if (!growthOperationEnabled(action.type)) throw new Error('This growth operation is disabled.');
+    return prepareGrowthAction(action);
   }
   const params = { ...action.params };
   let rollbackPayload: Record<string, unknown> = { reversible: true };

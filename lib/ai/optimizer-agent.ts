@@ -40,6 +40,8 @@ import {
 } from '../measurement/conversion-actions';
 import { executeLaunchRollback } from '../launch/execute';
 import { runLaunchAction } from '../launch/action';
+import { runGrowthAction, executeGrowthRollback } from '../growth/action';
+import { isGrowthOperation, isGrowthRollback, type GrowthOperation } from '../growth/flags';
 import { loopsPromptAddendum } from '../loops/prompt';
 import type { NgramPromptBlock } from '../loops/ngram-source';
 import type { WhatWorkedBlock } from '../loops/outcome-memory';
@@ -281,7 +283,9 @@ export interface OptimizerAction {
     | 'create_lead_conversion_action'
     | 'set_conversion_primary'
     // Campaign launcher (CAMPAIGN_LAUNCH_ENABLED), approval-only.
-    | 'launch_campaign';
+    | 'launch_campaign'
+    // Growth operations (DEMAND_GEN_ENABLED, AUDIENCES_ENABLED, EXPERIMENTS_ENABLED, IMAGE_ASSETS_ENABLED), approval-only.
+    | GrowthOperation;
   target_id: string;
   params: Record<string, unknown>;
   reason_ar: string;
@@ -1072,6 +1076,8 @@ export async function executeAction(
     return executeExtendedAction(action, customer, options);
   }
 
+  if (isGrowthOperation(action.type)) return runGrowthAction(action.type, action.params, client, options);
+
   switch (action.type) {
     case 'pause_keyword': {
       return client.adGroupCriteria.update([
@@ -1290,6 +1296,7 @@ export async function executeRollback(
       // Undo of the campaign launcher (lib/launch). Refuses while the campaign is enabled.
       return executeLaunchRollback(rollback, client, options);
     default:
+      if (isGrowthRollback(rollback)) return executeGrowthRollback(rollback, client, options);
       throw new Error('This action does not have a supported rollback operation');
   }
 }

@@ -1,4 +1,5 @@
 import type { MeasurementDescriptor } from './execution-preflight';
+import { GROWTH_RESULT_ROLLBACK, finalizeGrowthRollback } from '../growth/registry';
 import { isExtendedActionsEnabled } from './extended-actions/flag';
 import { finalizeExtendedRollback, isExtendedRollback } from './extended-actions/execute';
 
@@ -28,6 +29,7 @@ export function finalizeRollbackPayload(payload: Record<string, unknown>, result
   if (isExtendedActionsEnabled() && isExtendedRollback(payload)) {
     return finalizeExtendedRollback(payload, result);
   }
+  if (payload.action_type === GROWTH_RESULT_ROLLBACK) return finalizeGrowthRollback(payload, result);
   if (payload.action_type === 'remove_launched_campaign') {
     const built = result?.rollback_payload;
     return built && typeof built === 'object'
