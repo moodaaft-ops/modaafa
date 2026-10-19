@@ -8,6 +8,8 @@
  * (suspension, billing, policy) is marked `escalation: human` and the mail says
  * to talk to the agency; no action is proposed or executed.
  */
+import { excludeShadowAccounts } from '../shadow/guard';
+import { shadowModeEnabled } from '../shadow/flag';
 import { decrypt } from '@/lib/crypto';
 import { getCustomer } from '@/lib/google-ads/client';
 import { getBillableBusinessIds } from '@/lib/platform/jobs';
@@ -174,7 +176,8 @@ export async function runGuard(deps: GuardRunDeps, options: GuardRunOptions = {}
   });
   if (allowed.length === 0) return summary;
 
-  const all = await loadAccounts(supabase, allowed, options.accountId);
+  // Agency shadow accounts are never checked or mailed (SHADOW_MODE_ENABLED; a no-op when off).
+  const all = await excludeShadowAccounts(supabase, await loadAccounts(supabase, allowed, options.accountId), shadowModeEnabled(env as NodeJS.ProcessEnv));
   summary.accounts.considered = all.length;
   const due = all.filter((row) => {
     if (options.force || options.accountId) return true;

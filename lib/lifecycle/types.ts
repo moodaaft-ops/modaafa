@@ -123,6 +123,8 @@ export type MonthlyFacts = {
   moneyLines: string[];
   /** Plan lines from the monthly session, already cleaned. Max 4. */
   planLines: string[];
+  /** Offer and response coaching lines (OFFER_COACHING_ENABLED); absent when the flag is off or nothing was found. */
+  coachingLines?: string[];
 };
 
 export type BillingFacts = {

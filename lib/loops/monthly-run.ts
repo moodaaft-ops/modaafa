@@ -16,6 +16,11 @@
  * Google Ads, Supabase, Anthropic or Resend.
  */
 
+import { offerCoachingEnabled } from '../coaching/flag';
+import { loadCoachingInput } from '../coaching/load';
+import { coachingLinesForReport, detectCoaching } from '../coaching/response-coaching';
+import { shadowModeEnabled } from '../shadow/flag';
+import { isShadowAccount } from '../shadow/guard';
 import { createMessageForAgent, getModelForAgent } from '../ai/client';
 import { costUsd } from '../ai/pricing';
 import { allowableCpaCut, allowableCpaScale, type BreakEven } from '../economics/break-even';
@@ -87,13 +92,17 @@ export type MonthlyDeps = {
   hasReport(accountId: string, window: MonthWindow): Promise<boolean>;
   saveReport(row: Record<string, unknown>): Promise<'saved' | 'exists'>;
   callModel(system: string, user: string, maxTokens: number, account: MonthlyAccount): Promise<ModelReply | null>;
-  send(account: MonthlyAccount, window: MonthWindow, money: string[], plan: string[]): Promise<SendTemplateResult | { status: 'no_owner' }>;
+  send(account: MonthlyAccount, window: MonthWindow, money: string[], plan: string[], coaching?: string[]): Promise<SendTemplateResult | { status: 'no_owner' }>;
+  /** Offer and response coaching lines (OFFER_COACHING_ENABLED). Optional so older callers and tests stay valid. */
+  loadCoaching?(account: MonthlyAccount, now: Date): Promise<string[]>;
+  /** True for an agency shadow account (SHADOW_MODE_ENABLED). Optional: absent means not shadow. */
+  isShadow?(accountId: string): Promise<boolean>;
   modelName(): string;
 };
 
 export type AccountOutcome =
   | { account_id: string; status: 'reported'; model_called: boolean; model_cost_usd: number; mail: string; plan_lines: number }
-  | { account_id: string; status: 'skipped'; reason: 'already_reported' | 'below_min_spend' | 'read_failed' }
+  | { account_id: string; status: 'skipped'; reason: 'already_reported' | 'below_min_spend' | 'read_failed' | 'shadow_account' }
   | { account_id: string; status: 'failed'; message: string };
 
 export type MonthlySummary = {
@@ -242,7 +251,7 @@ export function defaultDeps(supabase: any): MonthlyDeps {
         return null;
       }
     },
-    send: async (account, window, money, plan) => {
+    send: async (account, window, money, plan, coaching) => {
       if (!account.owner?.email) return { status: 'no_owner' as const };
       return sendTemplate({
         user: {
@@ -260,11 +269,16 @@ export function defaultDeps(supabase: any): MonthlyDeps {
           trial: null,
           weekly: null,
           billing: null,
-          monthly: { month: window.month, monthNameAr: monthNameAr(window.month), moneyLines: money, planLines: plan },
+          monthly: { month: window.month, monthNameAr: monthNameAr(window.month), moneyLines: money, planLines: plan, ...(coaching && coaching.length > 0 ? { coachingLines: coaching } : {}) },
         },
         enforceGap: false,
       });
     },
+    loadCoaching: async (account, now) => {
+      const input = await loadCoachingInput({ customer: account.customer, admin: supabase, accountId: account.id, now });
+      return coachingLinesForReport(detectCoaching(input));
+    },
+    isShadow: (accountId) => isShadowAccount(accountId, { admin: () => supabase }),
     modelName: () => getModelForAgent('jarvis_deep'),
   };
 }
@@ -292,6 +306,10 @@ export async function reviewAccount(args: {
 }): Promise<AccountOutcome> {
   const { account, window, now, limits, deps, env } = args;
   try {
+    // Agency shadow accounts get no mail and no report (SHADOW_MODE_ENABLED; no lookup when it is off).
+    if (shadowModeEnabled(env as NodeJS.ProcessEnv) && deps.isShadow && (await deps.isShadow(account.id))) {
+      return { account_id: account.id, status: 'skipped', reason: 'shadow_account' };
+    }
     if (await deps.hasReport(account.id, window)) {
       return { account_id: account.id, status: 'skipped', reason: 'already_reported' };
     }
@@ -408,7 +426,11 @@ export async function reviewAccount(args: {
     });
     if (saved === 'exists') return { account_id: account.id, status: 'skipped', reason: 'already_reported' };
 
-    const mail = await deps.send(account, window, moneyLines, planLines).catch((): { status: string } => ({ status: 'failed' }));
+    // Coaching lines for the mail only (not stored in the report). Best effort, flag gated.
+    const coachingLines =
+      offerCoachingEnabled(env) && deps.loadCoaching ? await deps.loadCoaching(account, now).catch((): string[] => []) : [];
+
+    const mail = await deps.send(account, window, moneyLines, planLines, coachingLines).catch((): { status: string } => ({ status: 'failed' }));
     return {
       account_id: account.id,
       status: 'reported',

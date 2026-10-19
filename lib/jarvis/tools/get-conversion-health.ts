@@ -1,4 +1,7 @@
 import type { EvidenceRow, JarvisReadTool } from './types';
+import { landingSupportForVerdict } from '@/lib/landing-check/evidence';
+import { supabaseLandingCheckStore } from '@/lib/landing-check/store';
+import { createAdminClient } from '@/lib/supabase/server';
 import { isLeadLoopEnabled } from '@/lib/lead-loop/flag';
 import { reviewConversionGoals } from '@/lib/measurement/goals';
 import { loadMeasurementInputs } from '@/lib/measurement/review-inputs';
@@ -351,6 +354,20 @@ export const getConversionHealthTool: JarvisReadTool = {
       };
     }
 
+    // Landing page tag evidence (LANDING_CHECK_ENABLED): supporting only, the verdict above is untouched.
+    const landingSupport = await landingSupportForVerdict({
+      store: () => {
+        try {
+          return supabaseLandingCheckStore(createAdminClient());
+        } catch {
+          return null;
+        }
+      },
+      accountId: ctx.accountId,
+      verdict: result.verdict,
+      now: ctx.now,
+    });
+
     return okResult(
       {
         verdict: result.verdict,
@@ -369,6 +386,7 @@ export const getConversionHealthTool: JarvisReadTool = {
         actions: shownActions,
         unavailable_checks: unavailable,
         ...(measurement ? { measurement } : {}),
+        ...(landingSupport ? { landing_page_evidence: landingSupport } : {}),
       },
       evidence
     );

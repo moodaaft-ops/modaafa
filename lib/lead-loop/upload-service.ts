@@ -1,3 +1,4 @@
+import { isShadowAccount } from '../shadow/guard';
 import {
   buildUploadClickConversionsRequest,
   interpretUploadResponse,
@@ -58,6 +59,8 @@ export async function uploadLeadConversions({
   now?: Date;
   limit?: number;
 }): Promise<UploadSummary> {
+  // Agency shadow accounts never get an upload (SHADOW_MODE_ENABLED; no lookup when it is off).
+  if (await isShadowAccount(account.id, { admin: () => db })) return { status: 'nothing_to_upload', ...EMPTY };
   let resource = settings.conversion_action_resource;
   if (!resource) {
     const found = await findConversionAction();

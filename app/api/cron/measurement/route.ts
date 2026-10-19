@@ -5,6 +5,7 @@ import { getCustomer } from '@/lib/google-ads/client';
 import { googleAdsClickConversionTransport } from '@/lib/google-ads/click-conversions';
 import { decrypt } from '@/lib/crypto';
 import { hasValidCronAuthorization } from '@/lib/security/cron-auth';
+import { excludeShadowAccounts } from '@/lib/shadow/guard';
 import { isLeadLoopServing } from '@/lib/lead-loop/flag';
 import { uploadLeadConversions, type UploadSummary } from '@/lib/lead-loop/upload-service';
 import { findLeadActionQuery, parseFoundLeadAction } from '@/lib/measurement/conversion-actions';
@@ -108,7 +109,9 @@ export async function GET(req: NextRequest) {
       const since = new Date(Date.now() - SCAN_EVERY_MS).toISOString();
       const { data: recent } = await supabase.from('measurement_scans').select('account_id').gte('last_scan_at', since);
       const done = new Set((recent ?? []).map((row: any) => String(row.account_id)));
-      const due = allowedAccountIds.filter((id) => !done.has(id)).slice(0, SCAN_ACCOUNTS_PER_RUN);
+      // Agency shadow accounts get no proposal cards (SHADOW_MODE_ENABLED; a no-op when off).
+      const notDone = allowedAccountIds.filter((id) => !done.has(id));
+      const due = (await excludeShadowAccounts(supabase, notDone.map((id) => ({ id })))).map((row) => row.id).slice(0, SCAN_ACCOUNTS_PER_RUN);
 
       await mapLimit(due, 2, async (accountId) => {
         if (budget.expired(20_000)) return;

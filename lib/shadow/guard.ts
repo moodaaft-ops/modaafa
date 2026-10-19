@@ -48,3 +48,25 @@ export async function loadShadowAccountIds(admin: any, accountIds: string[]): Pr
   for (const row of data ?? []) out.add(row.account_id);
   return out;
 }
+
+/**
+ * Drops agency shadow accounts from a list of rows with an `id` (the guard run,
+ * the measurement scan). Flag off: the same array, no database read. Flag on and
+ * the state unreadable (not just a missing table): nothing is returned, because
+ * mailing or proposing for an agency account by mistake is the worse failure.
+ */
+export async function excludeShadowAccounts<T extends { id: string }>(
+  admin: any,
+  rows: T[],
+  enabled: boolean = shadowModeEnabled()
+): Promise<T[]> {
+  if (!enabled || rows.length === 0) return rows;
+  try {
+    const { data, error } = await admin.from('shadow_accounts').select('account_id').in('account_id', rows.map((r) => r.id));
+    if (error) return isMissingTable(error) ? rows : [];
+    const shadow = new Set((data ?? []).map((r: any) => String(r.account_id)));
+    return rows.filter((r) => !shadow.has(r.id));
+  } catch {
+    return [];
+  }
+}

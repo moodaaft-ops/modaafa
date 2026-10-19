@@ -601,6 +601,11 @@ const monthly_report: EmailCopy = {
       blocks.push({ type: 'p', text: 'وش أقترح الشهر الجاي:' });
       blocks.push({ type: 'list', items: plan });
     }
+    const coaching = (month.coachingLines ?? []).map(clean).filter(Boolean).slice(0, 3);
+    if (coaching.length > 0) {
+      blocks.push({ type: 'p', text: 'ملاحظات على العرض والرد:' });
+      blocks.push({ type: 'list', items: coaching });
+    }
     blocks.push({ type: 'note', text: 'الأرقام من حساب إعلانات قوقل حقك. الوفر والهدر تقدير، مو رقم محاسبي.' });
     return {
       subject: `تقرير ${month.monthNameAr} لإعلاناتك في قوقل`,

@@ -1,6 +1,6 @@
 # Integration of the media-buyer upgrade (feat/mb-integration)
 
-Merge order: feat/mb-guard, feat/mb-actions, feat/mb-measurement, feat/mb-launch, feat/mb-loops, feat/mb-ads. Every feature is additive and behind its own flag; with all flags off behaviour is what main does today.
+Merge order: feat/mb-guard, feat/mb-actions, feat/mb-measurement, feat/mb-launch, feat/mb-loops, feat/mb-ads, feat/mb-trust. Every feature is additive and behind its own flag; with all flags off behaviour is what main does today.
 
 ## Flags (all default off)
 
@@ -15,6 +15,11 @@ Merge order: feat/mb-guard, feat/mb-actions, feat/mb-measurement, feat/mb-launch
 | `SEASONS_ENABLED` | Saudi season calendar | exactly `true` |
 | `BUSINESS_MEMORY_ENABLED` | Merchant context (needs the merchant_context migration) | exactly `true` |
 | `ADS_STUDIO_ENABLED` | Ad copy and assets (asset performance, Saudi RSA writer, replace LOW assets, sitelinks, callouts, snippets, ad tests, Jarvis get_ad_assets) | exactly `true`; write actions also need `EXTENDED_ACTIONS_ENABLED=true` |
+| `LANDING_CHECK_ENABLED` | Landing page check (weekly, SSRF guarded) + Jarvis get_landing_check | exactly `true` |
+| `OFFER_COACHING_ENABLED` | Offer and response coaching (Jarvis tool + monthly report lines) | exactly `true` |
+| `AUTONOMY_LEVELS_ENABLED` | Autonomy level `small_and_notify` (still needs `AUTOPILOT_EXECUTION_ENABLED`) | exactly `true` |
+| `AGENCY_HANDOFF_ENABLED` | Agency handoff card and operator tab | exactly `true` |
+| `SHADOW_MODE_ENABLED` | Agency shadow accounts (nothing executes, nothing is mailed) | exactly `true` |
 | `MONTHLY_REVIEW_ENABLED` | Monthly Opus session, auction insights and quality score tools, monthly mail | plus `MONTHLY_REVIEW_MIN_SPEND`, `_MAX_COST_USD`, `_MAX_ACCOUNTS`, `_CATCHUP_DAYS` |
 
 ## Migrations, apply order (none has been run)
@@ -22,8 +27,12 @@ Merge order: feat/mb-guard, feat/mb-actions, feat/mb-measurement, feat/mb-launch
 1. `db/migrations/20261020_guard_findings.sql`
 2. `db/migrations/20261020_lead_loop.sql`
 3. `db/migrations/20261020_merchant_context.sql`
+4. `db/migrations/20261020_trust_agency_handoff.sql`
+5. `db/migrations/20261020_trust_autonomy_levels.sql`
+6. `db/migrations/20261020_trust_landing_checks.sql`
+7. `db/migrations/20261020_trust_shadow_mode.sql`
 
-They are independent of each other (each only references `google_ads_accounts` / `businesses`), so the order is by file name. All idempotent.
+They are independent of each other (they only reference `google_ads_accounts` / `businesses`), so file-name order is fine. Apply `trust_autonomy_levels` before turning `AUTONOMY_LEVELS_ENABLED` on (it backfills `small_and_notify` for accounts already in conservative mode). All idempotent. Ads adds none.
 
 ## Crons
 
@@ -52,9 +61,18 @@ They are independent of each other (each only references `google_ads_accounts` /
 - Only `.env.example` conflicted (both sides kept). Ads adds no migration and no cron; it hooks into `app/api/cron/optimize/route.ts` behind its flag. Its write actions go through the extended-actions executor, which already calls `customer.mutateOperations`, so no client rename was needed.
 - Shared validators: `lib/launch/copy.ts` now takes its limits (RSA counts, headline, description, path, sitelink, callout, snippet) from `lib/ads/validators.ts` (identical values) and, for lines with a language, also runs the shared check for hidden characters, dashes, Latin comma in Arabic, ornamental quotes, machine phrases and minimum length (new issue codes `house_style`, `too_short`). The grounding rules (invented numbers, claim words, Latin words not in sources) stay in the Ads Studio writer because launch has no source corpus. Launch rules were not loosened: the result is the stricter of the two. All launch tests pass unchanged.
 
+## feat/mb-trust merge and post-merge wiring
+
+- Conflicts: `.env.example` (both), `lib/jarvis/tools/index.ts` (trust tools added as a third flag-gated group next to the base and loop groups, name map extended), `lib/ai/optimizer-agent.ts` (`checkGuardrails`: the shadow check runs FIRST, before the extended-actions branch, because that branch returns early and would otherwise skip it).
+- Compile fix: in `app/api/cron/optimize/route.ts` the shadow branch used `actions` before it existed (loops introduced the filtered `actions` later); it now stores the raw `proposedActions`.
+- (1) Offer coaching in the monthly money report: `reviewAccount` calls `deps.loadCoaching` (default: `loadCoachingInput` + `detectCoaching` + `coachingLinesForReport`) only when `OFFER_COACHING_ENABLED`; lines go to the mail only (`MonthlyFacts.coachingLines`, block "ملاحظات على العرض والرد", max 3), not into the stored report. Flag off: no call, no block.
+- (2) Landing tag evidence in `get_conversion_health`: `lib/landing-check/evidence.ts` reads the latest stored check (never fetches a page) and adds `landing_page_evidence` with `supporting_only: true`; a note appears only for missing/suspect/broken verdicts when no Google tag is visible. The verdict code is never touched. Flag off: store not read, field absent.
+- (3) Shadow exclusion: guard run (`excludeShadowAccounts`, no check and no mail), monthly review (`shadow_account` skip before anything is read or sent), lead-loop upload (`uploadLeadConversions` returns before touching a lead), measurement scan (shadow accounts get no cards), campaign launch (executes only through `checkGuardrails`, which refuses shadow accounts first; tested with `launch_campaign`). All no-ops with `SHADOW_MODE_ENABLED` off; an unreadable shadow table fails closed (nothing mailed or proposed).
+- Tests for each wiring: `tests/integration-wiring.test.ts` (8 tests).
+
 ## Verification
 
-`npx tsc --noEmit` clean, `npx eslint . --max-warnings=0` clean, `npx tsx --test "tests/**/*.test.ts"`: 2713 tests, 2664 pass, 49 skipped, 0 fail (baseline 2440 plus guard, actions, measurement, launch, loops and ads). Each branch's own report (`guard.md`, `actions.md`, `measurement.md`, `launch.md`, `loops.md`) lists what is not verified live.
+`npx tsc --noEmit` clean, `npx eslint . --max-warnings=0` clean, `npx tsx --test "tests/**/*.test.ts"`: 2828 tests, 2779 pass, 49 skipped, 0 fail (baseline 2440 plus every branch and the integration wiring tests). Each branch's own report (`guard.md`, `actions.md`, `measurement.md`, `launch.md`, `loops.md`) lists what is not verified live.
 
 ## Build fixes found by `next build`
 
