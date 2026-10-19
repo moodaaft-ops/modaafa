@@ -14,6 +14,9 @@ export const OPERATION_LABELS_AR: Record<string, string> = {
   pause_campaign: 'إيقاف حملة',
   enable_campaign: 'تشغيل حملة',
   add_negative_keywords_batch: 'منع عبارات بحث (دفعة)',
+  add_data_exclusion: 'استبعاد أيام التتبع المكسور من تعلم المزايدة',
+  create_lead_conversion_action: 'إنشاء تحويل "زبون فعلي" لرفع الزبائن لقوقل',
+  set_conversion_primary: 'اجعل الزبون الفعلي تحويلاً أساسياً',
 };
 
 export function operationLabelAr(operation: string | null | undefined): string | null {

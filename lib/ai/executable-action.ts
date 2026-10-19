@@ -1,5 +1,13 @@
 import type { OptimizerAction } from './optimizer-agent';
 import { BUDGET_STEP_MAX_PCT, BUDGET_STEP_MIN_PCT } from './optimizer-gates';
+import { isLeadLoopServing } from '../lead-loop/flag';
+import { DATA_EXCLUSION_OPERATION, validateDataExclusionParams } from '../measurement/data-exclusion';
+import {
+  CREATE_LEAD_ACTION_OPERATION,
+  SET_PRIMARY_OPERATION,
+  validateCreateLeadActionParams,
+  validateSetPrimaryParams,
+} from '../measurement/conversion-actions';
 
 /**
  * Translate a stored recommendation payload into an executable OptimizerAction.
@@ -17,7 +25,7 @@ export function buildExecutableAction(
   accountCustomerId?: string | null
 ): OptimizerAction | null {
   const operation = String(payload?.operation ?? '');
-  const allowed = [
+  const allowed: string[] = [
     'pause_keyword',
     'add_negative_keyword',
     'add_keyword',
@@ -32,6 +40,11 @@ export function buildExecutableAction(
     'enable_campaign',
     'add_negative_keywords_batch',
   ];
+  // Measurement-layer operations exist only behind LEAD_LOOP_ENABLED. With the
+  // flag off the list is exactly what it was and these payloads stay manual review.
+  if (isLeadLoopServing()) {
+    allowed.push(DATA_EXCLUSION_OPERATION, CREATE_LEAD_ACTION_OPERATION, SET_PRIMARY_OPERATION);
+  }
   if (!allowed.includes(operation)) return null;
 
   const params = payload?.params ?? {};
@@ -141,7 +154,36 @@ export function buildExecutableAction(
     };
   }
 
+  if (operation === DATA_EXCLUSION_OPERATION) {
+    if (!validCustomerTarget(targetId, accountCustomerId)) return null;
+    const exclusion = validateDataExclusionParams(params, { customerId: accountCustomerId });
+    return exclusion.ok ? { ...base, params: { ...params, ...exclusion.value } } : null;
+  }
+
+  if (operation === CREATE_LEAD_ACTION_OPERATION) {
+    if (!validCustomerTarget(targetId, accountCustomerId)) return null;
+    const parsed = validateCreateLeadActionParams(params);
+    return parsed.ok ? { ...base, params: { ...params, currency_code: parsed.currency_code } } : null;
+  }
+
+  if (operation === SET_PRIMARY_OPERATION) {
+    const parsed = validateSetPrimaryParams(params, accountCustomerId);
+    if (!parsed.ok) return null;
+    return {
+      ...base,
+      target_id: parsed.value.conversion_action_resource,
+      params: { ...params, ...parsed.value },
+    };
+  }
+
   return null;
+}
+
+/** `customers/<id>` itself, the target of customer-level operations. */
+function validCustomerTarget(value: string, accountCustomerId?: string | null) {
+  const customer = accountCustomerId ? accountCustomerId.replace(/\D/g, '') : '\\d+';
+  if (accountCustomerId && !customer) return false;
+  return new RegExp(`^customers/${customer}$`).test(value);
 }
 
 export const MAX_NEGATIVE_KEYWORD_BATCH = 10;

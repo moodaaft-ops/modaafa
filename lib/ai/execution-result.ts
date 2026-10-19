@@ -25,7 +25,9 @@ export function firstResultResourceName(result: any): string | null {
 export function finalizeRollbackPayload(payload: Record<string, unknown>, result: any) {
   if (
     payload.action_type === 'remove_created_negative_keyword' ||
-    payload.action_type === 'remove_created_keyword'
+    payload.action_type === 'remove_created_keyword' ||
+    payload.action_type === 'remove_created_data_exclusion' ||
+    payload.action_type === 'remove_created_conversion_action'
   ) {
     return { ...payload, resource_name: firstResultResourceName(result) };
   }

@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { createAdminClient, getRequestAuthContext } from '@/lib/supabase/server';
 import { isRegistrationComplete, REGISTRATION_COMPLETE_PATH } from '@/lib/registration/gate';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
+import { isLeadLoopEnabled } from '@/lib/lead-loop/flag';
 import { DashboardChrome } from './dashboard-chrome';
 import { isModaafaOperator } from '@/lib/platform/operators';
 import { isChatFirstEnabled } from '@/lib/chat-first/flag';
@@ -55,6 +56,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         pausedAccounts={pausedAccounts}
         selectedCustomerId={selectedCustomerId}
         isOperator={isModaafaOperator(user.email)}
+        showLeads={isLeadLoopEnabled(process.env, user.email)}
         recentChats={recentChats}
       >
         {overrides.suspended && <SuspendedBanner />}
@@ -74,6 +76,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       selectedCustomerId={selectedCustomerId}
       isOperator={isModaafaOperator(user.email)}
       chatFirst={isChatFirstEnabled(process.env, user.email)}
+      showLeads={isLeadLoopEnabled(process.env, user.email)}
     >
       {overrides.suspended && <SuspendedBanner />}
       <InstallPrompt />

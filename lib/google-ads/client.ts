@@ -657,6 +657,58 @@ export function getCustomer(
           options
         ),
     },
+    // Measurement layer (LEAD_LOOP_ENABLED). Reached only through approved
+    // recommendations: a lead conversion action, its primary flag, and bidding
+    // data exclusions. The update mask is fixed to `primary_for_goal`.
+    conversionActions: {
+      create: (items: unknown[], options?: { validateOnly?: boolean }) =>
+        mutateResource(
+          refreshToken,
+          normalizedCustomerId,
+          'conversionActions',
+          toCreateOperations(items),
+          normalizedLoginCustomerId,
+          options
+        ),
+      update: (items: unknown[], options?: { validateOnly?: boolean }) =>
+        mutateResource(
+          refreshToken,
+          normalizedCustomerId,
+          'conversionActions',
+          toUpdateOperations(items, ['primary_for_goal']),
+          normalizedLoginCustomerId,
+          options
+        ),
+      remove: (resourceNames: string[], options?: { validateOnly?: boolean }) =>
+        mutateResource(
+          refreshToken,
+          normalizedCustomerId,
+          'conversionActions',
+          resourceNames.map((resourceName) => ({ remove: resourceName })),
+          normalizedLoginCustomerId,
+          options
+        ),
+    },
+    biddingDataExclusions: {
+      create: (items: unknown[], options?: { validateOnly?: boolean }) =>
+        mutateResource(
+          refreshToken,
+          normalizedCustomerId,
+          'biddingDataExclusions',
+          toCreateOperations(items),
+          normalizedLoginCustomerId,
+          options
+        ),
+      remove: (resourceNames: string[], options?: { validateOnly?: boolean }) =>
+        mutateResource(
+          refreshToken,
+          normalizedCustomerId,
+          'biddingDataExclusions',
+          resourceNames.map((resourceName) => ({ remove: resourceName })),
+          normalizedLoginCustomerId,
+          options
+        ),
+    },
   };
 
   return restCustomer as unknown as Customer;
