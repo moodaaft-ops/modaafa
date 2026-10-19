@@ -393,6 +393,7 @@ function ChangePreview({
   const operationLabels: Record<string, string> = {
     adjust_budget: 'تعديل ميزانية حملة',
     adjust_bid: 'تعديل هدف المزايدة لمجموعة إعلانية',
+    shift_budget_pair: 'نقل جزء من ميزانية حملة إلى حملة ثانية (الإجمالي ما يتغير)',
     pause_keyword: 'إيقاف كلمة مفتاحية',
     pause_ad: 'إيقاف إعلان',
     add_negative_keyword: 'إضافة كلمة سلبية',
@@ -447,6 +448,18 @@ function ChangePreview({
     if (params.budget_resource) {
       rows.push({ label: 'المورد المستهدف', value: String(params.budget_resource), ltr: true });
     }
+  } else if (operation === 'shift_budget_pair') {
+    const shift = Number(params.shift_micros ?? 0) / 1_000_000;
+    const fromNow = Number(params.from_current_micros ?? 0) / 1_000_000;
+    const toNow = Number(params.to_current_micros ?? 0) / 1_000_000;
+    if (shift > 0) rows.push({ label: 'المبلغ المنقول (يومياً)', value: formatCurrency(shift, currencyCode) });
+    if (fromNow > 0 && shift > 0) {
+      rows.push({ label: 'الميزانية اللي تنقص', value: `${formatCurrency(fromNow, currencyCode)} إلى ${formatCurrency(fromNow - shift, currencyCode)}` });
+    }
+    if (toNow > 0 && shift > 0) {
+      rows.push({ label: 'الميزانية اللي تزيد', value: `${formatCurrency(toNow, currencyCode)} إلى ${formatCurrency(toNow + shift, currencyCode)}` });
+    }
+    rows.push({ label: 'الإجمالي اليومي', value: 'ما يتغير. التعديلان ينفذان مع بعض أو ما ينفذ شي' });
   } else if (operation === 'adjust_bid') {
     if (params.target_cpa_micros !== undefined) {
       rows.push({

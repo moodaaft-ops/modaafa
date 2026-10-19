@@ -19,6 +19,7 @@ export type AutoActionNotice = {
 const ACTION_VERB_AR: Record<string, string> = {
   add_negative_keyword: 'منعنا كلمة',
   pause_keyword: 'أوقفنا كلمة',
+  shift_budget_pair: 'نقلنا جزء من الميزانية',
 };
 
 export function buildAutoActionNotice(notice: AutoActionNotice) {

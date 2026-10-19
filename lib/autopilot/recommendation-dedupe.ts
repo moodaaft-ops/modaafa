@@ -151,6 +151,7 @@ export function dedupeAppliesTo(actionType: string): boolean {
     actionType === 'add_keyword' ||
     actionType === 'add_negative_keyword' ||
     actionType === 'adjust_budget' ||
+    actionType === 'shift_budget_pair' ||
     actionType === 'adjust_bid'
   );
 }
@@ -225,7 +226,25 @@ export function findPendingDuplicate(
     if (!budget) return { skip: false };
     const match = active.find((row) => {
       const { operation, params: rowParams } = payloadOf(row);
-      return operation === 'adjust_budget' && text(rowParams.budget_resource) === budget;
+      return (
+        (operation === 'adjust_budget' && text(rowParams.budget_resource) === budget) ||
+        (operation === 'shift_budget_pair' &&
+          (text(rowParams.from_budget_resource) === budget || text(rowParams.to_budget_resource) === budget))
+      );
+    });
+    return match ? skip('duplicate_budget_pending', match.id) : { skip: false };
+  }
+
+  if ((action.type as string) === 'shift_budget_pair') {
+    const budgets = [text(params.from_budget_resource), text(params.to_budget_resource)].filter(Boolean);
+    if (budgets.length === 0) return { skip: false };
+    const match = active.find((row) => {
+      const { operation, params: rowParams } = payloadOf(row);
+      if (operation === 'adjust_budget') return budgets.includes(text(rowParams.budget_resource));
+      return (
+        operation === 'shift_budget_pair' &&
+        (budgets.includes(text(rowParams.from_budget_resource)) || budgets.includes(text(rowParams.to_budget_resource)))
+      );
     });
     return match ? skip('duplicate_budget_pending', match.id) : { skip: false };
   }

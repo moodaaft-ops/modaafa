@@ -11,6 +11,7 @@ import { decrypt } from '@/lib/crypto';
 import {
   decideOptimizations,
   checkGuardrails,
+  type OptimizerAction,
   type OptimizerSnapshot,
 } from '@/lib/ai/optimizer-agent';
 import {
@@ -23,6 +24,8 @@ import { isStalePendingRecommendation } from '@/lib/recommendations/staleness';
 import type { BreakEven } from '@/lib/economics/break-even';
 import { consumeFeatureUsage } from '@/lib/billing/entitlements';
 import { applyAutonomyLevel, autonomyLevelsEnabled } from '@/lib/autopilot/autonomy';
+import { proposeBudgetShift } from '@/lib/autopilot/budget-shift';
+import { validGoogleAdsResource } from '@/lib/ai/executable-action';
 import { notifyAutoAction } from '@/lib/autopilot/autonomy-notify';
 import { loadAutonomyLevels } from '@/lib/autopilot/autonomy-store';
 import { executeAutopilotAction } from '@/lib/autopilot/executor';
@@ -478,13 +481,24 @@ async function runOptimizerCron(req: NextRequest) {
             businessId: account.business_id,
             protectedTexts: [account.customer_name, businessContext?.sector],
           });
-      const proposedActions = idle
+      const proposedActions: OptimizerAction[] = idle
         ? []
         : await decideOptimizations(snapshot, {
             userId: businessContext?.user_id ?? null,
           });
       if (idle) results.skipped_idle++;
       else results.model_calls++;
+
+      // Paired budget shift (small level only, AUTONOMY_LEVELS_ENABLED): rules over the snapshot, no model.
+      // It rides the same guardrails, dedupe, policy and queue as every other proposal.
+      if (!idle && autonomyByAccount?.get(account.id) === 'small_and_notify' && proposedActions.length < 8) {
+        const shift = proposeBudgetShift(
+          snapshot,
+          (value) => validGoogleAdsResource(value, 'campaignBudgets', account.customer_id),
+          account.currency_code ?? 'SAR'
+        );
+        if (shift) proposedActions.push(shift);
+      }
 
       // Agency shadow account: the proposals are kept for the operator's review
       // and stop here. They never reach the policy gate, the approval queue or
@@ -819,7 +833,10 @@ async function runOptimizerCron(req: NextRequest) {
           if (autonomyByAccount && verdict.code === 'autonomy_approved') {
             await notifyAutoAction(ownerEmail, {
               actionType: action.type,
-              subject: String(action.params.keyword_text ?? action.params.keyword ?? 'كلمة مفتاحية'),
+              subject:
+                (action.type as string) === 'shift_budget_pair'
+                  ? 'بين حملتين والإجمالي ما تغير'
+                  : String(action.params.keyword_text ?? action.params.keyword ?? 'كلمة مفتاحية'),
               campaignName: String(action.params.campaign_name ?? '') || null,
               reasonAr: action.reason_ar,
               appUrl: process.env.NEXT_PUBLIC_APP_URL ?? 'https://ai.modaafa.com',

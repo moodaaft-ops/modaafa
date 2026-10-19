@@ -3,7 +3,8 @@ import {
 } from '@/lib/ai/optimizer-gates';
 import { evaluatePauseKeyword } from '@/lib/ai/optimizer-proposal-gates';
 import type { OptimizerSnapshot } from '@/lib/ai/optimizer-agent';
-import { allowableCpaCut } from '@/lib/economics/break-even';
+import { allowableCpaCut, hasBreakEven } from '@/lib/economics/break-even';
+import { BUDGET_SHIFT_OPERATION, evaluatePairAmounts, evaluatePairGate } from './budget-shift';
 import {
   AUTOPILOT_POLICY_VERSION,
   type AutopilotCandidate,
@@ -55,7 +56,7 @@ export function normalizeAutonomyLevel(value: unknown): AutonomyLevel {
 /** An exact negative must have cost this many allowable CPAs with 0 conversions. */
 export const AUTONOMY_NEGATIVE_COST_IN_CPAS = 2;
 /** A budget move may shift at most this share of the total, and never raise the total. */
-export const AUTONOMY_BUDGET_SHIFT_MAX_PCT = 10;
+export { AUTONOMY_BUDGET_SHIFT_MAX_PCT } from './budget-math';
 
 /** The only action types the small level can ever execute by itself. */
 export const AUTONOMY_SMALL_ACTIONS = ['add_negative_keyword', 'pause_keyword'] as const;
@@ -101,7 +102,9 @@ export type CeilingViolation =
   | 'changes_targets'
   | 'touches_billing_or_policy'
   | 'negative_not_exact'
-  | 'raises_total_spend';
+  | 'raises_total_spend'
+  | 'shift_too_large'
+  | 'shift_invalid';
 
 /**
  * Pure. Says which hard ceilings an action would break. An empty list means the
@@ -118,7 +121,19 @@ export function hardCeilingViolations(action: {
   if (type === 'enable_campaign' || type === 'create_campaign') out.add('creates_or_enables_campaign');
   if (type === 'adjust_bid') out.add('changes_targets');
   if (NEVER_AUTOMATIC_TYPES.has(type)) out.add('type_not_allowed');
-  if (!(AUTONOMY_SMALL_ACTIONS as readonly string[]).includes(type)) out.add('type_not_allowed');
+  if (type === BUDGET_SHIFT_OPERATION) {
+    // The one money move the small level may make: a pure pair shift inside every ceiling.
+    const amounts = evaluatePairAmounts({
+      from: String(params.from_budget_resource ?? ''),
+      to: String(params.to_budget_resource ?? ''),
+      fromAmount: Number(params.from_current_micros),
+      toAmount: Number(params.to_current_micros),
+      shiftMicros: Number(params.shift_micros),
+    });
+    if (!amounts.ok) {
+      out.add(amounts.code === 'raises_total_spend' ? 'raises_total_spend' : amounts.code === 'shift_too_large' ? 'shift_too_large' : 'shift_invalid');
+    }
+  } else if (!(AUTONOMY_SMALL_ACTIONS as readonly string[]).includes(type)) out.add('type_not_allowed');
 
   const keys = Object.keys(params).map((key) => key.toLowerCase());
   if (keys.some((key) => TARGET_KEYS.includes(key))) out.add('changes_targets');
@@ -130,58 +145,8 @@ export function hardCeilingViolations(action: {
   return [...out];
 }
 
-export type BudgetChange = {
-  budget_resource: string;
-  current_amount_micros: number;
-  new_amount_micros: number;
-};
-
-export type BudgetShiftVerdict =
-  | { ok: true; total_micros: number; moved_micros: number }
-  | { ok: false; code: 'raises_total_spend' | 'shift_too_large' | 'shape_invalid' };
-
-/**
- * A budget move between campaigns is automatic only when it is a pure shift:
- * the new total is not above the old total, no single budget moves by more than
- * 10% of the total, at least one budget goes up and one goes down. Any change
- * that raises the total is rejected, however it is split. Pure.
- */
-export function evaluateBudgetShift(changes: BudgetChange[]): BudgetShiftVerdict {
-  if (!Array.isArray(changes) || changes.length < 2 || changes.length > 6) {
-    return { ok: false, code: 'shape_invalid' };
-  }
-  const seen = new Set<string>();
-  let oldTotal = 0;
-  let newTotal = 0;
-  for (const change of changes) {
-    const resource = String(change?.budget_resource ?? '');
-    const before = Number(change?.current_amount_micros);
-    const after = Number(change?.new_amount_micros);
-    if (!resource || seen.has(resource)) return { ok: false, code: 'shape_invalid' };
-    seen.add(resource);
-    if (!Number.isFinite(before) || !Number.isFinite(after) || before <= 0 || after <= 0) {
-      return { ok: false, code: 'shape_invalid' };
-    }
-    oldTotal += before;
-    newTotal += after;
-  }
-  // The ceiling: compare exact micros, no tolerance. A shift that adds even one
-  // micro to the total is a raise.
-  if (newTotal > oldTotal) return { ok: false, code: 'raises_total_spend' };
-
-  const hasUp = changes.some((c) => c.new_amount_micros > c.current_amount_micros);
-  const hasDown = changes.some((c) => c.new_amount_micros < c.current_amount_micros);
-  if (!hasUp || !hasDown) return { ok: false, code: 'shape_invalid' };
-
-  const maxMove = (oldTotal * AUTONOMY_BUDGET_SHIFT_MAX_PCT) / 100;
-  let moved = 0;
-  for (const change of changes) {
-    const delta = Math.abs(change.new_amount_micros - change.current_amount_micros);
-    if (delta > maxMove) return { ok: false, code: 'shift_too_large' };
-    if (change.new_amount_micros > change.current_amount_micros) moved += delta;
-  }
-  return { ok: true, total_micros: oldTotal, moved_micros: moved };
-}
+export { evaluateBudgetShift } from './budget-math';
+export type { BudgetChange, BudgetShiftVerdict } from './budget-math';
 
 // ---------------------------------------------------------------------------
 // Policy
@@ -253,7 +218,14 @@ export function evaluateAutonomy(context: AutonomyContext): AutopilotPolicyVerdi
     context.snapshot.economics ?? null,
     accountCpa30dFromSnapshot(context.snapshot)
   );
-  if (
+  // A budget shift is judged by the cut and scale gates on the owner's break-even (CPA or ROAS), so it
+  // needs the owner's economics, not specifically a CPA. Everything else keeps the CPA yardstick.
+  const isShift = action.type === BUDGET_SHIFT_OPERATION;
+  if (isShift) {
+    if (!check('break_even_known', hasBreakEven(context.snapshot.economics ?? null), 'owner_economics')) {
+      return queue('no_break_even', 'ما عندنا أرقام ربحك من الإعلان، فالتعديل ينتظر موافقتك.', checks);
+    }
+  } else if (
     !check('cost_reference', limit?.source === 'break_even_cpa', `source=${limit?.source ?? 'none'}`) ||
     !limit
   ) {
@@ -264,7 +236,7 @@ export function evaluateAutonomy(context: AutonomyContext): AutopilotPolicyVerdi
     );
   }
 
-  const ruleOk = smallRule(action, limit.value, context.snapshot, check);
+  const ruleOk = smallRule(action, limit?.value ?? 0, context.snapshot, check);
   if (!ruleOk) {
     return queue('insufficient_evidence', 'الأرقام ما توصل لقاعدة التنفيذ التلقائي، فالتعديل ينتظر موافقتك.', checks);
   }
@@ -323,6 +295,12 @@ function smallRule(
     // model's numbers): 0 conversions, 20+ clicks, cost >= 2 allowable CPAs.
     const verdict = evaluatePauseKeyword(action, { snapshot: snapshot as any } as any);
     return check('pause_keyword_rule', verdict.ok === true, verdict.ok ? 'ok' : String((verdict as any).code ?? 'no'));
+  }
+  if (action.type === BUDGET_SHIFT_OPERATION) {
+    // Same cut gate for the giver and scale gate for the receiver as any single budget change,
+    // read from the snapshot (never from numbers the proposal carries).
+    const verdict = evaluatePairGate(action.params, snapshot as any, (value) => /^customers\/\d+\/campaignBudgets\/[^/]+$/.test(value));
+    return check('budget_shift_rule', verdict.ok === true, verdict.ok ? 'ok' : String((verdict as any).code ?? 'no'));
   }
   return check('small_action', false, `type=${action.type}`);
 }
