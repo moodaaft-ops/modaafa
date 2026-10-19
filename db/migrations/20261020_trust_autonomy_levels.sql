@@ -30,14 +30,9 @@ CREATE POLICY autopilot_autonomy_owner_select ON public.autopilot_autonomy
 REVOKE ALL ON TABLE public.autopilot_autonomy FROM anon, authenticated;
 GRANT SELECT ON TABLE public.autopilot_autonomy TO authenticated;
 
--- Accounts that already chose the conservative mode keep the behaviour they
--- opted into (automatic exact negatives) once the flag is turned on. Everyone
--- else starts at ask_all. DO NOTHING keeps reruns and later choices intact.
-INSERT INTO public.autopilot_autonomy (account_id, level)
-SELECT account_id, 'small_and_notify'
-FROM public.autopilot_settings
-WHERE mode = 'conservative'
-ON CONFLICT (account_id) DO NOTHING;
+-- No backfill: every account starts at ask_all (no row) and the merchant
+-- picks small_and_notify himself. The small level also pauses keywords, which
+-- owners of the old conservative mode never agreed to (review finding L1).
 
 COMMENT ON TABLE public.autopilot_autonomy IS
   'Merchant-chosen autonomy level (ask_all or small_and_notify). Hard ceilings are in code, not here.';
