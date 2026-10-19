@@ -478,7 +478,7 @@ export type SetupAnswer =
   | { key: 'manager'; choice: string }
   /** A legacy id (PAIN_OPTIONS) or one of the per-kind ids (KIND_PAIN_OPTIONS). */
   | { key: 'pain'; choice: string }
-  | { key: 'website'; choice: 'url' | 'none' | 'later'; url?: string };
+  | { key: 'website'; choice: 'url' | 'none' | 'later' | 'build'; url?: string };
 
 export type ParseResult = { ok: true; answer: SetupAnswer } | { ok: false; error: string };
 
@@ -597,7 +597,7 @@ export function parseAnswer(key: unknown, raw: unknown): ParseResult {
       if (!isPainChoice(choice)) return { ok: false, error: 'invalid_choice' };
       return { ok: true, answer: { key, choice } };
     case 'website': {
-      if (choice === 'none' || choice === 'later') return { ok: true, answer: { key, choice } };
+      if (choice === 'none' || choice === 'later' || choice === 'build') return { ok: true, answer: { key, choice } };
       const url = normalizeWebsite(input.url);
       if (!url) return { ok: false, error: 'invalid_website' };
       return { ok: true, answer: { key, choice: 'url', url } };
@@ -758,7 +758,12 @@ export function answerEffects(answer: SetupAnswer): AnswerEffects {
         business: {},
         fact: {
           kind: 'other',
-          fact_ar: answer.choice === 'none' ? 'ما عنده موقع إلكتروني' : 'بيعطينا رابط موقعه بعدين',
+          fact_ar:
+            answer.choice === 'build'
+              ? 'ما عنده موقع أو متجر، وضغط زر الواتساب عشان نبني له واحد'
+              : answer.choice === 'none'
+                ? 'ما عنده موقع إلكتروني'
+                : 'بيعطينا رابط موقعه بعدين',
           data: data({ choice: answer.choice }),
         },
       };
@@ -790,7 +795,9 @@ export function answerLabel(answer: SetupAnswer): string {
         ? answer.url.replace(/^https?:\/\//, '')
         : answer.choice === 'none'
           ? 'ما عندي موقع'
-          : 'بكتبه بعدين';
+          : answer.choice === 'build'
+            ? 'ما عندي موقع، ابي مضاعف يسوي لي'
+            : 'بكتبه بعدين';
   }
 }
 
@@ -811,6 +818,8 @@ export function reactionTo(answer: SetupAnswer, context?: AdaptiveReactionContex
       return answer.choice === 'unknown'
         ? 'ولا يهمك، نقدّره مع الوقت من أرقامك.'
         : 'زين. كذا أقول لك إذا الطلب يجيك بربح أو بخسارة.';
+    case 'website':
+      return answer.choice === 'build' ? 'تمام، أرسل الرسالة وبيردون عليك، وأنا أكمل معك الباقي هنا.' : null;
     case 'manager':
       if (answer.choice === 'agency') return 'ولا يهمك، أقرأ وأجهز وأنت تقرر، وما ألمس شي بدون موافقتك.';
       if (answer.choice === 'nobody') return 'من اليوم أنا أتابعها معك كل يوم.';
