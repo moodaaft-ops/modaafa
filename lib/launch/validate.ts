@@ -1,6 +1,8 @@
 import { LAUNCH_MAX_AD_GROUPS, LAUNCH_MAX_DAILY_BUDGET_SAR, LAUNCH_MAX_KEYWORDS_PER_GROUP } from './plan';
 import { copyIssues, RSA_MAX_DESCRIPTIONS, RSA_MAX_HEADLINES, RSA_MIN_DESCRIPTIONS, RSA_MIN_HEADLINES } from './copy';
 import { LAUNCH_PLAN_VERSION, type LaunchPlan } from './types';
+import { campaignLaunchPmaxEnabled } from './flag';
+import { validatePmaxBuild } from './pmax';
 
 /**
  * A plan read back from the approval card is data from the database, so it is
@@ -23,7 +25,9 @@ export function validateStoredPlan(value: unknown): StoredPlanCheck {
   const plan = value as Rec;
   if (plan.version !== LAUNCH_PLAN_VERSION) return fail('plan_version');
   if (plan.executable !== true || !isArr(plan.blockers) || plan.blockers.length > 0) return fail('plan_blocked');
-  if (plan.type !== 'SEARCH' && plan.type !== 'SHOPPING') return fail('plan_type');
+  // Performance Max is accepted only behind CAMPAIGN_LAUNCH_PMAX_ENABLED; a stored PMAX plan is refused otherwise.
+  const isPmax = plan.type === 'PMAX' && campaignLaunchPmaxEnabled();
+  if (plan.type !== 'SEARCH' && plan.type !== 'SHOPPING' && !isPmax) return fail('plan_type');
   if (!isStr(plan.name) || !plan.name.trim() || plan.name.length > 128) return fail('plan_name');
 
   const settings = plan.settings;
@@ -45,11 +49,16 @@ export function validateStoredPlan(value: unknown): StoredPlanCheck {
   }
 
   const bidding = plan.bidding;
-  if (!isRec(bidding) || !['MAXIMIZE_CLICKS', 'MANUAL_CPC', 'MAXIMIZE_CONVERSIONS'].includes(bidding.strategy)) {
+  const allowedBidding = isPmax ? ['MAXIMIZE_CONVERSIONS', 'MAXIMIZE_CONVERSION_VALUE'] : ['MAXIMIZE_CLICKS', 'MANUAL_CPC', 'MAXIMIZE_CONVERSIONS'];
+  if (!isRec(bidding) || !allowedBidding.includes(bidding.strategy)) {
     return fail('plan_bidding');
   }
   if (bidding.strategy === 'MAXIMIZE_CONVERSIONS' && plan.type === 'SHOPPING') return fail('plan_bidding_shopping');
-  if (bidding.cpc_ceiling_micros !== null) {
+  if (isPmax) {
+    // No click ceiling on Performance Max, and conversions vs value follows the objective.
+    if (bidding.cpc_ceiling_micros !== null) return fail('plan_cpc_ceiling');
+    if ((plan.objective === 'LEADS') !== (bidding.strategy === 'MAXIMIZE_CONVERSIONS')) return fail('plan_bidding_objective');
+  } else if (bidding.cpc_ceiling_micros !== null) {
     const ceiling = bidding.cpc_ceiling_micros;
     if (!Number.isInteger(ceiling) || ceiling < 10_000 || ceiling > budget.daily_micros) return fail('plan_cpc_ceiling');
   } else if (bidding.strategy !== 'MAXIMIZE_CONVERSIONS') {
@@ -67,7 +76,9 @@ export function validateStoredPlan(value: unknown): StoredPlanCheck {
     }
   }
 
-  if (!isArr(plan.ad_groups) || plan.ad_groups.length < 1 || plan.ad_groups.length > LAUNCH_MAX_AD_GROUPS) {
+  if (isPmax) {
+    if (!isArr(plan.ad_groups) || plan.ad_groups.length !== 0) return fail('plan_ad_groups');
+  } else if (!isArr(plan.ad_groups) || plan.ad_groups.length < 1 || plan.ad_groups.length > LAUNCH_MAX_AD_GROUPS) {
     return fail('plan_ad_groups');
   }
   const language = plan.language === 'en' ? 'en' : 'ar';
@@ -120,6 +131,7 @@ export function validateStoredPlan(value: unknown): StoredPlanCheck {
     }
   }
   if (!isStr(plan.shared_negative_list?.name) || plan.shared_negative_list.name.length > 255) return fail('plan_shared_list');
+  if (isPmax && plan.shared_negative_list.keywords.length > 0) return fail('plan_shared_list');
 
   const assets = plan.assets;
   if (!isRec(assets) || !isArr(assets.sitelinks) || !isArr(assets.callouts)) return fail('plan_assets');
@@ -136,6 +148,19 @@ export function validateStoredPlan(value: unknown): StoredPlanCheck {
   const snippet = assets.structured_snippet;
   if (snippet !== null && (!isRec(snippet) || !isStr(snippet.header) || !isArr(snippet.values) || snippet.values.length < 3 || snippet.values.length > 10)) {
     return fail('plan_snippet');
+  }
+
+  if (isPmax) {
+    const pmax = plan.pmax;
+    if (!isRec(pmax)) return fail('plan_pmax');
+    if (!isArr(pmax.brand_exclusions) || pmax.brand_exclusions.length > 10) return fail('plan_pmax_brands');
+    for (const brand of pmax.brand_exclusions) {
+      if (!isStr(brand) || !brand.trim() || brand.length > 80) return fail('plan_pmax_brands');
+    }
+    if (plan.language !== 'ar' && plan.language !== 'en') return fail('plan_language');
+    const reason = validatePmaxBuild(pmax.build, { language, brand, objective: plan.objective ?? null });
+    if (reason) return fail(reason);
+    if (assets.sitelinks.length > 0 || assets.callouts.length > 0 || assets.call_phone !== null || snippet !== null) return fail('plan_pmax_assets');
   }
 
   return { ok: true, plan: value as LaunchPlan };

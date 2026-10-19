@@ -1,4 +1,5 @@
 import type { BuilderBidStrategy, BuilderCampaignType, BuilderObjective } from '@/lib/ai/builder-gates';
+import type { PmaxBuild } from './pmax';
 
 /**
  * The launch plan: everything needed to create ONE campaign, PAUSED, in one
@@ -70,7 +71,8 @@ export type LaunchPlan = {
   business_kind: 'clinic' | 'services' | 'ecommerce' | 'local' | 'general';
   budget: { daily_sar: number; daily_micros: number };
   bidding: {
-    strategy: Extract<BuilderBidStrategy, 'MAXIMIZE_CLICKS' | 'MANUAL_CPC' | 'MAXIMIZE_CONVERSIONS'>;
+    /** MAXIMIZE_CONVERSION_VALUE is used only by a sales Performance Max plan (CAMPAIGN_LAUNCH_PMAX_ENABLED). */
+    strategy: Extract<BuilderBidStrategy, 'MAXIMIZE_CLICKS' | 'MANUAL_CPC' | 'MAXIMIZE_CONVERSIONS'> | 'MAXIMIZE_CONVERSION_VALUE';
     cpc_ceiling_micros: number | null;
     note_ar: string;
   };
@@ -91,8 +93,8 @@ export type LaunchPlan = {
   assets: LaunchAssets;
   /** SHOPPING only. The merchant id is read from the account at execution. */
   shopping: { campaign_priority: 0 } | null;
-  /** PMAX only (plan is not executable yet). */
-  pmax: { brand_exclusions: string[]; final_url: string } | null;
+  /** PMAX only. `build` is present only under CAMPAIGN_LAUNCH_PMAX_ENABLED; without it the plan is blocked. */
+  pmax: { brand_exclusions: string[]; final_url: string; build?: PmaxBuild } | null;
   blockers: LaunchBlocker[];
   warnings_ar: string[];
   /** What was dropped and why, for the merchant to see. */

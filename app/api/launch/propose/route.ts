@@ -6,7 +6,9 @@ import { getLinkedGoogleAdsAccount, normalizeCustomerId } from '@/lib/accounts/s
 import { loadBuilderSignals } from '@/lib/ai/builder-signals';
 import { isSameOriginRequest } from '@/lib/security/origin';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
-import { campaignLaunchEnabled } from '@/lib/launch/flag';
+import { campaignLaunchEnabled, campaignLaunchPmaxEnabled } from '@/lib/launch/flag';
+import { getCustomer } from '@/lib/google-ads/client';
+import { readOfflineUploadInPlace, readPmaxInventory } from '@/lib/launch/pmax-inventory';
 import { proposeLaunch } from '@/lib/launch/propose';
 
 /**
@@ -63,6 +65,19 @@ export async function POST(req: NextRequest) {
     const refreshToken = decrypt(account.refresh_token_encrypted);
     const business = (account as any).businesses ?? {};
     const signals = await loadBuilderSignals({ supabase, admin, accountId: account.id });
+    // Performance Max only: what the account already holds. Off, nothing extra is read.
+    let pmaxInventory = null;
+    let builderSignals = signals;
+    const draftType = String((session.draft_campaign as any)?.type ?? '').toUpperCase();
+    if (campaignLaunchPmaxEnabled() && (draftType === 'PMAX' || draftType === 'PERFORMANCE_MAX' || draftType === '')) {
+      try {
+        const customer = getCustomer(account.customer_id as string, refreshToken, account.manager_id ?? undefined);
+        pmaxInventory = await readPmaxInventory(customer as any);
+        builderSignals = { ...signals, offline_upload_in_place: await readOfflineUploadInPlace(customer as any) };
+      } catch {
+        pmaxInventory = null;
+      }
+    }
     const { plan, cardId } = await proposeLaunch({
       admin,
       accountId: account.id,
@@ -75,7 +90,9 @@ export async function POST(req: NextRequest) {
         phone: business.phone ?? null,
         monthlyBudgetSar: Number.isFinite(Number(business.monthly_budget)) ? Number(business.monthly_budget) : null,
         currency: (account as any).currency_code ?? null,
-        signals,
+        signals: builderSignals,
+        pmaxInventory,
+        pmaxEnabled: campaignLaunchPmaxEnabled(),
       },
       suggest: (suggestBody) =>
         googleAdsRest({

@@ -11,3 +11,17 @@ export function campaignLaunchEnabled(env: Record<string, string | undefined> = 
 }
 
 export const LAUNCH_OPERATION = 'launch_campaign';
+
+/**
+ * Performance Max launch ships dark behind its own switch, on top of
+ * CAMPAIGN_LAUNCH_ENABLED. CAMPAIGN_LAUNCH_PMAX_ENABLED=true:
+ *  - lifts the `pmax_assets_required` blocker when the plan carries a complete
+ *    asset group (text, images, logo),
+ *  - lets validateStoredPlan accept and buildLaunchOperations build a PMAX plan,
+ *  - reads the account's image/video/audience inventory when proposing.
+ * Anything else, or absent, leaves PMAX plans exactly as they were: built for
+ * the preview and blocked.
+ */
+export function campaignLaunchPmaxEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return campaignLaunchEnabled(env) && env.CAMPAIGN_LAUNCH_PMAX_ENABLED === 'true';
+}

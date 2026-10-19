@@ -10,6 +10,8 @@ import {
 import { cleanKeywordText, expandAndDedupeKeywords, normalizeArabicKey } from './arabic';
 import { buildAssets, resolveSiteUrl } from './assets';
 import { buildRsa } from './copy';
+import { campaignLaunchPmaxEnabled } from './flag';
+import { PMAX_LIMITS, buildPmax, type PmaxInventory } from './pmax';
 import { buildNegativePlan } from './negatives';
 import {
   LAUNCH_PLAN_VERSION,
@@ -35,6 +37,7 @@ import {
 /** A typo guard on the daily budget, not a benchmark. */
 export const LAUNCH_MAX_DAILY_BUDGET_SAR = 5000;
 export const LAUNCH_MAX_AD_GROUPS = 6;
+const PMAX_VALUE_NOTE_AR = 'تعظيم قيمة التحويلات: قوقل يصرف على اللي يجيب مبيعات أكثر قيمة، بدون هدف رقمي في البداية.';
 export const LAUNCH_MAX_KEYWORDS_PER_GROUP = 40;
 export const LAUNCH_MAX_KEYWORDS_TOTAL = 200;
 const MAX_REGIONS = 10;
@@ -54,6 +57,10 @@ export type LaunchContext = {
   signals?: BuilderAccountSignals | null;
   /** Region name -> geoTargetConstants/<id>, from lib/launch/geo.ts. */
   resolvedRegions?: Record<string, string>;
+  /** Images, videos and audiences already in the account (CAMPAIGN_LAUNCH_PMAX_ENABLED only). */
+  pmaxInventory?: PmaxInventory | null;
+  /** Test seam: defaults to CAMPAIGN_LAUNCH_PMAX_ENABLED. */
+  pmaxEnabled?: boolean;
 };
 
 type Rec = Record<string, any>;
@@ -167,9 +174,14 @@ export function buildLaunchPlan(rawDraft: unknown, context: LaunchContext): Laun
   const budgetSar = dailySar !== null && dailySar > 0 ? Math.round(dailySar * 100) / 100 : 0;
 
   // ---- Bidding ----------------------------------------------------------------
+  const pmaxOn = type === 'PMAX' && (context.pmaxEnabled ?? campaignLaunchPmaxEnabled());
   let strategy: LaunchPlan['bidding']['strategy'];
   const gatedStrategy = String(draft.bidding_strategy ?? 'MAXIMIZE_CLICKS');
-  if (gatedStrategy === 'MAXIMIZE_CONVERSIONS') strategy = 'MAXIMIZE_CONVERSIONS';
+  if (pmaxOn) {
+    // Performance Max has no click ceiling and no manual bidding: sales maximise conversion value, leads conversions.
+    // Both need the conversions the gates already required (30 a month), and neither takes a target at launch.
+    strategy = objective === 'LEADS' ? 'MAXIMIZE_CONVERSIONS' : 'MAXIMIZE_CONVERSION_VALUE';
+  } else if (gatedStrategy === 'MAXIMIZE_CONVERSIONS') strategy = 'MAXIMIZE_CONVERSIONS';
   else if (gatedStrategy === 'MANUAL_CPC') strategy = 'MANUAL_CPC';
   else if (gatedStrategy === 'MAXIMIZE_CLICKS') strategy = 'MAXIMIZE_CLICKS';
   else {
@@ -183,7 +195,7 @@ export function buildLaunchPlan(rawDraft: unknown, context: LaunchContext): Laun
     warnings.push('حملة التسوق العادية تبدأ بتعظيم النقرات مع سقف لسعر النقرة، وننتقل بعد ما تتجمع مبيعات.');
   }
   let ceilingMicros: number | null = null;
-  if (strategy !== 'MAXIMIZE_CONVERSIONS') {
+  if (!pmaxOn && strategy !== 'MAXIMIZE_CONVERSIONS') {
     const maxByRule = budgetSar > 0 ? budgetSar / CPC_CAP_BUDGET_DIVISOR : 0;
     const requested = finite(draft.max_cpc_sar);
     let cap = requested !== null && requested > 0 ? requested : maxByRule;
@@ -289,8 +301,8 @@ export function buildLaunchPlan(rawDraft: unknown, context: LaunchContext): Laun
     kind,
     allowGuarantee,
   });
-  if (type === 'SHOPPING') {
-    // Standard Shopping carries no ad text assets.
+  if (type === 'SHOPPING' || pmaxOn) {
+    // Standard Shopping carries no ad text assets, and a Performance Max campaign takes its text from the asset group.
     assetCheck.assets.sitelinks = [];
     assetCheck.assets.callouts = [];
     assetCheck.assets.structured_snippet = null;
@@ -301,22 +313,61 @@ export function buildLaunchPlan(rawDraft: unknown, context: LaunchContext): Laun
   }
   removed.push(...assetCheck.removed_ar);
 
-  // ---- Type specifics -------------------------------------------------------------------
-  let pmax: LaunchPlan['pmax'] = null;
-  if (type === 'PMAX') {
-    const brandNames = Array.isArray(draft.brand_names)
-      ? draft.brand_names.map((b: unknown) => cleanKeywordText(String(b ?? ''))).filter(Boolean)
-      : businessName
-        ? [businessName]
-        : [];
-    pmax = { brand_exclusions: Array.from(new Set(brandNames)).slice(0, 10), final_url: draftLanding ?? '' };
-    block('pmax_assets_required', 'الأداء الأقصى يحتاج صور وشعار. نبنيه في خطوة جاية، وللحين نبدأ بالبحث أو التسوق.');
-  }
-
   // ---- Names ----------------------------------------------------------------------------
   const name =
     cleanKeywordText(String(draft.name ?? '')).slice(0, CAMPAIGN_NAME_MAX) ||
-    `${businessName ?? 'حملة'} | ${type === 'SHOPPING' ? 'تسوق' : 'بحث'}`;
+    `${businessName ?? 'حملة'} | ${type === 'SHOPPING' ? 'تسوق' : pmaxOn ? 'أداء أقصى' : 'بحث'}`;
+
+  // ---- Type specifics -------------------------------------------------------------------
+  let pmax: LaunchPlan['pmax'] = null;
+  let pmaxAdGroupsCleared = false;
+  if (type === 'PMAX') {
+    if (!pmaxOn) {
+      const brandNames = Array.isArray(draft.brand_names)
+        ? draft.brand_names.map((b: unknown) => cleanKeywordText(String(b ?? ''))).filter(Boolean)
+        : businessName
+          ? [businessName]
+          : [];
+      pmax = { brand_exclusions: Array.from(new Set(brandNames)).slice(0, 10), final_url: draftLanding ?? '' };
+      block('pmax_assets_required', 'الأداء الأقصى يحتاج صور وشعار. نبنيه في خطوة جاية، وللحين نبدأ بالبحث أو التسوق.');
+    } else {
+      // Own brand is NOT excluded by default: a store with no brand search campaign would lose its cheapest sales.
+      const brandNames = Array.isArray(draft.brand_names)
+        ? draft.brand_names.map((b: unknown) => cleanKeywordText(String(b ?? ''))).filter(Boolean)
+        : [];
+      const rawGroups = Array.isArray(draft.ad_groups) ? draft.ad_groups.map(asRecord).filter((g): g is Rec => g !== null) : [];
+      const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
+      const rsaPool = {
+        headlines: rawGroups.flatMap((g) => strings(g.headlines_ar ?? g.headlines)),
+        descriptions: rawGroups.flatMap((g) => strings(g.descriptions_ar ?? g.descriptions)),
+      };
+      const built = buildPmax({
+        draft,
+        planName: name,
+        finalUrl: draftLanding ?? '',
+        businessName,
+        language,
+        allowGuarantee,
+        retail: objective !== 'LEADS',
+        rsaPool,
+        inventory: context.pmaxInventory ?? null,
+      });
+      removed.push(...built.removed_ar);
+      warnings.push(...built.warnings_ar);
+      pmax = {
+        brand_exclusions: Array.from(new Set(brandNames)).slice(0, PMAX_LIMITS.brand_exclusions_max),
+        final_url: draftLanding ?? '',
+        ...(built.build ? { build: built.build } : {}),
+      };
+      if (!built.build) {
+        const have = context.pmaxInventory ? ` (في مكتبة حسابك ${context.pmaxInventory.images.length} صورة)` : '';
+        block('pmax_assets_required', `الأداء الأقصى ناقصه: ${built.missing_ar.join('، ')}${have}. حدد الأصول الموجودة في حسابك أو ارفعها وحاول مرة ثانية.`);
+      }
+      // A PMax campaign has an asset group, not ad groups. The Search ad groups were only a source of text.
+      pmaxAdGroupsCleared = true;
+    }
+  }
+  if (pmaxAdGroupsCleared) adGroups.length = 0;
 
   // The gates' own notes (what they changed) belong in front of the merchant.
   warnings.unshift(...gated.notes_ar);
@@ -333,7 +384,7 @@ export function buildLaunchPlan(rawDraft: unknown, context: LaunchContext): Laun
     bidding: {
       strategy,
       cpc_ceiling_micros: ceilingMicros,
-      note_ar: strategyNoteAr(strategy),
+      note_ar: strategy === 'MAXIMIZE_CONVERSION_VALUE' ? PMAX_VALUE_NOTE_AR : strategyNoteAr(strategy),
     },
     settings: {
       search_partners: false,
@@ -344,7 +395,8 @@ export function buildLaunchPlan(rawDraft: unknown, context: LaunchContext): Laun
     geo: { country_constant: SAUDI_GEO_TARGET_CONSTANT, regions },
     ad_groups: adGroups,
     campaign_negatives: negatives.campaign_negatives,
-    shared_negative_list: negatives.shared_list,
+    // A Performance Max campaign takes no shared negative list; its negatives stay at campaign level.
+    shared_negative_list: pmaxOn ? { name: negatives.shared_list.name, keywords: [] } : negatives.shared_list,
     assets: assetCheck.assets,
     shopping: type === 'SHOPPING' ? { campaign_priority: 0 } : null,
     pmax,

@@ -1,5 +1,7 @@
 import { buildLaunchOperations, reusableKeys, type BuiltOperations, type OperationContext } from './operations';
 import type { LaunchPlan } from './types';
+import { readPmaxPreflight } from './pmax-preflight';
+import type { PmaxOperationContext } from './pmax-operations';
 
 /**
  * Builds the launch plan in the merchant's Google Ads account.
@@ -110,10 +112,14 @@ export type LaunchPreflight = {
   locationInherited: boolean;
   existingSharedSet: string | null;
   reusableAssets: NonNullable<OperationContext['reusableAssets']>;
+  /** Performance Max only. */
+  feedLabel?: string | null;
+  reusableVideos?: Record<string, string>;
 };
 
 /** Reads that the batch depends on. A failed optional read degrades to "none"; the merchant id is required for Shopping. */
 export async function readLaunchPreflight(plan: LaunchPlan, customer: LaunchCustomer): Promise<LaunchPreflight> {
+  if (plan.type === 'PMAX') return readPmaxLaunchPreflight(plan, customer);
   const names = await customer.query(`SELECT campaign.name FROM campaign WHERE campaign.status != 'REMOVED' LIMIT 10000`);
   const campaignName = uniqueCampaignName(
     plan.name,
@@ -231,6 +237,26 @@ export async function readLaunchPreflight(plan: LaunchPlan, customer: LaunchCust
   return { campaignName, merchantId, locationSyncAssetSet, locationInherited, existingSharedSet, reusableAssets };
 }
 
+async function readPmaxLaunchPreflight(plan: LaunchPlan, customer: LaunchCustomer): Promise<LaunchPreflight> {
+  const names = await customer.query(`SELECT campaign.name FROM campaign WHERE campaign.status != 'REMOVED' LIMIT 10000`);
+  const campaignName = uniqueCampaignName(
+    plan.name,
+    names.map((row) => String(get(row, 'campaign.name') ?? ''))
+  );
+  const pmax = await readPmaxPreflight(plan, customer);
+  if (!pmax.ok) throw new LaunchBlockedError(pmax.code, pmax.message);
+  return {
+    campaignName,
+    merchantId: pmax.merchantId,
+    feedLabel: pmax.feedLabel,
+    reusableVideos: pmax.reusableVideos,
+    locationSyncAssetSet: null,
+    locationInherited: false,
+    existingSharedSet: null,
+    reusableAssets: {},
+  };
+}
+
 /** One `<x>Result.resourceName` per operation, in order. */
 export function resourceNamesFromMutate(result: any, count: number): Array<string | null> {
   const responses: any[] = Array.isArray(result?.mutateOperationResponses)
@@ -307,6 +333,9 @@ export async function readbackLaunch(
     counts[key] = actual;
     if (actual !== expected) mismatches.push(`${key}:${actual}/${expected}`);
   };
+  if (plan.type === 'PMAX') {
+    await check('asset_groups', `SELECT asset_group.resource_name FROM asset_group WHERE campaign.resource_name = '${r}' AND asset_group.status != 'REMOVED'`, 1);
+  }
   await check('ad_groups', `SELECT ad_group.resource_name FROM ad_group WHERE campaign.resource_name = '${r}' AND ad_group.status != 'REMOVED'`, built.expected.ad_groups);
   await check('ads', `SELECT ad_group_ad.resource_name FROM ad_group_ad WHERE campaign.resource_name = '${r}' AND ad_group_ad.status != 'REMOVED'`, built.expected.ads);
   if (plan.type === 'SEARCH') {
@@ -329,7 +358,7 @@ async function findCampaignByName(customer: LaunchCustomer, name: string) {
 }
 
 export class LaunchBlockedError extends Error {
-  constructor(readonly code: 'merchant_missing' | 'readback_failed', message: string) {
+  constructor(readonly code: 'merchant_missing' | 'readback_failed' | 'pmax_assets_changed', message: string) {
     super(message);
   }
 }
@@ -348,7 +377,9 @@ export async function validateLaunchOnly(plan: LaunchPlan, customer: LaunchCusto
     locationSyncAssetSet: preflight.locationSyncAssetSet,
     existingSharedSet: preflight.existingSharedSet,
     reusableAssets: preflight.reusableAssets,
-  });
+    feedLabel: preflight.feedLabel ?? null,
+    reusableVideos: preflight.reusableVideos ?? {},
+  } as PmaxOperationContext);
   await customer.mutateOperations(built.operations, { validateOnly: true });
   return { validate_only: 'passed' as const, operations: built.operations.length, campaign_name: preflight.campaignName };
 }
@@ -378,7 +409,9 @@ export async function executeLaunch(
     locationSyncAssetSet: preflight.locationSyncAssetSet,
     existingSharedSet: preflight.existingSharedSet,
     reusableAssets: preflight.reusableAssets,
-  });
+    feedLabel: preflight.feedLabel ?? null,
+    reusableVideos: preflight.reusableVideos ?? {},
+  } as PmaxOperationContext);
 
   await customer.mutateOperations(built.operations, { validateOnly: true });
 
