@@ -22,7 +22,7 @@ import { guardFactsFrom } from './notify';
 import { createSupabaseGuardStore, reconcile, type GuardStore } from './persist';
 import { loadSignals, withImpressionShare, type AccountRef, type GaqlReader } from './signals';
 import { ymdInZone } from './time';
-import type { GuardSignals, GuardSource } from './types';
+import type { GuardOk, GuardSignals } from './types';
 
 export const GUARD_ACCOUNT_LIMIT = 200;
 export const GUARD_CONCURRENCY = 3;
@@ -132,7 +132,7 @@ function defaultOpenCustomer(account: AccountRow): GaqlReader {
 
 /** A paused link whose account Google reports dead: only the stored status is known, nothing can be queried. */
 function storedStatusSignals(account: AccountRow, ref: AccountRef, now: Date): GuardSignals {
-  const none: Record<GuardSource, boolean> = { status: true, daily: false, campaigns: false, ads: false, billing: false, changes: false };
+  const none: GuardOk = { status: true, daily: false, campaigns: false, ads: false, billing: false, changes: false };
   const timeZone = ref.timeZone || 'Asia/Riyadh';
   const today = ymdInZone(now, timeZone);
   return {

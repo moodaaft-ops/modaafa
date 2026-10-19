@@ -24,7 +24,17 @@ export const SNIPPET_VALUE_MAX = ASSET_LIMITS.snippet_value.max;
 export const SNIPPET_MIN_VALUES = 3;
 export const SNIPPET_MAX_VALUES = 10;
 
-export type CopyKind = 'headline' | 'description' | 'path' | 'sitelink_text' | 'sitelink_description' | 'callout' | 'snippet_value';
+export type CopyKind =
+  | 'headline'
+  | 'description'
+  | 'path'
+  | 'sitelink_text'
+  | 'sitelink_description'
+  | 'callout'
+  | 'snippet_value'
+  // Performance Max asset group text (CAMPAIGN_LAUNCH_PMAX_ENABLED).
+  | 'long_headline'
+  | 'business_name';
 
 const LIMITS: Record<CopyKind, number> = {
   headline: HEADLINE_MAX,
@@ -34,6 +44,8 @@ const LIMITS: Record<CopyKind, number> = {
   sitelink_description: SITELINK_DESC_MAX,
   callout: CALLOUT_MAX,
   snippet_value: SNIPPET_VALUE_MAX,
+  long_headline: ASSET_LIMITS.long_headline.max,
+  business_name: ASSET_LIMITS.business_name.max,
 };
 
 export type CopyIssueCode =
@@ -134,7 +146,7 @@ export function copyIssues(raw: unknown, options: ValidateOptions): CopyIssue[] 
   if (URL_OR_EMAIL.test(text)) add('url_or_email');
   if (hasExcessCaps(text, options.brand)) add('excess_caps');
   if (hasExcessPunctuation(text)) add('excess_punctuation');
-  if (options.kind === 'headline' && /[!！]/.test(text)) add('exclamation_in_headline');
+  if ((options.kind === 'headline' || options.kind === 'long_headline' || options.kind === 'business_name') && /[!！]/.test(text)) add('exclamation_in_headline');
   if (EMOJI_OR_SYMBOL.test(text)) add('symbol_or_emoji');
   if (/(.)\1{3,}/u.test(text)) add('repeated_chars');
   if (GENERIC_CTA.test(text)) add('generic_cta');

@@ -45,7 +45,8 @@ export type EvidenceKind =
   | 'auto_apply'
   | 'value_rule_set'
   | 'rsa_ad'
-  | 'ad_test';
+  | 'ad_test'
+  | 'shopping_issue';
 
 export type EvidenceRow = { ref: string; kind: EvidenceKind; data: Record<string, unknown> };
 

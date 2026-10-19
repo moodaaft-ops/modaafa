@@ -50,6 +50,12 @@ export type BuilderAccountSignals = {
   tracking_healthy: boolean | null;
   /** A campaign in the account already carries a Merchant Center id. */
   merchant_center_linked: boolean | null;
+  /**
+   * An enabled, primary uploaded-conversion action is receiving conversions
+   * (lib/launch/pmax-inventory.ts). Only read when CAMPAIGN_LAUNCH_PMAX_ENABLED
+   * is on; absent, null and false all keep PMAX for lead generation blocked.
+   */
+  offline_upload_in_place?: boolean | null;
 };
 
 export const UNKNOWN_BUILDER_SIGNALS: BuilderAccountSignals = {
@@ -318,7 +324,16 @@ export function applyBuilderGates(
   }
 
   if (type === 'PMAX') {
-    if (objective === 'LEADS') {
+    if (objective === 'LEADS' && signals.offline_upload_in_place === true) {
+      // Leads PMax is allowed only with the offline upload working (titan 21.12), and still needs the volume.
+      if (signals.conversions_30d === null || signals.conversions_30d < PMAX_MIN_CONVERSIONS_30D) {
+        typeChange(
+          'pmax_low_volume',
+          'SEARCH',
+          'حوّلنا الحملة من أداء أقصى لحملة بحث. أداء أقصى يبدأ بعد 30 تحويل في الشهر، وتحت هالحجم البحث أضبط وأرخص في التعلم.'
+        );
+      }
+    } else if (objective === 'LEADS') {
       typeChange(
         'pmax_leads',
         'SEARCH',

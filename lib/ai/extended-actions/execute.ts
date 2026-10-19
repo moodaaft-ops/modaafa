@@ -14,6 +14,12 @@ import {
   buildValueRuleRollbackOperations,
   finalizeValueRuleRollback,
 } from '../../value-rules/execute';
+import { isStructureOperation, isStructureRollback } from '../../structure/types';
+import {
+  buildStructureOperations,
+  buildStructureRollbackOperations,
+  finalizeStructureRollbackPayload,
+} from '../../structure/execute';
 
 /**
  * Builds and sends the Google Ads mutate for an extended action, from the
@@ -58,6 +64,7 @@ const criterion = (op: Record<string, unknown>): MutateOperation => ({ campaign_
 export function buildMutateOperations(action: OptimizerAction, customer: any): MutateOperation[] {
   if (isAdsStudioOperation(action.type)) return buildAdsStudioOperations(action);
   if (isValueRuleOperation(action.type)) return buildValueRuleOperations(action);
+  if (isStructureOperation(action.type)) return buildStructureOperations(action);
   const params = action.params as Record<string, any>;
   const resolved = resolvedOf(action);
 
@@ -248,6 +255,7 @@ export async function executeExtendedAction(
 export function finalizeExtendedRollback(payload: Record<string, any>, result: unknown): Record<string, unknown> {
   if (isAdsStudioRollback(payload)) return finalizeAdsStudioRollback(payload, result);
   if (isValueRuleRollback(payload)) return finalizeValueRuleRollback(payload, result);
+  if (isStructureRollback(payload)) return finalizeStructureRollbackPayload(payload, result);
   const names = resultResourceNames(result);
   const pick = (indexes: unknown): string[] | null => {
     if (!Array.isArray(indexes)) return [];
@@ -291,6 +299,7 @@ export function isExtendedRollback(rollback: Record<string, any>): boolean {
 export function buildRollbackOperations(rollback: Record<string, any>): MutateOperation[] {
   if (isAdsStudioRollback(rollback)) return buildAdsStudioRollbackOperations(rollback);
   if (isValueRuleRollback(rollback)) return buildValueRuleRollbackOperations(rollback);
+  if (isStructureRollback(rollback)) return buildStructureRollbackOperations(rollback);
   const touched = new Set<string>(Array.isArray(rollback.touched_resources) ? rollback.touched_resources : []);
   const guard = (name: unknown): string => {
     if (typeof name !== 'string' || !name || !touched.has(name)) {

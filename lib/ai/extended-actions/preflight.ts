@@ -15,6 +15,8 @@ import { prepareAdsStudioAction } from '../../ads/studio/preflight';
 import { isAdsStudioActive } from '../../ads/flag';
 import { isValueRuleOperation } from '../../value-rules/types';
 import { prepareValueRuleAction } from '../../value-rules/preflight';
+import { isStructureOperation } from '../../structure/types';
+import { prepareStructureAction } from '../../structure/preflight';
 
 /**
  * Pre-execution reads for the extended actions. Everything the live mutate
@@ -150,6 +152,7 @@ export async function prepareExtendedAction(
   }
 
   if (isValueRuleOperation(operation)) return prepareValueRuleAction(action, customer);
+  if (isStructureOperation(operation)) return prepareStructureAction(action, customer, deps);
 
   switch (operation) {
     case 'set_ad_schedule': {

@@ -50,6 +50,8 @@ const EXTENDED_NAME_LISTS = [
   'remove_campaign_assets',
   // Conversion value rules
   'pause_rules',
+  // Account structure (steps' resource names)
+  'struct_names',
 ];
 
 function extendedRollbackScoped(rollback: Record<string, any>, prefix: string): boolean {

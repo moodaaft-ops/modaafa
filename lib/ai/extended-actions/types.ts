@@ -13,6 +13,7 @@
 
 import { ADS_STUDIO_OPERATIONS } from '../../ads/studio/types';
 import { VALUE_RULE_OPERATIONS } from '../../value-rules/types';
+import { STRUCTURE_OPERATIONS, STRUCTURE_TARGETING_FAMILY } from '../../structure/types';
 
 export const EXTENDED_OPERATIONS = [
   'set_ad_schedule',
@@ -31,6 +32,8 @@ export const EXTENDED_OPERATIONS = [
   ...ADS_STUDIO_OPERATIONS,
   // Conversion value rules: create a rule set (geo, device or audience) and edit a rule's multiplier or status.
   ...VALUE_RULE_OPERATIONS,
+  // Account structure (AI Max, placement exclusions, shared budgets, portfolio strategies, listing groups).
+  ...STRUCTURE_OPERATIONS,
 ] as const;
 
 export type ExtendedOperation = (typeof EXTENDED_OPERATIONS)[number];
@@ -49,6 +52,7 @@ export const CAMPAIGN_TARGETING_FAMILY: Readonly<Record<string, string>> = {
   set_location_bid_modifier: 'location',
   set_geo_target_type: 'geo_type',
   set_network_settings: 'network',
+  ...STRUCTURE_TARGETING_FAMILY,
 };
 
 export const DAYS_OF_WEEK = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'] as const;

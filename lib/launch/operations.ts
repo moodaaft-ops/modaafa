@@ -1,4 +1,6 @@
 import type { LaunchPlan } from './types';
+import { campaignLaunchPmaxEnabled } from './flag';
+import { buildPmaxLaunchOperations } from './pmax-operations';
 
 /**
  * One GoogleAdsService:mutate batch that creates the whole campaign.
@@ -51,7 +53,13 @@ export type OperationRole =
   | 'listing_group'
   | 'asset'
   | 'campaign_asset'
-  | 'campaign_asset_set';
+  | 'campaign_asset_set'
+  // Performance Max (CAMPAIGN_LAUNCH_PMAX_ENABLED)
+  | 'asset_group'
+  | 'asset_group_asset'
+  | 'asset_group_signal'
+  | 'audience'
+  | 'asset_group_filter';
 
 export type BuiltOperations = {
   operations: MutateOperation[];
@@ -85,7 +93,10 @@ export const reusableKeys = {
 export function buildLaunchOperations(plan: LaunchPlan, ctx: OperationContext): BuiltOperations {
   if (plan.settings.status !== 'PAUSED') throw new Error('Launch plans are always created PAUSED.');
   if (!plan.executable) throw new Error('Launch plan has blockers and cannot be built.');
-  if (plan.type === 'PMAX') throw new Error('Performance Max launch is not supported yet.');
+  if (plan.type === 'PMAX') {
+    if (!campaignLaunchPmaxEnabled()) throw new Error('Performance Max launch is not supported yet.');
+    return buildPmaxLaunchOperations(plan, ctx);
+  }
   if (plan.type === 'SHOPPING' && !ctx.merchantId) throw new Error('Shopping launch needs a Merchant Center id.');
   if (plan.geo.regions.some((r) => !r.geo_target_constant)) throw new Error('Every region needs a geo target constant.');
 

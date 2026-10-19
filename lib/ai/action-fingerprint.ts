@@ -59,6 +59,14 @@ export function categoryForAction(type: string) {
     add_call_asset: 'ads',
     create_value_rule_set: 'bidding',
     update_value_rule: 'bidding',
+    set_ai_max: 'targeting',
+    add_placement_exclusions: 'targeting',
+    create_shared_budget: 'budget',
+    attach_shared_budget: 'budget',
+    detach_shared_budget: 'budget',
+    create_portfolio_strategy: 'bidding',
+    attach_portfolio_strategy: 'bidding',
+    detach_portfolio_strategy: 'bidding',
   };
   return map[type] ?? 'structure';
 }

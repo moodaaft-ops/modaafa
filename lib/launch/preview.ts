@@ -43,6 +43,14 @@ export function launchPreviewModel(plan: LaunchPlan): LaunchPreviewModel {
     { label: 'كلمات سلبية', value: negativeCount ? `${negativeCount} كلمة تمنع البحث غير المناسب` : 'لا يوجد' },
   ];
   if (assetBits.length) facts.push({ label: 'الإضافات', value: assetBits.join('، ') });
+  const pmax = plan.pmax?.build;
+  if (pmax) {
+    const images = Object.values(pmax.asset_group.images).reduce((sum, list) => sum + list.length, 0);
+    facts.push({ label: 'مجموعة الأصول', value: `${pmax.asset_group.headlines.length} عنوان و${pmax.asset_group.descriptions.length} وصف و${count(images, 'صورة', 'صورة')}${pmax.asset_group.videos.length ? ` و${count(pmax.asset_group.videos.length, 'فيديو', 'فيديوهات')}` : ''}` });
+    const signalCount = pmax.signals.search_themes.length + pmax.signals.user_lists.length + pmax.signals.custom_audiences.length;
+    if (signalCount) facts.push({ label: 'إشارات الجمهور', value: `${signalCount} إشارة، وهي توجيه للنظام وليست استهداف` });
+    facts.push({ label: 'توسيع الرابط', value: pmax.url_expansion.enabled ? 'شغال' : 'مقفل، الإعلان ينزل على رابطك فقط' });
+  }
 
   return {
     title: plan.name,

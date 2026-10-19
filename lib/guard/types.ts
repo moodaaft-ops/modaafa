@@ -15,12 +15,16 @@ export const GUARD_CODES = [
   'conversions_zero',
   'ad_policy',
   'outside_change',
+  // SHOPPING_HEALTH_ENABLED: a large share of the feed's products is not eligible.
+  'product_disapprovals',
 ] as const;
 export type GuardCode = (typeof GUARD_CODES)[number];
 
 /** Where each code's evidence is read from. A failed read must not close findings of its codes. */
 export type GuardSource = 'status' | 'daily' | 'campaigns' | 'ads' | 'billing' | 'changes';
-export const CODE_SOURCE: Record<GuardCode, GuardSource> = {
+/** `shopping` is read only under SHOPPING_HEALTH_ENABLED, so it may be absent: absent means unknown. */
+export type GuardOk = Record<GuardSource, boolean> & { shopping?: boolean };
+export const CODE_SOURCE: Record<GuardCode, GuardSource | 'shopping'> = {
   account_status: 'status',
   billing_setup: 'billing',
   billing_budget: 'billing',
@@ -30,6 +34,7 @@ export const CODE_SOURCE: Record<GuardCode, GuardSource> = {
   conversions_zero: 'daily',
   ad_policy: 'ads',
   outside_change: 'changes',
+  product_disapprovals: 'shopping',
 };
 
 export const CAUSE_CODES = [
@@ -156,5 +161,7 @@ export type GuardSignals = {
   changes: ChangeRow[];
   ownActions: OwnAction[];
   /** Which reads worked. A false source means "unknown", never "all clear". */
-  ok: Record<GuardSource, boolean>;
+  ok: GuardOk;
+  /** Merchant Center product status (SHOPPING_HEALTH_ENABLED). Absent or null = not read. */
+  shopping?: import('../shopping/reader').ShoppingHealth | null;
 };
