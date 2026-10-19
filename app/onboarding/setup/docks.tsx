@@ -17,6 +17,7 @@ import {
   Map,
   MapPin,
   Megaphone,
+  MessageCircle,
   MoreHorizontal,
   Pencil,
   Phone,
@@ -53,6 +54,7 @@ import {
   type SetupKey,
   type SetupOption,
 } from '@/lib/setup/questions';
+import { noSiteOffer, noSiteWhatsappUrl, resolveNoSiteAudience } from '@/lib/setup/no-site';
 import type { SetupAccount, SetupState } from '@/lib/setup/load';
 import { foldArabicSearch, toAsciiDigits } from '@/lib/accounts/search';
 
@@ -532,6 +534,50 @@ function RegionsDock({
 }
 
 function WebsiteDock({ state, busy, onAnswer }: { state: SetupState; busy: boolean; onAnswer: (payload: AnswerPayload) => void }) {
+  const [noSite, setNoSite] = useState(false);
+  const scenario = state.adaptive?.scenario;
+  const trusted = scenario && scenario.kind !== 'general' && (scenario.kindConfidence === 'stated' || scenario.kindConfidence === 'confident');
+  const offer = noSiteOffer(
+    resolveNoSiteAudience({
+      typeChoice: state.answered.type ?? null,
+      kind: trusted ? scenario.kind : null,
+      sector: state.business?.sector ?? null,
+    })
+  );
+
+  if (noSite) {
+    return (
+      <div className="space-y-3">
+        <div className="rounded-[16px] border border-border bg-card px-4 py-4">
+          <p className="text-[16px] font-bold leading-7">{offer.title}</p>
+          <p className="mt-1.5 text-[14.5px] leading-7 text-foreground">{offer.body}</p>
+          <p className="mt-2 text-[13px] leading-6 text-muted-foreground">{offer.limit}</p>
+        </div>
+        <a
+          href={noSiteWhatsappUrl(offer.audience, state.email)}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={() => {
+            if (!busy) onAnswer({ answer: { choice: 'build' }, label: offer.bubble });
+          }}
+          className="flex min-h-[56px] w-full items-center justify-center gap-2.5 rounded-full bg-primary px-5 text-[16px] font-bold text-primary-foreground transition-colors hover:bg-primary/90"
+        >
+          <MessageCircle className="h-5 w-5" />
+          {offer.button}
+        </a>
+        <div className="grid grid-cols-2 gap-2">
+          <AnswerTile
+            label="كمّل بدون موقع"
+            compact
+            disabled={busy}
+            onClick={() => onAnswer({ answer: { choice: 'none' }, label: 'ما عندي موقع' })}
+          />
+          <AnswerTile label="عندي رابط، بكتبه" compact disabled={busy} onClick={() => setNoSite(false)} />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-2">
       <TextAnswer
@@ -545,12 +591,7 @@ function WebsiteDock({ state, busy, onAnswer }: { state: SetupState; busy: boole
         onSubmit={(value) => onAnswer({ answer: { choice: 'url', url: value }, label: value.replace(/^https?:\/\//, '') })}
       />
       <div className="grid grid-cols-2 gap-2">
-        <AnswerTile
-          label="ما عندي موقع"
-          compact
-          disabled={busy}
-          onClick={() => onAnswer({ answer: { choice: 'none' }, label: 'ما عندي موقع' })}
-        />
+        <AnswerTile label={offer.tileLabel} compact disabled={busy} onClick={() => setNoSite(true)} />
         <AnswerTile
           label="بكتبه بعدين"
           compact
