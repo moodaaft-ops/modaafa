@@ -4,6 +4,7 @@ import { ThemeToggle } from '@/lib/ui/theme-toggle';
 import { AGENCY_URL, BRAND } from '@/lib/seo/site';
 import { CTA_TEXT, WHATSAPP } from '@/lib/landing/owner-config';
 import { SupportLink } from '@/lib/support/open-support';
+import { partnersEnabled } from '@/lib/partners/config';
 
 /**
  * Header and footer shared by every public page (home, /about,
@@ -101,6 +102,11 @@ export function SiteFooter() {
             <Link href="/about" className={footerLink}>
               عن مُضاعِف
             </Link>
+            {partnersEnabled() && (
+              <Link href="/affiliate" className={footerLink}>
+                برنامج الشركاء
+              </Link>
+            )}
           </nav>
 
           <nav aria-label="تواصل" className="flex flex-col">

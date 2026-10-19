@@ -24,6 +24,13 @@ export function refereeGiftPromoCode(env: Record<string, string | undefined> = p
   return raw ? raw : null;
 }
 
+/** A short Arabic phrase describing the gift ("20% على أول دفعة"), shown on the public page. Shown only together with the code. */
+export function refereeGiftLabel(env: Record<string, string | undefined> = process.env): string | null {
+  if (!refereeGiftPromoCode(env)) return null;
+  const raw = env.PARTNER_REFEREE_GIFT_LABEL?.trim();
+  return raw ? raw.slice(0, 80) : null;
+}
+
 /** A code as a partner would type or share it: trimmed, lower case, or null when it cannot be one. */
 export function normalizePartnerCode(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;
