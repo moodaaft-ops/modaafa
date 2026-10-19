@@ -103,6 +103,8 @@ export interface CheckoutParams {
   trialDays?: number;
   customerId?: string | null;
   idempotencyKey?: string;
+  /** A Stripe promotion code id applied up front (the partner welcome discount). */
+  promotionCodeId?: string | null;
 }
 
 /**
@@ -119,7 +121,8 @@ export function hostedCheckoutSubmitMessage(trialDays?: number) {
   return 'بالضغط على الزر يبدأ اشتراكك وينخصم المبلغ مباشرة. يتجدد تلقائياً، وتقدر تلغيه في أي وقت من داخل مُضاعِف.';
 }
 
-export async function createCheckoutSession(params: CheckoutParams) {
+/** The Checkout Session parameters for a plan. Pure, so the discount rules can be tested without Stripe. */
+export function buildCheckoutSessionParams(params: CheckoutParams): Stripe.Checkout.SessionCreateParams {
   const priceId = PLAN_PRICE_IDS[params.plan]?.[params.period];
   if (!isConfiguredEnv(priceId)) {
     throw new Error(`Missing Stripe price for plan/period: ${params.plan}/${params.period}`);
@@ -157,7 +160,11 @@ export async function createCheckoutSession(params: CheckoutParams) {
     // Stripe's canonical user-linkage field; makes the Dashboard and every
     // reporting export able to answer "who is this?" without metadata.
     client_reference_id: params.userId,
-    allow_promotion_codes: true,
+    // Stripe refuses `discounts` together with `allow_promotion_codes`: a customer
+    // who arrives with the partner welcome discount cannot also type another code.
+    ...(params.promotionCodeId
+      ? { discounts: [{ promotion_code: params.promotionCodeId }] }
+      : { allow_promotion_codes: true }),
     custom_text: { submit: { message: hostedCheckoutSubmitMessage(params.trialDays) } },
   };
 
@@ -168,6 +175,11 @@ export async function createCheckoutSession(params: CheckoutParams) {
   if (params.customerId) session.customer = params.customerId;
   else session.customer_email = params.email;
 
+  return session;
+}
+
+export async function createCheckoutSession(params: CheckoutParams) {
+  const session = buildCheckoutSessionParams(params);
   return getStripe().checkout.sessions.create(
     session,
     params.idempotencyKey ? { idempotencyKey: params.idempotencyKey } : undefined

@@ -1,5 +1,6 @@
 import type { PartnerSettings } from '@/lib/partners/store';
 import { formatMoney } from '@/lib/partners/format';
+import { refereeGiftLabel } from '@/lib/partners/config';
 
 const pct = (v: number) => `${Math.round(v * 1000) / 10}%`;
 
@@ -22,6 +23,11 @@ export function Offer({ settings }: { settings: PartnerSettings | null }) {
             <li>
               العمولة تحسب على اللي اندفع فعلاً، مو على التسجيل ولا التجربة. وتصير جاهزة للصرف بعد {settings.hold_days} يوم من الدفعة.
             </li>
+            {refereeGiftLabel() && (
+              <li>
+                العميل اللي يسجّل برابطك ياخذ <strong>{refereeGiftLabel()}</strong>، وهذا يسهّل عليك الإقناع.
+              </li>
+            )}
             <li>نصرف لك يدوياً لما يوصل الجاهز عندك {formatMoney(settings.min_payout, 'SAR')}.</li>
           </ul>
         ) : (
