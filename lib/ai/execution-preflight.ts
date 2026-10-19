@@ -1,3 +1,4 @@
+import { BUDGET_SHIFT_OPERATION, evaluatePairAmounts, readShiftParams } from '@/lib/autopilot/budget-shift';
 import type { OptimizerAction } from './optimizer-agent';
 import { isExtendedActionsEnabled } from './extended-actions/flag';
 import { isExtendedOperation } from './extended-actions/types';
@@ -87,7 +88,45 @@ export async function prepareActionForExecution(action: OptimizerAction, custome
   const capturedAt = new Date().toISOString();
   let measurement: MeasurementDescriptor | null = null;
 
-  if (action.type === 'adjust_budget') {
+  if ((action.type as string) === BUDGET_SHIFT_OPERATION) {
+    const read = readShiftParams(params, (value) => /^customers\/\d+\/campaignBudgets\/[^/]+$/.test(value));
+    if (!read.ok) throw new Error(`Budget shift is malformed: ${read.code}`);
+    const { from_budget_resource: from, to_budget_resource: to, shift_micros: shift } = read.value;
+    const live = async (resource: string) => {
+      const rows = await customer.query(`
+        SELECT campaign_budget.resource_name, campaign_budget.amount_micros
+        FROM campaign_budget
+        WHERE campaign_budget.resource_name = '${escapeGaql(resource)}'
+        LIMIT 1
+      `);
+      const budget = rows[0]?.campaignBudget ?? rows[0]?.campaign_budget;
+      const amount = Number(budget?.amountMicros ?? budget?.amount_micros ?? 0);
+      if (!Number.isSafeInteger(amount) || amount <= 0) throw new Error('Unable to read current campaign budget before execution');
+      return amount;
+    };
+    const [fromAmount, toAmount] = [await live(from), await live(to)];
+    // The card was made for these numbers. If either budget moved since, the card is stale.
+    if (
+      (read.value.from_current_micros !== undefined && read.value.from_current_micros !== fromAmount) ||
+      (read.value.to_current_micros !== undefined && read.value.to_current_micros !== toAmount)
+    ) {
+      throw new Error('Campaign budgets changed since this shift was proposed');
+    }
+    const pair = evaluatePairAmounts({ from, to, fromAmount, toAmount, shiftMicros: shift });
+    if (!pair.ok) throw new Error(`Budget shift refused on live numbers: ${pair.code}`);
+    params.changes = pair.changes;
+    params.from_current_micros = fromAmount;
+    params.to_current_micros = toAmount;
+    rollbackPayload = {
+      reversible: true,
+      action_type: BUDGET_SHIFT_OPERATION,
+      resource_names: [from, to],
+      changes: [
+        { budget_resource: from, amount_micros: fromAmount },
+        { budget_resource: to, amount_micros: toAmount },
+      ],
+    };
+  } else if (action.type === 'adjust_budget') {
     const resourceName = String(params.budget_resource);
     const rows = await customer.query(`
       SELECT campaign_budget.resource_name, campaign_budget.amount_micros

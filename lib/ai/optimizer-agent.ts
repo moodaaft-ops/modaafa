@@ -1,3 +1,5 @@
+import { autonomyLevelsEnabled } from '@/lib/autopilot/autonomy';
+import { evaluatePairAmounts, evaluatePairGate, readShiftParams } from '@/lib/autopilot/budget-shift';
 import { isShadowAccount } from '@/lib/shadow/guard';
 import { cachedSystemBlock, createMessageForAgent, hasAIBackend } from './client';
 import type { Customer } from 'google-ads-api';
@@ -270,6 +272,8 @@ export interface OptimizerAction {
     | 'pause_campaign'
     | 'enable_campaign'
     | 'add_negative_keywords_batch'
+    /** Behind AUTONOMY_LEVELS_ENABLED; made by rules in lib/autopilot/budget-shift.ts, never by the model. */
+    | 'shift_budget_pair'
     /** Behind EXTENDED_ACTIONS_ENABLED; never proposed by the nightly optimizer. */
     | ExtendedOperation
     // Measurement layer (LEAD_LOOP_ENABLED), approval-only like the three above.
@@ -600,6 +604,69 @@ export async function checkGuardrails(
     if (!trackingVerdict.ok) return reject(trackingVerdict.code);
   }
 
+  // A paired budget shift (AUTONOMY_LEVELS_ENABLED): the total never rises, each leg is an ordinary
+  // 5 to 20% step, both budgets pass the same cut/scale gates a single budget change passes, and
+  // neither budget changed in the last 7 days (executed or waiting), by either kind of change.
+  if ((action.type as string) === 'shift_budget_pair') {
+    if (!autonomyLevelsEnabled()) return reject('budget_shift_disabled');
+    const valid = (value: string) => /^customers\/\d+\/campaignBudgets\/[^/]+$/.test(value);
+    const read = readShiftParams(action.params, valid);
+    if (!read.ok) return reject(read.code);
+    const { from_budget_resource: from, to_budget_resource: to } = read.value;
+    if (context) {
+      const gate = evaluatePairGate(action.params, context.snapshot, valid);
+      if (!gate.ok) return reject(gate.code);
+    } else if (read.value.from_current_micros && read.value.to_current_micros) {
+      const pair = evaluatePairAmounts({
+        from,
+        to,
+        fromAmount: read.value.from_current_micros,
+        toAmount: read.value.to_current_micros,
+        shiftMicros: read.value.shift_micros,
+      });
+      if (!pair.ok) return reject(pair.code);
+    }
+    const sinceMs = nowMs - BUDGET_LOCK_DAYS * DAY_MS;
+    const budgets = [from, to];
+    for (const operation of ['adjust_budget', 'shift_budget_pair']) {
+      const { data: rows, error: rowsError } = await recentExecutedRows(supabase, accountId, operation, sinceMs);
+      if (rowsError) return reject('budget_history_unreadable');
+      if (appliesExecutedLocks) {
+        const executed =
+          operation === 'adjust_budget'
+            ? executedLockRows(rows, operation, 'budget_resource', excludeOwnRows)
+            : [
+                ...executedLockRows(rows, operation, 'from_budget_resource', excludeOwnRows),
+                ...executedLockRows(rows, operation, 'to_budget_resource', excludeOwnRows),
+              ];
+        if (budgets.some((budget) => lockedByRecentChange(executed, operation, budget, BUDGET_LOCK_DAYS, nowMs))) {
+          return reject('budget_locked_recent_change');
+        }
+      }
+      if (context) {
+        const keys = operation === 'adjust_budget' ? ['budget_resource'] : ['from_budget_resource', 'to_budget_resource'];
+        for (const key of keys) {
+          const pending = await pendingLockRows(supabase, accountId, operation, key, sinceMs, nowMs);
+          if (!pending) return reject('pending_unreadable');
+          if (budgets.some((budget) => lockedByRecentChange(pending, operation, budget, BUDGET_LOCK_DAYS, nowMs))) {
+            return reject('budget_locked_pending');
+          }
+        }
+      }
+    }
+    if (context) {
+      const { data: recentBids, error: recentBidsError } = await recentExecutedRows(supabase, accountId, 'adjust_bid', nowMs - CROSS_LOCK_DAYS * DAY_MS);
+      if (recentBidsError) return reject('bid_history_unreadable');
+      const pendingBids = await pendingLockRows(supabase, accountId, 'adjust_bid', 'ad_group_resource', nowMs - CROSS_LOCK_DAYS * DAY_MS, nowMs);
+      if (!pendingBids) return reject('pending_unreadable');
+      const bidRows = [...executedLockRows(recentBids, 'adjust_bid', 'ad_group_resource'), ...pendingBids];
+      if (budgets.some((budget) => budgetChangeCollidesWithBid(context.snapshot, budget, bidRows, nowMs))) {
+        return reject('budget_locked_by_bid_change');
+      }
+    }
+    return action;
+  }
+
   // Guardrail 1: budget changes. The step is 5 to 20% either way (titan 5.2,
   // 5.3, 6.2: 10 to 20% per step, and 20% or more can reset a smart
   // strategy's learning), one change per budget per 7 days (red rule 6), and
@@ -609,6 +676,24 @@ export async function checkGuardrails(
     const boundsVerdict = evaluateBudgetBounds(action.params);
     if (!boundsVerdict.ok) return reject(boundsVerdict.code);
     const newPct = Number((action.params as any).delta_pct ?? 0);
+
+    // A budget that took part in a paired shift this week is as locked as one that was adjusted.
+    if (autonomyLevelsEnabled() && appliesExecutedLocks) {
+      const { data: shifted, error: shiftedError } = await recentExecutedRows(
+        supabase,
+        accountId,
+        'shift_budget_pair',
+        nowMs - BUDGET_LOCK_DAYS * DAY_MS
+      );
+      if (shiftedError) return reject('budget_history_unreadable');
+      const shiftedRows = [
+        ...executedLockRows(shifted, 'shift_budget_pair', 'from_budget_resource', excludeOwnRows),
+        ...executedLockRows(shifted, 'shift_budget_pair', 'to_budget_resource', excludeOwnRows),
+      ];
+      if (lockedByRecentChange(shiftedRows, 'shift_budget_pair', budgetResource, BUDGET_LOCK_DAYS, nowMs)) {
+        return reject('budget_locked_recent_change');
+      }
+    }
 
     // Queue time: economics known, tracking healthy, scale or cut gate, impression share.
     if (context) {
@@ -1026,6 +1111,24 @@ export async function executeAction(
       ], options);
     }
 
+    case 'shift_budget_pair': {
+      if (!autonomyLevelsEnabled()) throw new Error('Budget shift is disabled');
+      // ONE mutate request carrying both budgets: Google applies both or neither.
+      const p = action.params as any;
+      const pair = evaluatePairAmounts({
+        from: String(p.from_budget_resource),
+        to: String(p.to_budget_resource),
+        fromAmount: Number(p.from_current_micros),
+        toAmount: Number(p.to_current_micros),
+        shiftMicros: Number(p.shift_micros),
+      });
+      if (!pair.ok) throw new Error(`Budget shift refused: ${pair.code}`);
+      return client.campaignBudgets.update(
+        pair.changes.map((c) => ({ resource_name: c.budget_resource, amount_micros: c.new_amount_micros })),
+        options
+      );
+    }
+
     case 'adjust_bid': {
       const { ad_group_resource, target_cpa_micros, target_roas } = action.params as any;
       return client.adGroups.update([
@@ -1113,6 +1216,16 @@ export async function executeRollback(
         [{ resource_name: rollback.budget_resource, amount_micros: rollback.amount_micros }],
         options
       );
+    case 'shift_budget_pair': {
+      const changes = Array.isArray(rollback.changes) ? rollback.changes : [];
+      if (changes.length !== 2 || changes.some((c: any) => !c?.budget_resource || !(Number(c?.amount_micros) > 0))) {
+        throw new Error('Previous budget amounts are unavailable');
+      }
+      return client.campaignBudgets.update(
+        changes.map((c: any) => ({ resource_name: c.budget_resource, amount_micros: Number(c.amount_micros) })),
+        options
+      );
+    }
     case 'pause_keyword':
       return client.adGroupCriteria.update(
         [{ resource_name: rollback.resource_name, status: rollback.status }],

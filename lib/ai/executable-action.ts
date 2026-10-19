@@ -1,3 +1,5 @@
+import { BUDGET_SHIFT_OPERATION, readShiftParams } from '@/lib/autopilot/budget-shift';
+import { autonomyLevelsEnabled } from '@/lib/autopilot/autonomy';
 import type { OptimizerAction } from './optimizer-agent';
 import { isExtendedActionsEnabled } from './extended-actions/flag';
 import { isExtendedOperation } from './extended-actions/types';
@@ -48,6 +50,25 @@ export function buildExecutableAction(
       reason_en: recommendation.title,
       expected_impact: {
         metric: String(recommendation.expected_impact?.metric ?? 'performance'),
+        delta_pct: Number(recommendation.expected_impact?.delta_pct ?? 0),
+        delta_sar_per_month: Number(recommendation.expected_impact?.delta_sar_per_month ?? 0),
+      },
+    };
+  }
+
+  if (operation === BUDGET_SHIFT_OPERATION) {
+    // Behind AUTONOMY_LEVELS_ENABLED: flag off, the same null as any unknown operation.
+    if (!autonomyLevelsEnabled()) return null;
+    const shift = readShiftParams(payload?.params ?? {}, (value) => validGoogleAdsResource(value, 'campaignBudgets', accountCustomerId));
+    if (!shift.ok) return null;
+    return {
+      type: BUDGET_SHIFT_OPERATION as OptimizerAction['type'],
+      target_id: shift.value.from_budget_resource,
+      params: { ...shift.value },
+      reason_ar: recommendation.description ?? recommendation.title,
+      reason_en: recommendation.title,
+      expected_impact: {
+        metric: String(recommendation.expected_impact?.metric ?? 'conversions'),
         delta_pct: Number(recommendation.expected_impact?.delta_pct ?? 0),
         delta_sar_per_month: Number(recommendation.expected_impact?.delta_sar_per_month ?? 0),
       },

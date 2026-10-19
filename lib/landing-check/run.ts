@@ -3,6 +3,7 @@ import { guardedFetch, type FetchDeps, type FetchFailureCode } from './fetch';
 import { buildPageFindings, sortFindings, tagStates, type Finding } from './findings';
 import type { CheckTarget } from './sources';
 import type { PageTags, TagState } from './analyze';
+import { candidateSiteLinks, crawlSitePages, type SiteLink, type SitePage } from './site-pages';
 
 /** A page is checked at most once a week per account. */
 export const LANDING_CHECK_MIN_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -28,6 +29,8 @@ export type PageReport = {
   smartLink: boolean;
   match: (MessageMatch & { keywords: string[] }) | null;
   findings: Finding[];
+  /** Same-host links found in the HTML. Present only on a run that asked for site pages. */
+  siteLinks?: SiteLink[];
 };
 
 /** What the page says about the conversion tag, for the tracking verdict. Evidence, not a verdict. */
@@ -43,9 +46,18 @@ export type LandingCheckReport = {
   pages: PageReport[];
   findings: Array<Finding & { url: string }>;
   tracking: TrackingEvidence;
+  /**
+   * Same-site pages that answered 200 (sitelink sources). Present only on a run that asked
+   * for them: an empty list means "crawled, nothing usable", absent means "never crawled".
+   */
+  sitePages?: SitePage[];
 };
 
-export async function checkLandingPage(target: CheckTarget, deps: FetchDeps): Promise<PageReport> {
+export async function checkLandingPage(
+  target: CheckTarget,
+  deps: FetchDeps,
+  options: { collectLinks?: boolean } = {}
+): Promise<PageReport> {
   const fetched = await guardedFetch(target.url, deps);
 
   if (!fetched.ok) {
@@ -88,6 +100,9 @@ export async function checkLandingPage(target: CheckTarget, deps: FetchDeps): Pr
     ...factsFrom(page, analysis, fetched.html !== null ? true : false),
     fetchError: null,
   });
+  if (options.collectLinks && analysis && fetched.html !== null && fetched.status === 200) {
+    page.siteLinks = candidateSiteLinks(fetched.finalUrl, fetched.html);
+  }
   return page;
 }
 
@@ -156,13 +171,19 @@ export function trackingEvidence(pages: PageReport[]): TrackingEvidence {
   return { googleTag: 'not_visible', pagesChecked: readable.length, line_ar: 'ما لقينا وسم قوقل في كود صفحة الهبوط' };
 }
 
-export async function runLandingCheck(targets: CheckTarget[], deps: FetchDeps, checkedAt: Date): Promise<LandingCheckReport> {
+export async function runLandingCheck(
+  targets: CheckTarget[],
+  deps: FetchDeps,
+  checkedAt: Date,
+  options: { discoverSitePages?: boolean } = {}
+): Promise<LandingCheckReport> {
   const pages: PageReport[] = [];
   // One after another: at most three pages, and a polite single connection to the merchant's site.
   for (const target of targets) {
-    const page = await checkLandingPage(target, deps);
+    const page = await checkLandingPage(target, deps, { collectLinks: options.discoverSitePages === true });
     pages.push(page);
   }
+  const sitePages = options.discoverSitePages === true ? await crawlSitePages(pages, deps) : undefined;
   const findings = sortFindings(pages.flatMap((page) => page.findings.map((finding) => ({ ...finding, url: page.url })))) as Array<
     Finding & { url: string }
   >;
@@ -172,6 +193,7 @@ export async function runLandingCheck(targets: CheckTarget[], deps: FetchDeps, c
     pages,
     findings,
     tracking: trackingEvidence(pages),
+    ...(sitePages ? { sitePages } : {}),
   };
 }
 
@@ -209,9 +231,12 @@ export async function getLandingCheck(args: {
   loadTargets: () => Promise<CheckTarget[]>;
   deps: FetchDeps;
   now: Date;
+  /** Also crawl same-site pages (sitelink sources). A stored report that never crawled is re-run once. */
+  discoverSitePages?: boolean;
 }): Promise<GetLandingCheckResult> {
   const latest = await args.store.latest(args.accountId).catch(() => null);
-  if (latest && !dueForCheck(latest.checked_at, args.now)) {
+  const needsCrawl = args.discoverSitePages === true && latest !== null && latest.report.sitePages === undefined;
+  if (latest && !dueForCheck(latest.checked_at, args.now) && !needsCrawl) {
     return { status: 'cached', report: latest.report, ageDays: ageDays(latest.checked_at, args.now) };
   }
   const targets = await args.loadTargets();
@@ -219,7 +244,7 @@ export async function getLandingCheck(args: {
     // Nothing to check this time; an older report, if there is one, is still the best we have.
     return latest ? { status: 'cached', report: latest.report, ageDays: ageDays(latest.checked_at, args.now) } : { status: 'no_pages' };
   }
-  const report = await runLandingCheck(targets, args.deps, args.now);
+  const report = await runLandingCheck(targets, args.deps, args.now, { discoverSitePages: args.discoverSitePages });
   await args.store.save(args.accountId, report).catch((error) => {
     console.warn('[landing-check] could not store the report', error instanceof Error ? error.message : error);
   });

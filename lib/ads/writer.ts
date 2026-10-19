@@ -183,6 +183,8 @@ export type RsaWriterInput = WriterContext & {
   replace: ReadonlyArray<{ field: 'HEADLINE' | 'DESCRIPTION' }>;
   /** Texts that stay in the ad (BEST and GOOD first); new copy must not restate them. */
   keep: ReadonlyArray<{ text: string; field: 'HEADLINE' | 'DESCRIPTION'; label?: string }>;
+  /** Google policy topic ids of the disapproved texts being replaced. Optional. */
+  avoidPolicyTopics?: readonly string[];
 };
 
 export type RsaWriterResult =
@@ -195,6 +197,12 @@ export type RsaWriterResult =
       rejected: Array<{ text: string; code: string }>;
     }
   | { ok: false; code: 'no_ai_backend' | 'model_failed' | 'nothing_passed' | 'nothing_to_write' };
+
+function policyLine(topics: readonly string[] | undefined): string {
+  const safe = (topics ?? []).filter((t) => /^[A-Za-z0-9_ .:-]{2,80}$/.test(t));
+  if (safe.length === 0) return '';
+  return `\nThe texts being replaced were disapproved by Google Ads policy (${safe.join(', ')}). Write plain, factual wording that does not repeat their claims, symbols or style.`;
+}
 
 export async function writeRsaReplacements(input: RsaWriterInput, deps: WriterDeps): Promise<RsaWriterResult> {
   const needH = input.replace.filter((r) => r.field === 'HEADLINE').length;
@@ -224,6 +232,7 @@ export async function writeRsaReplacements(input: RsaWriterInput, deps: WriterDe
       `\n</ad_data>\nlanguage: ${input.language}\n` +
       `Write ${Math.max(stillH, 0) + (stillH > 0 ? EXTRA_CANDIDATES : 0)} new headlines and ` +
       `${Math.max(stillD, 0) + (stillD > 0 ? EXTRA_CANDIDATES : 0)} new descriptions that do not repeat the kept ones.` +
+      policyLine(input.avoidPolicyTopics) +
       feedbackLine(reports);
 
     let raw: string;

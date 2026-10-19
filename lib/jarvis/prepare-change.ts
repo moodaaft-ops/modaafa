@@ -18,6 +18,15 @@ import {
   isExtendedPrepareOperation,
   resolveExtended,
 } from './prepare-change-extended';
+import {
+  ADS_STUDIO_CHOICES_SCHEMA,
+  ADS_STUDIO_PREPARE_OPERATIONS,
+  ADS_STUDIO_TOOL_NOTE,
+  isAdsStudioPrepareOperation,
+  resolveAdsStudio,
+} from './prepare-change-ads';
+import { isAdsStudioActive } from '@/lib/ads/flag';
+import { addFingerprint, replaceFingerprint } from '@/lib/ads/proposals';
 
 /**
  * prepare_change (spec 83, section 4.4).
@@ -95,20 +104,25 @@ export const PREPARE_CHANGE_TOOL: Anthropic.Tool = BASE_PREPARE_CHANGE_TOOL;
  * The tool the brain offers. Flag off returns the base tool object itself, so
  * the schema is unchanged; flag on adds the extended operations and choices.
  */
-export function prepareChangeToolFor(extended: boolean): Anthropic.Tool {
+export function prepareChangeToolFor(extended: boolean, adsStudio = false): Anthropic.Tool {
   if (!extended) return PREPARE_CHANGE_TOOL;
   const base = BASE_PREPARE_CHANGE_TOOL;
+  const studio = adsStudio ? [...ADS_STUDIO_PREPARE_OPERATIONS] : [];
   return {
     ...base,
-    description: base.description + EXTENDED_TOOL_NOTE,
+    description: base.description + EXTENDED_TOOL_NOTE + (adsStudio ? ADS_STUDIO_TOOL_NOTE : ''),
     input_schema: {
       ...base.input_schema,
       properties: {
         ...base.input_schema.properties,
-        operation: { type: 'string', enum: [...PREPARE_OPERATIONS, ...EXTENDED_PREPARE_OPERATIONS] },
+        operation: { type: 'string', enum: [...PREPARE_OPERATIONS, ...EXTENDED_PREPARE_OPERATIONS, ...studio] },
         choices: {
           ...base.input_schema.properties.choices,
-          properties: { ...base.input_schema.properties.choices.properties, ...EXTENDED_CHOICES_SCHEMA },
+          properties: {
+            ...base.input_schema.properties.choices.properties,
+            ...EXTENDED_CHOICES_SCHEMA,
+            ...(adsStudio ? ADS_STUDIO_CHOICES_SCHEMA : {}),
+          },
         },
       },
     },
@@ -300,6 +314,10 @@ function resolveNegatives(ctx: PrepareContext, rows: EvidenceRow[], choices: Rec
 
 function resolve(ctx: PrepareContext, operation: PrepareOperation | string, rows: EvidenceRow[], choices: Record<string, unknown>): Resolved {
   const currency = ctx.currencyCode;
+  if (isAdsStudioPrepareOperation(operation)) {
+    if (!isAdsStudioActive()) fail('unknown_operation', 'العملية غير معروفة.');
+    return resolveAdsStudio(operation, rows, choices, { fail, numberOf, text, customerId: ctx.customerId }) as Resolved;
+  }
   if (isExtendedPrepareOperation(operation)) {
     if (!isExtendedActionsEnabled()) fail('unknown_operation', 'العملية غير معروفة.');
     return resolveExtended(operation, rows, choices, { fail, numberOf, text }) as Resolved;
@@ -511,7 +529,9 @@ export async function prepareChange(input: unknown, ctx: PrepareContext): Promis
     }
     const args = input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
     const operation = String(args.operation ?? '') as PrepareOperation;
-    const extendedOperation = isExtendedActionsEnabled() && isExtendedPrepareOperation(operation);
+    const extendedOperation =
+      (isExtendedActionsEnabled() && isExtendedPrepareOperation(operation)) ||
+      (isAdsStudioActive() && isAdsStudioPrepareOperation(operation));
     if (!PREPARE_OPERATIONS.includes(operation) && !extendedOperation) fail('unknown_operation', 'العملية غير معروفة.');
     const why = text(args.why_ar, 400);
     if (!why) fail('why_required', 'اكتب سبب التعديل في why_ar.');
@@ -577,6 +597,30 @@ export async function prepareChange(input: unknown, ctx: PrepareContext): Promis
       const createdAt = existing.created_at ? new Date(existing.created_at).getTime() : Number.NaN;
       if (!Number.isFinite(createdAt) || ctx.now.getTime() - createdAt < REPROPOSE_AFTER_MS) {
         fail('already_handled', 'نفس التعديل انطبق أو رفضه العميل خلال آخر أسبوع. لا تقترحه مرة ثانية الحين.');
+      }
+    }
+
+    // The nightly ad copy cards use a different fingerprint (the campaign or the exact replaced texts, not the new
+    // words). A chat proposal for the same thing must not stack on top of a waiting one.
+    if (isAdsStudioPrepareOperation(resolved.payload.operation)) {
+      const op = resolved.payload.operation;
+      const cronFingerprint =
+        op === 'replace_rsa_assets'
+          ? replaceFingerprint(
+              ctx.accountId,
+              String(action!.target_id),
+              (((action!.params as any).replacements ?? []) as Array<{ field: string; old_text: string }>).map((r) => ({ field: r.field, text: r.old_text }))
+            )
+          : addFingerprint(ctx.accountId, op, String(action!.target_id));
+      const waiting = await findBlocking(ctx.admin, ctx.accountId, cronFingerprint, ctx.now.getTime());
+      if (waiting && (waiting.status === 'pending' || waiting.status === 'approved')) {
+        return {
+          ok: true,
+          card: { ...cardFor(finalResolved, waiting.id, why, false, ctx.subscriptionActive), status: waiting.status },
+          recommendationId: waiting.id,
+          created: false,
+          modelText: 'فيه بطاقة مجهزة قبل لنفس الشي وتنتظر اعتماد العميل. طلعت له نفس البطاقة.',
+        };
       }
     }
 

@@ -9,6 +9,7 @@ import { getSubscriptionAccess } from '@/lib/billing/entitlements';
 import { SubscriptionGate } from '@/lib/ui/subscription-gate';
 import { isChatFirstEnabled } from '@/lib/chat-first/flag';
 import { isSimpleExperience } from '@/lib/setup/mode';
+import { campaignLaunchEnabled } from '@/lib/launch/flag';
 
 export const metadata = {
   title: 'المساعد الذكي',
@@ -53,6 +54,7 @@ export default async function AssistantPage({
             accounts={accounts}
             selectedCustomerId={selectedCustomerId}
             initialBrief={initialBrief || null}
+            launchEnabled={campaignLaunchEnabled()}
           />
         ) : (
           <SubscriptionGate

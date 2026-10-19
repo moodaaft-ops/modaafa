@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { buildExpansionRecommendation, detectExpansionIdeas, EXPANSION_OPERATION, expansionIdeasEnabled, objectiveFromGoal } from '@/lib/ai/expansion';
+import { loadBuilderSignals } from '@/lib/ai/builder-signals';
 import { createHash } from 'node:crypto';
 import { isAdsStudioActive, isAdsStudioEnabled } from '@/lib/ads/flag';
 import { isShoppingHealthEnabled } from '@/lib/shopping/flag';
@@ -14,6 +16,7 @@ import { decrypt } from '@/lib/crypto';
 import {
   decideOptimizations,
   checkGuardrails,
+  type OptimizerAction,
   type OptimizerSnapshot,
 } from '@/lib/ai/optimizer-agent';
 import {
@@ -26,6 +29,8 @@ import { isStalePendingRecommendation } from '@/lib/recommendations/staleness';
 import type { BreakEven } from '@/lib/economics/break-even';
 import { consumeFeatureUsage } from '@/lib/billing/entitlements';
 import { applyAutonomyLevel, autonomyLevelsEnabled } from '@/lib/autopilot/autonomy';
+import { proposeBudgetShift } from '@/lib/autopilot/budget-shift';
+import { validGoogleAdsResource } from '@/lib/ai/executable-action';
 import { notifyAutoAction } from '@/lib/autopilot/autonomy-notify';
 import { loadAutonomyLevels } from '@/lib/autopilot/autonomy-store';
 import { executeAutopilotAction } from '@/lib/autopilot/executor';
@@ -487,13 +492,24 @@ async function runOptimizerCron(req: NextRequest) {
             businessId: account.business_id,
             protectedTexts: [account.customer_name, businessContext?.sector],
           });
-      const proposedActions = idle
+      const proposedActions: OptimizerAction[] = idle
         ? []
         : await decideOptimizations(snapshot, {
             userId: businessContext?.user_id ?? null,
           });
       if (idle) results.skipped_idle++;
       else results.model_calls++;
+
+      // Paired budget shift (small level only, AUTONOMY_LEVELS_ENABLED): rules over the snapshot, no model.
+      // It rides the same guardrails, dedupe, policy and queue as every other proposal.
+      if (!idle && autonomyByAccount?.get(account.id) === 'small_and_notify' && proposedActions.length < 8) {
+        const shift = proposeBudgetShift(
+          snapshot,
+          (value) => validGoogleAdsResource(value, 'campaignBudgets', account.customer_id),
+          account.currency_code ?? 'SAR'
+        );
+        if (shift) proposedActions.push(shift);
+      }
 
       // Agency shadow account: the proposals are kept for the operator's review
       // and stop here. They never reach the policy gate, the approval queue or
@@ -828,7 +844,10 @@ async function runOptimizerCron(req: NextRequest) {
           if (autonomyByAccount && verdict.code === 'autonomy_approved') {
             await notifyAutoAction(ownerEmail, {
               actionType: action.type,
-              subject: String(action.params.keyword_text ?? action.params.keyword ?? 'كلمة مفتاحية'),
+              subject:
+                (action.type as string) === 'shift_budget_pair'
+                  ? 'بين حملتين والإجمالي ما تغير'
+                  : String(action.params.keyword_text ?? action.params.keyword ?? 'كلمة مفتاحية'),
               campaignName: String(action.params.campaign_name ?? '') || null,
               reasonAr: action.reason_ar,
               appUrl: process.env.NEXT_PUBLIC_APP_URL ?? 'https://ai.modaafa.com',
@@ -922,6 +941,25 @@ async function runOptimizerCron(req: NextRequest) {
         }
       }
 
+      // ---- Horizontal expansion ideas (EXPANSION_IDEAS_ENABLED, default off).
+      // Recommendation only: the CTA opens the assistant with a brief.
+      if (expansionIdeasEnabled() && !budget.expired()) {
+        try {
+          const queued = await maybeQueueExpansionIdea({
+            supabase,
+            accountId: account.id,
+            snapshot,
+            terms: mapConvertingTermRows(snapshot.converting_search_terms ?? []),
+            goal: businessContext?.primary_goal ?? null,
+            currencyCode: account.currency_code ?? 'SAR',
+          });
+          if (queued) results.opportunities_queued++;
+          if (queued === 'renewed') results.recommendations_renewed++;
+        } catch (expansionError) {
+          console.warn(`Expansion idea detection failed for ${account.customer_id}`, expansionError);
+        }
+      }
+
       // ---- Ad copy cards: replace LOW assets, add missing assets. Queued for approval only.
       if (adsStudioRead && isAdsStudioActive() && !budget.expired()) {
         try {
@@ -935,6 +973,8 @@ async function runOptimizerCron(req: NextRequest) {
             customerName: account.customer_name ?? null,
             sector: businessContext?.sector ?? null,
             convertingTermRows: snapshot.converting_search_terms ?? [],
+            trackingStatus: snapshot.conversion_tracking?.status ?? null,
+            economics,
           });
         } catch (adsError) {
           console.warn(`Ad assets proposals failed for ${account.customer_id}`, adsError);
@@ -1560,6 +1600,58 @@ const OPPORTUNITY_COOLDOWN_MS = 14 * 24 * 60 * 60 * 1000;
  *
  * Returns 'created', 'renewed', or false when nothing was queued.
  */
+async function maybeQueueExpansionIdea({
+  supabase,
+  accountId,
+  snapshot,
+  terms,
+  goal,
+  currencyCode,
+}: {
+  supabase: any;
+  accountId: string;
+  snapshot: any;
+  terms: ReturnType<typeof mapConvertingTermRows>;
+  goal: string | null;
+  currencyCode: string;
+}): Promise<'created' | 'renewed' | false> {
+  // Geo rows are not read by the nightly snapshot yet: the geo idea needs the
+  // geo report plus the targeted-location list, so it stays off until that read
+  // is verified live (docs/mb-upgrade/uxgaps.md).
+  const signals = await loadBuilderSignals({ supabase, admin: supabase, accountId });
+  const ideas = detectExpansionIdeas({ snapshot, geo: null, terms, signals, objective: objectiveFromGoal(goal) });
+  const idea = ideas[0];
+  if (!idea) return false;
+
+  const { data: recent } = await supabase
+    .from('recommendations')
+    .select('id')
+    .eq('account_id', accountId)
+    .gte('created_at', new Date(Date.now() - OPPORTUNITY_COOLDOWN_MS).toISOString())
+    .contains('action_payload', { operation: EXPANSION_OPERATION })
+    .limit(1)
+    .maybeSingle();
+  if (recent) return false;
+
+  const fingerprint = createHash('sha256').update(`${accountId}:${EXPANSION_OPERATION}:${idea.kind}:${idea.key}`).digest('hex');
+  const row = buildExpansionRecommendation(idea, currencyCode);
+  const { error } = await supabase.from('recommendations').insert({ account_id: accountId, fingerprint, ...row, status: 'pending' });
+  if (error) {
+    if (error.code !== '23505') throw error;
+    const { data: held } = await supabase
+      .from('recommendations')
+      .select('id')
+      .eq('account_id', accountId)
+      .eq('fingerprint', fingerprint)
+      .eq('status', 'pending')
+      .limit(1)
+      .maybeSingle();
+    if (!held?.id) return false;
+    return (await renewStalePendingRecommendation(supabase, held.id, row)) ? 'renewed' : false;
+  }
+  return 'created';
+}
+
 async function maybeQueueCampaignOpportunity({
   supabase,
   accountId,

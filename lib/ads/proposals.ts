@@ -11,12 +11,17 @@ import {
   type RsaSummary,
 } from './assets-reader';
 import { esc, list, str } from './rows';
+import { buildAppealText, disapprovalFindings } from './disapproved';
 import { validateAdsStudioPayload, groundingTermsFrom } from './studio/validate';
+import { MIN_SITELINKS_PER_ACTION } from './studio/types';
+import type { LandingCheckReport } from '../landing-check/run';
+import { sitePagesForCampaign, type PhoneResolution } from './site-sources';
 import {
   detectAdLanguage,
   groundingFor,
   writeCallouts,
   writeRsaReplacements,
+  writeSitelinks,
   writeSnippetValues,
   type ConvertingTerm,
   type WriterBusiness,
@@ -42,7 +47,9 @@ import {
  */
 
 export type AssetCard = {
-  kind: 'replace_low' | 'add_missing';
+  kind: 'replace_low' | 'replace_disapproved' | 'add_missing';
+  /** Disapproved-ad cards only: text the merchant can paste into a Google Ads appeal. Never submitted by us. */
+  appeal_ar?: string;
   fingerprint: string;
   action: {
     type: 'replace_rsa_assets' | 'add_callouts' | 'add_structured_snippet' | 'add_sitelinks' | 'add_call_asset';
@@ -64,6 +71,10 @@ export type ProposalInput = {
   business: WriterBusiness;
   topTerms: readonly ConvertingTerm[];
   landing?: { title?: string | null; h1?: string | null } | null;
+  /** Latest stored landing check with its same-site crawl. Sitelink cards need pages from here. */
+  landingReport?: LandingCheckReport | null;
+  /** The merchant's own number (see site-sources.ts). Call asset cards need `found`. */
+  phone?: PhoneResolution | null;
 };
 
 export type ProposalDeps = {
@@ -95,11 +106,15 @@ function keepTexts(rsa: RsaSummary, replaced: ReadonlySet<string>) {
   return all.sort((a, b) => rank(a.label) - rank(b.label)).map((a) => ({ text: a.text, field: a.field, label: a.label }));
 }
 
+function policyCount(verdict: ReturnType<typeof assetVerdict>) {
+  return verdict.replace.filter((r) => r.reason === 'policy_disapproved').length;
+}
+
 async function replaceCard(input: ProposalInput, deps: ProposalDeps, skipped: ProposalReport['skipped']): Promise<AssetCard | null> {
   const ranked = input.report.rsas
     .map((rsa) => ({ rsa, verdict: assetVerdict(rsa) }))
     .filter((x) => x.verdict.replace.length > 0)
-    .sort((a, b) => b.verdict.replace.length - a.verdict.replace.length || b.rsa.impressions_30d - a.rsa.impressions_30d);
+    .sort((a, b) => policyCount(b.verdict) - policyCount(a.verdict) || b.verdict.replace.length - a.verdict.replace.length || b.rsa.impressions_30d - a.rsa.impressions_30d);
 
   for (const { rsa, verdict } of ranked) {
     const fingerprint = replaceFingerprint(input.accountId, rsa.ad_group_ad, verdict.replace);
@@ -112,7 +127,11 @@ async function replaceCard(input: ProposalInput, deps: ProposalDeps, skipped: Pr
     const language = detectAdLanguage([...keep.map((k) => k.text), input.landing?.title, input.landing?.h1]);
     const ctx = { language, business: input.business, topTerms: input.topTerms, landing: input.landing ?? null };
 
-    const written = await writeRsaReplacements({ ...ctx, replace: verdict.replace, keep }, deps.writer);
+    const finding = disapprovalFindings([rsa])[0] ?? null;
+    const written = await writeRsaReplacements(
+      { ...ctx, replace: verdict.replace, keep, ...(finding && finding.topics.length > 0 ? { avoidPolicyTopics: finding.topics } : {}) },
+      deps.writer
+    );
     if (!written.ok) {
       skipped.push({ what: 'replace_rsa_assets', why: written.code });
       continue;
@@ -141,6 +160,24 @@ async function replaceCard(input: ProposalInput, deps: ProposalDeps, skipped: Pr
     }
     const lowCount = pairs.length;
     const name = rsa.ad_group_name || rsa.campaign_name;
+    const policyTexts = new Set((finding?.texts ?? []).map((t) => `${t.field}|${t.text}`));
+    const disapprovedPairs = pairs.filter((p) => policyTexts.has(`${p.field}|${p.old_text}`));
+    if (finding && disapprovedPairs.length > 0) {
+      const topics = finding.topics_ar.length > 0 ? ` السبب حسب قوقل: ${finding.topics_ar.join(' و')}.` : '';
+      return {
+        kind: 'replace_disapproved',
+        fingerprint,
+        appeal_ar: buildAppealText({ adName: name, topicsAr: finding.topics_ar, replaced: disapprovedPairs }),
+        action: {
+          type: 'replace_rsa_assets',
+          target_id: validated.target_id,
+          params: validated.params,
+          reason_ar: `قوقل رفض ${disapprovedPairs.length} من نصوص إعلان "${name}".${topics} جهزنا نصوص بديلة تمشي مع السياسة، والإعلان الحالي يبقى محفوظ وتقدر ترجعه. بعد التنفيذ تقدر تقدّم طلب مراجعة بنص جاهز تلقاه في البطاقة.`,
+          reason_en: `Rewrite ${disapprovedPairs.length} disapproved responsive search ad text(s) in ${name}`,
+          expected_impact: NOW_IMPACT,
+        },
+      };
+    }
     const reason_ar = `قوقل مقيّم ${lowCount} من نصوص إعلان "${name}" ضعيف. جهزنا بدايل، والإعلان الحالي يبقى متوقف ومحفوظ وتقدر ترجعه.`;
     return {
       kind: 'replace_low',
@@ -158,9 +195,13 @@ async function replaceCard(input: ProposalInput, deps: ProposalDeps, skipped: Pr
   return null;
 }
 
-async function existingCampaignTexts(reader: GaqlReader, campaign: string, field: 'CALLOUT' | 'STRUCTURED_SNIPPET'): Promise<string[]> {
+async function existingCampaignTexts(
+  reader: GaqlReader,
+  campaign: string,
+  field: 'CALLOUT' | 'STRUCTURED_SNIPPET' | 'SITELINK'
+): Promise<string[]> {
   const rows = await reader.query(`
-    SELECT asset.callout_asset.callout_text, asset.structured_snippet_asset.values
+    SELECT asset.callout_asset.callout_text, asset.structured_snippet_asset.values, asset.sitelink_asset.link_text
     FROM campaign_asset
     WHERE campaign_asset.campaign = '${esc(campaign)}' AND campaign_asset.field_type = '${field}'
       AND campaign_asset.status != 'REMOVED'
@@ -170,6 +211,8 @@ async function existingCampaignTexts(reader: GaqlReader, campaign: string, field
   for (const row of rows) {
     const callout = str(row, 'asset.callout_asset.callout_text');
     if (callout) out.push(callout);
+    const sitelink = str(row, 'asset.sitelink_asset.link_text');
+    if (sitelink) out.push(sitelink);
     for (const v of list(row, 'asset.structured_snippet_asset.values')) if (typeof v === 'string') out.push(v);
   }
   return out;
@@ -275,12 +318,114 @@ async function addCard(input: ProposalInput, deps: ProposalDeps, skipped: Propos
       }
     }
 
-    // Sitelinks need real pages of the merchant's site and a call asset needs the merchant's own
-    // number. The platform holds neither today, so no card is invented for them.
-    if (cov.missing.includes('SITELINK')) skipped.push({ what: 'add_sitelinks', why: 'no_site_urls' });
-    if (cov.missing.includes('CALL')) skipped.push({ what: 'add_call_asset', why: 'no_phone_number' });
+    // Sitelinks need real pages of the merchant's site (the landing check crawl, same host, 200 OK) and a
+    // call asset needs the merchant's own number (see site-sources.ts). Without either, no card is invented.
+    if (cov.missing.includes('SITELINK')) {
+      const card = await sitelinkCard(input, deps, cov, ctx, skipped);
+      if (card) return card;
+    }
+    if (cov.missing.includes('CALL')) {
+      const card = await callCard(input, deps, cov, skipped);
+      if (card) return card;
+    }
   }
   return null;
+}
+
+async function sitelinkCard(
+  input: ProposalInput,
+  deps: ProposalDeps,
+  cov: CampaignCoverage,
+  ctx: Parameters<typeof groundingFor>[0],
+  skipped: ProposalReport['skipped']
+): Promise<AssetCard | null> {
+  const finalUrls = input.report.rsas
+    .filter((r) => r.campaign === cov.campaign && r.status === 'ENABLED')
+    .flatMap((r) => r.final_urls);
+  const pages = sitePagesForCampaign({ report: input.landingReport, campaignFinalUrls: finalUrls });
+  if (pages.length < MIN_SITELINKS_PER_ACTION) {
+    skipped.push({ what: 'add_sitelinks', why: 'no_site_urls' });
+    return null;
+  }
+  const fingerprint = addFingerprint(input.accountId, 'add_sitelinks', cov.campaign);
+  if (await deps.hasBlocking(fingerprint)) {
+    skipped.push({ what: 'add_sitelinks', why: 'card_exists' });
+    return null;
+  }
+  const existing = await existingCampaignTexts(input.reader, cov.campaign, 'SITELINK');
+  const written = await writeSitelinks(
+    ctx,
+    deps.writer,
+    pages.map((p) => ({ url: p.url, title: p.title || p.h1 || p.anchor })),
+    4,
+    existing
+  );
+  if (!written.ok || written.sitelinks.length < MIN_SITELINKS_PER_ACTION) {
+    skipped.push({ what: 'add_sitelinks', why: written.ok ? 'too_few' : written.code });
+    return null;
+  }
+  const grounding = groundingFor(ctx, [...existing, ...pages.flatMap((p) => [p.title, p.h1, p.anchor])]);
+  const validated = validateAdsStudioPayload('add_sitelinks', cov.campaign, {
+    campaign_resource: cov.campaign,
+    sitelinks: written.sitelinks,
+    language: ctx.language,
+    grounding_terms: groundingTermsFrom([...grounding.numbers, ...grounding.latinWords]),
+  }, input.customerId);
+  if (!validated.ok) {
+    skipped.push({ what: 'add_sitelinks', why: validated.code });
+    return null;
+  }
+  return {
+    kind: 'add_missing',
+    fingerprint,
+    action: {
+      type: 'add_sitelinks',
+      target_id: validated.target_id,
+      params: validated.params,
+      reason_ar: `حملة "${cov.campaign_name}" ما فيها روابط فرعية كفاية. جهزنا ${written.sitelinks.length} روابط لصفحات موجودة فعلاً في موقعك وتفتح سليمة.`,
+      reason_en: `Add sitelinks to ${cov.campaign_name}`,
+      expected_impact: { metric: 'ctr', delta_pct: 0, delta_sar_per_month: 0 },
+    },
+  };
+}
+
+async function callCard(
+  input: ProposalInput,
+  deps: ProposalDeps,
+  cov: CampaignCoverage,
+  skipped: ProposalReport['skipped']
+): Promise<AssetCard | null> {
+  const phone = input.phone;
+  if (!phone || phone.status !== 'found') {
+    skipped.push({ what: 'add_call_asset', why: phone?.status === 'ambiguous' ? 'phone_ambiguous' : 'no_phone_number' });
+    return null;
+  }
+  const fingerprint = addFingerprint(input.accountId, 'add_call_asset', cov.campaign);
+  if (await deps.hasBlocking(fingerprint)) {
+    skipped.push({ what: 'add_call_asset', why: 'card_exists' });
+    return null;
+  }
+  const validated = validateAdsStudioPayload('add_call_asset', cov.campaign, {
+    campaign_resource: cov.campaign,
+    phone_number: phone.value.phone,
+  }, input.customerId);
+  if (!validated.ok) {
+    skipped.push({ what: 'add_call_asset', why: validated.code });
+    return null;
+  }
+  const where = phone.value.source === 'merchant_saved' ? 'الرقم اللي سجلته عندنا' : 'رقم الاتصال اللي شغال أصلاً في حسابك';
+  return {
+    kind: 'add_missing',
+    fingerprint,
+    action: {
+      type: 'add_call_asset',
+      target_id: validated.target_id,
+      params: validated.params,
+      reason_ar: `حملة "${cov.campaign_name}" ما فيها زر اتصال. جهزناه من ${where}، وتشوف الرقم في البطاقة قبل ما توافق.`,
+      reason_en: `Add a call asset to ${cov.campaign_name}`,
+      expected_impact: { metric: 'calls', delta_pct: 0, delta_sar_per_month: 0 },
+    },
+  };
 }
 
 /** At most one replace card and one add card. Never throws: a failed part is reported as skipped. */
@@ -364,6 +509,7 @@ export function cardToRow(card: AssetCard): QueueRow {
       params: action.params,
       confidence: null,
       evidence: null,
+      ...(card.appeal_ar ? { appeal_text_ar: card.appeal_ar } : {}),
       source: 'optimizer_cron',
       // A card for the owner, never an autopilot execution.
       autopilot: { outcome: 'queue', code: 'ads_studio_manual_only' },

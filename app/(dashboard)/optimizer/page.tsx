@@ -233,6 +233,19 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
                           payload={item.action_payload}
                           currencyCode={selectedAccount?.currency_code}
                         />
+                        {typeof item.action_payload?.appeal_text_ar === 'string' && item.action_payload.appeal_text_ar ? (
+                          <details className="mt-3 rounded-md border border-border bg-muted/50 p-3">
+                            <summary className="cursor-pointer text-xs font-semibold text-foreground">نص طلب المراجعة (انسخه وقدّمه بنفسك في قوقل)</summary>
+                            <textarea
+                              readOnly
+                              dir="rtl"
+                              rows={7}
+                              defaultValue={String(item.action_payload.appeal_text_ar)}
+                              className="mt-2 w-full rounded-md border border-border bg-background p-2 text-xs leading-6"
+                            />
+                            <p className="mt-1 text-[11px] leading-5 text-muted-foreground">ما نقدّم الطلب عنك. تقدّمه من حسابك في قوقل بعد تنفيذ التعديل.</p>
+                          </details>
+                        ) : null}
                       </div>
                     ))}
                   </div>
@@ -380,6 +393,7 @@ function ChangePreview({
   const operationLabels: Record<string, string> = {
     adjust_budget: 'تعديل ميزانية حملة',
     adjust_bid: 'تعديل هدف المزايدة لمجموعة إعلانية',
+    shift_budget_pair: 'نقل جزء من ميزانية حملة إلى حملة ثانية (الإجمالي ما يتغير)',
     pause_keyword: 'إيقاف كلمة مفتاحية',
     pause_ad: 'إيقاف إعلان',
     add_negative_keyword: 'إضافة كلمة سلبية',
@@ -392,6 +406,7 @@ function ChangePreview({
     create_lead_conversion_action: 'إنشاء تحويل "زبون فعلي" لرفع الزبائن لقوقل',
     set_conversion_primary: 'اجعل الزبون الفعلي تحويلاً أساسياً',
     build_campaign_opportunity: 'عبارات بحث رابحة (تُراجع في المساعد)',
+    expansion_idea: 'فرصة توسع (تُراجع في المساعد)',
     manual_campaign_draft: 'مسودة حملة جديدة (تحتاج مراجعة يدوية)',
     ...(isExtendedOperation(operation) ? { [operation]: EXTENDED_OPERATION_LABELS_AR[operation] } : {}),
   };
@@ -434,6 +449,18 @@ function ChangePreview({
     if (params.budget_resource) {
       rows.push({ label: 'المورد المستهدف', value: String(params.budget_resource), ltr: true });
     }
+  } else if (operation === 'shift_budget_pair') {
+    const shift = Number(params.shift_micros ?? 0) / 1_000_000;
+    const fromNow = Number(params.from_current_micros ?? 0) / 1_000_000;
+    const toNow = Number(params.to_current_micros ?? 0) / 1_000_000;
+    if (shift > 0) rows.push({ label: 'المبلغ المنقول (يومياً)', value: formatCurrency(shift, currencyCode) });
+    if (fromNow > 0 && shift > 0) {
+      rows.push({ label: 'الميزانية اللي تنقص', value: `${formatCurrency(fromNow, currencyCode)} إلى ${formatCurrency(fromNow - shift, currencyCode)}` });
+    }
+    if (toNow > 0 && shift > 0) {
+      rows.push({ label: 'الميزانية اللي تزيد', value: `${formatCurrency(toNow, currencyCode)} إلى ${formatCurrency(toNow + shift, currencyCode)}` });
+    }
+    rows.push({ label: 'الإجمالي اليومي', value: 'ما يتغير. التعديلان ينفذان مع بعض أو ما ينفذ شي' });
   } else if (operation === 'adjust_bid') {
     if (params.target_cpa_micros !== undefined) {
       rows.push({
@@ -526,7 +553,8 @@ function ChangePreview({
 }
 
 function isCampaignOpportunity(item: any) {
-  return String(item?.action_payload?.operation ?? '') === 'build_campaign_opportunity';
+  const operation = String(item?.action_payload?.operation ?? '');
+  return operation === 'build_campaign_opportunity' || operation === 'expansion_idea';
 }
 
 /**

@@ -40,6 +40,7 @@ export const EXTENDED_OPERATION_LABELS_AR: Record<string, string> = {
 export const OPERATION_LABELS_AR: Record<string, string> = {
   adjust_budget: 'تعديل ميزانية حملة',
   adjust_bid: 'تعديل هدف المزايدة لمجموعة إعلانية',
+  shift_budget_pair: 'نقل جزء من ميزانية حملة إلى حملة ثانية (الإجمالي ما يتغير)',
   pause_keyword: 'إيقاف كلمة مفتاحية',
   pause_ad: 'إيقاف إعلان',
   add_negative_keyword: 'إضافة كلمة سلبية',

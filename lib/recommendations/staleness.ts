@@ -57,7 +57,9 @@ export const OPTIMIZER_OPERATIONS: readonly string[] = [
   'adjust_budget',
   'adjust_bid',
   'pause_ad',
+  'shift_budget_pair',
   'build_campaign_opportunity',
+  'expansion_idea',
 ];
 
 /**
@@ -138,7 +140,7 @@ export const STUCK_APPROVED_DAYS = 7;
 /** An optimizer budget or bid card older than this is not executable: its numbers belong to another week. */
 export const MONEY_MOVE_EXPIRY_DAYS = 7;
 /** The operations that move money or the bidding strategy, the ones with a short shelf life. */
-export const MONEY_MOVE_OPERATIONS: readonly string[] = ['adjust_budget', 'adjust_bid'];
+export const MONEY_MOVE_OPERATIONS: readonly string[] = ['adjust_budget', 'adjust_bid', 'shift_budget_pair'];
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;

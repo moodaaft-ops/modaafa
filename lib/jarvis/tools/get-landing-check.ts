@@ -1,11 +1,13 @@
-import type { JarvisReadTool } from './types';
-import { cleanText, okResult, parseArgs, runQuery, tryQuery } from './shared';
+import type { EvidenceRow, JarvisReadTool } from './types';
+import { cleanText, okResult, parseArgs, refCounter, runQuery, tryQuery } from './shared';
+import { hostKey } from '@/lib/landing-check/site-pages';
 import { createAdminClient } from '@/lib/supabase/server';
 import { getLandingCheck, type LandingCheckStore, type PageReport } from '@/lib/landing-check/run';
 import { FINAL_URLS_GAQL, KEYWORDS_GAQL, selectTargets } from '@/lib/landing-check/sources';
 import { supabaseLandingCheckStore } from '@/lib/landing-check/store';
 import { pinnedHttpsTransport, systemResolver } from '@/lib/landing-check/transport';
 import type { FetchDeps } from '@/lib/landing-check/fetch';
+import { isAdsStudioEnabled } from '@/lib/ads/flag';
 import { landingCheckEnabled } from '@/lib/landing-check/flag';
 
 const FINDINGS_PER_PAGE = 5;
@@ -91,6 +93,8 @@ export function createLandingCheckTool(deps: LandingToolDeps = defaultDeps()): J
         accountId: ctx.accountId,
         deps: deps.fetchDeps,
         now: ctx.now,
+        // Sitelink cards need same-site pages; only crawl when the Ads Studio is on.
+        discoverSitePages: isAdsStudioEnabled(),
         loadTargets: async () => {
           const [ads, keywords] = await Promise.all([runQuery(ctx, FINAL_URLS_GAQL), tryQuery(ctx, 'landing_keywords', KEYWORDS_GAQL)]);
           return selectTargets(ads, keywords ?? []);
@@ -107,8 +111,28 @@ export function createLandingCheckTool(deps: LandingToolDeps = defaultDeps()): J
         );
       }
 
+      // Site pages the crawl saw answer 200 on the merchant's own host. Only with the Ads Studio on (that is
+      // the only flag that crawls), and only as refs: the URL stays in the evidence row.
+      const nextSite = refCounter();
+      const sitePages = isAdsStudioEnabled() && Array.isArray(result.report.sitePages) ? result.report.sitePages : [];
+      const siteRows: EvidenceRow[] = sitePages.map((page) => ({
+        ref: nextSite('sp'),
+        kind: 'site_page',
+        data: { url: page.url, title: page.title, h1: page.h1, anchor: page.anchor, host: hostKey(page.url) },
+      }));
+
       return okResult(
         {
+          ...(siteRows.length > 0
+            ? {
+                site_pages: siteRows.map((row) => ({
+                  ref: row.ref,
+                  host: cleanText(row.data.host),
+                  title: cleanText(row.data.title),
+                  h1: cleanText(row.data.h1),
+                })),
+              }
+            : {}),
           status: result.status,
           checked_at: result.report.checkedAt,
           age_days: result.ageDays,
@@ -117,7 +141,7 @@ export function createLandingCheckTool(deps: LandingToolDeps = defaultDeps()): J
           pages: result.report.pages.map(pageSummary),
           tracking_evidence: result.report.tracking,
         },
-        []
+        siteRows
       );
     },
   };
