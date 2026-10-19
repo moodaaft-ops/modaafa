@@ -21,6 +21,7 @@ import { Alert } from '@/lib/ui/alert';
 import { extendedPreviewRows } from '@/lib/ai/extended-actions/preview';
 import { isExtendedOperation } from '@/lib/ai/extended-actions/types';
 import { EXTENDED_OPERATION_LABELS_AR } from '@/lib/ai/operation-labels';
+import { LaunchPlanPreview } from '@/lib/launch/launch-plan-preview';
 
 export const metadata = {
   title: 'مركز الموافقات',
@@ -373,6 +374,7 @@ function ChangePreview({
 
   const operation = String(payload.operation ?? '');
   const params = payload.params ?? {};
+  if (operation === 'launch_campaign') return <LaunchPlanPreview plan={params.plan} />;
   const rows: Array<{ label: string; value: string; ltr?: boolean }> = [];
 
   const operationLabels: Record<string, string> = {
@@ -384,6 +386,7 @@ function ChangePreview({
     add_keyword: 'إضافة كلمة رابحة من عبارات البحث',
     pause_campaign: 'إيقاف حملة',
     enable_campaign: 'تشغيل حملة',
+    launch_campaign: 'بناء حملة موقوفة',
     add_negative_keywords_batch: 'منع عبارات بحث (دفعة)',
     add_data_exclusion: 'استبعاد أيام التتبع المكسور من تعلم المزايدة',
     create_lead_conversion_action: 'إنشاء تحويل "زبون فعلي" لرفع الزبائن لقوقل',
@@ -585,6 +588,8 @@ function actionTypeLabel(value?: string | null) {
     add_keyword: 'إضافة كلمة رابحة',
     pause_campaign: 'إيقاف حملة',
     enable_campaign: 'تشغيل حملة',
+    launch_campaign: 'بناء حملة موقوفة',
+    remove_launched_campaign: 'التراجع عن بناء حملة',
     add_negative_keywords_batch: 'منع عبارات بحث (دفعة)',
     ...EXTENDED_OPERATION_LABELS_AR,
     add_data_exclusion: 'استبعاد أيام تتبع مكسور',

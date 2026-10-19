@@ -35,6 +35,8 @@ import {
   validateCreateLeadActionParams,
   validateSetPrimaryParams,
 } from '../measurement/conversion-actions';
+import { executeLaunchRollback } from '../launch/execute';
+import { runLaunchAction } from '../launch/action';
 
 /**
  * Optimizer Agent - the heart of the platform.
@@ -252,7 +254,9 @@ export interface OptimizerAction {
     // Measurement layer (LEAD_LOOP_ENABLED), approval-only like the three above.
     | 'add_data_exclusion'
     | 'create_lead_conversion_action'
-    | 'set_conversion_primary';
+    | 'set_conversion_primary'
+    // Campaign launcher (CAMPAIGN_LAUNCH_ENABLED), approval-only.
+    | 'launch_campaign';
   target_id: string;
   params: Record<string, unknown>;
   reason_ar: string;
@@ -1021,6 +1025,10 @@ export async function executeAction(
       ], options);
     }
 
+    case 'launch_campaign': {
+      return runLaunchAction(action.params, client, options);
+    }
+
     case 'enable_campaign': {
       return client.campaigns.update([
         { resource_name: action.target_id, status: 'ENABLED' },
@@ -1139,6 +1147,9 @@ export async function executeRollback(
       }
       return client.campaignCriteria.remove(names, options);
     }
+    case 'remove_launched_campaign':
+      // Undo of the campaign launcher (lib/launch). Refuses while the campaign is enabled.
+      return executeLaunchRollback(rollback, client, options);
     default:
       throw new Error('This action does not have a supported rollback operation');
   }

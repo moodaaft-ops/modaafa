@@ -11,6 +11,7 @@ import {
   validateCreateLeadActionParams,
   validateSetPrimaryParams,
 } from '../measurement/conversion-actions';
+import { buildLaunchAction } from '../launch/executable';
 
 /**
  * Translate a stored recommendation payload into an executable OptimizerAction.
@@ -52,6 +53,8 @@ export function buildExecutableAction(
       },
     };
   }
+
+  if (operation === 'launch_campaign') return buildLaunchAction(payload, recommendation, accountCustomerId);
 
   const allowed: string[] = [
     'pause_keyword',

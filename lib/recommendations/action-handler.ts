@@ -9,6 +9,7 @@ import {
   type OptimizerAction,
 } from '@/lib/ai/optimizer-agent';
 import { buildExecutableAction } from '@/lib/ai/executable-action';
+import { createEnableCard } from '@/lib/launch/recommendation';
 import {
   isAmbiguousGoogleAdsMutationError,
   prepareActionForExecution,
@@ -466,6 +467,8 @@ async function executeApprovedRecommendation(
     if (appliedError || !appliedRecommendation) {
       throw new Error(`Unable to mark executed recommendation as applied: ${appliedError?.message ?? 'no row returned'}`);
     }
+
+    if (safe.type === 'launch_campaign') await createEnableCard(admin, recommendation, result);
 
     return NextResponse.redirect(new URL(`${next}?executed=1`, req.url), 303);
   } catch (error) {
