@@ -1,6 +1,6 @@
 # Integration of the media-buyer upgrade (feat/mb-integration)
 
-Merge order: feat/mb-guard, feat/mb-actions, feat/mb-measurement, feat/mb-launch, feat/mb-loops. Every feature is additive and behind its own flag; with all flags off behaviour is what main does today.
+Merge order: feat/mb-guard, feat/mb-actions, feat/mb-measurement, feat/mb-launch, feat/mb-loops, feat/mb-ads. Every feature is additive and behind its own flag; with all flags off behaviour is what main does today.
 
 ## Flags (all default off)
 
@@ -14,6 +14,7 @@ Merge order: feat/mb-guard, feat/mb-actions, feat/mb-measurement, feat/mb-launch
 | `OUTCOME_MEMORY_ENABLED` | Measured outcomes memory + diff-in-diff | exactly `true` |
 | `SEASONS_ENABLED` | Saudi season calendar | exactly `true` |
 | `BUSINESS_MEMORY_ENABLED` | Merchant context (needs the merchant_context migration) | exactly `true` |
+| `ADS_STUDIO_ENABLED` | Ad copy and assets (asset performance, Saudi RSA writer, replace LOW assets, sitelinks, callouts, snippets, ad tests, Jarvis get_ad_assets) | exactly `true`; write actions also need `EXTENDED_ACTIONS_ENABLED=true` |
 | `MONTHLY_REVIEW_ENABLED` | Monthly Opus session, auction insights and quality score tools, monthly mail | plus `MONTHLY_REVIEW_MIN_SPEND`, `_MAX_COST_USD`, `_MAX_ACCOUNTS`, `_CATCHUP_DAYS` |
 
 ## Migrations, apply order (none has been run)
@@ -46,9 +47,14 @@ They are independent of each other (each only references `google_ads_accounts` /
 - `vercel.json`, `.github/workflows/scheduled-jobs.yml`, `.env.example`: all entries kept (see crons and flags above).
 - Auto-merged without conflict but worth a look in review: `lib/ai/execution-preflight.ts` (measurement and launch both add cases), `app/robots.ts`, `middleware.ts`.
 
+## feat/mb-ads merge
+
+- Only `.env.example` conflicted (both sides kept). Ads adds no migration and no cron; it hooks into `app/api/cron/optimize/route.ts` behind its flag. Its write actions go through the extended-actions executor, which already calls `customer.mutateOperations`, so no client rename was needed.
+- Shared validators: `lib/launch/copy.ts` now takes its limits (RSA counts, headline, description, path, sitelink, callout, snippet) from `lib/ads/validators.ts` (identical values) and, for lines with a language, also runs the shared check for hidden characters, dashes, Latin comma in Arabic, ornamental quotes, machine phrases and minimum length (new issue codes `house_style`, `too_short`). The grounding rules (invented numbers, claim words, Latin words not in sources) stay in the Ads Studio writer because launch has no source corpus. Launch rules were not loosened: the result is the stricter of the two. All launch tests pass unchanged.
+
 ## Verification
 
-`npx tsc --noEmit` clean, `npx eslint . --max-warnings=0` clean, `npx tsx --test "tests/**/*.test.ts"`: 2687 tests, 2638 pass, 49 skipped, 0 fail (baseline 2440 plus guard 71, actions 48, measurement 20, launch 43, loops 65). Each branch's own report (`guard.md`, `actions.md`, `measurement.md`, `launch.md`, `loops.md`) lists what is not verified live.
+`npx tsc --noEmit` clean, `npx eslint . --max-warnings=0` clean, `npx tsx --test "tests/**/*.test.ts"`: 2713 tests, 2664 pass, 49 skipped, 0 fail (baseline 2440 plus guard, actions, measurement, launch, loops and ads). Each branch's own report (`guard.md`, `actions.md`, `measurement.md`, `launch.md`, `loops.md`) lists what is not verified live.
 
 ## Build fixes found by `next build`
 
