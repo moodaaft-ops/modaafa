@@ -8,6 +8,8 @@ import {
   type RsaSummary,
 } from '@/lib/ads/assets-reader';
 import { readAdTests } from '@/lib/ads/ad-test';
+import { readAccountCallPhones, readMerchantSavedPhones, resolveVerifiedPhone, type PhoneResolution } from '@/lib/ads/site-sources';
+import { createAdminClient } from '@/lib/supabase/server';
 
 /**
  * What each responsive search ad is made of and how Google rates every text
@@ -30,6 +32,19 @@ function trimTexts(rsa: RsaSummary, label: 'LOW' | 'BEST') {
       .slice(0, MAX_TEXTS_PER_LIST)
       .map((a) => ({ text: cleanText(a.text), pinned: a.pinned_field !== null }));
   return { headlines: pick(rsa.headlines), descriptions: pick(rsa.descriptions) };
+}
+
+async function verifiedPhoneFor(ctx: Parameters<JarvisReadTool['run']>[1]): Promise<PhoneResolution> {
+  let merchantSaved: string[] = [];
+  try {
+    const admin = createAdminClient();
+    const { data } = await admin.from('google_ads_accounts').select('business_id').eq('id', ctx.accountId).maybeSingle();
+    merchantSaved = await readMerchantSavedPhones(admin, data?.business_id ?? null);
+  } catch {
+    merchantSaved = [];
+  }
+  const accountPhones = (await readAccountCallPhones(ctx.customer)) ?? [];
+  return resolveVerifiedPhone({ merchantSaved, accountPhones });
 }
 
 export const getAdAssetsTool: JarvisReadTool = {
@@ -71,6 +86,13 @@ export const getAdAssetsTool: JarvisReadTool = {
           .slice(0, 5)
           .map((a) => ({ text: cleanText(a.text), approval: a.approval, topics: a.policy_topics.map(cleanText) })),
         replaceable: verdict.replace.length,
+        // Numbered so prepare_change can name a text without typing it (n is the position here, starting at 1).
+        replaceable_texts: verdict.replace.map((candidate, index) => ({
+          n: index + 1,
+          field: candidate.field,
+          reason: candidate.reason,
+          text: cleanText(candidate.text),
+        })),
         not_proposed_because: verdict.skip_reason,
       };
       evidence.push({
@@ -100,8 +122,15 @@ export const getAdAssetsTool: JarvisReadTool = {
       return { ref, ...compact };
     });
 
+    // The only phone numbers a call asset may use: one the merchant saved, or one already serving in the account.
+    const phone = await verifiedPhoneFor(ctx);
+    if (phone.status === 'found') {
+      evidence.push({ ref: nextRef('ph'), kind: 'verified_phone', data: { phone: phone.value.phone, source: phone.value.source } });
+    }
+
     return okResult(
       {
+        verified_phone: phone.status === 'found' ? { available: true, ref: evidence[evidence.length - 1].ref, source: phone.value.source } : { available: false, reason: phone.status },
         rsa_count: report.rsas.length,
         ads,
         campaigns_missing_assets: (coverage ?? [])
