@@ -91,3 +91,20 @@ test('tapping the button is recorded as a normal website answer, no migration ne
 test('an unknown website choice is still refused', () => {
   assert.deepEqual(parseAnswer('website', { choice: 'whatever' }), { ok: false, error: 'invalid_website' });
 });
+
+test('only the store wording talks about a shop, the others talk about a site, and every limit says the build is a separate service', () => {
+  for (const audience of NO_SITE_AUDIENCES) {
+    const offer = noSiteOffer(audience);
+    const text = [offer.tileLabel, offer.title, offer.body, offer.button, offer.opener].join(' ');
+    if (audience === 'store') {
+      assert.match(text, /متجر/);
+    } else if (audience === 'general') {
+      // we do not know the business, so the general wording names both
+      assert.match(text, /موقع/);
+    } else {
+      assert.doesNotMatch(text, /متجر/, `${audience} must not offer a shop`);
+      assert.match(text, /موقع/, `${audience} must offer a site`);
+    }
+    assert.match(offer.limit, /خدمة منفصلة عن الاشتراك/, `${audience} limit must say it is a separate service`);
+  }
+});
