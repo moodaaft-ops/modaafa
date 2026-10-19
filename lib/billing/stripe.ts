@@ -105,6 +105,20 @@ export interface CheckoutParams {
   idempotencyKey?: string;
 }
 
+/**
+ * Stripe's hosted Checkout has no Arabic (34 languages, none of them Arabic), so
+ * the labels and the pay button stay English. `custom_text` is the one place we
+ * can put our own Arabic on that page: it sits right under the pay button, so it
+ * says in plain words what pressing it does. Kept short and exact, because a
+ * wrong promise here is a billing dispute.
+ */
+export function hostedCheckoutSubmitMessage(trialDays?: number) {
+  if (trialDays && trialDays > 0) {
+    return `تجربتك المجانية ${trialDays} يوم، وما ينخصم منك شي قبل نهايتها. بعدها يتجدد اشتراكك تلقائياً، وتقدر تلغيه قبل نهاية التجربة من داخل مُضاعِف.`;
+  }
+  return 'بالضغط على الزر يبدأ اشتراكك وينخصم المبلغ مباشرة. يتجدد تلقائياً، وتقدر تلغيه في أي وقت من داخل مُضاعِف.';
+}
+
 export async function createCheckoutSession(params: CheckoutParams) {
   const priceId = PLAN_PRICE_IDS[params.plan]?.[params.period];
   if (!isConfiguredEnv(priceId)) {
@@ -144,6 +158,7 @@ export async function createCheckoutSession(params: CheckoutParams) {
     // reporting export able to answer "who is this?" without metadata.
     client_reference_id: params.userId,
     allow_promotion_codes: true,
+    custom_text: { submit: { message: hostedCheckoutSubmitMessage(params.trialDays) } },
   };
 
   // Always pass an explicit customer id when we have one. `customer_email` in
