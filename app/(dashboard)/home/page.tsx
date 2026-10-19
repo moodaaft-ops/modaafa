@@ -22,6 +22,8 @@ import { economicsKindFromLedger } from '@/lib/setup/ledger';
 import { homeMissingKeys, loadEconomicsNudgeInput } from '@/lib/setup/adaptive/economics-nudge';
 import { adaptiveAnswered, answeredOnRecord } from '@/lib/setup/adaptive/view';
 import { loadRecentChanges } from '@/lib/home/recent-changes';
+import { isGuardEnabledForUser } from '@/lib/guard/flag';
+import { readOpenGuardFindings, type OpenGuardFinding } from '@/lib/guard/read';
 import { recordUserEvent } from '@/lib/stages/events';
 import { keysAnsweredByProfile, missingCoreKeys, type SetupKey } from '@/lib/setup/questions';
 import { firstNameFrom, healthWord } from '@/lib/setup/stage';
@@ -198,6 +200,10 @@ export default async function HomePage({
     );
   }
 
+  // الحارس الصباحي: nothing is read while GUARD_ENABLED is off for this owner.
+  const guardFindings = isGuardEnabledForUser(user.email)
+    ? await readOpenGuardFindings(supabase, selectedAccount.id, { limit: 3 })
+    : [];
   const money = (amount: number) => formatCurrency(Math.round(amount), currency);
   const week = weekNumbers(campaignsRes.error ? [] : campaignsRes.data ?? []);
   const audit = auditRes.error ? null : auditRes.data;
@@ -271,6 +277,7 @@ export default async function HomePage({
         {greetingFor()}
         {firstName ? ` ${firstName}` : ''}
       </p>
+      {guardFindings.length > 0 && <GuardAlerts items={guardFindings} />}
       <p className="text-[19px] font-semibold leading-9 sm:text-[21px]">{summaryLine({ week, decisions: decisions.length, money })}</p>
 
       {!quietWeek && (
@@ -341,6 +348,31 @@ export default async function HomePage({
         currency={currency}
       />
     </div>
+  );
+}
+
+function GuardAlerts({ items }: { items: OpenGuardFinding[] }) {
+  return (
+    <section aria-labelledby="guard-title" className="space-y-2">
+      <h2 id="guard-title" className="text-[15px] font-bold">
+        الحارس الصباحي
+      </h2>
+      <ul className="space-y-2">
+        {items.map((item) => (
+          <li
+            key={item.id}
+            className={cn(
+              'rounded-[14px] px-4 py-3 text-[14px] leading-7',
+              item.severity === 'critical' || item.severity === 'high' ? 'bg-danger-soft' : 'bg-muted'
+            )}
+          >
+            <p className="font-semibold">{item.whatAr}</p>
+            {item.causeAr && <p className="text-muted-foreground">السبب المحتمل: {item.causeAr}</p>}
+            <p className="text-muted-foreground">الخطوة: {item.stepAr}</p>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

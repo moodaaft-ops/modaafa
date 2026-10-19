@@ -679,6 +679,51 @@ const tx_payment_failed: EmailCopy = {
 };
 
 // ---------------------------------------------------------------------------
+// Morning guard (lib/guard). Sent by the guard cron, never by a journey.
+// Unapproved until Ayman reads it: the cron then sends nothing.
+// ---------------------------------------------------------------------------
+
+const GUARD_MAX_ITEMS = 5;
+const stripEnd = (line: string) => line.replace(/[.،:\s]+$/u, '');
+
+const guard_alert: EmailCopy = {
+  key: 'guard_alert',
+  category: 'lifecycle',
+  approved: false,
+  build: (facts) => {
+    const guard = facts.guard;
+    if (!guard || guard.items.length === 0) return null;
+    const shown = guard.items.slice(0, GUARD_MAX_ITEMS);
+    const rest = guard.items.length - shown.length;
+    const blocks: Block[] = [
+      { type: 'p', text: 'راجعت حسابك الإعلاني هالصباح ولقيت:' },
+      {
+        type: 'list',
+        items: shown.map((item) => {
+          const account = item.accountName ? `${clean(item.accountName)}: ` : '';
+          const cause = item.causeAr ? ` السبب المحتمل: ${stripEnd(clean(item.causeAr))}.` : '';
+          return `${account}${stripEnd(clean(item.whatAr))}.${cause} الخطوة: ${stripEnd(clean(item.stepAr))}.`;
+        }),
+      },
+    ];
+    if (rest > 0) blocks.push({ type: 'p', text: `وفيه ${rest === 1 ? 'تنبيه ثاني' : `${rest} تنبيهات ثانية`} تلقاها في الرئيسية.` });
+    if (guard.escalate) {
+      blocks.push({
+        type: 'note',
+        text: 'اللي يخص التعليق أو الفوترة أو سياسات قوقل ما نتصرف فيه بدون ما نكلمك، ونمشي معك فيه خطوة خطوة.',
+      });
+    }
+    return {
+      subject: guard.hasCritical ? 'تنبيه عاجل على حسابك الإعلاني' : 'وش صار في حسابك الإعلاني أمس',
+      preheader: guard.hasCritical ? 'فيه شي يحتاج تتحرك عليه اليوم' : 'مراجعة الصباح لحسابك وفيها نقاط تستاهل نظرة',
+      blocks,
+      cta: { label: 'افتح الرئيسية', path: '/home' },
+      signer: 'team',
+    };
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Broadcasts (config/email-broadcasts.ts)
 // ---------------------------------------------------------------------------
 
@@ -725,6 +770,7 @@ export const EMAIL_COPY: Record<CopyKey, EmailCopy> = {
   tx_subscription_welcome,
   tx_trial_ending,
   tx_payment_failed,
+  guard_alert,
   broadcast_chat_relaunch,
 };
 

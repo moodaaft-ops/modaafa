@@ -11,6 +11,7 @@ import { isModaafaOperator } from '@/lib/platform/operators';
 import { createAdminClient } from '@/lib/supabase/server';
 import { runJarvisTurn, type JarvisChannel, type JarvisTurnResult } from './brain';
 import { loadMemoryFacts } from './db-tools';
+import { guardCardLines } from '@/lib/guard/read';
 import { extractAndSaveFacts } from './memory-extractor';
 import { formatPlaybookResult, loadPlaybookIndex, readPlaybook } from './playbook';
 import type { ToolContext } from './tools';
@@ -153,12 +154,14 @@ export async function answerWithJarvis(args: {
     }
   }
 
-  const [history, memory, playbook, consentPending, writeAccess] = await Promise.all([
+  const [history, memory, playbook, consentPending, writeAccess, guard] = await Promise.all([
     loadHistory(supabase, sessionId),
     loadMemoryFacts(supabase, businessRow?.id ?? null),
     loadPlaybookIndex(admin),
     accountRow ? loadConsentPending(supabase, accountRow.id) : Promise.resolve(false),
     accountRow ? loadWriteAccess(supabase, accountRow.id) : Promise.resolve(null),
+    // [] while GUARD_ENABLED is off for this owner: nothing is read.
+    guardCardLines(supabase, accountRow?.id, user.email),
   ]);
 
   // Weekly validate-only permission probe, after the response, never blocking it.
@@ -207,6 +210,7 @@ export async function answerWithJarvis(args: {
         }
       : null,
     memory,
+    guard,
     playbook,
     budgetLevel: budget.level === 'degraded' ? 'degraded' : 'ok',
     userId: user.id,

@@ -163,6 +163,7 @@ export const TEMPLATE_LABEL_AR: Record<string, string> = {
   tx_subscription_welcome: 'تأكيد الاشتراك',
   tx_trial_ending: 'التجربة قربت تخلص',
   tx_payment_failed: 'الدفعة ما مرت (تنبيه فوري)',
+  guard_alert: 'الحارس الصباحي (تنبيه الحساب)',
   broadcast_chat_relaunch: 'إعلان: رجوع المحادثة',
 };
 

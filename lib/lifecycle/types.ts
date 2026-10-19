@@ -59,6 +59,8 @@ export const COPY_KEYS = [
   'tx_subscription_welcome',
   'tx_trial_ending',
   'tx_payment_failed',
+  // morning guard (lib/guard): alerts about the ad account, sent by the guard cron
+  'guard_alert',
   // broadcasts (config/email-broadcasts.ts)
   'broadcast_chat_relaunch',
 ] as const;
@@ -114,6 +116,23 @@ export type BillingFacts = {
   trialEndsAt: string | null;
 };
 
+/** One line of the morning guard's mail. Built by lib/guard/notify.ts from findings; never from a model. */
+export type GuardItem = {
+  severity: 'critical' | 'high' | 'medium';
+  whatAr: string;
+  stepAr: string;
+  /** The rule-based likely cause, when the guard found one. */
+  causeAr: string | null;
+  accountName: string | null;
+};
+
+export type GuardFacts = {
+  items: GuardItem[];
+  hasCritical: boolean;
+  /** Something in the list is a suspension, billing or policy matter: a person handles it, not the platform. */
+  escalate: boolean;
+};
+
 export type EmailFacts = {
   firstName: string | null;
   /** Business name from the onboarding answers or the Google Ads account name. */
@@ -122,6 +141,8 @@ export type EmailFacts = {
   trial: TrialFacts | null;
   weekly: WeeklyFacts | null;
   billing: BillingFacts | null;
+  /** Only the guard cron sets this. */
+  guard?: GuardFacts | null;
 };
 
 export type FactNeed = 'plan' | 'trial' | 'weekly' | 'billing';

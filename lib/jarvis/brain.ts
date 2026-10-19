@@ -65,6 +65,8 @@ export type JarvisTurnInput = {
   account: JarvisAccount | null;
   business: JarvisBusiness | null;
   memory: MemoryFact[];
+  /** Open morning-guard findings as account-card lines (lib/guard/read.ts). Empty or absent when the guard is off. */
+  guard?: string[];
   playbook: PlaybookIndex;
   /** 'degraded' = the plan's LLM budget passed 70%: fast model, one tool round. */
   budgetLevel: 'ok' | 'degraded';
@@ -200,6 +202,7 @@ function accountCard(input: JarvisTurnInput) {
     lines.push('اقتراحات مفتوحة تنتظر العميل:');
     for (const r of open) lines.push(`  - ${sanitizePromptText(r.title, 100)} (${r.status === 'approved' ? 'معتمدة' : 'تنتظر'})`);
   }
+  if (input.guard?.length) lines.push(...input.guard);
   if (memory.length) {
     lines.push('اللي قاله العميل عن نشاطه (حقائق محفوظة):');
     for (const fact of memory.slice(0, 20)) {
