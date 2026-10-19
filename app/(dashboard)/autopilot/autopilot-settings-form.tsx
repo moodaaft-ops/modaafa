@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Eye, LockKeyhole, OctagonX, Save, ShieldCheck } from 'lucide-react';
-import { AUTONOMY_LEVEL_LABELS_AR, AUTONOMY_LEVELS, type AutonomyLevel } from '@/lib/autopilot/autonomy';
+import { AUTONOMY_LEVEL_LABELS_AR, AUTONOMY_LEVELS, type AutonomyLevel } from '@/lib/autopilot/autonomy-levels';
 import type { AutopilotMode, AutopilotSettings } from '@/lib/autopilot/types';
 import { Alert } from '@/lib/ui/alert';
 import { Button } from '@/lib/ui/button';
