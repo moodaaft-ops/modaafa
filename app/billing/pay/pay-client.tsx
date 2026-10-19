@@ -607,7 +607,13 @@ function PaymentArea(props: {
       <div hidden={!wallets} aria-hidden={!wallets}>
         <ExpressCheckoutElement
           options={expressOptions(props)}
-          onReady={(event) => setWallets(Boolean(event.availablePaymentMethods))}
+          // `ready` can fire before the wallets are worked out, with nothing listed yet, and then
+          // the block would stay hidden for good. Stripe's own hide-until-available pattern listens
+          // to this change event, so the buttons show the moment a wallet turns out to be usable.
+          onReady={(event) => {
+            if (event.availablePaymentMethods) setWallets(true);
+          }}
+          onAvailablePaymentMethodsChange={(event) => setWallets(Boolean(event.paymentMethods))}
           onConfirm={(event) => void confirmWallet(event)}
         />
         <div className="my-6 flex items-center gap-4 text-[13px] text-muted-foreground" aria-hidden>
