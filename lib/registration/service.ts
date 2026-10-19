@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/server';
 import { sendWelcomeInBackground } from '@/lib/lifecycle/welcome';
 import { resolveClientIp } from '@/lib/security/rate-limit';
 import { ATTRIBUTION_COOKIE, parseAttributionCookie } from './attribution';
+import { attachReferralFromRequest } from '@/lib/partners/attach';
 import { finalizeRegistration, type ClientContext, type FinalizeDeps, type FinalizeUser, type RegistrationDb } from './finalize';
 
 export function clientContextFromRequest(req: NextRequest): ClientContext {
@@ -20,6 +21,7 @@ export type FinalizeForRequestDeps = {
   db?: RegistrationDb;
   sendServerEvent?: FinalizeDeps['sendServerEvent'];
   sendWelcome?: (userId: string) => void;
+  attachReferral?: (req: NextRequest, userId: string) => Promise<unknown>;
 };
 
 export async function finalizeForRequest(
@@ -41,6 +43,10 @@ export async function finalizeForRequest(
   // The welcome mail goes out right after the registration is committed, not
   // when the address is confirmed: a Google user is not registered at that point.
   // Fire and forget; the /api/cron/welcome-email sweep is the safety net.
-  if (outcome.status === 'completed') (deps.sendWelcome ?? sendWelcomeInBackground)(user.id);
+  if (outcome.status === 'completed') {
+    (deps.sendWelcome ?? sendWelcomeInBackground)(user.id);
+    // Tie the new user to the partner whose link they used. Never throws.
+    await (deps.attachReferral ?? attachReferralFromRequest)(req, user.id);
+  }
   return outcome;
 }

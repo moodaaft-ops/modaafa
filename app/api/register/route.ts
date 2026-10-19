@@ -3,6 +3,7 @@ import { createAdminClient, createServerClient } from '@/lib/supabase/server';
 import { isSameOriginRequest } from '@/lib/security/origin';
 import { checkRateLimit, rateLimitHeaders, resolveClientIp } from '@/lib/security/rate-limit';
 import { ATTRIBUTION_COOKIE, parseAttributionCookie } from '@/lib/registration/attribution';
+import { normalizePartnerCode, partnersEnabled, REF_COOKIE } from '@/lib/partners/config';
 import { validateRegistration } from '@/lib/registration/validate';
 
 /**
@@ -65,6 +66,9 @@ export async function POST(req: NextRequest) {
       reg: {
         phone: phoneE164,
         attribution,
+        // The partner link this visitor came through, kept next to the campaign
+        // data so a referral that failed to attach can be repaired by hand.
+        ref: partnersEnabled() ? normalizePartnerCode(req.cookies.get(REF_COOKIE)?.value) : null,
         client: {
           ip: resolveClientIp(req),
           ua: req.headers.get('user-agent')?.slice(0, 300) ?? null,

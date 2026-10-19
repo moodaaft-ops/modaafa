@@ -13,7 +13,7 @@ export function OpsTabs({
   active,
   updatedAt,
 }: {
-  active: 'overview' | 'customers' | 'costs' | 'signals' | 'provisioning';
+  active: 'overview' | 'customers' | 'costs' | 'signals' | 'provisioning' | 'partners';
   updatedAt: string;
 }) {
   const tabs = [
@@ -22,6 +22,7 @@ export function OpsTabs({
     { key: 'costs', href: '/operations/costs', label: 'التكلفة' },
     { key: 'signals', href: '/operations/onboarding-signals', label: 'قراءة الحساب' },
     { key: 'provisioning', href: '/operations/provisioning', label: 'فتح الحسابات' },
+    { key: 'partners', href: '/operations/partners', label: 'الشركاء' },
   ] as const;
   return (
     <div className="flex flex-wrap items-end justify-between gap-3 border-b border-border px-4 sm:px-6 lg:px-8">
