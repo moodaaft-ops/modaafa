@@ -9,6 +9,7 @@ import { readAccessOverrides } from '@/lib/billing/access-overrides';
 import { SuspendedBanner } from './suspended-banner';
 import { InstallPrompt } from './install-prompt';
 import { SimpleChrome } from './simple-chrome';
+import { SupportWidgetGate } from '@/lib/support/support-widget-gate';
 import { isSimpleExperience } from '@/lib/setup/mode';
 import { listRecentChats } from '@/lib/chat-first/sessions';
 
@@ -60,6 +61,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         {overrides.suspended && <SuspendedBanner />}
         <InstallPrompt />
         {children}
+        <SupportWidgetGate hideLauncher />
       </SimpleChrome>
     );
   }

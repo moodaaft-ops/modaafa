@@ -1,3 +1,4 @@
+import React from 'react';
 import { FAQ_ITEMS } from '@/lib/faq/data';
 import { whatsappHelpUrl } from '@/lib/support/contact';
 import { isSupportBotEnabled } from '@/lib/support/flag';
@@ -39,7 +40,8 @@ function quickQuestions(): QuickQuestion[] {
 }
 
 /** Renders nothing unless SUPPORT_BOT_ENABLED=true. */
-export function SupportWidgetGate() {
+/** `hideLauncher`: no floating button, the window opens only from a SupportLink (used inside the dashboard). */
+export function SupportWidgetGate({ hideLauncher = false }: { hideLauncher?: boolean }) {
   if (!isSupportBotEnabled()) return null;
-  return <SupportWidget quick={quickQuestions()} />;
+  return <SupportWidget quick={quickQuestions()} hideLauncher={hideLauncher} />;
 }
