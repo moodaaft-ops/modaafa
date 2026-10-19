@@ -61,8 +61,9 @@ export async function accrueInvoiceCommission(db: Db, params: { userId: string; 
   return check('accrue commission', result) as AccrueOutcome;
 }
 
-export async function voidInvoiceCommission(db: Db, invoiceKey: string, reason: string, full: boolean) {
-  const result = await db.rpc('partner_void_invoice', { p_invoice_key: invoiceKey, p_reason: reason, p_full: full });
+/** `fraction` is the share of the invoice refunded: 1 for a full refund or a dispute. */
+export async function voidInvoiceCommission(db: Db, invoiceKey: string, reason: string, fraction: number) {
+  const result = await db.rpc('partner_void_invoice', { p_invoice_key: invoiceKey, p_reason: reason, p_fraction: fraction });
   return check('void commission', result) as string;
 }
 
@@ -72,11 +73,12 @@ export async function openReferralFor(db: Db, userId: string): Promise<{ code: s
     'read referral',
     await db
       .from('referrals')
-      .select('code_used, first_paid_at, status')
+      .select('code_used, first_paid_at, status, partners(status)')
       .eq('referred_user_id', userId)
       .maybeSingle(),
-  ) as { code_used: string; first_paid_at: string | null; status: string } | null;
-  if (!row || row.first_paid_at || row.status === 'rejected') return null;
+  ) as { code_used: string; first_paid_at: string | null; status: string; partners: { status: string } | null } | null;
+  // No gift for someone whose partner is paused or banned.
+  if (!row || row.first_paid_at || row.status === 'rejected' || row.partners?.status !== 'active') return null;
   return { code: row.code_used };
 }
 
@@ -107,13 +109,21 @@ export async function findPartnerForUser(db: Db, user: { id: string; email: stri
   const byUser = check('find partner', await db.from('partners').select(PARTNER_COLUMNS).eq('user_id', user.id).maybeSingle()) as PartnerRow | null;
   if (byUser) return byUser;
   if (!user.email) return null;
+  // An exact match on the lower-cased address (createPartner stores it that way).
+  // Never a pattern match: `_` and `%` in an address are wildcards to ilike.
   const byEmail = check(
     'find partner by email',
-    await db.from('partners').select(PARTNER_COLUMNS).ilike('email', user.email).is('user_id', null).maybeSingle(),
+    await db.from('partners').select(PARTNER_COLUMNS).eq('email', user.email.trim().toLowerCase()).is('user_id', null).maybeSingle(),
   ) as PartnerRow | null;
   if (!byEmail) return null;
-  const linked = await db.from('partners').update({ user_id: user.id, updated_at: new Date().toISOString() }).eq('id', byEmail.id).is('user_id', null);
-  if (linked.error) return null; // someone else linked it first (unique user_id): treat as not theirs
+  const linked = await db
+    .from('partners')
+    .update({ user_id: user.id, updated_at: new Date().toISOString() })
+    .eq('id', byEmail.id)
+    .is('user_id', null)
+    .select('id');
+  // Someone else linked it first, or the link failed: not theirs.
+  if (linked.error || !Array.isArray(linked.data) || linked.data.length !== 1) return null;
   return { ...byEmail, user_id: user.id };
 }
 
@@ -142,7 +152,7 @@ export async function partnerSummary(db: Db, partnerId: string, now = new Date()
     db.from('referrals').select('status').eq('partner_id', partnerId).neq('status', 'rejected'),
     db
       .from('commissions')
-      .select('invoice_key, currency, amount, status, earned_at, payable_at, needs_clawback, clawback_payout_id')
+      .select('invoice_key, currency, amount, status, earned_at, payable_at, needs_clawback, clawback_amount, clawback_payout_id')
       .eq('partner_id', partnerId)
       .order('earned_at', { ascending: false })
       .limit(500),
@@ -167,7 +177,7 @@ export async function partnerSummary(db: Db, partnerId: string, now = new Date()
     if (r.status === 'pending') add(new Date(r.payable_at) <= now ? summary.payable : summary.pending, r.currency, amount);
     else if (r.status === 'held') add(summary.held, r.currency, amount);
     else if (r.status === 'paid') add(summary.paid, r.currency, amount);
-    if (r.needs_clawback && !r.clawback_payout_id) add(summary.clawback, r.currency, amount);
+    if (r.needs_clawback && !r.clawback_payout_id) add(summary.clawback, r.currency, Number(r.clawback_amount ?? r.amount));
   }
   return summary;
 }
@@ -182,7 +192,7 @@ export async function listPartners(db: Db, now = new Date()): Promise<PartnerLis
   if (partners.length === 0) return [];
   const [refs, coms, clicks] = await Promise.all([
     db.from('referrals').select('partner_id, status').neq('status', 'rejected').limit(20000),
-    db.from('commissions').select('partner_id, currency, amount, status, payable_at, needs_clawback, clawback_payout_id').limit(20000),
+    db.from('commissions').select('partner_id, currency, amount, status, payable_at, needs_clawback, clawback_amount, clawback_payout_id').limit(20000),
     db.from('referral_clicks').select('partner_id').gte('clicked_at', new Date(now.getTime() - 30 * 86_400_000).toISOString()).limit(50000),
   ]);
   const refRows = check('list referrals', refs) as Array<{ partner_id: string; status: string }>;
@@ -197,7 +207,7 @@ export async function listPartners(db: Db, now = new Date()): Promise<PartnerLis
       const amount = Number(c.amount);
       if (c.status === 'pending' && new Date(c.payable_at) <= now) add(payable, c.currency, amount);
       if (c.status === 'held') held += 1;
-      if (c.needs_clawback && !c.clawback_payout_id) add(owed, c.currency, amount);
+      if (c.needs_clawback && !c.clawback_payout_id) add(owed, c.currency, Number(c.clawback_amount ?? amount));
     }
     return {
       ...p,
@@ -261,18 +271,29 @@ export async function resolveHeldCommission(db: Db, id: string, release: boolean
 
 export async function payOutPartner(
   db: Db,
-  params: { partnerId: string; currency: string; method: string; reference: string; note?: string | null; paidBy: string },
+  params: { partnerId: string; currency: string; method: string; reference: string; note?: string | null; paidBy: string; expectedNet?: number | null },
 ) {
   const result = await db.rpc('partner_pay_out', {
     p_partner_id: params.partnerId, p_currency: params.currency, p_method: params.method,
-    p_reference: params.reference, p_note: params.note ?? null, p_paid_by: params.paidBy,
+    p_reference: params.reference, p_note: params.note ?? null, p_paid_by: params.paidBy, p_expected: params.expectedNet ?? null,
   });
-  return check('pay out', result) as { status: string; amount?: number; gross?: number; clawback?: number; net?: number; minimum?: number };
+  return check('pay out', result) as { status: string; amount?: number; gross?: number; clawback?: number; net?: number; minimum?: number; expected?: number };
 }
 
-export async function reconcilePartnerCommissions(db: Db, limit = 500) {
-  const result = await db.rpc('partner_reconcile', { p_limit: limit });
-  return check('reconcile', result) as { checked: number; earned: number };
+/**
+ * Small batches, each its own transaction: a long sweep would hold customer rows
+ * a billing webhook may need. Stops when a batch comes back short.
+ */
+export async function reconcilePartnerCommissions(db: Db, batch = 50, maxBatches = 10) {
+  let checked = 0;
+  let earned = 0;
+  for (let i = 0; i < maxBatches; i++) {
+    const result = check('reconcile', await db.rpc('partner_reconcile', { p_limit: batch })) as { checked: number; earned: number };
+    checked += result.checked;
+    earned += result.earned;
+    if (result.checked < batch) break;
+  }
+  return { checked, earned };
 }
 
 export type PartnerSettings = {

@@ -10,6 +10,7 @@ const ERRORS: Record<string, string> = {
   bad_rate: 'النسبة بين 0 و0.5 (مثلاً 0.25).',
   duplicate: 'الكود أو الإيميل مستخدم عند شريك ثاني.',
   reference_required: 'اكتب رقم الحوالة (3 أحرف على الأقل).',
+  expected_required: 'المبلغ اللي حوّلته مطلوب.',
   too_many_requests: 'كثرت المحاولات، انتظر شوي.',
   bad_input: 'في بيانات ناقصة.',
 };
@@ -72,11 +73,13 @@ export function CreatePartnerForm() {
   );
 }
 
-export function PartnerRowActions({ partnerId, status, payableCurrencies }: { partnerId: string; status: string; payableCurrencies: string[] }) {
+export function PartnerRowActions({ partnerId, status, expectedNet }: { partnerId: string; status: string; expectedNet: Record<string, number> }) {
+  const payableCurrencies = Object.keys(expectedNet);
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [paying, setPaying] = useState(false);
+  const [currency, setCurrency] = useState(payableCurrencies[0] ?? 'SAR');
 
   async function setStatus(next: 'active' | 'paused' | 'banned') {
     if (busy) return;
@@ -103,7 +106,8 @@ export function PartnerRowActions({ partnerId, status, payableCurrencies }: { pa
       router.refresh();
     } else if (result.ok) {
       setMessage(
-        s === 'below_minimum' ? 'الصافي أقل من الحد الأدنى للصرف.'
+        s === 'amount_changed' ? `تغيّر المبلغ بعد ما فتحت الصفحة (صار ${result.json?.net}). ما انسجّل شي، حدّث الصفحة وراجع قبل ما تحوّل.`
+        : s === 'below_minimum' ? 'الصافي أقل من الحد الأدنى للصرف.'
         : s === 'covered_by_clawback' ? 'الاسترجاعات تغطي الجاهز، ما فيه شي يُصرف.'
         : 'ما فيه شي جاهز للصرف.'
       );
@@ -122,9 +126,10 @@ export function PartnerRowActions({ partnerId, status, payableCurrencies }: { pa
       </div>
       {paying && (
         <form onSubmit={payOut} className="grid gap-2 border border-border p-3 sm:grid-cols-2">
-          <select name="currency" aria-label="العملة" className={field} defaultValue={payableCurrencies[0]}>
+          <select name="currency" aria-label="العملة" className={field} defaultValue={payableCurrencies[0]} onChange={(e) => setCurrency(e.target.value)}>
             {payableCurrencies.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
+          <input name="expected" required dir="ltr" inputMode="decimal" key={currency} defaultValue={expectedNet[currency]?.toFixed(2)} aria-label="المبلغ اللي حوّلته" placeholder="المبلغ اللي حوّلته" className={field} />
           <select name="method" aria-label="طريقة التحويل" className={field} defaultValue="bank_transfer">
             <option value="bank_transfer">تحويل بنكي</option>
             <option value="wise">Wise</option>
@@ -133,7 +138,7 @@ export function PartnerRowActions({ partnerId, status, payableCurrencies }: { pa
           <input name="reference" required dir="ltr" placeholder="رقم الحوالة" aria-label="رقم الحوالة" className={field} />
           <input name="note" placeholder="ملاحظة (اختياري)" aria-label="ملاحظة" className={field} />
           <p className="text-xs leading-5 text-muted-foreground sm:col-span-2">
-            حوّل المبلغ أول من البنك، وبعدين سجّله هنا. التسجيل يقفل العمولات الجاهزة ويخصم الاسترجاعات تلقائياً.
+            حوّل المبلغ أول من البنك، وبعدين سجّله هنا بنفس المبلغ اللي حوّلته. لو تغيّر الحساب بين الفتح والتسجيل (استرجاع مثلاً) ما ينسجّل شي ويطلع لك الرقم الجديد.
           </p>
           <button type="submit" disabled={busy} className={primary}>سجّل الصرف</button>
         </form>

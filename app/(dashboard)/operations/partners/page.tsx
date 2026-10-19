@@ -130,7 +130,7 @@ export default async function PartnersOpsPage() {
                       )}
                     </div>
                   </dl>
-                  <PartnerRowActions partnerId={p.id} status={p.status} payableCurrencies={Object.keys(p.payable)} />
+                  <PartnerRowActions partnerId={p.id} status={p.status} expectedNet={expectedNet(p)} />
                 </li>
               ))}
             </ul>
@@ -139,6 +139,13 @@ export default async function PartnersOpsPage() {
       </div>
     </div>
   );
+}
+
+/** Per currency: what is payable minus what is owed back, the figure the payout is checked against. */
+function expectedNet(p: PartnerListRow) {
+  const out: Record<string, number> = {};
+  for (const [cur, gross] of Object.entries(p.payable)) out[cur] = Math.round((gross - (p.owed_clawback[cur] ?? 0)) * 100) / 100;
+  return out;
 }
 
 function Item({ label, value }: { label: string; value: string }) {

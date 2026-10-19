@@ -50,7 +50,10 @@ export async function runPartnerAction(db: Db, actorId: string, input: unknown):
       if (!UUID.test(id) || !/^[A-Z]{3}$/.test(currency) || !METHODS.has(method)) return bad('bad_input');
       // The transfer reference is what makes a payout traceable later.
       if (reference.length < 3) return bad('reference_required');
-      const result = await payOutPartner(db, { partnerId: id, currency, method, reference, note: str(body.note, 200) || null, paidBy: actorId });
+      const expected = body.expected === undefined || body.expected === '' ? null : Number(body.expected);
+      // The amount the operator saw and sent is required: the books are checked against it.
+      if (expected === null || !Number.isFinite(expected)) return bad('expected_required');
+      const result = await payOutPartner(db, { partnerId: id, currency, method, reference, note: str(body.note, 200) || null, paidBy: actorId, expectedNet: expected });
       return { status: 200, body: { ok: true, ...result } };
     }
     default:

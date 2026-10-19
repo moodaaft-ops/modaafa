@@ -215,6 +215,8 @@ export async function startArabicSubscription(
     /** The server's own decision, asked again now. Never the browser's. */
     trialDays: number;
     promotionCodeId?: string | null;
+    /** A second attempt with different terms needs its own Stripe idempotency key. */
+    idempotencySuffix?: string;
   },
 ): Promise<SubscriptionOutcome> {
   const setupIntent = await stripe.retrieveSetupIntent(input.setupIntentId);
@@ -304,7 +306,7 @@ export async function startArabicSubscription(
   // Keyed on the SetupIntent: the same card cannot become two subscriptions.
   let created: Loose;
   try {
-    created = await stripe.createSubscription(params, `modaafa-arabic-sub:${input.setupIntentId}`);
+    created = await stripe.createSubscription(params, `modaafa-arabic-sub:${input.setupIntentId}${input.idempotencySuffix ?? ''}`);
   } catch (error) {
     // A card decline or a rejected request means nothing was charged. A lost
     // connection or a Stripe server error may mean the subscription exists, so the

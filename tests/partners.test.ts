@@ -94,7 +94,8 @@ test('ops actions: bad input is refused before the database is touched', async (
   assert.equal((await run({ action: 'status', partner_id: uuid, status: 'deleted' })).body.error, 'bad_input');
   assert.equal((await run({ action: 'resolve_held', commission_id: uuid, release: 'yes' })).body.error, 'bad_input');
   assert.equal((await run({ action: 'pay_out', partner_id: uuid, currency: 'SAR', method: 'cash', reference: 'R-1' })).body.error, 'bad_input');
-  const noRef = await run({ action: 'pay_out', partner_id: uuid, currency: 'SAR', method: 'bank_transfer', reference: ' ' });
+  const noRef = await run({ action: 'pay_out', partner_id: uuid, currency: 'SAR', method: 'bank_transfer', reference: ' ', expected: 100 });
+  assert.equal((await run({ action: 'pay_out', partner_id: uuid, currency: 'SAR', method: 'bank_transfer', reference: 'R-1' })).body.error, 'expected_required');
   assert.equal(noRef.status, 400);
   assert.equal(noRef.body.error, 'reference_required');
 });
@@ -212,11 +213,11 @@ test('webhook: a trial invoice (nothing paid) never reaches the accrual', async 
   assert.equal(accrued, 0);
 });
 
-test('webhook: a full refund voids the commission on that invoice, a partial one holds it', async () => {
+test('webhook: a full refund voids the commission, a partial one passes its share', async () => {
   const voids: any[][] = [];
   const base = {
     retrieveStripeInvoice: async () => ({ id: 'in_9', number: 'INV-0009' }) as any,
-    voidInvoiceCommission: async (_db: unknown, key: string, reason: string, full: boolean) => { voids.push([key, reason, full]); return 'voided'; },
+    voidInvoiceCommission: async (_db: unknown, key: string, reason: string, fraction: number) => { voids.push([key, reason, fraction]); return 'voided'; },
   };
   await withFlag('true', async () => {
     const full = await handlerFor(stripeEvent('charge.refunded', { id: 'ch_1', invoice: 'in_9', amount: 11_500, amount_refunded: 11_500, refunded: true }, 'evt_r1'), base)(request());
@@ -224,7 +225,10 @@ test('webhook: a full refund voids the commission on that invoice, a partial one
     const part = await handlerFor(stripeEvent('charge.refunded', { id: 'ch_2', invoice: 'in_9', amount: 11_500, amount_refunded: 2_000, refunded: false }, 'evt_r2'), base)(request());
     assert.equal(part.status, 200);
   });
-  assert.deepEqual(voids, [['INV-0009', 'refund', true], ['INV-0009', 'refund', false]]);
+  assert.equal(voids.length, 2);
+  assert.deepEqual(voids[0], ['INV-0009', 'refund', 1]);
+  assert.equal(voids[1][0], 'INV-0009');
+  assert.ok(Math.abs((voids[1][2] as number) - 2000 / 11500) < 1e-9, 'a partial refund passes its share of the invoice');
 });
 
 test('webhook: a refund with the programme off does nothing', async () => {
@@ -243,7 +247,7 @@ test('webhook: a real dispute voids the commission; a bank inquiry does not', as
   const deps = {
     retrieveStripeCharge: async () => ({ id: 'ch_d', invoice: 'in_d' }) as any,
     retrieveStripeInvoice: async () => ({ id: 'in_d', number: 'INV-D' }) as any,
-    voidInvoiceCommission: async (_db: unknown, key: string, reason: string, full: boolean) => { voids.push([key, reason, full]); return 'voided'; },
+    voidInvoiceCommission: async (_db: unknown, key: string, reason: string, fraction: number) => { voids.push([key, reason, fraction]); return 'voided'; },
   };
   await withFlag('true', async () => {
     const dispute = await handlerFor(stripeEvent('charge.dispute.created', { id: 'dp_1', charge: 'ch_d', status: 'needs_response' }, 'evt_d1'), deps)(request());
@@ -251,5 +255,129 @@ test('webhook: a real dispute voids the commission; a bank inquiry does not', as
     const inquiry = await handlerFor(stripeEvent('charge.dispute.created', { id: 'dp_2', charge: 'ch_d', status: 'warning_needs_response' }, 'evt_d2'), deps)(request());
     assert.equal(inquiry.status, 200);
   });
-  assert.deepEqual(voids, [['INV-D', 'dispute', true]]);
+  assert.deepEqual(voids, [['INV-D', 'dispute', 1]]);
+});
+
+test('webhook: a refund whose void fails is retried by Stripe (500), not lost', async () => {
+  const originalError = console.error;
+  console.error = () => undefined;
+  try {
+    await withFlag('true', async () => {
+      const res = await handlerFor(stripeEvent('charge.refunded', { id: 'ch_1', invoice: 'in_9', amount: 100, amount_refunded: 100, refunded: true }, 'evt_rf'), {
+        retrieveStripeInvoice: async () => ({ id: 'in_9', number: 'INV-0009' }) as any,
+        voidInvoiceCommission: async () => { throw new Error('db down'); },
+      })(request());
+      assert.equal(res.status, 500);
+    });
+  } finally {
+    console.error = originalError;
+  }
+});
+
+test('webhook: a dispute still alerts and is handled when the void fails, then Stripe retries', async () => {
+  const alerts: string[] = [];
+  const originalError = console.error;
+  console.error = () => undefined;
+  try {
+    await withFlag('true', async () => {
+      const res = await handlerFor(stripeEvent('charge.dispute.created', { id: 'dp_1', charge: 'ch_d', status: 'needs_response' }, 'evt_dx'), {
+        retrieveStripeCharge: async () => ({ id: 'ch_d', invoice: 'in_d' }) as any,
+        retrieveStripeInvoice: async () => ({ id: 'in_d', number: 'INV-D' }) as any,
+        voidInvoiceCommission: async () => { throw new Error('db down'); },
+        sendOpsAlert: async (payload: any) => { alerts.push(payload.subject); return { sent: true, id: 'x' }; },
+      })(request());
+      assert.equal(res.status, 500);
+    });
+  } finally {
+    console.error = originalError;
+  }
+  assert.ok(alerts.includes('نزاع على دفعة بلا اشتراك معروف'), 'the dispute itself was still handled before the retry');
+});
+
+// ---- partner lookup, gift, middleware ----
+
+function chain(log: string[], results: { select?: unknown; update?: unknown }) {
+  const q: any = {
+    select(cols: string) { log.push(`select`); q._last = 'select'; return q; },
+    eq(col: string, value: unknown) { log.push(`eq:${col}=${String(value)}`); return q; },
+    ilike() { log.push('ilike'); return q; },
+    is() { return q; },
+    update() { log.push('update'); q._mode = 'update'; return q; },
+    async maybeSingle() { return { data: results.select ?? null, error: null }; },
+    then(resolve: any) { return resolve(q._mode === 'update' ? (results.update as any) : { data: null, error: null }); },
+  };
+  return q;
+}
+
+test('partner lookup by email is an exact match, never a pattern', async () => {
+  const { findPartnerForUser } = await import('../lib/partners/store');
+  const log: string[] = [];
+  const row = { id: 'p1', user_id: null, code: 'ali', display_name: 'Ali', email: 'ali.saeed@outlook.com', status: 'active' };
+  // First lookup by user finds nothing, the second (by email) finds the row.
+  let call = 0;
+  const db = { from: () => { call++; return chain(log, call === 2 ? { select: row, update: { data: [{ id: 'p1' }], error: null } } : call === 1 ? {} : { update: { data: [{ id: 'p1' }], error: null } }); } };
+  const found = await findPartnerForUser(db, { id: 'u1', email: 'ALI_SAEED@outlook.com' });
+  assert.ok(!log.includes('ilike'), 'no pattern matching on an email');
+  assert.ok(log.includes('eq:email=ali_saeed@outlook.com'));
+  assert.equal(found?.user_id, 'u1');
+});
+
+test('partner lookup: a link that changed no row is not a link', async () => {
+  const { findPartnerForUser } = await import('../lib/partners/store');
+  const row = { id: 'p1', user_id: null, code: 'ali', display_name: 'Ali', email: 'a@x.co', status: 'active' };
+  let call = 0;
+  const db = { from: () => { call++; return chain([], call === 2 ? { select: row, update: { data: [], error: null } } : call === 1 ? {} : { update: { data: [], error: null } }); } };
+  assert.equal(await findPartnerForUser(db, { id: 'u1', email: 'a@x.co' }), null);
+});
+
+test('referee gift: only for an open referral of an active partner, and never throws', async () => {
+  const { refereeGiftPromotion } = await import('../lib/partners/gift');
+  const stripe: any = { findPromotionCode: async () => ({ id: 'promo_1', active: true, coupon: { percent_off: 20, valid: true, duration: 'once' } }) };
+  const referral = (status: string, extra: object = {}) => ({ from: () => chain([], { select: { code_used: 'sara', first_paid_at: null, status: 'registered', partners: { status }, ...extra } }) });
+  const gift = (db: any, s = stripe) => refereeGiftPromotion({ getDb: () => db, stripe: s }, { userId: 'u1', customerId: 'cus_1' });
+  const before = { flag: process.env.PARTNERS_ENABLED, code: process.env.PARTNER_REFEREE_PROMO_CODE };
+  try {
+    delete process.env.PARTNERS_ENABLED;
+    process.env.PARTNER_REFEREE_PROMO_CODE = 'WELCOME20';
+    assert.equal(await gift(referral('active')), null, 'programme off');
+    process.env.PARTNERS_ENABLED = 'true';
+    assert.equal((await gift(referral('active')))?.id, 'promo_1');
+    assert.equal(await gift(referral('paused')), null, 'paused partner');
+    assert.equal(await gift(referral('banned')), null, 'banned partner');
+    assert.equal(await gift(referral('active', { first_paid_at: '2026-10-01' })), null, 'already paid');
+    assert.equal(await gift({ from: () => chain([], {}) }), null, 'no referral');
+    const originalError = console.error;
+    console.error = () => undefined;
+    try {
+      assert.equal(await gift(referral('active'), { findPromotionCode: async () => { throw new Error('stripe down'); } } as any), null);
+      assert.equal(await gift({ from: () => { throw new Error('db down'); } }), null);
+    } finally {
+      console.error = originalError;
+    }
+    delete process.env.PARTNER_REFEREE_PROMO_CODE;
+    assert.equal(await gift(referral('active')), null, 'no gift code configured');
+  } finally {
+    for (const [k, v] of [['PARTNERS_ENABLED', before.flag], ['PARTNER_REFEREE_PROMO_CODE', before.code]] as const) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+});
+
+test('middleware: ?ref sets the cookie only when none is remembered', async () => {
+  const { middleware } = await import('../middleware');
+  const before = process.env.PARTNERS_ENABLED;
+  process.env.PARTNERS_ENABLED = 'true';
+  try {
+    const fresh = await middleware(new NextRequest('https://ai.modaafa.com/register?ref=Sara'));
+    assert.match(fresh.headers.get('set-cookie') ?? '', /mz_ref=sara/);
+    const kept = await middleware(new NextRequest('https://ai.modaafa.com/register?ref=zzz', { headers: { cookie: 'mz_ref=omar' } }));
+    assert.doesNotMatch(kept.headers.get('set-cookie') ?? '', /mz_ref/);
+    process.env.PARTNERS_ENABLED = 'false';
+    const off = await middleware(new NextRequest('https://ai.modaafa.com/register?ref=sara'));
+    assert.doesNotMatch(off.headers.get('set-cookie') ?? '', /mz_ref/);
+  } finally {
+    if (before === undefined) delete process.env.PARTNERS_ENABLED;
+    else process.env.PARTNERS_ENABLED = before;
+  }
 });

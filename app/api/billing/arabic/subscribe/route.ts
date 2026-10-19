@@ -45,13 +45,29 @@ export async function POST(req: NextRequest) {
           { userId: gate.user.id, customerId },
         );
 
-    const outcome = await startArabicSubscription(arabicCheckoutStripe, {
-      userId: gate.user.id,
-      customerId,
-      setupIntentId,
-      trialDays: gate.trialDays,
-      promotionCodeId: promotion?.id ?? null,
-    });
+    const start = (promotionCodeId: string | null, idempotencySuffix = '') =>
+      startArabicSubscription(arabicCheckoutStripe, {
+        userId: gate.user.id,
+        customerId,
+        setupIntentId,
+        trialDays: gate.trialDays,
+        promotionCodeId,
+        idempotencySuffix,
+      });
+    let outcome;
+    try {
+      outcome = await start(promotion?.id ?? null);
+    } catch (error) {
+      // Stripe can refuse a code for reasons the lookup cannot see (a minimum
+      // amount, first-purchase only). The welcome gift is a bonus the customer
+      // never asked for, so it must not stop them subscribing: retry once
+      // without it, under its own idempotency key. A code the customer typed
+      // keeps failing loudly, as before.
+      const rejected = (error as { type?: string } | null)?.type === 'StripeInvalidRequestError';
+      if (promoCode || !promotion || !rejected) throw error;
+      console.error('[partners] referee gift rejected by Stripe, retrying without it');
+      outcome = await start(null, ':nogift');
+    }
 
     if (outcome.kind === 'requires_action') {
       // Only the pay-now path gets here: the bank wants a 3D Secure check on the

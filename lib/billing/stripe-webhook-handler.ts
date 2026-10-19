@@ -120,6 +120,9 @@ export function createStripeWebhookHandler(
       }
 
       const eventCreatedAt = new Date(event.created * 1000).toISOString();
+      // A partner-programme failure on a dispute must not delay the cancellation, so
+      // it is raised after the event has been handled and Stripe retries the event.
+      let deferredPartnerError: unknown = null;
 
       switch (event.type) {
         case 'checkout.session.completed': {
@@ -362,10 +365,13 @@ export function createStripeWebhookHandler(
 
           // A real dispute takes the money back, so the commission on it goes too.
           if (partnersEnabled()) {
-            await partnerStep('void disputed commission', async () => {
+            try {
               const key = await chargeInvoiceKey(dependencies, dispute?.charge);
-              if (key) await dependencies.voidInvoiceCommission(supabase, key, 'dispute', true);
-            });
+              if (key) await dependencies.voidInvoiceCommission(supabase, key, 'dispute', 1);
+            } catch (error) {
+              console.error('[partners] void disputed commission failed', error instanceof Error ? error.message : 'unknown');
+              deferredPartnerError = error;
+            }
           }
 
           const subscriptionId = await resolveDisputedSubscriptionId(dependencies, dispute);
@@ -482,11 +488,15 @@ export function createStripeWebhookHandler(
         case 'charge.refunded': {
           if (!partnersEnabled()) break;
           const charge = event.data.object as any;
-          const full = charge?.refunded === true || (typeof charge?.amount === 'number' && charge.amount_refunded >= charge.amount);
-          await partnerStep('void refunded commission', async () => {
-            const key = await chargeInvoiceKey(dependencies, charge);
-            if (key) await dependencies.voidInvoiceCommission(supabase, key, 'refund', full);
-          });
+          const total = Number(charge?.amount ?? 0);
+          const refunded = Number(charge?.amount_refunded ?? 0);
+          // The share of the invoice that was refunded. Nothing known and not marked refunded: nothing to do.
+          const fraction = charge?.refunded === true ? 1 : total > 0 ? Math.min(refunded / total, 1) : 0;
+          if (fraction <= 0) break;
+          // Not swallowed: a refund that fails to void is retried by Stripe, and
+          // nothing else in billing depends on this event.
+          const key = await chargeInvoiceKey(dependencies, charge);
+          if (key) await dependencies.voidInvoiceCommission(supabase, key, 'refund', fraction);
           break;
         }
 
@@ -518,6 +528,7 @@ export function createStripeWebhookHandler(
         }
       }
 
+      if (deferredPartnerError) throw deferredPartnerError;
       await dependencies.completeStripeWebhookEvent(supabase, event.id);
     } catch (error) {
       console.error('Stripe webhook processing failed', {

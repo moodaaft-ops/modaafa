@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
+import { promisify } from 'node:util';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
@@ -10,6 +11,7 @@ import test from 'node:test';
  * the Supabase roles, takes trial_email_key from the real 20261013 migration,
  * applies the partner migration twice, then drives every money rule.
  */
+const run = promisify(execFile);
 const url = process.env.PARTNERS_PG_URL;
 const skip = url ? false : 'set PARTNERS_PG_URL to run the SQL integration tests';
 
@@ -200,11 +202,22 @@ test('accrue: more than 5 first payments in a week is a velocity hold', { skip }
   assert.deepEqual(held, [false, false, false, false, false, true, true]);
 });
 
-test('void: unpaid is voided, partial refund holds, repeat is harmless', { skip }, () => {
-  assert.equal(svc(`select public.partner_void_invoice('NOPE', 'refund', true)`), 'no_commission');
-  assert.equal(svc(`select public.partner_void_invoice('INV-2', 'half refund', false)`), 'held');
-  assert.equal(svc(`select public.partner_void_invoice('INV-2', 'refund', true)`), 'voided');
-  assert.equal(svc(`select public.partner_void_invoice('INV-2', 'refund', true)`), 'already');
+test('velocity: a burst is judged on a first commission only, renewals are not held for it', { skip }, () => {
+  // Customer 500 earned INV FAST-0 earlier in the burst. Their renewal a day later is a different matter.
+  const renewal = accrue(U(500), 'FAST-0-RENEWAL', 100, `now() + interval '1 day'`);
+  assert.equal(renewal.status, 'earned');
+  assert.equal(renewal.held, false);
+  assert.equal(svc(`select array_to_string(flags, ',') from public.referrals where referred_user_id='${U(500)}'`), '');
+});
+
+test('void: partial refund cuts pro rata, full voids, repeat is harmless', { skip }, () => {
+  assert.equal(svc(`select public.partner_void_invoice('NOPE', 'refund', 0.5)`), 'no_commission');
+  // INV-2 earned 25 on a net of 100. Half refunded: 12.50. The same event twice changes nothing.
+  assert.equal(svc(`select public.partner_void_invoice('INV-2', 'half refund', 0.5)`), 'reduced');
+  assert.equal(svc(`select public.partner_void_invoice('INV-2', 'half refund', 0.5)`), 'reduced');
+  assert.equal(svc(`select amount from public.commissions where invoice_key='INV-2'`), '12.50');
+  assert.equal(svc(`select public.partner_void_invoice('INV-2', 'refund', 1)`), 'voided');
+  assert.equal(svc(`select public.partner_void_invoice('INV-2', 'refund', 1)`), 'already');
   assert.equal(svc(`select status from public.commissions where invoice_key='INV-2'`), 'voided');
 });
 
@@ -231,7 +244,7 @@ test('payout: minimum applies, paid once, clawback is netted off later payouts',
   assert.equal(svc(`select count(*) from public.commissions where status='paid' and partner_id=(select id from public.partners where code='payme')`), '2');
 
   // PAY-2 (275) is refunded after it was paid out: clawback, not a silent loss.
-  assert.equal(svc(`select public.partner_void_invoice('PAY-2', 'chargeback', true)`), 'clawback');
+  assert.equal(svc(`select public.partner_void_invoice('PAY-2', 'chargeback', 1)`), 'clawback');
   assert.equal(svc(`select status||'|'||needs_clawback from public.commissions where invoice_key='PAY-2'`), 'paid|true');
 
   accrue(U(602), 'PAY-3', 800); // 200 < 275 owed back
@@ -264,7 +277,97 @@ test('reconcile: earns invoices the webhook missed, and only once', { skip }, ()
     ('${U(2)}', 400, 'paid', 'INV-1', now())`);
   const first = JSON.parse(svc('select public.partner_reconcile()'));
   assert.equal(first.earned, 1);
-  assert.equal(svc(`select amount from public.commissions where invoice_key='REC-1'`), '100.00');
+  assert.equal(svc(`select amount||'|'||status from public.commissions where invoice_key='REC-1'`), '100.00|held');
+  assert.match(svc(`select note from public.commissions where invoice_key='REC-1'`), /reconciled/);
   assert.equal(JSON.parse(svc('select public.partner_reconcile()')).earned, 0);
   assert.equal(svc(`select count(*) from public.commissions where invoice_key in ('REC-0','REC-F')`), '0');
+});
+
+test('reconcile: invoices that can never earn do not starve the batch', { skip }, () => {
+  newPartner('old', 'old@x.co');
+  newUser(800, 'oldcust@x.co');
+  newUser(801, 'newcust@x.co');
+  svc(`select public.partner_record_referral('${U(800)}', 'old')`);
+  svc(`select public.partner_record_referral('${U(801)}', 'old')`);
+  accrue(U(800), 'OLD-FIRST', 100, `now() - interval '30 months'`);
+  // Three invoices far outside the 12 month window, older than the missed one below.
+  psql(`insert into public.invoices (user_id, amount_sar, status, invoice_number, paid_at) values
+    ('${U(800)}', 100, 'paid', 'EXP-1', now() - interval '3 days'),
+    ('${U(800)}', 100, 'paid', 'EXP-2', now() - interval '3 days' + interval '1 minute'),
+    ('${U(800)}', 100, 'paid', 'EXP-3', now() - interval '3 days' + interval '2 minutes'),
+    ('${U(801)}', 100, 'paid', 'MISSED-1', now() - interval '1 day')`);
+  const first = JSON.parse(svc('select public.partner_reconcile(3)'));
+  assert.deepEqual(first, { checked: 3, earned: 0 });
+  const second = JSON.parse(svc('select public.partner_reconcile(3)'));
+  assert.deepEqual(second, { checked: 1, earned: 1 });
+  assert.equal(svc(`select count(*) from public.partner_skipped_invoices where invoice_key like 'EXP-%'`), '3');
+});
+
+test('refund before the commission exists: it can never be earned afterwards', { skip }, () => {
+  newPartner('late', 'late@x.co');
+  newUser(810, 'latecust@x.co');
+  svc(`select public.partner_record_referral('${U(810)}', 'late')`);
+  psql(`insert into public.invoices (user_id, amount_sar, status, invoice_number, paid_at) values ('${U(810)}', 115, 'paid', 'LATE-1', now())`);
+  assert.equal(svc(`select public.partner_void_invoice('LATE-1', 'refund', 1)`), 'no_commission');
+  assert.equal(accrue(U(810), 'LATE-1', 100).status, 'voided');
+  assert.equal(JSON.parse(svc('select public.partner_reconcile()')).earned, 0);
+  assert.equal(svc(`select count(*) from public.commissions where invoice_key='LATE-1'`), '0');
+});
+
+test('payout: the amount transferred is checked against the books', { skip }, () => {
+  newPartner('exact', 'exact@x.co');
+  newUser(820, 'exactcust@x.co');
+  svc(`select public.partner_record_referral('${U(820)}', 'exact')`);
+  accrue(U(820), 'EX-1', 2000); // 500
+  psql(`update public.commissions set payable_at = now() - interval '1 day' where invoice_key='EX-1'`);
+  const pid = `(select id from public.partners where code='exact')`;
+  const wrong = JSON.parse(svc(`select public.partner_pay_out(${pid}, 'SAR', 'bank_transfer', 'R-1', null, null, 400)`));
+  assert.equal(wrong.status, 'amount_changed');
+  assert.equal(wrong.net, 500);
+  assert.equal(svc(`select status from public.commissions where invoice_key='EX-1'`), 'pending');
+  assert.equal(svc(`select count(*) from public.payouts where partner_id=${pid}`), '0');
+  const right = JSON.parse(svc(`select public.partner_pay_out(${pid}, 'SAR', 'bank_transfer', 'R-1', null, null, 500)`));
+  assert.equal(right.status, 'paid');
+  assert.equal(right.amount, 500);
+});
+
+test('payout: a partial refund after payout claws back only the difference', { skip }, () => {
+  newPartner('part', 'part@x.co');
+  for (let i = 0; i < 2; i++) {
+    newUser(830 + i, `part${i}@x.co`);
+    svc(`select public.partner_record_referral('${U(830 + i)}', 'part')`);
+  }
+  accrue(U(830), 'PART-1', 2000); // 500
+  psql(`update public.commissions set payable_at = now() - interval '1 day' where invoice_key='PART-1'`);
+  const pid = `(select id from public.partners where code='part')`;
+  assert.equal(JSON.parse(svc(`select public.partner_pay_out(${pid}, 'SAR', 'wise', 'R-2')`)).status, 'paid');
+  // A quarter of the invoice is refunded later: 125 of the 500 is owed back.
+  assert.equal(svc(`select public.partner_void_invoice('PART-1', 'partial', 0.25)`), 'partial_clawback');
+  assert.equal(svc(`select clawback_amount from public.commissions where invoice_key='PART-1'`), '125.00');
+  accrue(U(831), 'PART-2', 2000); // 500
+  psql(`update public.commissions set payable_at = now() - interval '1 day' where invoice_key='PART-2'`);
+  const next = JSON.parse(svc(`select public.partner_pay_out(${pid}, 'SAR', 'wise', 'R-3')`));
+  assert.equal(next.amount, 375);
+});
+
+test('payout: a refund racing the payout is either before it or waits for it, never lost', { skip }, async () => {
+  newPartner('race', 'race@x.co');
+  for (let i = 0; i < 2; i++) {
+    newUser(840 + i, `race${i}@x.co`);
+    svc(`select public.partner_record_referral('${U(840 + i)}', 'race')`);
+    accrue(U(840 + i), `RACE-${i + 1}`, 1600); // 400 each
+  }
+  psql(`update public.commissions set payable_at = now() - interval '1 day' where invoice_key like 'RACE-%'`);
+  // Session B voids RACE-2 and holds its transaction open for 2 seconds.
+  const b = run('psql', [url!, '-v', 'ON_ERROR_STOP=1', '-qtA', '-c',
+    `begin; set role service_role; select public.partner_void_invoice('RACE-2', 'refund', 1); select pg_sleep(2); commit;`]);
+  await new Promise((r) => setTimeout(r, 700));
+  // Session A pays out while B is still open: it must wait, then leave the voided row out.
+  const out = svc(`select public.partner_pay_out((select id from public.partners where code='race'), 'SAR', 'bank_transfer', 'R-RACE', null, null, null)`);
+  await b;
+  const result = JSON.parse(out);
+  assert.equal(result.status, 'paid');
+  assert.equal(result.amount, 400);
+  assert.equal(svc(`select status||'|'||needs_clawback from public.commissions where invoice_key='RACE-2'`), 'voided|false');
+  assert.equal(svc(`select status from public.commissions where invoice_key='RACE-1'`), 'paid');
 });

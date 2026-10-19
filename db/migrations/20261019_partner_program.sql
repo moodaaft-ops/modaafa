@@ -16,6 +16,8 @@
 --                            reconcile sweep can never earn the same invoice twice
 --   6. functions             record click / record referral / accrue / void / pay
 --                            out / reconcile. All service_role only.
+--   7. partner_skipped_invoices  invoices that must never earn (refunded before
+--                            the commission existed, outside the window)
 --
 -- Privileges: every table is service_role only (RLS on, nothing granted to
 -- anon or authenticated). The partner dashboard reads through the server with
@@ -141,17 +143,29 @@ CREATE TABLE IF NOT EXISTS public.commissions (
   -- A refund or dispute landed after the commission was paid out: the amount is
   -- netted against the partner's next payout.
   needs_clawback boolean NOT NULL DEFAULT false,
+  -- How much of a paid commission is owed back. Null means all of it.
+  clawback_amount numeric(12,2) CHECK (clawback_amount IS NULL OR clawback_amount >= 0),
   clawback_payout_id uuid REFERENCES public.payouts (id),
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS commissions_partner_idx ON public.commissions (partner_id, status, payable_at);
 CREATE INDEX IF NOT EXISTS commissions_referral_idx ON public.commissions (referral_id);
 
+-- Invoices that must never earn a commission: refunded or disputed before the
+-- commission existed, or outside the window / on a banned partner. One row per
+-- invoice key. partner_accrue_commission refuses them and partner_reconcile
+-- skips them, so they cannot fill the sweep's batch either.
+CREATE TABLE IF NOT EXISTS public.partner_skipped_invoices (
+  invoice_key text PRIMARY KEY,
+  reason text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
 -- Privileges: service_role only ---------------------------------------
 DO $$
 DECLARE t text;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['partner_settings', 'partners', 'referral_clicks', 'referrals', 'payouts', 'commissions'] LOOP
+  FOREACH t IN ARRAY ARRAY['partner_settings', 'partners', 'referral_clicks', 'referrals', 'payouts', 'commissions', 'partner_skipped_invoices'] LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('REVOKE ALL ON TABLE public.%I FROM PUBLIC, anon, authenticated', t);
     EXECUTE format('GRANT SELECT, INSERT, UPDATE ON TABLE public.%I TO service_role', t);
@@ -242,12 +256,15 @@ $$;
 
 -- Earn a commission from one paid invoice. Idempotent on p_invoice_key. Money
 -- is only ever earned here, from an invoice that really moved money.
+-- p_force_hold: the caller could not be sure of the amount (the reconcile sweep
+-- reads the invoice total, tax included), so a person must look before it is payable.
 CREATE OR REPLACE FUNCTION public.partner_accrue_commission(
   p_user_id uuid,
   p_invoice_key text,
   p_net numeric,
   p_currency text,
-  p_paid_at timestamptz
+  p_paid_at timestamptz,
+  p_force_hold boolean DEFAULT false
 ) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -263,9 +280,11 @@ DECLARE
   v_paying int;
   v_amount numeric(12,2);
   v_status text := 'pending';
-  v_note text;
+  v_notes text[] := '{}';
   v_flags text[];
   v_recent int;
+  v_velocity boolean := false;
+  v_first boolean;
   v_id uuid;
 BEGIN
   IF p_invoice_key IS NULL OR btrim(p_invoice_key) = '' THEN RETURN jsonb_build_object('status', 'bad_invoice'); END IF;
@@ -281,10 +300,14 @@ BEGIN
   IF EXISTS (SELECT 1 FROM commissions WHERE invoice_key = p_invoice_key) THEN
     RETURN jsonb_build_object('status', 'duplicate');
   END IF;
+  IF EXISTS (SELECT 1 FROM partner_skipped_invoices WHERE invoice_key = p_invoice_key) THEN
+    RETURN jsonb_build_object('status', 'voided');
+  END IF;
 
   SELECT * INTO v_partner FROM partners WHERE id = v_ref.partner_id;
   IF v_partner.status = 'banned' THEN RETURN jsonb_build_object('status', 'inactive'); END IF;
 
+  v_first := NOT EXISTS (SELECT 1 FROM commissions WHERE referral_id = v_ref.id);
   IF v_ref.first_paid_at IS NULL OR p_paid_at < v_ref.first_paid_at THEN
     UPDATE referrals SET first_paid_at = p_paid_at WHERE id = v_ref.id;
     v_ref.first_paid_at := p_paid_at;
@@ -312,20 +335,14 @@ BEGIN
   -- rejects the customer: a held commission is simply not payable yet.
   SELECT * INTO v_user FROM users WHERE id = p_user_id;
   v_flags := v_ref.flags;
-  IF public.trial_email_key(v_user.email) = public.trial_email_key(v_partner.email)
-     OR v_partner.user_id = p_user_id THEN
+  IF (public.trial_email_key(v_user.email) = public.trial_email_key(v_partner.email) OR v_partner.user_id = p_user_id)
+     AND NOT 'same_email' = ANY (v_flags) THEN
     v_flags := array_append(v_flags, 'same_email');
   END IF;
   IF v_partner.phone IS NOT NULL AND v_user.phone IS NOT NULL AND v_partner.phone = v_user.phone
      AND NOT 'same_phone' = ANY (v_flags) THEN
     v_flags := array_append(v_flags, 'same_phone');
   END IF;
-  SELECT count(*) INTO v_recent
-    FROM referrals r
-   WHERE r.partner_id = v_partner.id AND r.first_paid_at > p_paid_at - interval '7 days'
-     AND r.first_paid_at <= p_paid_at AND r.id <> v_ref.id;
-  IF v_recent >= s.velocity_cap THEN v_flags := array_append(v_flags, 'velocity'); END IF;
-
   -- The partner's own card paid for the referred customer's subscription.
   IF v_partner.user_id IS NOT NULL AND to_regclass('public.trial_card_ledger') IS NOT NULL
      AND EXISTS (SELECT 1 FROM trial_card_ledger l
@@ -335,17 +352,29 @@ BEGIN
     v_flags := array_append(v_flags, 'same_card');
   END IF;
 
-  IF 'same_email' = ANY (v_flags) OR 'same_phone' = ANY (v_flags) OR 'same_card' = ANY (v_flags) OR 'velocity' = ANY (v_flags) THEN
-    v_status := 'held';
-    v_note := 'flags: ' || array_to_string(v_flags, ',');
-  ELSIF v_partner.status = 'paused' THEN
-    v_status := 'held';
-    v_note := 'partner paused';
+  -- A burst of new customers is judged once, on a customer's FIRST commission.
+  -- It is a note on that commission, never a lasting flag on the customer, so
+  -- their later renewals are not held for something that happened once.
+  IF v_first THEN
+    SELECT count(*) INTO v_recent
+      FROM referrals r
+     WHERE r.partner_id = v_partner.id AND r.id <> v_ref.id
+       AND r.first_paid_at > p_paid_at - interval '7 days' AND r.first_paid_at <= p_paid_at;
+    v_velocity := v_recent >= s.velocity_cap;
   END IF;
+
+  IF 'same_email' = ANY (v_flags) OR 'same_phone' = ANY (v_flags) OR 'same_card' = ANY (v_flags) THEN
+    v_notes := array_append(v_notes, 'flags: ' || array_to_string(v_flags, ','));
+    v_status := 'held';
+  END IF;
+  IF v_velocity THEN v_notes := array_append(v_notes, 'velocity'); v_status := 'held'; END IF;
+  IF v_partner.status = 'paused' THEN v_notes := array_append(v_notes, 'partner paused'); v_status := 'held'; END IF;
+  IF p_force_hold THEN v_notes := array_append(v_notes, 'reconciled: base is the invoice total, check tax'); v_status := 'held'; END IF;
 
   INSERT INTO commissions (partner_id, referral_id, invoice_key, currency, invoice_net, rate, amount, status, earned_at, payable_at, note)
   VALUES (v_partner.id, v_ref.id, p_invoice_key, upper(COALESCE(p_currency, 'SAR')), p_net, v_rate, v_amount, v_status,
-          p_paid_at, p_paid_at + make_interval(days => s.hold_days), v_note)
+          p_paid_at, p_paid_at + make_interval(days => s.hold_days),
+          CASE WHEN cardinality(v_notes) = 0 THEN NULL ELSE array_to_string(v_notes, '; ') END)
   ON CONFLICT (invoice_key) DO NOTHING
   RETURNING id INTO v_id;
   IF v_id IS NULL THEN RETURN jsonb_build_object('status', 'duplicate'); END IF;
@@ -357,29 +386,14 @@ BEGIN
 END;
 $$;
 
--- Put a flag on a referral and hold anything not yet paid (used by the card-match check).
-CREATE OR REPLACE FUNCTION public.partner_flag_referral(p_referral_id uuid, p_flag text)
-RETURNS text
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public, pg_temp
-AS $$
-BEGIN
-  IF p_flag !~ '^[a-z_]{3,30}$' THEN RETURN 'bad_flag'; END IF;
-  UPDATE referrals SET flags = CASE WHEN p_flag = ANY (flags) THEN flags ELSE array_append(flags, p_flag) END
-   WHERE id = p_referral_id;
-  IF NOT FOUND THEN RETURN 'no_referral'; END IF;
-  UPDATE commissions
-     SET status = 'held', note = COALESCE(note || '; ', '') || 'flag: ' || p_flag
-   WHERE referral_id = p_referral_id AND status = 'pending';
-  RETURN 'flagged';
-END;
-$$;
-
--- A refund or dispute on an invoice. Unpaid commissions are voided; a paid one is
--- marked to be netted off the next payout. A partial refund holds the commission
--- for a person to decide.
-CREATE OR REPLACE FUNCTION public.partner_void_invoice(p_invoice_key text, p_reason text, p_full boolean DEFAULT true)
+-- A refund or dispute on an invoice. p_fraction is the share of the invoice that
+-- was refunded (1 for a full refund or a dispute). Full: an unpaid commission is
+-- voided; a paid one is marked to be netted off the next payout. Partial: the
+-- commission is cut pro rata from the original invoice amount (so the same event
+-- twice gives the same answer); a paid one is clawed back for the difference.
+-- When no commission exists yet, a full refund is remembered so the commission
+-- can never be earned later from that invoice.
+CREATE OR REPLACE FUNCTION public.partner_void_invoice(p_invoice_key text, p_reason text, p_fraction numeric DEFAULT 1)
 RETURNS text
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -387,22 +401,37 @@ SET search_path = public, pg_temp
 AS $$
 DECLARE
   c commissions%ROWTYPE;
+  v_new numeric(12,2);
+  v_f numeric := LEAST(GREATEST(COALESCE(p_fraction, 1), 0), 1);
 BEGIN
+  IF v_f = 0 THEN RETURN 'nothing'; END IF;
   SELECT * INTO c FROM commissions WHERE invoice_key = p_invoice_key FOR UPDATE;
-  IF NOT FOUND THEN RETURN 'no_commission'; END IF;
+  IF NOT FOUND THEN
+    IF v_f >= 1 THEN
+      INSERT INTO partner_skipped_invoices (invoice_key, reason) VALUES (p_invoice_key, left(p_reason, 40)) ON CONFLICT DO NOTHING;
+    END IF;
+    RETURN 'no_commission';
+  END IF;
   IF c.status = 'voided' THEN RETURN 'already'; END IF;
 
-  IF NOT p_full THEN
+  IF v_f < 1 THEN
+    v_new := round(c.invoice_net * (1 - v_f) * c.rate, 2);
     IF c.status = 'paid' THEN
-      UPDATE commissions SET note = COALESCE(note || '; ', '') || 'partial refund after payout' WHERE id = c.id;
-      RETURN 'partial_paid';
+      UPDATE commissions
+         SET needs_clawback = true, clawback_amount = GREATEST(c.amount - v_new, 0),
+             note = COALESCE(note || '; ', '') || 'partial refund after payout'
+       WHERE id = c.id AND clawback_payout_id IS NULL;
+      RETURN 'partial_clawback';
     END IF;
-    UPDATE commissions SET status = 'held', note = COALESCE(note || '; ', '') || 'partial refund' WHERE id = c.id;
-    RETURN 'held';
+    UPDATE commissions
+       SET amount = LEAST(amount, v_new), note = COALESCE(note || '; ', '') || 'partial refund, cut pro rata'
+     WHERE id = c.id;
+    RETURN 'reduced';
   END IF;
 
   IF c.status = 'paid' THEN
-    UPDATE commissions SET needs_clawback = true, note = COALESCE(note || '; ', '') || left(p_reason, 80) WHERE id = c.id;
+    UPDATE commissions SET needs_clawback = true, clawback_amount = NULL,
+           note = COALESCE(note || '; ', '') || left(p_reason, 80) WHERE id = c.id;
     RETURN 'clawback';
   END IF;
   UPDATE commissions SET status = 'voided', note = COALESCE(note || '; ', '') || left(p_reason, 80) WHERE id = c.id;
@@ -427,15 +456,20 @@ BEGIN
 END;
 $$;
 
--- Pay a partner everything that is payable in one currency. Clawbacks are netted
--- first. Below the minimum nothing moves.
+-- Pay a partner everything that is payable in one currency. The exact rows are
+-- locked first and the amount is worked out from those rows, so a refund landing
+-- at the same moment either comes first (and is left out) or waits. Clawbacks are
+-- netted first. Below the minimum nothing moves. p_expected: the net amount the
+-- operator saw and transferred; when it differs from the books now, nothing is
+-- recorded and the caller is told the real figure.
 CREATE OR REPLACE FUNCTION public.partner_pay_out(
   p_partner_id uuid,
   p_currency text,
   p_method text,
   p_reference text,
   p_note text DEFAULT NULL,
-  p_paid_by uuid DEFAULT NULL
+  p_paid_by uuid DEFAULT NULL,
+  p_expected numeric DEFAULT NULL
 ) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -444,6 +478,8 @@ AS $$
 DECLARE
   s partner_settings%ROWTYPE;
   v_cur text := upper(COALESCE(p_currency, 'SAR'));
+  v_pay_ids uuid[];
+  v_claw_ids uuid[];
   v_gross numeric(12,2);
   v_claw numeric(12,2);
   v_net numeric(12,2);
@@ -453,13 +489,22 @@ BEGIN
   PERFORM 1 FROM partners WHERE id = p_partner_id FOR UPDATE;
   IF NOT FOUND THEN RETURN jsonb_build_object('status', 'no_partner'); END IF;
 
-  SELECT COALESCE(sum(amount), 0) INTO v_gross FROM commissions
-   WHERE partner_id = p_partner_id AND currency = v_cur AND status = 'pending' AND payable_at <= now();
-  SELECT COALESCE(sum(amount), 0) INTO v_claw FROM commissions
-   WHERE partner_id = p_partner_id AND currency = v_cur AND needs_clawback AND clawback_payout_id IS NULL;
+  SELECT COALESCE(array_agg(id), '{}'), COALESCE(sum(amount), 0) INTO v_pay_ids, v_gross FROM (
+    SELECT id, amount FROM commissions
+     WHERE partner_id = p_partner_id AND currency = v_cur AND status = 'pending' AND payable_at <= now()
+     ORDER BY id FOR UPDATE
+  ) x;
+  SELECT COALESCE(array_agg(id), '{}'), COALESCE(sum(COALESCE(clawback_amount, amount)), 0) INTO v_claw_ids, v_claw FROM (
+    SELECT id, amount, clawback_amount FROM commissions
+     WHERE partner_id = p_partner_id AND currency = v_cur AND needs_clawback AND clawback_payout_id IS NULL
+     ORDER BY id FOR UPDATE
+  ) y;
   v_net := v_gross - v_claw;
 
   IF v_gross = 0 THEN RETURN jsonb_build_object('status', 'nothing'); END IF;
+  IF p_expected IS NOT NULL AND abs(p_expected - v_net) > 0.005 THEN
+    RETURN jsonb_build_object('status', 'amount_changed', 'net', v_net, 'expected', p_expected);
+  END IF;
   IF v_net <= 0 THEN RETURN jsonb_build_object('status', 'covered_by_clawback', 'gross', v_gross, 'clawback', v_claw); END IF;
   IF v_cur = 'SAR' AND v_net < s.min_payout THEN
     RETURN jsonb_build_object('status', 'below_minimum', 'net', v_net, 'minimum', s.min_payout);
@@ -469,10 +514,8 @@ BEGIN
   VALUES (p_partner_id, v_cur, v_net, p_method, p_reference, p_note, p_paid_by)
   RETURNING id INTO v_payout;
 
-  UPDATE commissions SET status = 'paid', paid_at = now(), payout_id = v_payout
-   WHERE partner_id = p_partner_id AND currency = v_cur AND status = 'pending' AND payable_at <= now();
-  UPDATE commissions SET clawback_payout_id = v_payout
-   WHERE partner_id = p_partner_id AND currency = v_cur AND needs_clawback AND clawback_payout_id IS NULL;
+  UPDATE commissions SET status = 'paid', paid_at = now(), payout_id = v_payout WHERE id = ANY (v_pay_ids);
+  UPDATE commissions SET clawback_payout_id = v_payout WHERE id = ANY (v_claw_ids);
 
   RETURN jsonb_build_object('status', 'paid', 'payout_id', v_payout, 'amount', v_net, 'gross', v_gross, 'clawback', v_claw);
 END;
@@ -480,8 +523,11 @@ $$;
 
 -- The safety net behind the webhook: any paid invoice of a referred customer that
 -- has no commission yet is earned now. Invoices carry the same key, so running it
--- twice, or racing the webhook, changes nothing.
-CREATE OR REPLACE FUNCTION public.partner_reconcile(p_limit int DEFAULT 500)
+-- twice, or racing the webhook, changes nothing. The invoice row holds the total
+-- paid (tax included), so what this earns is HELD for a person to confirm.
+-- Invoices that cannot earn (outside the window, banned partner) are remembered,
+-- so they never fill a batch again.
+CREATE OR REPLACE FUNCTION public.partner_reconcile(p_limit int DEFAULT 50)
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -499,12 +545,16 @@ BEGIN
       JOIN referrals rf ON rf.referred_user_id = i.user_id AND rf.status <> 'rejected'
      WHERE i.status = 'paid' AND i.amount_sar > 0 AND i.invoice_number IS NOT NULL
        AND NOT EXISTS (SELECT 1 FROM commissions c WHERE c.invoice_key = i.invoice_number)
+       AND NOT EXISTS (SELECT 1 FROM partner_skipped_invoices k WHERE k.invoice_key = i.invoice_number)
      ORDER BY COALESCE(i.paid_at, i.created_at)
      LIMIT p_limit
   LOOP
     v_seen := v_seen + 1;
-    v_res := public.partner_accrue_commission(r.user_id, r.invoice_number, r.amount_sar, r.currency, r.paid_at);
+    v_res := public.partner_accrue_commission(r.user_id, r.invoice_number, r.amount_sar, r.currency, r.paid_at, true);
     IF v_res ->> 'status' = 'earned' THEN v_earned := v_earned + 1; END IF;
+    IF v_res ->> 'status' IN ('expired', 'inactive') THEN
+      INSERT INTO partner_skipped_invoices (invoice_key, reason) VALUES (r.invoice_number, v_res ->> 'status') ON CONFLICT DO NOTHING;
+    END IF;
   END LOOP;
   RETURN jsonb_build_object('checked', v_seen, 'earned', v_earned);
 END;
@@ -517,11 +567,10 @@ BEGIN
   FOREACH f IN ARRAY ARRAY[
     'partner_record_click(text,text,text)',
     'partner_record_referral(uuid,text,text)',
-    'partner_accrue_commission(uuid,text,numeric,text,timestamptz)',
-    'partner_flag_referral(uuid,text)',
-    'partner_void_invoice(text,text,boolean)',
+    'partner_accrue_commission(uuid,text,numeric,text,timestamptz,boolean)',
+    'partner_void_invoice(text,text,numeric)',
     'partner_resolve_held(uuid,boolean,text)',
-    'partner_pay_out(uuid,text,text,text,text,uuid)',
+    'partner_pay_out(uuid,text,text,text,text,uuid,numeric)',
     'partner_reconcile(int)'
   ] LOOP
     EXECUTE format('REVOKE ALL ON FUNCTION public.%s FROM PUBLIC, anon, authenticated', f);

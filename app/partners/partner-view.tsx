@@ -36,7 +36,7 @@ export function PartnerView({ partner, summary, settings, appUrl }: { partner: P
         <h2 className="text-base font-bold text-foreground">رابطك</h2>
         <CopyLink link={link} />
         <p className="text-xs leading-5 text-muted-foreground">
-          يشتغل لمدة {Math.round(REF_COOKIE_MAX_AGE / 86400)} يوم من أول نقرة، وآخر رابط يفتحه العميل هو اللي يُحسب. تقدر تضيف <bdi dir="ltr" className="font-mono">?ref={partner.code}</bdi> لأي رابط من روابطنا.
+          يشتغل لمدة {Math.round(REF_COOKIE_MAX_AGE / 86400)} يوم من أول نقرة، وآخر رابط مختصر يفتحه العميل هو اللي يُحسب. وتقدر تضيف <bdi dir="ltr" className="font-mono">?ref={partner.code}</bdi> لأي رابط من روابطنا، بس هذا ما يلغي رابط شريك ثاني فتحه العميل قبل.
         </p>
       </section>
 

@@ -35,11 +35,15 @@ export async function middleware(req: NextRequest) {
   // parameters never touches the cookie. See lib/registration/attribution.ts.
   const incomingAttribution =
     req.method === 'GET' ? extractAttribution(req.nextUrl.searchParams, req.nextUrl.pathname) : {};
-  // A partner's ?ref=<code> link on any page. The code is only checked for shape
-  // here (the edge cannot reach the database); the database decides at sign-up
-  // whether it belongs to an active partner. The most recent link wins.
+  // A partner's ?ref=<code> link on any page. The edge cannot reach the database,
+  // so the code is only checked for shape here and the database decides at sign-up
+  // whether it belongs to an active partner. Because nothing is verified, it
+  // never replaces a code already remembered; only /r/<code>, which does verify
+  // the partner, replaces one (last verified link wins).
   const incomingRef =
-    req.method === 'GET' && partnersEnabled() ? normalizePartnerCode(req.nextUrl.searchParams.get('ref')) : null;
+    req.method === 'GET' && partnersEnabled() && !req.cookies.get(REF_COOKIE)?.value
+      ? normalizePartnerCode(req.nextUrl.searchParams.get('ref'))
+      : null;
   const rememberAttribution = <T extends NextResponse>(res: T): T => {
     if (incomingRef) {
       res.cookies.set({ name: REF_COOKIE, value: incomingRef, ...REF_COOKIE_OPTIONS, secure: process.env.NODE_ENV === 'production' });
