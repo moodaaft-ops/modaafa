@@ -4,6 +4,8 @@ import { requireAppUrl } from '@/lib/platform/env';
 import { partnersEnabled } from '@/lib/partners/config';
 import { findPartnerForUser, partnerSummary, readPartnerSettings, type PartnerSettings, type PartnerSummary } from '@/lib/partners/store';
 import { PartnerView } from './partner-view';
+import { Offer } from './offer';
+import { JoinForm } from './join-form';
 
 export const metadata = { title: 'برنامج الشركاء · مُضاعِف', robots: { index: false, follow: false } };
 export const dynamic = 'force-dynamic';
@@ -38,12 +40,28 @@ export default async function PartnerPage() {
     );
   }
   if (!partner || !summary || !settings) {
+    // Not a partner yet: show the offer and let them join on their own.
+    let offer: PartnerSettings | null = null;
+    try {
+      offer = await readPartnerSettings(createAdminClient());
+    } catch {
+      offer = null;
+    }
+    const meta = (user.user_metadata ?? {}) as Record<string, unknown>;
+    const defaultName = typeof meta.full_name === 'string' ? meta.full_name : typeof meta.name === 'string' ? meta.name : '';
     return (
       <Shell>
         <h1 className="text-xl font-bold text-foreground">برنامج الشركاء</h1>
-        <p className="mt-3 text-sm leading-7 text-muted-foreground">
-          ما لقينا حساب شريك على هذا الإيميل ({user.email}). إذا وصلتك دعوة، سجّل الدخول بنفس الإيميل اللي أرسلنا عليه الدعوة.
+        <p className="mt-2 text-sm leading-7 text-muted-foreground">
+          انضم وخذ رابطك الخاص. كل عميل يسجّل منه ويدفع، لك عمولة منه.
         </p>
+        <div className="mt-6">
+          <Offer settings={offer} />
+        </div>
+        <section className="mt-8 border-t border-border pt-6">
+          <h2 className="text-base font-bold text-foreground">انضم الحين</h2>
+          <JoinForm defaultName={defaultName} />
+        </section>
       </Shell>
     );
   }

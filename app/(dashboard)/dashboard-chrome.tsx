@@ -9,6 +9,7 @@ import {
   BarChart3,
   Bot,
   CreditCard,
+  Handshake,
   HelpCircle,
   LayoutDashboard,
   Megaphone,
@@ -75,6 +76,7 @@ export function DashboardChrome({
   selectedCustomerId,
   isOperator = false,
   chatFirst = false,
+  partnersOn = false,
   children,
 }: {
   brandName: string;
@@ -86,6 +88,8 @@ export function DashboardChrome({
   isOperator?: boolean;
   /** CHAT_FIRST_ENTRY: adds the single /start entry; off keeps the shell exactly as it was. */
   chatFirst?: boolean;
+  /** PARTNERS_ENABLED: adds the partner programme link under the account group. */
+  partnersOn?: boolean;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -98,13 +102,20 @@ export function DashboardChrome({
           : group
       )
     : navGroups;
-  const visibleNavGroups = isOperator
+  const withPartners = partnersOn
     ? withStart.map((group) =>
+        group.label === 'الحساب' && !group.items.some((item) => item.href === '/partners')
+          ? { ...group, items: [...group.items, { href: '/partners', label: 'برنامج الشركاء', icon: Handshake } as NavItem] }
+          : group
+      )
+    : withStart;
+  const visibleNavGroups = isOperator
+    ? withPartners.map((group) =>
         group.label === 'الحساب'
           ? { ...group, items: [...group.items, { href: '/operations', label: 'مركز التشغيل', icon: Activity } as NavItem] }
           : group
       )
-    : withStart;
+    : withPartners;
   const [mobileOpen, setMobileOpen] = useState(false);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);

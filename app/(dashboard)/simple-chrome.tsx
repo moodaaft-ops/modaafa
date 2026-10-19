@@ -5,6 +5,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import {
   Activity,
+  Handshake,
   BarChart3,
   CreditCard,
   Megaphone,
@@ -54,6 +55,7 @@ export function SimpleChrome({
   pausedAccounts = [],
   selectedCustomerId,
   isOperator = false,
+  partnersOn = false,
   recentChats = [],
   children,
 }: {
@@ -64,6 +66,8 @@ export function SimpleChrome({
   pausedAccounts?: AdsAccountSummary[];
   selectedCustomerId: string | null;
   isOperator?: boolean;
+  /** PARTNERS_ENABLED: adds the partner programme link. */
+  partnersOn?: boolean;
   recentChats?: RecentChat[];
   children: React.ReactNode;
 }) {
@@ -116,7 +120,7 @@ export function SimpleChrome({
       accounts={accounts}
       revokedAccounts={revokedAccounts}
       selectedCustomerId={selectedCustomerId}
-      items={isOperator ? [...ITEMS, { href: '/operations', label: 'مركز التشغيل', icon: Activity }] : ITEMS}
+      items={[...ITEMS, ...(partnersOn ? [{ href: '/partners', label: 'برنامج الشركاء', icon: Handshake } as Item] : []), ...(isOperator ? [{ href: '/operations', label: 'مركز التشغيل', icon: Activity } as Item] : [])]}
       pathname={pathname}
       activeChat={activeChat}
       recentChats={recentChats}
