@@ -5,6 +5,8 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { Loader2, Lock, ShieldCheck, X } from 'lucide-react';
 import { SEVERITY_WORD } from '@/lib/home/briefing';
 import { trapTabKey } from '@/lib/ui/focus-trap';
+import { PlatformGuideDialog } from '@/lib/ui/platform-guide';
+import { PLATFORM_GUIDE_AFTER_START_SECONDS } from '@/lib/onboarding/platform-guide';
 import { cn, formatCurrency } from '@/lib/utils';
 import type { ScenarioDecision } from '@/lib/setup/adaptive/types';
 import {
@@ -343,18 +345,29 @@ export function PlanCta({
   cta,
   className,
   hideTrust = false,
+  hideGuide = false,
 }: {
   trialEligible: boolean;
   cta?: PaywallCta;
   className?: string;
   /** Adaptive onboarding's agency ending only: the trust line talks about what «مُضاعِف» executes, and that ending executes nothing. */
   hideTrust?: boolean;
+  /**
+   * Hides «وش يصير بعد ما أبدأ؟» (the guide video from the chapter about the daily
+   * screen). Off inside the bottom sheet, whose own focus trap and Esc handling
+   * would fight a dialog opened from within it, and in the agency ending, which has
+   * no daily screen to show.
+   */
+  hideGuide?: boolean;
 }) {
   return (
     <div className={cn('space-y-2', className)}>
       <PlanCtaReason cta={cta} />
       <PlanCtaButton trialEligible={trialEligible} cta={cta} />
       {cta?.kind !== 'billing' && <PlanCancelLine trialEligible={trialEligible} />}
+      {cta?.kind !== 'billing' && !hideGuide && (
+        <PlatformGuideDialog start={PLATFORM_GUIDE_AFTER_START_SECONDS} label="وش يصير بعد ما أبدأ؟" className="pt-1" />
+      )}
       {!hideTrust && <PlanTrust />}
     </div>
   );
@@ -446,7 +459,7 @@ export function PlanSheet({
         {!suspended && (
           <div className="mt-5 space-y-3">
             {/* The sheet's own line above already says why; the CTA adds only the button. */}
-            <PlanCta trialEligible={trialEligible} cta={cta && { ...cta, reason: null }} />
+            <PlanCta trialEligible={trialEligible} cta={cta && { ...cta, reason: null }} hideGuide />
             <button
               type="button"
               onClick={onClose}

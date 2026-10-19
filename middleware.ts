@@ -17,7 +17,7 @@ import {
  * nonce-based Content-Security-Policy.
  */
 export async function middleware(req: NextRequest) {
-  const protectedPaths = ['/dashboard', '/home', '/assistant', '/start', '/audit', '/campaigns', '/optimizer', '/reports', '/billing', '/settings', '/onboarding', '/autopilot', '/operations', '/welcome'];
+  const protectedPaths = ['/dashboard', '/home', '/assistant', '/start', '/audit', '/campaigns', '/optimizer', '/reports', '/billing', '/settings', '/onboarding', '/autopilot', '/operations', '/welcome', '/guide'];
   const isProtected = protectedPaths.some((p) => req.nextUrl.pathname.startsWith(p));
   const isLogin = req.nextUrl.pathname === '/login';
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
