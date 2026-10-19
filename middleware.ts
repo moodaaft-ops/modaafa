@@ -3,6 +3,7 @@ import { createServerClient as createSSRClient } from '@supabase/ssr/dist/module
 import type { CookieOptions } from '@supabase/ssr/dist/module/types';
 import { SUPABASE_COOKIE_OPTIONS } from '@/lib/supabase/cookie-options';
 import { buildContentSecurityPolicy, generateNonce, NONCE_HEADER } from '@/lib/security/csp';
+import { ARABIC_CHECKOUT_PATH } from '@/lib/billing/arabic-checkout/flag';
 import {
   ATTRIBUTION_COOKIE,
   ATTRIBUTION_COOKIE_MAX_AGE,
@@ -24,7 +25,8 @@ export async function middleware(req: NextRequest) {
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
   const nonce = generateNonce();
-  const csp = buildContentSecurityPolicy(nonce);
+  // Only the Arabic checkout page may talk to Stripe from the browser.
+  const csp = buildContentSecurityPolicy(nonce, { stripe: req.nextUrl.pathname === ARABIC_CHECKOUT_PATH });
 
   // Remember where a campaign visitor came from (utm_*, ttclid, gclid). It is
   // written on whatever response leaves this middleware, redirects included,

@@ -380,6 +380,29 @@ export async function ensureStripeCustomer(params: {
   return created.id;
 }
 
+/**
+ * The Stripe calls the in-platform (Arabic) checkout makes, bound to the real
+ * client. lib/billing/arabic-checkout/flow.ts takes them as an injected object so
+ * its rules are tested without Stripe.
+ */
+export const arabicCheckoutStripe = {
+  createSetupIntent: (params: Stripe.SetupIntentCreateParams) => getStripe().setupIntents.create(params),
+  retrieveSetupIntent: (id: string) => getStripe().setupIntents.retrieve(id),
+  createSubscription: (params: Stripe.SubscriptionCreateParams, idempotencyKey: string) =>
+    getStripe().subscriptions.create(params, { idempotencyKey }),
+  retrieveSubscription: (id: string) =>
+    getStripe().subscriptions.retrieve(id, { expand: ['latest_invoice.payment_intent'] }),
+  listCustomerSubscriptions: async (customerId: string) =>
+    (await getStripe().subscriptions.list({ customer: customerId, status: 'all', limit: 20 })).data,
+  // No proration and no final invoice: the same spelled-out defaults as the
+  // abuse cancellation above.
+  cancelSubscription: (id: string) => getStripe().subscriptions.cancel(id, { invoice_now: false, prorate: false }),
+  findPromotionCode: async (code: string) => {
+    const found = await getStripe().promotionCodes.list({ code, active: true, limit: 1 });
+    return found.data[0] ?? null;
+  },
+};
+
 export type PlanPriceAmount = { amount: number; currency: string } | null;
 export type PlanPriceAmounts = Record<PlanKey, Record<PeriodKey, PlanPriceAmount>>;
 

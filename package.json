@@ -18,6 +18,8 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
+    "@stripe/react-stripe-js": "7.0.0",
+    "@stripe/stripe-js": "10.1.0",
     "@supabase/ssr": "^0.5.1",
     "@supabase/supabase-js": "^2.45.4",
     "class-variance-authority": "^0.7.0",
@@ -41,9 +43,9 @@
     "eslint-config-next": "15.5.26",
     "postcss": "8.5.23",
     "tailwindcss": "^3.4.13",
+    "tailwindcss-animate": "^1.0.7",
     "tsx": "^4.19.1",
-    "typescript": "^5.6.3",
-    "tailwindcss-animate": "^1.0.7"
+    "typescript": "^5.6.3"
   },
   "engines": {
     "node": "22.x"
