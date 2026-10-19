@@ -11,10 +11,27 @@ export function isArabicCheckoutFlagOn(env: Env = process.env) {
   return value === 'true' || value === '1';
 }
 
-/** The browser key. A secret key here would be a leak, so only `pk_` is accepted. */
+/**
+ * The browser key. It is read on the server and handed to the page as a prop, so
+ * the existing `STRIPE_PUBLISHABLE_KEY` works as it is; `NEXT_PUBLIC_...` is
+ * accepted too. A secret key here would be a leak, so only `pk_` is accepted.
+ */
 export function stripePublishableKey(env: Env = process.env) {
-  const key = env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
+  const key = env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || env.STRIPE_PUBLISHABLE_KEY;
   return isConfiguredEnv(key) && key.trim().startsWith('pk_') ? key.trim() : null;
+}
+
+/**
+ * A Vercel Preview must never move real money. The page is off there unless BOTH
+ * keys are test keys, so a preview that was wired to live keys by mistake shows
+ * the old hosted page instead of taking a live card on an unreviewed build.
+ */
+function previewKeysAreTestOnly(env: Env) {
+  if (env.VERCEL_ENV !== 'preview') return true;
+  return (
+    stripePublishableKey(env)?.startsWith('pk_test_') === true &&
+    env.STRIPE_SECRET_KEY?.trim().startsWith('sk_test_') === true
+  );
 }
 
 /**
@@ -24,5 +41,5 @@ export function stripePublishableKey(env: Env = process.env) {
  * never strand a customer on a page that cannot take a card.
  */
 export function isArabicCheckoutAvailable(env: Env = process.env) {
-  return isArabicCheckoutFlagOn(env) && stripePublishableKey(env) !== null;
+  return isArabicCheckoutFlagOn(env) && stripePublishableKey(env) !== null && previewKeysAreTestOnly(env);
 }

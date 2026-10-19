@@ -35,6 +35,24 @@ test('the page is offered only with the flag AND the key; otherwise the old path
   );
 });
 
+test('the existing server-side publishable key name works without a NEXT_PUBLIC copy', () => {
+  assert.equal(stripePublishableKey({ STRIPE_PUBLISHABLE_KEY: 'pk_test_abc' }), 'pk_test_abc');
+  assert.equal(stripePublishableKey({ STRIPE_PUBLISHABLE_KEY: 'sk_test_abc' }), null);
+});
+
+test('on a Vercel Preview the page needs test keys on both sides, never live ones', () => {
+  const on = { ARABIC_CHECKOUT_ENABLED: 'true', VERCEL_ENV: 'preview' };
+  assert.equal(isArabicCheckoutAvailable({ ...on, STRIPE_PUBLISHABLE_KEY: 'pk_test_a', STRIPE_SECRET_KEY: 'sk_test_a' }), true);
+  assert.equal(isArabicCheckoutAvailable({ ...on, STRIPE_PUBLISHABLE_KEY: 'pk_live_a', STRIPE_SECRET_KEY: 'sk_live_a' }), false);
+  assert.equal(isArabicCheckoutAvailable({ ...on, STRIPE_PUBLISHABLE_KEY: 'pk_test_a', STRIPE_SECRET_KEY: 'sk_live_a' }), false);
+  assert.equal(isArabicCheckoutAvailable({ ...on, STRIPE_PUBLISHABLE_KEY: 'pk_test_a' }), false);
+  // Production is not restricted here: turning it on there is a separate, explicit decision.
+  assert.equal(
+    isArabicCheckoutAvailable({ ARABIC_CHECKOUT_ENABLED: 'true', VERCEL_ENV: 'production', STRIPE_PUBLISHABLE_KEY: 'pk_live_a' }),
+    true,
+  );
+});
+
 test('the payment page is the only place the policy opens to Stripe', () => {
   assert.equal(ARABIC_CHECKOUT_PATH, '/billing/pay');
   const closed = buildContentSecurityPolicy('n');
