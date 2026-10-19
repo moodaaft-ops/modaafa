@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import React, { useEffect, useRef, useState, type FormEvent } from 'react';
 import { MessageCircle, Send, X } from 'lucide-react';
 import { buttonClasses } from '@/lib/ui/button';
 import { supportBotHandoffUrl } from '@/lib/support/contact';
@@ -44,7 +44,7 @@ const GREETING = 'هلا فيك. اختر سؤالك من تحت أو اكتبه
 const ERROR_TEXT = 'تعذّر الرد الحين. اضغط الزر تحت وكلّم فريق مُضاعفة على الواتساب.';
 const LIMIT_TEXT = 'وصلت حد الرسائل مع الدعم الآلي. كمّل مع فريق مُضاعفة على الواتساب.';
 
-export function SupportWidget({ quick }: { quick: QuickQuestion[] }) {
+export function SupportWidget({ quick, hideLauncher = false }: { quick: QuickQuestion[]; hideLauncher?: boolean }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -294,17 +294,19 @@ export function SupportWidget({ quick }: { quick: QuickQuestion[] }) {
         </section>
       ) : null}
 
-      <button
-        ref={launcherRef}
-        type="button"
-        onClick={() => setOpen((value) => !value)}
-        aria-expanded={open}
-        aria-controls="support-widget-panel"
-        className={cn(buttonClasses({ variant: 'primary', size: 'lg' }), 'shadow-pop')}
-      >
-        <MessageCircle className="h-5 w-5" aria-hidden />
-        الدعم
-      </button>
+      {hideLauncher ? null : (
+        <button
+          ref={launcherRef}
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          aria-expanded={open}
+          aria-controls="support-widget-panel"
+          className={cn(buttonClasses({ variant: 'primary', size: 'lg' }), 'shadow-pop')}
+        >
+          <MessageCircle className="h-5 w-5" aria-hidden />
+          الدعم
+        </button>
+      )}
     </div>
   );
 }

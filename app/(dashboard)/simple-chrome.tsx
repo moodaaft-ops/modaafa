@@ -21,6 +21,7 @@ import { LogoMark } from '@/lib/ui/logo';
 import { RouteProgress } from '@/lib/ui/route-progress';
 import { trapTabKey } from '@/lib/ui/focus-trap';
 import { SUPPORT_WHATSAPP_NUMBER } from '@/lib/support/contact';
+import { SupportLink } from '@/lib/support/open-support';
 import { cn } from '@/lib/utils';
 import { AccountMenu } from './account-menu';
 import { RecentChats } from './recent-chats';
@@ -259,15 +260,10 @@ function Sidebar({
       <RecentChats chats={recentChats} activeChat={activeChat} />
 
       <div className="flex-shrink-0 space-y-1 border-t border-border/60 p-2">
-        <a
-          href={`https://wa.me/${SUPPORT_WHATSAPP_NUMBER}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className={cn(ROW, ROW_IDLE)}
-        >
+        <SupportLink href={`https://wa.me/${SUPPORT_WHATSAPP_NUMBER}`} className={cn(ROW, ROW_IDLE)}>
           <MessageCircle className="h-[18px] w-[18px] text-muted-foreground" />
           كلّم فريقنا على الواتساب
-        </a>
+        </SupportLink>
         <AccountMenu
           userEmail={userEmail}
           accounts={accounts}
