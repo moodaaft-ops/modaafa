@@ -6,6 +6,7 @@ import { FINAL_URLS_GAQL, KEYWORDS_GAQL, selectTargets } from '@/lib/landing-che
 import { supabaseLandingCheckStore } from '@/lib/landing-check/store';
 import { pinnedHttpsTransport, systemResolver } from '@/lib/landing-check/transport';
 import type { FetchDeps } from '@/lib/landing-check/fetch';
+import { isAdsStudioEnabled } from '@/lib/ads/flag';
 import { landingCheckEnabled } from '@/lib/landing-check/flag';
 
 const FINDINGS_PER_PAGE = 5;
@@ -91,6 +92,8 @@ export function createLandingCheckTool(deps: LandingToolDeps = defaultDeps()): J
         accountId: ctx.accountId,
         deps: deps.fetchDeps,
         now: ctx.now,
+        // Sitelink cards need same-site pages; only crawl when the Ads Studio is on.
+        discoverSitePages: isAdsStudioEnabled(),
         loadTargets: async () => {
           const [ads, keywords] = await Promise.all([runQuery(ctx, FINAL_URLS_GAQL), tryQuery(ctx, 'landing_keywords', KEYWORDS_GAQL)]);
           return selectTargets(ads, keywords ?? []);

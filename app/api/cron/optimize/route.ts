@@ -926,6 +926,8 @@ async function runOptimizerCron(req: NextRequest) {
             customerName: account.customer_name ?? null,
             sector: businessContext?.sector ?? null,
             convertingTermRows: snapshot.converting_search_terms ?? [],
+            trackingStatus: snapshot.conversion_tracking?.status ?? null,
+            economics,
           });
         } catch (adsError) {
           console.warn(`Ad assets proposals failed for ${account.customer_id}`, adsError);

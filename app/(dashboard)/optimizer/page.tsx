@@ -233,6 +233,19 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
                           payload={item.action_payload}
                           currencyCode={selectedAccount?.currency_code}
                         />
+                        {typeof item.action_payload?.appeal_text_ar === 'string' && item.action_payload.appeal_text_ar ? (
+                          <details className="mt-3 rounded-md border border-border bg-muted/50 p-3">
+                            <summary className="cursor-pointer text-xs font-semibold text-foreground">نص طلب المراجعة (انسخه وقدّمه بنفسك في قوقل)</summary>
+                            <textarea
+                              readOnly
+                              dir="rtl"
+                              rows={7}
+                              defaultValue={String(item.action_payload.appeal_text_ar)}
+                              className="mt-2 w-full rounded-md border border-border bg-background p-2 text-xs leading-6"
+                            />
+                            <p className="mt-1 text-[11px] leading-5 text-muted-foreground">ما نقدّم الطلب عنك. تقدّمه من حسابك في قوقل بعد تنفيذ التعديل.</p>
+                          </details>
+                        ) : null}
                       </div>
                     ))}
                   </div>

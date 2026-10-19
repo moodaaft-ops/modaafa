@@ -16,6 +16,8 @@ import { Alert } from '@/lib/ui/alert';
 import { buttonClasses } from '@/lib/ui/button';
 import { inputClasses, selectClasses } from '@/lib/ui/field';
 import { cn, formatCurrency } from '@/lib/utils';
+import { shouldOfferLaunch } from '@/lib/launch/client';
+import { LaunchDraftAction } from './launch-draft-action';
 
 type Account = {
   customer_id: string;
@@ -59,11 +61,14 @@ export function AssistantClient({
   accounts,
   selectedCustomerId,
   initialBrief = null,
+  launchEnabled = false,
 }: {
   accounts: Account[];
   selectedCustomerId: string | null;
   /** Prefilled composer text (e.g. a campaign-opportunity brief). The user still reviews and sends it. */
   initialBrief?: string | null;
+  /** CAMPAIGN_LAUNCH_ENABLED, read on the server. False keeps the draft card exactly as it was. */
+  launchEnabled?: boolean;
 }) {
   const router = useRouter();
   const [isSwitching, startTransition] = useTransition();
@@ -93,6 +98,7 @@ export function AssistantClient({
     [accounts, customerId]
   );
   const started = chat.some((item) => item.role === 'user');
+  const lastDraftIndex = chat.reduce((last, item, index) => (item.draft ? index : last), -1);
 
   // Keep the conversation scrolled to the latest message.
   useEffect(() => {
@@ -384,7 +390,17 @@ export function AssistantClient({
           ) : (
             <div className="flex flex-col gap-3">
               {chat.map((item, index) => (
-                <ChatBubble key={`${item.role}-${index}`} item={item} />
+                <ChatBubble
+                  key={`${item.role}-${index}`}
+                  item={item}
+                  launch={
+                    // The session keeps only the latest draft, so only the latest draft card can be built.
+                    index === lastDraftIndex &&
+                    shouldOfferLaunch({ enabled: launchEnabled, draft: item.draft, sessionId, customerId })
+                      ? { sessionId: sessionId as string, customerId }
+                      : null
+                  }
+                />
               ))}
               {loading && <TypingIndicator />}
             </div>
@@ -518,7 +534,13 @@ export function AssistantClient({
   );
 }
 
-function ChatBubble({ item }: { item: ChatItem }) {
+function ChatBubble({
+  item,
+  launch = null,
+}: {
+  item: ChatItem;
+  launch?: { sessionId: string; customerId: string } | null;
+}) {
   const isUser = item.role === 'user';
   return (
     // Alignment follows the universal chat convention rather than the raw
@@ -619,6 +641,7 @@ function ChatBubble({ item }: { item: ChatItem }) {
             </span>
             <span className="text-muted-foreground">المزايدة: {biddingLabel(item.draft.bidding_strategy)}</span>
           </div>
+          {launch && <LaunchDraftAction sessionId={launch.sessionId} customerId={launch.customerId} />}
         </div>
       )}
     </article>
