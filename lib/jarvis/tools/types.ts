@@ -36,7 +36,9 @@ export type EvidenceKind =
   | 'change'
   | 'schedule_slot'
   | 'device'
-  | 'pmax_category';
+  | 'pmax_category'
+  | 'google_recommendation'
+  | 'auto_apply';
 
 export type EvidenceRow = { ref: string; kind: EvidenceKind; data: Record<string, unknown> };
 

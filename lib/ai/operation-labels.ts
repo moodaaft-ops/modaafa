@@ -4,6 +4,22 @@
  * chat-first preview cannot name the same operation differently.
  * House rule: no em dash or en dash in any Arabic string.
  */
+/** Extended operations (EXTENDED_ACTIONS_ENABLED). Rows with these exist only when the flag is on. */
+export const EXTENDED_OPERATION_LABELS_AR: Record<string, string> = {
+  set_ad_schedule: 'تعديل جدول عرض الإعلانات',
+  set_device_bid_modifier: 'تعديل مزايدة نوع الجهاز',
+  exclude_location: 'استبعاد موقع من الاستهداف',
+  set_location_bid_modifier: 'تعديل مزايدة موقع',
+  set_geo_target_type: 'تغيير نوع الاستهداف الجغرافي',
+  set_network_settings: 'إيقاف شركاء البحث وشبكة العرض',
+  create_shared_negative_list: 'إنشاء قائمة كلمات سلبية مشتركة',
+  add_shared_negative_keywords: 'إضافة كلمات إلى قائمة سلبية مشتركة',
+  attach_shared_negative_list: 'ربط قائمة سلبية مشتركة بحملات',
+  apply_google_recommendation: 'تطبيق توصية من قوقل',
+  dismiss_google_recommendation: 'رفض توصية من قوقل',
+  pause_auto_apply: 'إيقاف التطبيق التلقائي لتوصيات قوقل',
+};
+
 export const OPERATION_LABELS_AR: Record<string, string> = {
   adjust_budget: 'تعديل ميزانية حملة',
   adjust_bid: 'تعديل هدف المزايدة لمجموعة إعلانية',
@@ -14,6 +30,7 @@ export const OPERATION_LABELS_AR: Record<string, string> = {
   pause_campaign: 'إيقاف حملة',
   enable_campaign: 'تشغيل حملة',
   add_negative_keywords_batch: 'منع عبارات بحث (دفعة)',
+  ...EXTENDED_OPERATION_LABELS_AR,
 };
 
 export function operationLabelAr(operation: string | null | undefined): string | null {

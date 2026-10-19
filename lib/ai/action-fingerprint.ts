@@ -43,6 +43,15 @@ export function categoryForAction(type: string) {
     adjust_budget: 'budget',
     adjust_bid: 'bidding',
     pause_ad: 'ads',
+    set_ad_schedule: 'targeting',
+    set_device_bid_modifier: 'targeting',
+    exclude_location: 'targeting',
+    set_location_bid_modifier: 'targeting',
+    set_geo_target_type: 'targeting',
+    set_network_settings: 'targeting',
+    create_shared_negative_list: 'keywords',
+    add_shared_negative_keywords: 'keywords',
+    attach_shared_negative_list: 'keywords',
   };
   return map[type] ?? 'structure';
 }

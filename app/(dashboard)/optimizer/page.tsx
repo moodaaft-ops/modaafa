@@ -18,6 +18,9 @@ import { loadPlanLock, type PlanLockData } from '@/lib/plan/load';
 import { PlanLock } from '@/lib/plan/plan-lock';
 import { dropStalePending } from '@/lib/recommendations/staleness';
 import { Alert } from '@/lib/ui/alert';
+import { extendedPreviewRows } from '@/lib/ai/extended-actions/preview';
+import { isExtendedOperation } from '@/lib/ai/extended-actions/types';
+import { EXTENDED_OPERATION_LABELS_AR } from '@/lib/ai/operation-labels';
 
 export const metadata = {
   title: 'مركز الموافقات',
@@ -384,6 +387,7 @@ function ChangePreview({
     add_negative_keywords_batch: 'منع عبارات بحث (دفعة)',
     build_campaign_opportunity: 'عبارات بحث رابحة (تُراجع في المساعد)',
     manual_campaign_draft: 'مسودة حملة جديدة (تحتاج مراجعة يدوية)',
+    ...(isExtendedOperation(operation) ? { [operation]: EXTENDED_OPERATION_LABELS_AR[operation] } : {}),
   };
 
   if (operation === 'build_campaign_opportunity') {
@@ -462,6 +466,8 @@ function ChangePreview({
           ? 'تُوقف فقط إذا كانت الحملة شغالة وقت التنفيذ'
           : 'تُشغّل فقط إذا كانت الحملة موقوفة ولها ميزانية يومية',
     });
+  } else if (isExtendedOperation(operation)) {
+    rows.push(...extendedPreviewRows(operation, params, payload.target_id ? String(payload.target_id) : undefined));
   } else if (payload.target_id) {
     rows.push({ label: 'المورد المستهدف', value: String(payload.target_id), ltr: true });
   }
@@ -556,6 +562,7 @@ function actionTypeLabel(value?: string | null) {
     pause_campaign: 'إيقاف حملة',
     enable_campaign: 'تشغيل حملة',
     add_negative_keywords_batch: 'منع عبارات بحث (دفعة)',
+    ...EXTENDED_OPERATION_LABELS_AR,
     approval_queued: 'اعتماد توصية',
     execution_blocked: 'محجوب: يحتاج مراجعة',
     blocked_by_guardrails: 'محجوب بحواجز الأمان',

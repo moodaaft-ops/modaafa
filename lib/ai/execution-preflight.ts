@@ -1,4 +1,7 @@
 import type { OptimizerAction } from './optimizer-agent';
+import { isExtendedActionsEnabled } from './extended-actions/flag';
+import { isExtendedOperation } from './extended-actions/types';
+import { prepareExtendedAction } from './extended-actions/preflight';
 import { cleanNegativeKeywordBatch, NEGATIVE_BATCH_MATCH_TYPES } from './executable-action';
 
 /** Where and how the nightly measurement pass evaluates an applied action. */
@@ -62,6 +65,15 @@ function* errorChain(error: unknown) {
 }
 
 export async function prepareActionForExecution(action: OptimizerAction, customer: any) {
+  if (isExtendedOperation(action.type)) {
+    // Flag off: the action never reaches here (buildExecutableAction refuses it); fail closed anyway.
+    if (!isExtendedActionsEnabled()) throw new Error('Extended actions are disabled');
+    return prepareExtendedAction(action, customer, {
+      filterNegativeKeywordBatch,
+      readSevenDayMetrics,
+      normalizeKeywordText,
+    });
+  }
   const params = { ...action.params };
   let rollbackPayload: Record<string, unknown> = { reversible: true };
   const capturedAt = new Date().toISOString();

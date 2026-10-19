@@ -35,6 +35,13 @@ export const MEASURED_ACTION_TYPES = [
   'pause_campaign',
   'enable_campaign',
   'add_negative_keywords_batch',
+  // Extended operations: a campaign-level before/after window (EXTENDED_ACTIONS_ENABLED).
+  'set_ad_schedule',
+  'set_device_bid_modifier',
+  'exclude_location',
+  'set_location_bid_modifier',
+  'set_geo_target_type',
+  'set_network_settings',
 ];
 
 const MEASURE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
