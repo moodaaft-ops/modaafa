@@ -27,6 +27,9 @@ export const FONT_STACK = "'IBM Plex Sans Arabic', Tahoma, Arial, sans-serif";
 
 export const WORDMARK = 'مُضاعِف';
 
+/** 360x85 transparent PNG of the primary lockup, served from public/brand/email. */
+const LOGO_URL = () => `${appBaseUrl()}/brand/email/modaafa-lockup-email.png`;
+
 const SIGNATURE = {
   team: ['فريق مُضاعِف'],
   ayman: ['أيمن أمين', 'مؤسس مُضاعِف'],
@@ -226,7 +229,13 @@ export function renderTemplate(input: RenderInput): RenderedMessage | null {
   const footerLinks: FooterLinks = { preferencesUrl, stopUrl };
 
   const bodyRows = [
-    `<tr><td dir="rtl" align="right" style="font-family:${FONT_STACK};font-size:22px;line-height:1.4;font-weight:700;color:${BRAND.navy};text-align:right;padding:0 0 18px;">${escapeHtml(WORDMARK)}</td></tr>`,
+    // The lockup is a hosted PNG (Gmail strips SVG), drawn at 150px wide from a 360px
+    // file so it stays sharp on retina screens. Clients that block images show the
+    // alt text in the same navy bold, so the header never collapses to a blank gap.
+    `<tr><td dir="rtl" align="right" style="font-family:${FONT_STACK};font-size:22px;line-height:1.4;font-weight:700;color:${BRAND.navy};text-align:right;padding:0 0 18px;">` +
+      `<a href="${escapeHtml(appBaseUrl())}" target="_blank" style="text-decoration:none;color:${BRAND.navy};">` +
+      `<img src="${escapeHtml(LOGO_URL())}" width="150" height="35" alt="${escapeHtml(WORDMARK)}" style="display:block;border:0;outline:none;width:150px;height:35px;font-family:${FONT_STACK};font-size:22px;font-weight:700;color:${BRAND.navy};">` +
+      `</a></td></tr>`,
     `<tr><td style="padding:0 0 22px;"><div style="height:1px;line-height:1px;font-size:0;background:${BRAND.hairline};">&nbsp;</div></td></tr>`,
     row(`<span style="font-size:18px;font-weight:700;">${escapeHtml(greeting)}</span>`),
     ...built.blocks.map(renderBlockHtml),
