@@ -440,6 +440,8 @@ test('no website: the tile is worded for the store, opens the offer, and the gre
   const seen = watchRequests(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/onboarding');
+  await expect(page.getByRole('link', { name: 'اربط حساب إعلانات قوقل' })).toBeVisible({ timeout: 20_000 });
+  await pick(page, 'ما عندي حساب إعلانات');
   await pick(page, 'كمّل بدون حساب، وأجهز لك خطة أول حملة');
   await expect(page.getByText('وش نوع نشاطك؟')).toBeVisible({ timeout: 20_000 });
   await pick(page, 'متجر إلكتروني');
@@ -483,7 +485,7 @@ test('no website: the tile is worded for the store, opens the offer, and the gre
   const opened = await popup;
   expect(opened.url()).toMatch(/wa\.me|whatsapp/);
   await opened.close();
-  await expect(page.getByText('ما عندي موقع، ابي مضاعف يسوي لي')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText('ما عندي متجر، ابي مضاعف يسوي لي')).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText('تمام، أرسل الرسالة وبيردون عليك، وأنا أكمل معك الباقي هنا.')).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText('خلصنا. هذا اللي فهمته عنك:')).toBeVisible({ timeout: 20_000 });
   await shot(page, 'no-site-3-after');
