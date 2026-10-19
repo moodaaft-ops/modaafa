@@ -9,6 +9,7 @@ import {
 } from './detectors';
 import { diagnoseAll } from './diagnose';
 import type { GuardFinding, GuardSignals } from './types';
+import { detectProductDisapprovals } from '../shopping/guard';
 
 const SEVERITY_RANK = { critical: 0, high: 1, medium: 2, info: 3 } as const;
 const DIAGNOSABLE = new Set(['spend_zero', 'spend_spike', 'cpa_spike', 'conversions_zero']);
@@ -28,6 +29,7 @@ export function detectAll(signals: GuardSignals): Detected {
     ...(cpa ? [cpa] : []),
     ...detectAdPolicy(signals),
     ...detectOutsideChanges(signals),
+    ...detectProductDisapprovals(signals),
   ];
   return { findings, conversionsZeroIds: conversions.campaignIds };
 }

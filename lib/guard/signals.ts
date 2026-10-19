@@ -7,6 +7,8 @@
  */
 import { getGoogleAdsErrorCodes } from '@/lib/google-ads/client';
 import { BASELINE_DAYS } from './detectors';
+import { isShoppingHealthEnabled } from '../shopping/flag';
+import { readShoppingHealthOrThrow } from '../shopping/reader';
 import { DEFAULT_TIME_ZONE, addDaysYmd, ymdInZone, zonedStringToEpoch } from './time';
 import type {
   AdPolicyRow,
@@ -15,7 +17,7 @@ import type {
   ChangeRow,
   DailyRow,
   GuardSignals,
-  GuardSource,
+  GuardOk,
   OwnAction,
 } from './types';
 
@@ -333,7 +335,7 @@ export async function loadSignals(args: {
   const timeZone = account.timeZone || DEFAULT_TIME_ZONE;
   const today = ymdInZone(now, timeZone);
   const yesterday = addDaysYmd(today, -1);
-  const ok: Record<GuardSource, boolean> = { status: false, daily: false, campaigns: false, ads: false, billing: false, changes: false };
+  const ok: GuardOk = { status: false, daily: false, campaigns: false, ads: false, billing: false, changes: false };
 
   const base: GuardSignals = {
     accountId: account.id,
@@ -368,7 +370,7 @@ export async function loadSignals(args: {
   const dailyFrom = addDaysYmd(yesterday, -BASELINE_DAYS);
   const changeFrom = addDaysYmd(today, -3);
   const changeTo = addDaysYmd(today, 1);
-  const [daily, info, ads, setups, budgets, changes, own] = await Promise.all([
+  const [daily, info, ads, setups, budgets, changes, own, shopping] = await Promise.all([
     attempt(() => customer.query(dailyQuery(dailyFrom, yesterday))),
     attempt(() => customer.query(CAMPAIGN_INFO_QUERY)),
     attempt(() => customer.query(ADS_QUERY)),
@@ -376,6 +378,7 @@ export async function loadSignals(args: {
     attempt(() => customer.query(ACCOUNT_BUDGET_QUERY)),
     attempt(() => customer.query(changesQuery(changeFrom, changeTo))),
     loadOwnActions(supabase, account.id, now),
+    isShoppingHealthEnabled() ? attempt(() => readShoppingHealthOrThrow(customer)) : Promise.resolve(null),
   ]);
 
   if (daily.ok) {
@@ -401,6 +404,10 @@ export async function loadSignals(args: {
     base.ownActions = own;
   } else if (own !== null) {
     base.ownActions = own;
+  }
+  if (shopping && shopping.ok) {
+    ok.shopping = true;
+    base.shopping = shopping.value;
   }
   return base;
 }

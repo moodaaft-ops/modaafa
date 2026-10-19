@@ -44,7 +44,8 @@ export type EvidenceKind =
   | 'google_recommendation'
   | 'auto_apply'
   | 'rsa_ad'
-  | 'ad_test';
+  | 'ad_test'
+  | 'shopping_issue';
 
 export type EvidenceRow = { ref: string; kind: EvidenceKind; data: Record<string, unknown> };
 

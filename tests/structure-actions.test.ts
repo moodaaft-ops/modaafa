@@ -16,6 +16,9 @@ import { listingCase } from '../lib/structure/plan';
 import { cleanPlacement, normalizePlacementHost, cleanSubdivision } from '../lib/structure/validate';
 import type { OptimizerAction } from '../lib/ai/optimizer-agent';
 
+const mut = (a: OptimizerAction, c: unknown): any[] => buildMutateOperations(a, c);
+const rbo = (p: unknown): any[] => buildRollbackOperations(p as any);
+
 const CID = '1234567890';
 const C1 = `customers/${CID}/campaigns/11`;
 const C2 = `customers/${CID}/campaigns/22`;
@@ -166,11 +169,11 @@ test('capacity step: neutral passes, 5 to 20 percent passes, outside fails', () 
 test('AI Max: gates, operation, rollback restores the previous value', async () => {
   const customer = fakeCustomer({ campaigns: { [C1]: { channel: 'SEARCH', bidding: 'MAXIMIZE_CONVERSIONS' } }, conv: 40 });
   const prepared = await prepare('set_ai_max', { campaign_resource: C1, enabled: true }, customer);
-  const ops = buildMutateOperations(prepared.action, customer);
+  const ops = mut(prepared.action, customer);
   assert.deepEqual(ops, [
     { campaign_operation: { update: { resource_name: C1, ai_max_setting: { enable_ai_max: true } }, update_mask: 'aiMaxSetting.enableAiMax' } },
   ]);
-  const rb = buildRollbackOperations(prepared.rollbackPayload as any);
+  const rb = rbo(prepared.rollbackPayload as any);
   assert.deepEqual(rb[0].campaign_operation.update, { resource_name: C1, ai_max_setting: { enable_ai_max: false } });
   assert.equal(isExtendedRollback(prepared.rollbackPayload as any), true);
   assert.equal(rollbackResourcesScoped(prepared.rollbackPayload as any, CID), true);
@@ -182,7 +185,7 @@ test('AI Max: gates, operation, rollback restores the previous value', async () 
   await refused('set_ai_max', { campaign_resource: C1, enabled: true }, fakeCustomer({ campaigns: { [C1]: { ai: true } } }), 'no_change');
   // Turning it off has no conversion gate.
   const off = await prepare('set_ai_max', { campaign_resource: C1, enabled: false }, fakeCustomer({ campaigns: { [C1]: { ai: true, bidding: 'MANUAL_CPC' } }, conv: 0 }));
-  assert.equal(buildMutateOperations(off.action, null)[0].campaign_operation.update.ai_max_setting.enable_ai_max, false);
+  assert.equal(mut(off.action, null)[0].campaign_operation.update.ai_max_setting.enable_ai_max, false);
 });
 
 test('placement exclusions: account level builds customer negatives, dedupes, rolls back by result index', async () => {
@@ -198,7 +201,7 @@ test('placement exclusions: account level builds customer negatives, dedupes, ro
     customer,
     `customers/${CID}`
   );
-  const ops = buildMutateOperations(prepared.action, customer);
+  const ops = mut(prepared.action, customer);
   assert.equal(ops.length, 3);
   assert.deepEqual(ops[0], { customer_negative_criterion_operation: { create: { placement: { url: 'new.com' } } } });
   assert.deepEqual(ops[1], { customer_negative_criterion_operation: { create: { content_label: { type: 'JUVENILE' } } } });
@@ -208,7 +211,7 @@ test('placement exclusions: account level builds customer negatives, dedupes, ro
     results: [1, 2, 3].map((n) => ({ resourceName: `customers/${CID}/customerNegativeCriteria/${n}` })),
   }) as any;
   assert.equal(finalized.reversible, true);
-  const rb = buildRollbackOperations(finalized);
+  const rb = rbo(finalized);
   assert.deepEqual(rb, [1, 2, 3].map((n) => ({ customer_negative_criterion_operation: { remove: `customers/${CID}/customerNegativeCriteria/${n}` } })));
   assert.equal(rollbackResourcesScoped(finalized, CID), true);
 
@@ -230,7 +233,7 @@ test('placement exclusions: campaign level only for Display, Video and Demand Ge
   );
   const customer = fakeCustomer({ campaigns: { [C1]: { channel: 'DISPLAY' } } });
   const prepared = await prepare('add_placement_exclusions', { level: 'campaign', campaign_resource: C1, placements: [{ kind: 'mobile_app', value: '1-com.x.y' }] }, customer, C1);
-  assert.deepEqual(buildMutateOperations(prepared.action, customer), [
+  assert.deepEqual(mut(prepared.action, customer), [
     { campaign_criterion_operation: { create: { campaign: C1, negative: true, mobile_application: { app_id: '1-com.x.y' } } } },
   ]);
 });
@@ -239,7 +242,7 @@ test('shared budget: create applies the budget step, uses a temp id, one atomic 
   const campaigns = { [C1]: { budget: B1, amount: '50000000' }, [C2]: { budget: B2, amount: '50000000' } };
   const customer = fakeCustomer({ campaigns });
   const prepared = await prepare('create_shared_budget', { name: 'ميزانية المتجر', amount_micros: 110_000_000, campaign_resources: [C1, C2] }, customer);
-  const ops = buildMutateOperations(prepared.action, customer);
+  const ops = mut(prepared.action, customer);
   const temp = `customers/${CID}/campaignBudgets/-1`;
   assert.equal(ops.length, 3);
   assert.deepEqual(ops[0].campaign_budget_operation.create, {
@@ -251,7 +254,7 @@ test('shared budget: create applies the budget step, uses a temp id, one atomic 
   const finalized = finalizeExtendedRollback(prepared.rollbackPayload as any, {
     results: [{ resourceName: BS }, { resourceName: C1 }, { resourceName: C2 }],
   }) as any;
-  const rb = buildRollbackOperations(finalized);
+  const rb = rbo(finalized);
   assert.equal(rb.length, 3);
   assert.deepEqual(rb[0].campaign_operation.update, { resource_name: C1, campaign_budget: B1 });
   assert.deepEqual(rb[1].campaign_operation.update, { resource_name: C2, campaign_budget: B2 });
@@ -283,9 +286,9 @@ test('shared budget: attach and detach', async () => {
       : undefined;
   const customer = fakeCustomer({ campaigns: { [C1]: { budget: B1, amount: '8000000' } }, extra: sharedRow });
   const prepared = await prepare('attach_shared_budget', { budget_resource: BS, campaign_resources: [C1] }, customer, BS);
-  const ops = buildMutateOperations(prepared.action, customer);
+  const ops = mut(prepared.action, customer);
   assert.deepEqual(ops, [{ campaign_operation: { update: { resource_name: C1, campaign_budget: BS }, update_mask: 'campaignBudget' } }]);
-  const rb = buildRollbackOperations(prepared.rollbackPayload as any);
+  const rb = rbo(prepared.rollbackPayload as any);
   assert.deepEqual(rb[0].campaign_operation.update, { resource_name: C1, campaign_budget: B1 });
 
   // Joining with a campaign that has a much larger own budget cuts capacity too far.
@@ -294,12 +297,12 @@ test('shared budget: attach and detach', async () => {
 
   const detachCustomer = fakeCustomer({ campaigns: { [C1]: { budget: BS, amount: '100000000', shared: true } } });
   const detach = await prepare('detach_shared_budget', { campaign_resource: C1, amount_micros: 10_000_000 }, detachCustomer);
-  const dops = buildMutateOperations(detach.action, detachCustomer);
+  const dops = mut(detach.action, detachCustomer);
   assert.equal(dops[0].campaign_budget_operation.create.explicitly_shared, false);
   assert.equal(dops[0].campaign_budget_operation.create.amount_micros, 10_000_000);
   assert.equal(dops[1].campaign_operation.update.campaign_budget, `customers/${CID}/campaignBudgets/-1`);
   const fin = finalizeExtendedRollback(detach.rollbackPayload as any, { results: [{ resourceName: B2 }, { resourceName: C1 }] }) as any;
-  const drb = buildRollbackOperations(fin);
+  const drb = rbo(fin);
   assert.deepEqual(drb[0].campaign_operation.update, { resource_name: C1, campaign_budget: BS });
   assert.deepEqual(drb[1], { campaign_budget_operation: { remove: B2 } });
   await refused('detach_shared_budget', { campaign_resource: C1, amount_micros: 60_000_000 }, detachCustomer, 'budget_step_too_large');
@@ -314,12 +317,12 @@ test('portfolio strategy: create gates, builds, rolls back to the previous stand
   };
   const customer = fakeCustomer({ campaigns, conv: 40, cost: 1_000_000_000 }); // pooled CPA = 2,000,000,000 / 80 / 1e6 -> 25,000,000 micros
   const prepared = await prepare('create_portfolio_strategy', { name: 'استراتيجية المتجر', strategy_type: 'TARGET_CPA', target_cpa_micros: 26_000_000, campaign_resources: [C1, C2] }, customer);
-  const ops = buildMutateOperations(prepared.action, customer);
+  const ops = mut(prepared.action, customer);
   const temp = `customers/${CID}/biddingStrategies/-1`;
   assert.deepEqual(ops[0], { bidding_strategy_operation: { create: { resource_name: temp, name: 'استراتيجية المتجر', target_cpa: { target_cpa_micros: 26_000_000 } } } });
   assert.deepEqual(ops[1].campaign_operation.update, { resource_name: C1, bidding_strategy: temp });
   const fin = finalizeExtendedRollback(prepared.rollbackPayload as any, { results: [{ resourceName: STRAT }, { resourceName: C1 }, { resourceName: C2 }] }) as any;
-  const rb = buildRollbackOperations(fin);
+  const rb = rbo(fin);
   assert.deepEqual(rb[0].campaign_operation.update, { resource_name: C1, target_cpa: { target_cpa_micros: 30_000_000 } });
   assert.equal(rb[0].campaign_operation.update_mask, 'targetCpa');
   assert.deepEqual(rb[1].campaign_operation.update, { resource_name: C2, maximize_conversions: { target_cpa_micros: 25_000_000 } });
@@ -353,10 +356,10 @@ test('portfolio strategy: target ROAS band uses pooled value over cost', async (
 test('portfolio strategy: detach moves to a standalone Smart Bidding strategy and rolls back by re-attaching', async () => {
   const customer = fakeCustomer({ campaigns: { [C1]: { portfolio: STRAT, bidding: 'TARGET_CPA' } } });
   const prepared = await prepare('detach_portfolio_strategy', { campaign_resource: C1, to: 'MAXIMIZE_CONVERSIONS' }, customer);
-  assert.deepEqual(buildMutateOperations(prepared.action, customer), [
+  assert.deepEqual(mut(prepared.action, customer), [
     { campaign_operation: { update: { resource_name: C1, maximize_conversions: {} }, update_mask: 'maximizeConversions' } },
   ]);
-  const rb = buildRollbackOperations(prepared.rollbackPayload as any);
+  const rb = rbo(prepared.rollbackPayload as any);
   assert.deepEqual(rb[0].campaign_operation.update, { resource_name: C1, bidding_strategy: STRAT });
   await refused('detach_portfolio_strategy', { campaign_resource: C1, to: 'MAXIMIZE_CONVERSIONS' }, fakeCustomer({ campaigns: { [C1]: {} } }), 'not_in_portfolio');
 });
@@ -368,7 +371,7 @@ test('portfolio strategy: attach reads the strategy and checks the target agains
       : undefined;
   const customer = fakeCustomer({ campaigns: { [C1]: {} }, conv: 40, extra: strategyRow });
   const prepared = await prepare('attach_portfolio_strategy', { strategy_resource: STRAT, campaign_resources: [C1] }, customer, STRAT);
-  assert.deepEqual(buildMutateOperations(prepared.action, customer), [
+  assert.deepEqual(mut(prepared.action, customer), [
     { campaign_operation: { update: { resource_name: C1, bidding_strategy: STRAT }, update_mask: 'biddingStrategy' } },
   ]);
   await refused('attach_portfolio_strategy', { strategy_resource: STRAT, campaign_resources: [C1] }, fakeCustomer({ campaigns: { [C1]: {} }, extra: () => [] }), 'strategy_not_found', STRAT);
@@ -392,7 +395,7 @@ test('Standard Shopping tree: remove the single root, rebuild as subdivision wit
       : undefined;
   const customer = fakeCustomer({ extra: rows });
   const prepared = await prepare('subdivide_shopping_listing_group', { ad_group_resource: AG, dimension: 'brand', values: ['Nike', 'Adidas'] }, customer, AG);
-  const ops = buildMutateOperations(prepared.action, customer);
+  const ops = mut(prepared.action, customer);
   const t = (n: number) => `customers/${CID}/adGroupCriteria/31~-${n}`;
   assert.equal(ops.length, 5);
   assert.deepEqual(ops[0], { ad_group_criterion_operation: { remove: ROOT } });
@@ -407,7 +410,7 @@ test('Standard Shopping tree: remove the single root, rebuild as subdivision wit
   const fin = finalizeExtendedRollback(prepared.rollbackPayload as any, {
     results: [{ resourceName: ROOT }, { resourceName: NEWROOT }, {}, {}, {}].map((r) => r),
   }) as any;
-  const rb = buildRollbackOperations(fin);
+  const rb = rbo(fin);
   assert.deepEqual(rb[0], { ad_group_criterion_operation: { remove: NEWROOT } });
   assert.deepEqual(rb[1].ad_group_criterion_operation.create, { ad_group: AG, status: 'ENABLED', cpc_bid_micros: 700000, listing_group: { type: 'UNIT' } });
   assert.equal(rollbackResourcesScoped(fin, CID), true);
@@ -426,7 +429,7 @@ test('PMax tree: filters with temp ids, others included by default or excluded o
       : undefined;
   const customer = fakeCustomer({ extra: rows });
   const prepared = await prepare('subdivide_pmax_listing_group', { asset_group_resource: ASSET_GROUP, dimension: 'brand', values: ['Nike'], others: 'exclude' }, customer, ASSET_GROUP);
-  const ops = buildMutateOperations(prepared.action, customer);
+  const ops = mut(prepared.action, customer);
   const t = (n: number) => `customers/${CID}/assetGroupListingGroupFilters/41~-${n}`;
   assert.equal(ops.length, 4);
   assert.deepEqual(ops[0], { asset_group_listing_group_filter_operation: { remove: ROOT } });
@@ -436,11 +439,11 @@ test('PMax tree: filters with temp ids, others included by default or excluded o
   assert.deepEqual(ops[3].asset_group_listing_group_filter_operation.create.case_value, { product_brand: {} });
 
   const plain = await prepare('subdivide_pmax_listing_group', { asset_group_resource: ASSET_GROUP, dimension: 'brand', values: ['Nike'] }, customer, ASSET_GROUP);
-  assert.equal(buildMutateOperations(plain.action, customer)[3].asset_group_listing_group_filter_operation.create.type, 'UNIT_INCLUDED');
+  assert.equal(mut(plain.action, customer)[3].asset_group_listing_group_filter_operation.create.type, 'UNIT_INCLUDED');
 
   const NEWROOT = `customers/${CID}/assetGroupListingGroupFilters/41~1000`;
   const fin = finalizeExtendedRollback(prepared.rollbackPayload as any, { results: [{ resourceName: ROOT }, { resourceName: NEWROOT }, {}, {}] }) as any;
-  const rb = buildRollbackOperations(fin);
+  const rb = rbo(fin);
   assert.deepEqual(rb[0], { asset_group_listing_group_filter_operation: { remove: NEWROOT } });
   assert.deepEqual(rb[1].asset_group_listing_group_filter_operation.create, { asset_group: ASSET_GROUP, type: 'UNIT_INCLUDED', listing_source: 'SHOPPING' });
 });

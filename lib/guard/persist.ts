@@ -4,7 +4,7 @@
  * no longer does. A repeat of an open finding only touches it, so nobody is
  * told twice; a resolved one that comes back is reopened and told again.
  */
-import { CODE_SOURCE, type GuardCode, type GuardFinding, type GuardSource, type GuardSeverity } from './types';
+import { CODE_SOURCE, type GuardCode, type GuardFinding, type GuardOk, type GuardSeverity } from './types';
 
 export type StoredFinding = {
   id: string;
@@ -37,7 +37,7 @@ export type ReconcilePlan = {
 export function reconcile(
   existing: Pick<StoredFinding, 'id' | 'code' | 'dedupe_key' | 'status' | 'seen_count'>[],
   found: GuardFinding[],
-  ok: Record<GuardSource, boolean>
+  ok: GuardOk
 ): ReconcilePlan {
   const byKey = new Map(existing.map((row) => [row.dedupe_key, row]));
   const seen = new Set<string>();
@@ -51,7 +51,7 @@ export function reconcile(
   }
   for (const row of existing) {
     if (row.status !== 'open' || seen.has(row.dedupe_key)) continue;
-    if (ok[CODE_SOURCE[row.code]]) plan.resolve.push(row.id);
+    if (ok[CODE_SOURCE[row.code]] === true) plan.resolve.push(row.id);
   }
   return plan;
 }

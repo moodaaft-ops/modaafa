@@ -219,6 +219,8 @@ export interface OptimizerSnapshot {
   converting_search_terms?: any[];
   /** Ad copy state (counts only, no ad text). Present only when ADS_STUDIO_ENABLED is on. */
   ad_assets?: import('@/lib/ads/assets-reader').AdAssetsSnapshot;
+  /** Merchant Center product status (counts and top issue codes only). Present only when SHOPPING_HEALTH_ENABLED is on. */
+  shopping_health?: import('@/lib/shopping/snapshot').ShoppingHealthBlock;
   /**
    * Enabled ad groups that carry an explicit target CPA / target ROAS, with
    * their current values. adjust_bid proposals are only valid against rows in

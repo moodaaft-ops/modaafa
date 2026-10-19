@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createHash } from 'node:crypto';
 import { isAdsStudioActive, isAdsStudioEnabled } from '@/lib/ads/flag';
+import { isShoppingHealthEnabled } from '@/lib/shopping/flag';
+import { readShoppingHealth } from '@/lib/shopping/reader';
+import { shoppingHealthBlock } from '@/lib/shopping/snapshot';
 import { runAdsStudioProposals } from '@/lib/ads/cron';
 import { actionFingerprint, categoryForAction, severityForAction } from '@/lib/ai/action-fingerprint';
 import { createAdminClient } from '@/lib/supabase/server';
@@ -460,6 +463,12 @@ async function runOptimizerCron(req: NextRequest) {
         ? await runAdsStudioProposals.read(customer).catch(() => null)
         : null;
       if (adsStudioRead) snapshot.ad_assets = adsStudioRead.block;
+      // Feed health for the optimizer, only with SHOPPING_HEALTH_ENABLED on (byte-identical otherwise).
+      if (isShoppingHealthEnabled()) {
+        const feed = await readShoppingHealth(customer as any);
+        const block = feed ? shoppingHealthBlock(feed) : null;
+        if (block) snapshot.shopping_health = block;
+      }
 
       // Get AI decisions. An account with no spend and no evidence rows gives
       // the model nothing to act on, so we skip the paid call and record a
