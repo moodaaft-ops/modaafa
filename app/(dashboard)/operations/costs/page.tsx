@@ -31,6 +31,8 @@ const FEATURE_LABELS: Record<string, string> = {
   jarvis_memory: 'ذاكرة جارفس',
   chat_start_language: 'فهم طلب الدخول',
   reporter: 'التقرير الأسبوعي',
+  support: 'خدمة العملاء',
+  support_bot: 'خدمة العملاء',
 };
 
 const MODEL_LABELS: Array<[RegExp, string]> = [

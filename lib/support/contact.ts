@@ -27,6 +27,40 @@ const OPENERS: Record<WhatsAppHelpReason, string> = {
   full_management: 'سجلت في مضاعف وابي فريق مضاعفة يدير حساب اعلاناتي',
 };
 
+/**
+ * The WhatsApp link the support bot offers once it cannot finish the job. The
+ * prefilled text carries the bot's own two-line summary of the question, so
+ * the person answering does not have to ask it again. Everything is cleaned
+ * here because the summary comes from a model and the page path from a browser.
+ */
+export function supportBotHandoffUrl({
+  summary,
+  email,
+  page,
+}: {
+  summary?: string | null;
+  email?: string | null;
+  page?: string | null;
+}) {
+  const lines = ['السلام عليكم', 'كنت أكلم الدعم في مضاعف وما انحلت مشكلتي'];
+  const cleanSummary = cleanLine(summary, 300);
+  if (cleanSummary) lines.push(`سؤالي: ${cleanSummary}`);
+  const cleanEmail = cleanLine(email, 120);
+  if (cleanEmail) lines.push(`ايميلي في المنصة: ${cleanEmail}`);
+  const cleanPage = cleanLine(page, 80);
+  if (cleanPage && /^\/[A-Za-z0-9\-_/]*$/.test(cleanPage)) lines.push(`الصفحة: ${cleanPage}`);
+  return `https://wa.me/${SUPPORT_WHATSAPP_NUMBER}?text=${encodeURIComponent(lines.join('\n'))}`;
+}
+
+function cleanLine(value: string | null | undefined, max: number) {
+  if (!value) return '';
+  return value
+    .replace(/[\u0000-\u001F\u007F​-‏‪-‮⁦-⁩]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max);
+}
+
 export function whatsappHelpUrl(reason: WhatsAppHelpReason, email?: string | null) {
   const lines = ['السلام عليكم', OPENERS[reason]];
   const cleanEmail = email?.trim();
