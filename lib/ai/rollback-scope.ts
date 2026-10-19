@@ -44,6 +44,10 @@ const EXTENDED_NAME_LISTS = [
   'remove_shared_sets',
   'remove_shared_criteria',
   'remove_campaign_shared_sets',
+  // Ad copy and assets (ADS_STUDIO_ENABLED)
+  'pause_ads',
+  'reenable_ads',
+  'remove_campaign_assets',
 ];
 
 function extendedRollbackScoped(rollback: Record<string, any>, prefix: string): boolean {

@@ -10,6 +10,9 @@ import {
 } from './types';
 import { planAdSchedule, scheduleCriteriaFromRows } from './schedule';
 import type { SharedKeyword } from './validate';
+import { isAdsStudioOperation } from '../../ads/studio/types';
+import { prepareAdsStudioAction } from '../../ads/studio/preflight';
+import { isAdsStudioActive } from '../../ads/flag';
 
 /**
  * Pre-execution reads for the extended actions. Everything the live mutate
@@ -138,6 +141,11 @@ export async function prepareExtendedAction(
   const capturedAt = new Date().toISOString();
   const params = action.params as Record<string, any>;
   const operation = action.type as ExtendedOperation;
+
+  if (isAdsStudioOperation(operation)) {
+    if (!isAdsStudioActive()) refuse('ads_studio_disabled', 'Ad assets actions are disabled');
+    return prepareAdsStudioAction(action, customer, deps);
+  }
 
   switch (operation) {
     case 'set_ad_schedule': {

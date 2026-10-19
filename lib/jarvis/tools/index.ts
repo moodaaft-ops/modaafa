@@ -18,6 +18,8 @@ import { getAdsStatusTool } from './get-ads-status';
 import { getChangeHistoryTool } from './get-change-history';
 import { getPmaxCategoriesTool } from './get-pmax-categories';
 import { getGoogleRecommendationsTool } from './get-google-recommendations';
+import { getAdAssetsTool } from './get-ad-assets';
+import { isAdsStudioEnabled } from '@/lib/ads/flag';
 import { isExtendedActionsEnabled } from '@/lib/ai/extended-actions/flag';
 
 export type { EvidenceKind, EvidenceRow, GaqlCustomer, JarvisReadTool, ToolContext, ToolResult } from './types';
@@ -36,6 +38,8 @@ export const JARVIS_READ_TOOLS: readonly JarvisReadTool[] = [
   getPmaxCategoriesTool,
   // Behind EXTENDED_ACTIONS_ENABLED (read at load): flag off keeps the tool list byte-identical.
   ...(isExtendedActionsEnabled() ? [getGoogleRecommendationsTool] : []),
+  // Behind ADS_STUDIO_ENABLED (read at load): read-only, so it does not need the extended flag.
+  ...(isAdsStudioEnabled() ? [getAdAssetsTool] : []),
 ];
 
 const TOOLS_BY_NAME: ReadonlyMap<string, JarvisReadTool> = new Map(

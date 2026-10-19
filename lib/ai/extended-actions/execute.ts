@@ -1,6 +1,13 @@
 import { toFieldMask } from '../../google-ads/client';
 import type { OptimizerAction } from '../optimizer-agent';
 import { isExtendedOperation } from './types';
+import { isAdsStudioOperation, isAdsStudioRollback } from '../../ads/studio/types';
+import {
+  buildAdsStudioOperations,
+  buildAdsStudioRollbackOperations,
+  finalizeAdsStudioRollback,
+} from '../../ads/studio/execute';
+import { isAdsStudioActive } from '../../ads/flag';
 
 /**
  * Builds and sends the Google Ads mutate for an extended action, from the
@@ -43,6 +50,7 @@ function customerIdOf(customer: any): string {
 const criterion = (op: Record<string, unknown>): MutateOperation => ({ campaign_criterion_operation: op });
 
 export function buildMutateOperations(action: OptimizerAction, customer: any): MutateOperation[] {
+  if (isAdsStudioOperation(action.type)) return buildAdsStudioOperations(action);
   const params = action.params as Record<string, any>;
   const resolved = resolvedOf(action);
 
@@ -192,6 +200,7 @@ export async function executeExtendedAction(
   options?: { validateOnly?: boolean }
 ) {
   if (!isExtendedOperation(action.type)) throw new Error(`Not an extended action: ${action.type}`);
+  if (isAdsStudioOperation(action.type) && !isAdsStudioActive()) throw new Error('Ad assets actions are disabled');
   const params = action.params as Record<string, any>;
 
   if (action.type === 'apply_google_recommendation' || action.type === 'dismiss_google_recommendation') {
@@ -230,6 +239,7 @@ export async function executeExtendedAction(
  * and lists them among the touched resources so the scope check covers them.
  */
 export function finalizeExtendedRollback(payload: Record<string, any>, result: unknown): Record<string, unknown> {
+  if (isAdsStudioRollback(payload)) return finalizeAdsStudioRollback(payload, result);
   const names = resultResourceNames(result);
   const pick = (indexes: unknown): string[] | null => {
     if (!Array.isArray(indexes)) return [];
@@ -271,6 +281,7 @@ export function isExtendedRollback(rollback: Record<string, any>): boolean {
 }
 
 export function buildRollbackOperations(rollback: Record<string, any>): MutateOperation[] {
+  if (isAdsStudioRollback(rollback)) return buildAdsStudioRollbackOperations(rollback);
   const touched = new Set<string>(Array.isArray(rollback.touched_resources) ? rollback.touched_resources : []);
   const guard = (name: unknown): string => {
     if (typeof name !== 'string' || !name || !touched.has(name)) {
@@ -342,6 +353,7 @@ export async function executeExtendedRollback(
   customer: any,
   options?: { validateOnly?: boolean }
 ) {
+  if (isAdsStudioRollback(rollback) && !isAdsStudioActive()) throw new Error('Ad assets actions are disabled');
   const operations = buildRollbackOperations(rollback);
   if (operations.length === 0) throw new Error('Rollback produced no operations');
   return customer.mutateOperations(operations, options);

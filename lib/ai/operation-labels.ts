@@ -18,6 +18,11 @@ export const EXTENDED_OPERATION_LABELS_AR: Record<string, string> = {
   apply_google_recommendation: 'تطبيق توصية من قوقل',
   dismiss_google_recommendation: 'رفض توصية من قوقل',
   pause_auto_apply: 'إيقاف التطبيق التلقائي لتوصيات قوقل',
+  replace_rsa_assets: 'تبديل نصوص الإعلان الضعيفة',
+  add_sitelinks: 'إضافة روابط فرعية للحملة',
+  add_callouts: 'إضافة نصوص مميزة للحملة',
+  add_structured_snippet: 'إضافة مقتطف منظم للحملة',
+  add_call_asset: 'إضافة رقم اتصال للحملة',
 };
 
 export const OPERATION_LABELS_AR: Record<string, string> = {
