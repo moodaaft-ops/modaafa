@@ -6,6 +6,8 @@
  * never turns into an invented number, name or promise.
  */
 
+import { SUPPORT_WHATSAPP_NUMBER } from '@/lib/support/contact';
+
 export type AgencyResult = {
   /** Kind of business, never the client's name. */
   business: string;
@@ -38,9 +40,7 @@ export type Guarantee = {
   approved: boolean;
 };
 
-const WHATSAPP_NUMBER = '966541004029';
-
-export const whatsappHref = (text: string) => `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(text)}`;
+export const whatsappHref = (text: string) => `https://wa.me/${SUPPORT_WHATSAPP_NUMBER}?text=${encodeURIComponent(text)}`;
 
 export const WHATSAPP = {
   general: whatsappHref('السلام عليكم، شفت مُضاعِف وعندي سؤال'),

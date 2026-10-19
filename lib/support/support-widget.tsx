@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { MessageCircle, Send, X } from 'lucide-react';
 import { buttonClasses } from '@/lib/ui/button';
 import { supportBotHandoffUrl } from '@/lib/support/contact';
+import { OPEN_SUPPORT_EVENT, type OpenSupportDetail } from '@/lib/support/open-support';
 import { cn } from '@/lib/utils';
 
 /**
@@ -51,6 +52,7 @@ export function SupportWidget({ quick }: { quick: QuickQuestion[] }) {
   const [loading, setLoading] = useState(false);
   const [asked, setAsked] = useState<string[]>([]);
   const [typed, setTyped] = useState(false);
+  const [pending, setPending] = useState<OpenSupportDetail | null>(null);
   const nextId = useRef(1);
   const inputRef = useRef<HTMLInputElement>(null);
   const launcherRef = useRef<HTMLButtonElement>(null);
@@ -62,6 +64,31 @@ export function SupportWidget({ quick }: { quick: QuickQuestion[] }) {
   useEffect(() => {
     if (open) inputRef.current?.focus();
   }, [open]);
+
+  // Tell the page's WhatsApp links the window is here, and open on request.
+  useEffect(() => {
+    document.documentElement.dataset.supportBot = '1';
+    const onOpen = (event: Event) => {
+      setOpen(true);
+      setPending((event as CustomEvent<OpenSupportDetail>).detail ?? {});
+    };
+    window.addEventListener(OPEN_SUPPORT_EVENT, onOpen);
+    return () => {
+      window.removeEventListener(OPEN_SUPPORT_EVENT, onOpen);
+      delete document.documentElement.dataset.supportBot;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!pending || loading) return;
+    const request = pending;
+    setPending(null);
+    const item = request.faqId ? quick.find((q) => q.id === request.faqId && !asked.includes(q.id)) : undefined;
+    if (item) askQuick(item);
+    else if (request.prompt) void send(request.prompt);
+    // askQuick and send close over the current conversation; the request runs once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending]);
 
   useEffect(() => {
     const el = logRef.current;

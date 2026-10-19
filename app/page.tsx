@@ -10,6 +10,7 @@ import { JsonLd } from '@/lib/seo/json-ld';
 import { SiteFooter, SiteHeader } from '@/lib/ui/site-chrome';
 import { cn, formatCurrency } from '@/lib/utils';
 import { CTA_TEXT, WHATSAPP, ownerConfig, showDrafts } from '@/lib/landing/owner-config';
+import { SupportLink } from '@/lib/support/open-support';
 import { SquareField } from './landing/square-field';
 import { DecisionCard, TodayDecisions } from './landing/decision-card';
 
@@ -154,15 +155,13 @@ export default async function HomePage({
               >
                 {CTA_TEXT}
               </Link>
-              <a
+              <SupportLink
                 href={WHATSAPP.general}
-                target="_blank"
-                rel="noopener noreferrer"
                 className="inline-flex items-center gap-2 py-2 text-[16px] font-semibold underline decoration-brand-navy decoration-2 underline-offset-8"
               >
                 <MessageCircle className="h-[18px] w-[18px]" aria-hidden />
                 كلّمني على الواتساب
-              </a>
+              </SupportLink>
             </div>
             <p className="mt-5 text-[14.5px] leading-7 text-brand-navy/70">
               الفحص الأول بدون بطاقة، وما يتغيّر شي في حسابك إلا باعتمادك.
@@ -243,9 +242,9 @@ export default async function HomePage({
           </ol>
           <p className="mt-10 max-w-[40rem] text-[15.5px] leading-8 text-brand-navy/80">
             ما عندك حساب إعلانات قوقل؟ مُضاعِف يجهّز لك خطة أول حملة، ونفتح لك الحساب مجاناً{' '}
-            <a href={WHATSAPP.noAccount} target="_blank" rel="noopener noreferrer" className="font-bold underline decoration-2 underline-offset-4">
+            <SupportLink href={WHATSAPP.noAccount} support={{ faqId: 'no-ads-account' }} className="font-bold underline decoration-2 underline-offset-4">
               على الواتساب
-            </a>
+            </SupportLink>
             .
           </p>
         </div>
@@ -279,15 +278,13 @@ export default async function HomePage({
                 <p className="mt-2 text-[14px] text-muted-foreground">مؤسس وكالة مُضاعفة ومنصة مُضاعِف</p>
               </div>
               {ownerConfig.googlePartner && <PartnerBadge tone="paper" />}
-              <a
+              <SupportLink
                 href={WHATSAPP.general}
-                target="_blank"
-                rel="noopener noreferrer"
                 className="inline-flex h-12 items-center gap-2 border border-foreground px-5 text-[15px] font-semibold transition-colors hover:bg-foreground hover:text-background"
               >
                 <MessageCircle className="h-[18px] w-[18px]" aria-hidden />
                 كلّمني على الواتساب
-              </a>
+              </SupportLink>
               <a
                 href={WHATSAPP.fullManagement}
                 target="_blank"
@@ -495,15 +492,14 @@ export default async function HomePage({
                   <div>
                     <p className="max-w-[42rem] text-[16.5px] leading-9 text-foreground/85">{item.a}</p>
                     {item.whatsapp && (
-                      <a
+                      <SupportLink
                         href={WHATSAPP.noAccount}
-                        target="_blank"
-                        rel="noopener noreferrer"
+                        support={{ faqId: 'no-ads-account' }}
                         className="mt-3 inline-flex items-center gap-2 text-[15px] font-semibold underline underline-offset-4"
                       >
                         <MessageCircle className="h-4 w-4" aria-hidden />
                         افتح حسابي على الواتساب
-                      </a>
+                      </SupportLink>
                     )}
                   </div>
                 </div>

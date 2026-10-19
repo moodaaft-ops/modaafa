@@ -4,6 +4,7 @@ import { ThemeToggle } from '@/lib/ui/theme-toggle';
 import { AGENCY_URL, BRAND } from '@/lib/seo/site';
 import { CTA_TEXT, WHATSAPP } from '@/lib/landing/owner-config';
 import { SupportWidgetGate } from '@/lib/support/support-widget-gate';
+import { SupportLink } from '@/lib/support/open-support';
 
 /**
  * Header and footer shared by every public page (home, /about,
@@ -105,9 +106,9 @@ export function SiteFooter() {
 
           <nav aria-label="تواصل" className="flex flex-col">
             <span className="mb-2 font-semibold text-foreground">تواصل</span>
-            <a href={WHATSAPP.general} target="_blank" rel="noopener noreferrer" className={footerLink}>
+            <SupportLink href={WHATSAPP.general} className={footerLink}>
               واتساب <span dir="ltr" className="ms-1.5 numeric">{BRAND.whatsappLocal}</span>
-            </a>
+            </SupportLink>
             <a href={`mailto:${BRAND.email}`} className={footerLink}>
               الدعم
             </a>
