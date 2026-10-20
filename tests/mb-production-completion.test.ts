@@ -14,7 +14,14 @@ import { deviceImageItem, privateImageInAccount } from '../lib/image-assets/priv
 import { zidWebhookDetails, registerZidWebhooks } from '../lib/stores/zid-webhooks';
 import { getStoreAccessToken } from '../lib/stores/tokens';
 import { encrypt } from '../lib/crypto';
+import { parseOptimizerResponse } from '../lib/ai/optimizer-response';
 const CID='1234567890', U='11111111-1111-4111-8111-111111111111';
+
+test('optimizer explicit empty decision with explanation stays empty, other malformed actions remain refused',()=>{
+ assert.deepEqual(parseOptimizerResponse('{"actions":[]}\n\nما فيه تغيير آمن قبل إصلاح القياس'),{actions:[]});
+ assert.throws(()=>parseOptimizerResponse('{"actions":[{"type":"adjust_budget"}]}\nشرح خارج JSON'));
+ assert.throws(()=>parseOptimizerResponse('not json'));
+});
 
 test('Customer Match preserves accepted chunk IDs and locks a partial live upload against whole-card retry',async()=>{
  let calls=0; const members=Array.from({length:10001},()=>({email_sha256:'a'.repeat(64)}));

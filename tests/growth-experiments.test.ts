@@ -215,13 +215,15 @@ test('create: validateOnly on the experiment, arms, the ONE change on the draft,
   const stub = makeCustomer(createHandlers());
   const result = await executeCreateExperiment(plan, stub, CID, { nonce: () => 'n1' });
   const kinds = stub.experimentCalls.map((c: any) => c.kind);
-  assert.deepEqual(kinds, ['experiments.mutate', 'experiments.mutate', 'arms.mutate', 'schedule', 'schedule']);
-  assert.equal(stub.experimentCalls[0].args[1].validateOnly, true);
-  assert.equal(stub.experimentCalls[3].args[1].validateOnly, true);
-  assert.equal(stub.experimentCalls[4].args[1], undefined);
+  assert.deepEqual(kinds, ['experiments.mutate', 'arms.mutate', 'schedule', 'schedule']);
+  assert.equal(stub.mutates[0].validateOnly, true);
+  assert.equal(stub.mutates[0].ops.length, 3);
+  assert.equal(stub.experimentCalls[2].args[1].validateOnly, true);
+  assert.equal(stub.experimentCalls[3].args[1], undefined);
   const change = stub.mutates.filter((m: any) => !m.validateOnly)[0].ops;
   assert.equal(change.length, 1, 'exactly one change');
   assert.equal(change[0].campaign_operation.update.resource_name, DRAFT);
+  assert.equal(change[0].campaign_operation.update_mask, 'maximize_conversions.target_cpa_micros');
   assert.equal(result.rollback_payload.action_type, END_EXPERIMENT_ROLLBACK);
   assert.deepEqual(result.rollback_payload.resource_names, [EXP]);
   assert.equal(result.readback.ok, false, 'second arm in the stub has no campaigns but control matches');
@@ -240,7 +242,7 @@ test('create: a failure before the schedule removes the half built experiment an
   const stub = makeCustomer(createHandlers());
   const original = stub.mutateOperations.bind(stub);
   stub.mutateOperations = async (ops: any[], o?: any) => {
-    if (o?.validateOnly) throw new Error('INVALID_ARGUMENT');
+    if (o?.validateOnly && ops[0]?.campaign_operation) throw new Error('INVALID_ARGUMENT');
     return original(ops, o);
   };
   await assert.rejects(() => executeCreateExperiment(plan, stub, CID, { nonce: () => 'n1' }), /INVALID_ARGUMENT/);
@@ -263,12 +265,16 @@ test('create: a start date that already passed is refused', async () => {
   await assert.rejects(() => executeCreateExperiment(plan, stub, CID, { nonce: () => 'n1' }), /فات|start/i);
 });
 
-test('validateCreateExperiment only validates the experiment resource', async () => {
+test('validateCreateExperiment validates setup and both arms without any live resource', async () => {
   const plan = await planFor(bidding);
   const stub = makeCustomer(createHandlers());
   const res = await validateCreateExperiment(plan, stub, CID, { nonce: () => 'n1' });
   assert.equal(res.validate_only, 'passed');
-  assert.ok(stub.experimentCalls.every((c: any) => c.args[1]?.validateOnly === true));
+  assert.equal(stub.experimentCalls.length, 0);
+  assert.equal(stub.mutates.length, 1);
+  assert.equal(stub.mutates[0].validateOnly, true);
+  assert.equal(stub.mutates[0].ops.length, 3);
+  assert.equal(stub.mutates[0].ops[1].experiment_arm_operation.create.experiment, `${P}/experiments/-1`);
 });
 
 test('end: validateOnly then live; not reversible; refuses an experiment that is not running', async () => {

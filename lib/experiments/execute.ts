@@ -16,10 +16,8 @@ import type { ExperimentMetric } from './significance';
  *                       Re-checks the verdict with fresh data and refuses unless the treatment won.
  *                       Not reversible; the control's previous settings are recorded in the result.
  *
- * validateOnly covers what Google can validate without a live experiment: the experiment resource
- * (create), and the end / promote calls (they accept validate_only). The arms and the draft campaign
- * only exist once the experiment does, so they are validated by the live steps, each of which is
- * undone on failure.
+ * The experiment and both arms are validated together using a temporary experiment ID.
+ * The treatment is also validated before its live change. End/promote accept validate_only.
  */
 
 export const END_EXPERIMENT_ROLLBACK = 'growth_end_experiment';
@@ -78,11 +76,18 @@ export function armsCreate(plan: ExperimentPlan, experimentResource: string) {
   ];
 }
 
+/** Validate the complete setup without creating a real experiment or draft. */
+export function experimentSetupOperations(plan: ExperimentPlan, name: string, customerId: string): MutateOperation[] {
+  const temp = `customers/${customerId.replace(/\D/g, '')}/experiments/-1`;
+  return [{ experiment_operation: { create: { ...experimentCreate(plan, name).create, resource_name: temp } } },
+    ...armsCreate(plan, temp).map((operation) => ({ experiment_arm_operation: operation }))];
+}
+
 /** The one change, applied to the draft campaign (or its ads) of the treatment arm. */
 export function treatmentChangeOperations(plan: ExperimentPlan, draftCampaign: string, draftAds: string[]): MutateOperation[] {
   if (plan.change.type === 'bidding') {
     if (plan.change.strategy === 'MAXIMIZE_CONVERSIONS') {
-      return [{ campaign_operation: { update: { resource_name: draftCampaign, maximize_conversions: {} }, update_mask: 'maximize_conversions' } }];
+      return [{ campaign_operation: { update: { resource_name: draftCampaign, maximize_conversions: {} }, update_mask: 'maximize_conversions.target_cpa_micros' } }];
     }
     return [
       {
@@ -130,9 +135,8 @@ async function preflightCreate(rawPlan: unknown, customer: GrowthCustomer, custo
 
 export async function validateCreateExperiment(rawPlan: unknown, customer: GrowthCustomer, customerId: string, deps: { nonce: () => string; now?: () => Date }) {
   const plan = await preflightCreate(rawPlan, customer, customerId, deps.now?.() ?? new Date());
-  const { experiments } = need(customer);
   const name = await uniqueExperimentName(customer, plan.name, deps.nonce);
-  await experiments.mutate([experimentCreate(plan, name)], { validateOnly: true });
+  await customer.mutateOperations(experimentSetupOperations(plan, name, customerId), { validateOnly: true });
   return { validate_only: 'passed' as const, experiment_name: name };
 }
 
@@ -189,7 +193,7 @@ export async function executeCreateExperiment(
   const name = await uniqueExperimentName(customer, plan.name, deps.nonce);
 
   const operation = experimentCreate(plan, name);
-  await experiments.mutate([operation], { validateOnly: true });
+  await customer.mutateOperations(experimentSetupOperations(plan, name, customerId), { validateOnly: true });
   const created = await experiments.mutate([operation]);
   const experiment = resultNames(created)[0];
   if (!experiment || !EXPERIMENT_RE.test(experiment) || !experiment.startsWith(prefix)) {
