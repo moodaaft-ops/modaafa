@@ -47,7 +47,9 @@ Live SQL verification: all 17 tables exist with RLS enabled. Owner policies are 
 
 scripts/verify-live.ts refuses any Google Ads POST mutation without validateOnly=true. It runs real builders against agency-owned SAR account 3378391742 under manager 7561141000. Report: verify-live-2026-10-20.json.
 
-Coverage: Demand Gen campaign/image/video ads, PMax campaign/asset group, listing-group subdivision, experiment creation and both arms, bidding/landing treatments, shared budgets, portfolios, exclusions, AI Max, sitelinks, calls, the paired-budget executor, visitor list and image creation. All 21 live checks pass. Reads: policy topics, shopping_product fields, asset_automation_settings, expansion geo, structure proposals.
+Coverage: Demand Gen campaign/image/video ads, PMax campaign/asset group, listing-group subdivision, experiment creation and both arms, bidding/landing treatments, shared budgets, portfolios, exclusions, AI Max, sitelinks, calls, the paired-budget executor, visitor list and image creation. All 24 live checks pass. Reads: policy topics, shopping_product fields, asset_automation_settings, expansion geo, structure proposals, RSA per-text policy, extension coverage and PMax asset groups.
+
+The additional Ads Studio rollout read found UNRECOGNIZED_FIELD for policy_summary.approval_status/review_status in ad_group_ad_asset_view. Selecting the whole policy_summary message succeeds on v23 and preserves the nested approval/review normalizer. The live verifier counts caught query failures so its graceful fallback cannot turn an unsupported per-text read into a PASS. Ads Studio was temporarily disabled and redeployed while this fix passed validation.
 
 Experiment setup and both arms are validated atomically using a temporary experiment ID. Both treatment builders are validated against existing Search resources without applying changes. The live check found and fixed FIELD_HAS_SUBFIELDS: Maximize Conversions updates require the leaf mask maximize_conversions.target_cpa_micros. Production now validates setup and arms before creating anything. Scheduling, ending and promotion still require a real experiment state; no serving experiment was created solely for this check. Image verification supplies controlled PNG bytes to the storage adapter and uses the real Google validateOnly builder; it does not upload merchant files.
 
@@ -61,7 +63,7 @@ Use staged production flags and a new READY deployment after each stage. Stage 3
 
 The Google OAuth client now contains https://ai.modaafa.com/api/auth/google-extra/callback. Data Manager scope was saved with a usage justification. Google marks it unverified and requires a demo video and review. Keep DATA_MANAGER_UPLOAD_ENABLED and CUSTOMER_MATCH_UPLOAD_ENABLED off for public production until approval. Merchants must authorize the optional scope separately; existing Ads tokens cannot gain it automatically.
 
-Salla and Zid partner portals require login credentials absent from this session. Shopify sign-in needs explicit profile-sharing approval. Provider keys cannot be fabricated; production keys and end-to-end store installation remain pending those access steps. No Sentry integration or credentials were found; Vercel runtime errors are the available rollout monitor.
+Salla and Zid partner portals require login credentials absent from this session. The Shopify app was registered through an existing authenticated store organization (Qurba, app 437648523265); its read_orders version and redirect are active, and its credentials are saved in Vercel Production. Public distribution still requires a Partner organization and Shopify review; no merchant store installation was claimed. Data Manager API activation/terms and scope verification remain pending. No Sentry integration or credentials were found; Vercel runtime errors are the available rollout monitor.
 
 ## Primary API references
 

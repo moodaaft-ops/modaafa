@@ -4,7 +4,7 @@
   "apiVersion": "v23",
   "currency": "SAR",
   "identity": "أضاحي السعودية (ADS)",
-  "at": "2026-10-20T10:33:31.472Z",
+  "at": "2026-10-20T11:25:59.189Z",
   "validateOnly": true,
   "liveMutations": 0,
   "validatedRequests": 16,
@@ -111,6 +111,21 @@
     },
     {
       "check": "read_structure_proposals",
+      "status": "pass",
+      "requests": 0
+    },
+    {
+      "check": "read_ads_studio_rsa_policy",
+      "status": "pass",
+      "requests": 0
+    },
+    {
+      "check": "read_ads_studio_extension_coverage",
+      "status": "pass",
+      "requests": 0
+    },
+    {
+      "check": "read_ads_studio_pmax_assets",
       "status": "pass",
       "requests": 0
     }

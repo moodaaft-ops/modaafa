@@ -156,6 +156,23 @@ async function main() {
     try { const { readStructureProposals } = await import('../lib/structure/proposals'); await readStructureProposals(customer, customerId, true); }
     finally { [process.env.STRUCTURE_PROPOSALS_ENABLED, process.env.EXTENDED_ACTIONS_ENABLED] = previous; }
   });
+  const adsReader = await import('../lib/ads/assets-reader');
+  let readFailures = 0;
+  const strictReader = { query: async (sql: string) => {
+    try { return await customer.query(sql); }
+    catch (error) { readFailures++; throw error; }
+  } };
+  await check('read_ads_studio_rsa_policy', async () => {
+    const before = readFailures;
+    const result = await adsReader.readRsaAssets(strictReader);
+    if (!result.readable || readFailures !== before) throw new Error('RSA or per-text policy read failed');
+  });
+  await check('read_ads_studio_extension_coverage', async () => {
+    if (await adsReader.readExtensionCoverage(strictReader) === null) throw new Error('Extension coverage read failed');
+  });
+  await check('read_ads_studio_pmax_assets', async () => {
+    if (await adsReader.readAssetGroups(strictReader) === null) throw new Error('PMax asset read failed');
+  });
   const report={customerId,manager,apiVersion:process.env.GOOGLE_ADS_API_VERSION,currency:pickStr(identity[0],'customer.currency_code'),identity:pickStr(identity[0],'customer.descriptive_name'),at:new Date().toISOString(),validateOnly:true,liveMutations:0,validatedRequests,checks:rows};
   if(arg('output')) await writeFile(arg('output')!,JSON.stringify(report,null,2));
   if(rows.some((r)=>r.status!=='pass')) process.exitCode=1;
