@@ -1,3 +1,5 @@
+import { registerZidWebhooks, zidAutoRegistrationEnabled } from '@/lib/stores/zid-webhooks';
+import { saveStoreConnection } from '@/lib/stores/connect';
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient, createServerClient } from '@/lib/supabase/server';
 import { consumeOAuthState } from '@/lib/auth/oauth-state-store';
@@ -45,18 +47,9 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ platform: s
     if (!storeId) return go('store_unreadable');
 
     const admin = createAdminClient();
-    const { data: existing, error: lookupError } = await admin
-      .from('store_connections')
-      .select('id, user_id')
-      .eq('platform', platform)
-      .eq('external_store_id', storeId)
-      .maybeSingle();
-    if (lookupError) throw lookupError;
-    if (existing && existing.user_id !== user.id) return go('store_taken');
-
     const { selectedAccount } = await getAccountWorkspace(user.id);
     const expiresIn = typeof tokens.expires_in === 'number' && tokens.expires_in > 0 ? tokens.expires_in : 14 * 86400;
-    const { error } = await admin.from('store_connections').upsert(
+    const saved = await saveStoreConnection(admin,
       {
         user_id: user.id,
         account_id: selectedAccount?.id ?? null,
@@ -69,10 +62,13 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ platform: s
         last_error: null,
         refresh_lease_until: null,
         updated_at: new Date().toISOString(),
-      },
-      { onConflict: 'platform,external_store_id' }
+      }
     );
-    if (error) throw error;
+    if (saved === 'store_taken') return go('store_taken');
+    if (platform === 'zid' && zidAutoRegistrationEnabled() && tokens.authorization) {
+      const result = await registerZidWebhooks({ storeId, accessToken: tokens.access_token, authorization: tokens.authorization }).catch(() => ({ status: 'manual' }));
+      if (result.status !== 'registered') return go('webhook_manual');
+    }
   } catch (error) {
     console.error('Store connect failed', platform, error instanceof Error ? error.message : 'unknown');
     return go('oauth_failed');

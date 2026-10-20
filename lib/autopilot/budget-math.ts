@@ -1,7 +1,8 @@
-/** Pure budget math shared by the autonomy policy and the paired budget shift. No imports on purpose (no cycles). */
+import { settingNumber } from '../growth/owner-settings';
+/** Pure budget math shared by the autonomy policy and the paired budget shift. */
 
 /** A budget move may shift at most this share of the total, and never raise the total. */
-export const AUTONOMY_BUDGET_SHIFT_MAX_PCT = 10;
+export const AUTONOMY_BUDGET_SHIFT_MAX_PCT = settingNumber('BUDGET_PAIR_SHIFT_MAX_PCT', 10, 1, 10);
 
 export type BudgetChange = {
   budget_resource: string;

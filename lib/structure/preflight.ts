@@ -289,7 +289,10 @@ export async function prepareStructureAction(
       for (const c of campaigns) {
         if (!SHARED_BUDGET_CHANNELS.has(c.channel)) refuse('channel_not_supported', `${c.channel} cannot use a shared budget`);
         if (c.budget_shared) refuse('already_shared_budget', 'A campaign already spends from a shared budget; attach to it instead');
+        if (['MAXIMIZE_CONVERSIONS', 'MAXIMIZE_CONVERSION_VALUE'].includes(c.bidding_type) && !c.portfolio) refuse('shared_needs_portfolio', 'Standalone maximize strategies cannot use a shared budget; approve a portfolio first');
       }
+      const portfolios = new Set(campaigns.map((c) => c.portfolio));
+      if (portfolios.size > 1 && campaigns.some((c) => c.portfolio)) refuse('shared_portfolio_mismatch', 'Shared campaigns must use the same portfolio strategy');
       const distinct = new Set(campaigns.map((c) => c.budget));
       if (distinct.size !== campaigns.length) refuse('budget_not_exclusive', 'Two campaigns already share one budget');
       const before = campaigns.reduce((sum, c) => sum + c.budget_amount_micros, 0);
@@ -324,7 +327,11 @@ export async function prepareStructureAction(
         if (!SHARED_BUDGET_CHANNELS.has(c.channel)) refuse('channel_not_supported', `${c.channel} cannot use a shared budget`);
         if (c.budget === params.budget_resource) refuse('already_attached', 'A campaign already uses this budget');
         if (c.budget_shared) refuse('already_shared_budget', 'A campaign already spends from another shared budget');
+        if (['MAXIMIZE_CONVERSIONS', 'MAXIMIZE_CONVERSION_VALUE'].includes(c.bidding_type) && !c.portfolio) refuse('shared_needs_portfolio', 'Standalone maximize strategies cannot use a shared budget');
       }
+      const members = await customer.query(`SELECT campaign.bidding_strategy FROM campaign WHERE campaign.campaign_budget = '${esc(params.budget_resource)}' AND campaign.status != 'REMOVED'`);
+      const portfolios = new Set([...campaigns.map((c) => c.portfolio ?? ''), ...members.map((r: any) => str(pick(r.campaign, 'biddingStrategy', 'bidding_strategy')))]);
+      if (portfolios.size > 1 && [...portfolios].some(Boolean)) refuse('shared_portfolio_mismatch', 'Shared campaigns must use the same portfolio strategy');
       // The campaigns drop their own budgets and spend from one amount: capacity before is the sum.
       const before = shared + campaigns.reduce((sum, c) => sum + c.budget_amount_micros, 0);
       const step = checkCapacityStep(before, shared);

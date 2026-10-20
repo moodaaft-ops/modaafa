@@ -1,3 +1,4 @@
+import { saveStoreConnection } from '@/lib/stores/connect';
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient, createServerClient } from '@/lib/supabase/server';
 import { consumeOAuthState } from '@/lib/auth/oauth-state-store';
@@ -45,21 +46,15 @@ export async function GET(req: NextRequest) {
     if (!token) return go('oauth_failed');
 
     const admin = createAdminClient();
-    const { data: existing, error: lookupError } = await admin
-      .from('store_connections').select('id, user_id').eq('platform', 'shopify').eq('external_store_id', shop).maybeSingle();
-    if (lookupError) throw lookupError;
-    if (existing && existing.user_id !== user.id) return go('store_taken');
-
     const { selectedAccount } = await getAccountWorkspace(user.id);
-    const { error } = await admin.from('store_connections').upsert(
+    const saved = await saveStoreConnection(admin,
       {
         user_id: user.id, account_id: selectedAccount?.id ?? null, platform: 'shopify', external_store_id: shop,
         access_token_encrypted: encrypt(token), refresh_token_encrypted: null, token_expires_at: null,
         status: 'active', last_error: null, updated_at: new Date().toISOString(),
-      },
-      { onConflict: 'platform,external_store_id' }
+      }
     );
-    if (error) throw error;
+    if (saved === 'store_taken') return go('store_taken');
 
     // Best effort: a failure here leaves the store connected; the merchant can register the webhooks in Shopify.
     const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? '').replace(/\/$/, '');

@@ -1,3 +1,5 @@
+import { privateImageInAccount, storageImagePath } from './private-storage';
+import { probeImage } from './probe';
 import { createHash } from 'node:crypto';
 import { escapeGaql, isRec, isStr, pickNum, pickStr, type GrowthCustomer } from '../growth/types';
 import { resourceNamesFromMutate } from '../launch/execute';
@@ -29,7 +31,7 @@ export function validateCreateImageAssetsParams(raw: unknown): { ok: true; value
   const out: ImageAssetItem[] = [];
   const seen = new Set<string>();
   for (const item of raw.images) {
-    if (!isRec(item) || !isStr(item.url) || !item.url.startsWith('https://') || item.url.length > 2000) return { ok: false, code: 'image_url' };
+    if (!isRec(item) || !isStr(item.url) || !(item.url.startsWith('https://') || /^storage:\/\/merchant-images\/\d{10}\/[0-9a-f-]{36}\/[0-9a-f]{64}\.(png|jpg)$/.test(item.url)) || item.url.length > 2000) return { ok: false, code: 'image_url' };
     if (!isStr(item.sha256) || !SHA_RE.test(item.sha256)) return { ok: false, code: 'image_hash' };
     const { width, height, bytes, slot } = item as Record<string, unknown>;
     if (!Number.isInteger(width) || !Number.isInteger(height) || !Number.isInteger(bytes)) return { ok: false, code: 'image_size' };
@@ -47,7 +49,7 @@ export function validateCreateImageAssetsParams(raw: unknown): { ok: true; value
 
 export const imageAssetName = (item: Pick<ImageAssetItem, 'sha256' | 'slot'>) => `${ASSET_NAME_PREFIX} ${item.slot} ${item.sha256.slice(0, 8)}`;
 
-export type ImageDeps = FetchDeps;
+export type ImageDeps = FetchDeps & { fetchStored?: (path: string) => Promise<Uint8Array> };
 
 type Prepared = { item: ImageAssetItem; name: string; data: string; existing: string | null };
 
@@ -61,10 +63,19 @@ async function prepare(raw: unknown, customer: GrowthCustomer, deps: ImageDeps):
   if (!checked.ok) throw new Error(`Image assets are malformed (${checked.code})`);
   const prepared: Prepared[] = [];
   for (const item of checked.value.images) {
-    const fetched = await fetchImage(item.url, deps);
+    const path = storageImagePath(item.url);
+    let fetched;
+    if (path !== null) {
+      const cid = String(customer.credentials?.customer_id ?? '').replace(/\D/g, '');
+      if (!deps.fetchStored || !privateImageInAccount(item.url, cid)) throw new Error('Private image outside selected account');
+      const bytes = await deps.fetchStored(path);
+      const probe = probeImage(bytes);
+      fetched = probe ? { ok: true as const, bytes, probe } : { ok: false as const, code: 'unreadable' };
+    } else fetched = await fetchImage(item.url, deps);
     if (!fetched.ok) throw new Error(`Could not download an image again (${fetched.code}); nothing was uploaded.`);
     const hash = createHash('sha256').update(fetched.bytes).digest('hex');
     if (hash !== item.sha256) throw new Error('An image changed since you approved it; nothing was uploaded.');
+    if (fetched.bytes.length !== item.bytes || !['png', 'jpeg'].includes(fetched.probe.format)) throw new Error('Image bytes or format changed');
     if (fetched.probe.width !== item.width || fetched.probe.height !== item.height) throw new Error('An image size changed since you approved it.');
     const name = imageAssetName(item);
     prepared.push({ item, name, data: Buffer.from(fetched.bytes).toString('base64'), existing: await existingAsset(customer, name) });

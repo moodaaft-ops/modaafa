@@ -1,0 +1,103 @@
+{
+  "customerId": "3378391742",
+  "manager": "7561141000",
+  "apiVersion": "v23",
+  "currency": "SAR",
+  "identity": "أضاحي السعودية (ADS)",
+  "at": "2026-10-20T03:09:47.673Z",
+  "validateOnly": true,
+  "liveMutations": 0,
+  "validatedRequests": 13,
+  "checks": [
+    {
+      "check": "image_asset",
+      "status": "pass",
+      "requests": 1
+    },
+    {
+      "check": "demand_gen_campaign_and_image_ad",
+      "status": "pass",
+      "requests": 1
+    },
+    {
+      "check": "demand_gen_video_ad",
+      "status": "pass",
+      "requests": 1
+    },
+    {
+      "check": "pmax_campaign_asset_group",
+      "status": "pass",
+      "requests": 1
+    },
+    {
+      "check": "ai_max",
+      "status": "pass",
+      "requests": 1
+    },
+    {
+      "check": "shared_budget",
+      "status": "pass",
+      "requests": 1
+    },
+    {
+      "check": "portfolio_strategy",
+      "status": "pass",
+      "requests": 1
+    },
+    {
+      "check": "placement_exclusions",
+      "status": "pass",
+      "requests": 1
+    },
+    {
+      "check": "sitelink_and_call_assets",
+      "status": "pass",
+      "requests": 1
+    },
+    {
+      "check": "budget_pair_update",
+      "status": "pass",
+      "requests": 1
+    },
+    {
+      "check": "visitor_user_list",
+      "status": "pass",
+      "requests": 1
+    },
+    {
+      "check": "experiment_create",
+      "status": "pass",
+      "requests": 1
+    },
+    {
+      "check": "pmax_listing_groups",
+      "status": "pass",
+      "requests": 1
+    },
+    {
+      "check": "read_policy_topics",
+      "status": "pass",
+      "requests": 0
+    },
+    {
+      "check": "read_shopping_product_fields",
+      "status": "pass",
+      "requests": 0
+    },
+    {
+      "check": "read_pmax_url_expansion",
+      "status": "pass",
+      "requests": 0
+    },
+    {
+      "check": "read_expansion_geo",
+      "status": "pass",
+      "requests": 0
+    },
+    {
+      "check": "read_structure_proposals",
+      "status": "pass",
+      "requests": 0
+    }
+  ]
+}

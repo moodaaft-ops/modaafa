@@ -1,3 +1,4 @@
+import { runMatchUpload } from '../audiences/match-action';
 import { randomUUID } from 'node:crypto';
 import { isAmbiguousGoogleAdsMutationError } from '../ai/execution-preflight';
 import { growthOperationEnabled, isGrowthOperation } from './flags';
@@ -30,7 +31,13 @@ const nonce = () => randomUUID().replace(/-/g, '').slice(0, 8);
 
 async function imageDeps() {
   const [{ systemResolver, pinnedHttpsTransport }] = await Promise.all([import('../landing-check/transport')]);
-  return { resolve: systemResolver, transport: pinnedHttpsTransport };
+  return { resolve: systemResolver, transport: pinnedHttpsTransport, fetchStored: async (path: string) => {
+    if (process.env.IMAGE_DEVICE_UPLOAD_ENABLED !== 'true') throw new Error('Device image upload is disabled');
+    const { createAdminClient } = await import('../supabase/server');
+    const { data, error } = await createAdminClient().storage.from('merchant-images').download(path);
+    if (error || !data) throw new Error('Private image unavailable');
+    return new Uint8Array(await data.arrayBuffer());
+  } };
 }
 
 /**
@@ -56,6 +63,7 @@ export async function runGrowthAction(
       if (validateOnly) return validateDemandGenOnly(checked.plan, client, customerId, { nonce });
       return executeDemandGen(checked.plan, client, customerId, { nonce, isAmbiguous: isAmbiguousGoogleAdsMutationError });
     }
+    case 'upload_customer_match': return runMatchUpload(params, client, validateOnly);
     case 'create_user_list':
       return validateOnly ? validateCreateUserList(params, client) : executeCreateUserList(params, client, customerId);
     case 'attach_audience':

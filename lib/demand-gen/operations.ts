@@ -77,7 +77,7 @@ export function buildDemandGenOperations(plan: DemandGenPlan, ctx: DemandGenOper
       ? { target_cpa: { target_cpa_micros: plan.bidding.target_cpa_micros } }
       : plan.bidding.strategy === 'MAXIMIZE_CONVERSIONS'
         ? { maximize_conversions: {} }
-        : { target_spend: { cpc_bid_ceiling_micros: plan.bidding.cpc_ceiling_micros } };
+        : { target_spend: {} };
   push('campaign', 'campaign_operation', {
     resource_name: campaign,
     name: ctx.campaignName,
@@ -180,6 +180,7 @@ export function buildDemandGenOperations(plan: DemandGenPlan, ctx: DemandGenOper
       status: 'ENABLED',
       ad: {
         final_urls: [plan.final_url],
+        name: `${ctx.campaignName} | فيديو`.slice(0, 255),
         demand_gen_video_responsive_ad: {
           videos: [{ asset: videoAsset }],
           logo_images: imageLinks(plan.images.logo),

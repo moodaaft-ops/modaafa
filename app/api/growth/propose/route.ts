@@ -1,6 +1,10 @@
+import { prepareCustomerMatchMembers } from '@/lib/audiences/customer-match';
+import { validateMatchUpload } from '@/lib/audiences/match-action';
+import { createGrowthCard, growthCardRow } from '@/lib/growth/card';
+import { cachedRegionConstants } from '@/lib/launch/geo-cache';
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient, createServerClient } from '@/lib/supabase/server';
-import { getCustomer } from '@/lib/google-ads/client';
+import { getCustomer, googleAdsRest } from '@/lib/google-ads/client';
 import { decrypt } from '@/lib/crypto';
 import { getLinkedGoogleAdsAccount, normalizeCustomerId } from '@/lib/accounts/selection';
 import { isSameOriginRequest } from '@/lib/security/origin';
@@ -29,6 +33,7 @@ export const maxDuration = 60;
 const OPERATION_BY_KIND: Record<string, string> = {
   demand_gen: 'launch_demand_gen',
   user_list: 'create_user_list',
+  customer_match: 'upload_customer_match',
   experiment: 'create_experiment',
   end_experiment: 'end_experiment',
   promote_experiment: 'promote_experiment',
@@ -70,12 +75,26 @@ export async function POST(req: NextRequest) {
     const base = { admin, accountId: account.id };
 
     switch (kind) {
+      case 'customer_match': {
+        if (!Array.isArray(body.rows) || body.rows.length > 100000) return NextResponse.json({ error: 'invalid_rows' }, { status: 400 });
+        const prepared = prepareCustomerMatchMembers(body.rows);
+        const checked = validateMatchUpload({ user_list_resource: body.user_list_resource, members: prepared.members, consent_confirmed: body.consent_confirmed, terms_confirmed: body.terms_confirmed }, customerId);
+        if (!checked) return NextResponse.json({ error: 'invalid_match_upload' }, { status: 400 });
+        const card = await createGrowthCard(admin, growthCardRow(account.id, 'upload_customer_match', checked, `نرفع ${prepared.usable} عميل لقائمتك، بصمات البريد والجوال فقط، بعد موافقتك`, 'audience'));
+        return NextResponse.json({ card_id: card.id });
+      }
       case 'demand_gen': {
+        const names = Array.isArray(body?.input?.target_regions)
+          ? body.input.target_regions.filter((n: unknown): n is string => typeof n === 'string' && n.length <= 100) : [];
+        const resolvedRegions = await cachedRegionConstants(names, (request) => googleAdsRest({
+          refreshToken: decrypt(account.refresh_token_encrypted), path: '/geoTargetConstants:suggest',
+          method: 'POST', body: request, loginCustomerId: account.manager_id ?? null, maxAttempts: 1,
+        })).catch(() => ({}));
         const result = await proposeDemandGen({
           ...base,
           customer,
           input: body?.input ?? {},
-          context: { website: business.website ?? null, businessName: business.name ?? null, resolvedRegions: {} },
+          context: { website: business.website ?? null, businessName: business.name ?? null, resolvedRegions },
         });
         return NextResponse.json({ plan: result.plan, card_id: result.cardId });
       }

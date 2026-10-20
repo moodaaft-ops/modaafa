@@ -3,12 +3,10 @@ import type { GuardFinding, GuardSignals } from '../guard/types';
 
 /**
  * Morning-guard rule: a large share of the Merchant Center feed is not
- * eligible to show. Pure: it reads only `signals.shopping`.
+ * eligible to show. Pure: it reads today's feed and the optional previous day.
  *
- * "Spike" here means the share that is blocked TODAY. The guard keeps no
- * history of earlier feed snapshots, so this is a level rule, not a
- * day-over-day delta; a delta needs a snapshot table (see the open
- * decisions in docs/mb-upgrade/pmax.md). The finding is re-announced only
+ * Historical comparison is optional; the level rule remains available on the first day.
+ * Complete consecutive snapshots also detect day-over-day spikes. The finding is re-announced only
  * when the main problem changes (dedupe key carries the top issue code).
  */
 export const MIN_PRODUCTS_FOR_ALERT = 20;
@@ -22,7 +20,12 @@ export function detectProductDisapprovals(signals: GuardSignals): GuardFinding[]
   if (signals.ok.shopping !== true || !signals.shopping) return [];
   const feed = signals.shopping;
   if (feed.total < MIN_PRODUCTS_FOR_ALERT || feed.not_eligible < MIN_NOT_ELIGIBLE_FOR_ALERT) return [];
-  if (feed.not_eligible_share < NOT_ELIGIBLE_HIGH_SHARE) return [];
+  const previous = signals.shoppingPrevious;
+  // A comparable, complete daily pair detects a jump even below the level threshold.
+  const spike = previous && !previous.truncated && !feed.truncated && previous.total >= MIN_PRODUCTS_FOR_ALERT
+    && feed.not_eligible - previous.not_eligible >= MIN_NOT_ELIGIBLE_FOR_ALERT
+    && feed.not_eligible_share - previous.not_eligible_share >= 0.1;
+  if (feed.not_eligible_share < NOT_ELIGIBLE_HIGH_SHARE && !spike) return [];
 
   const top = feed.issues.find((i) => i.severity === 'DISAPPROVED') ?? feed.issues[0] ?? null;
   const severity = feed.not_eligible_share >= NOT_ELIGIBLE_CRITICAL_SHARE ? 'critical' : 'high';
@@ -40,6 +43,9 @@ export function detectProductDisapprovals(signals: GuardSignals): GuardFinding[]
       whatAr: what,
       stepAr: step,
       evidence: {
+        day_over_day_spike: Boolean(spike),
+        previous_not_eligible: previous?.not_eligible ?? null,
+        previous_not_eligible_share: previous?.not_eligible_share ?? null,
         total: feed.total,
         not_eligible: feed.not_eligible,
         eligible_limited: feed.eligible_limited,

@@ -16,6 +16,7 @@ export const imageAssetsEnabled = (env: Env = process.env) => env.IMAGE_ASSETS_E
 export const GROWTH_OPERATIONS = [
   'launch_demand_gen',
   'create_user_list',
+  'upload_customer_match',
   'attach_audience',
   'create_experiment',
   'end_experiment',
@@ -38,6 +39,8 @@ export function growthOperationEnabled(operation: string, env: Env = process.env
       return demandGenEnabled(env);
     case 'create_user_list':
       return audiencesEnabled(env);
+    case 'upload_customer_match':
+      return audiencesEnabled(env) && env.CUSTOMER_MATCH_UPLOAD_ENABLED === 'true' && env.DATA_MANAGER_UPLOAD_ENABLED === 'true';
     case 'attach_audience':
       return audiencesEnabled(env) && demandGenEnabled(env);
     case 'create_experiment':
@@ -62,6 +65,7 @@ export function isGrowthRollback(rollback: unknown): boolean {
 export const GROWTH_LABELS_AR: Readonly<Record<GrowthOperation, string>> = {
   launch_demand_gen: 'بناء حملة ديماند جن موقوفة',
   create_user_list: 'إنشاء قائمة جمهور',
+  upload_customer_match: 'رفع قائمة العملاء',
   attach_audience: 'ربط جمهور بمجموعة إعلانية',
   create_experiment: 'بدء تجربة على حملة',
   end_experiment: 'إيقاف تجربة',

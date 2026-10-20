@@ -1,3 +1,4 @@
+import { MerchantPhoneSection } from './merchant-phone-section';
 import Link from 'next/link';
 import { Activity, LogOut, Pencil } from 'lucide-react';
 import { redirect } from 'next/navigation';
@@ -42,7 +43,7 @@ export const metadata = {
 export default async function SettingsPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ delete_error?: string; rename_error?: string; renamed?: string; extra?: string; feature?: string; store?: string; platform?: string }>;
+  searchParams?: Promise<{ phone?: string; delete_error?: string; rename_error?: string; renamed?: string; extra?: string; feature?: string; store?: string; platform?: string }>;
 }) {
   const params = await searchParams;
   const { user } = await getRequestAuthContext();
@@ -71,6 +72,8 @@ export default async function SettingsPage({
           )}
         </div>
       )}
+
+      <MerchantPhoneSection businessId={business?.id} outcome={params?.phone} />
 
       {/* Linked accounts: the part of this page people actually use. */}
       <section className="mt-8" aria-labelledby="accounts-title">

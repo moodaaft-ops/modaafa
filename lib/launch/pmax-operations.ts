@@ -73,6 +73,7 @@ export function buildPmaxLaunchOperations(plan: LaunchPlan, ctx: PmaxOperationCo
     advertising_channel_type: 'PERFORMANCE_MAX',
     campaign_budget: budget,
     contains_eu_political_advertising: EU_POLITICAL_DECLARATION,
+    brand_guidelines_enabled: true,
     ...(plan.bidding.strategy === 'MAXIMIZE_CONVERSION_VALUE' ? { maximize_conversion_value: {} } : { maximize_conversions: {} }),
     geo_target_type_setting: { positive_geo_target_type: plan.settings.positive_geo_target_type },
     // Off by default: Google does not send traffic to pages we did not choose. v22 has no url_expansion_opt_out;
@@ -152,7 +153,9 @@ export function buildPmaxLaunchOperations(plan: LaunchPlan, ctx: PmaxOperationCo
   });
 
   const link = (assetName: string, fieldType: string) => {
-    push('asset_group_asset', 'asset_group_asset_operation', { asset_group: assetGroup, asset: assetName, field_type: fieldType });
+    const brand = ['BUSINESS_NAME', 'LOGO', 'LANDSCAPE_LOGO'].includes(fieldType);
+    if (brand) push('campaign_asset', 'campaign_asset_operation', { campaign, asset: assetName, field_type: fieldType });
+    else push('asset_group_asset', 'asset_group_asset_operation', { asset_group: assetGroup, asset: assetName, field_type: fieldType });
     expected.asset_links += 1;
   };
   const textAsset = (value: string, fieldType: string) => {
@@ -210,5 +213,12 @@ export function buildPmaxLaunchOperations(plan: LaunchPlan, ctx: PmaxOperationCo
     });
   }
 
+  // Google validates each consecutive block of AssetGroupAsset operations as
+  // a complete group. Create all assets first, then campaign brand links, then
+  // the group and its uninterrupted asset links. Keep roles aligned for undo.
+  const rank = (role: OperationRole) => role === 'asset' ? 0 : role === 'campaign_asset' ? 2 : role === 'asset_group' ? 3 : role === 'asset_group_asset' ? 4 : ['audience','asset_group_signal','asset_group_filter'].includes(role) ? 5 : 1;
+  const ordered = operations.map((op, i) => ({ op, role: roles[i], i })).sort((a,b) => rank(a.role)-rank(b.role) || a.i-b.i);
+  operations.splice(0, operations.length, ...ordered.map((v) => v.op));
+  roles.splice(0, roles.length, ...ordered.map((v) => v.role));
   return { operations, roles, temp: { budget, campaign, sharedSet: null, adGroups: [] }, expected };
 }

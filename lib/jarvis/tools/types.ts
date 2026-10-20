@@ -48,7 +48,8 @@ export type EvidenceKind =
   | 'ad_test'
   | 'shopping_issue'
   | 'site_page'
-  | 'verified_phone';
+  | 'verified_phone'
+  | 'structure_proposal';
 
 export type EvidenceRow = { ref: string; kind: EvidenceKind; data: Record<string, unknown> };
 

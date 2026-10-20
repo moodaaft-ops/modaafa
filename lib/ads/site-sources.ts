@@ -1,3 +1,4 @@
+import { merchantPhoneEnabled } from '@/lib/settings/merchant-phone';
 import type { LandingCheckReport } from '../landing-check/run';
 import { cleanSitePageUrl, hostKey } from '../landing-check/site-pages';
 import { str } from './rows';
@@ -89,6 +90,11 @@ export async function readAccountCallPhones(reader: GaqlReader): Promise<string[
 export async function readMerchantSavedPhones(admin: any, businessId: string | null | undefined): Promise<string[]> {
   if (!admin || !businessId) return [];
   try {
+    if (merchantPhoneEnabled()) {
+      const saved = await admin.from('merchant_call_phones').select('phone_e164').eq('business_id', businessId).maybeSingle();
+      const phone = cleanSaudiPhone(saved.data?.phone_e164);
+      if (!saved.error && phone) return [phone];
+    }
     const { data, error } = await admin
       .from('business_memory')
       .select('data, source, basis')

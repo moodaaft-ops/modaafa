@@ -288,7 +288,8 @@ test('guarantee wording is removed from ad copy unless the merchant wrote it in 
 test('default strategy follows tracking, not a fixed value', () => {
   assert.equal(defaultStrategy(UNKNOWN_BUILDER_SIGNALS), 'MAXIMIZE_CLICKS');
   assert.equal(defaultStrategy(signals({ conversions_30d: 0, tracking_healthy: false })), 'MAXIMIZE_CLICKS');
-  assert.equal(defaultStrategy(signals({ conversions_30d: 3 })), 'MAXIMIZE_CONVERSIONS');
+  assert.equal(defaultStrategy(signals({ conversions_30d: 3 })), 'MAXIMIZE_CLICKS');
+  assert.equal(defaultStrategy(signals({ conversions_30d: 10 })), 'MAXIMIZE_CONVERSIONS');
 });
 
 test('signals: conversions come from the synced cache, tracking is healthy only if conversions arrive and nothing contradicts it', () => {
@@ -398,7 +399,7 @@ test('buildCampaign forces the model draft through the gates when it finalizes',
     const result = await buildCampaign('أبغى حملة عطور', {} as any, { business_name: 'متجر', signals: signals({ conversions_30d: 8 }) });
     const draft = result.draft_campaign;
     assert.equal(draft.type, 'SEARCH', 'no Merchant Center feed, so PMax becomes Search');
-    assert.equal(draft.bidding_strategy, 'MAXIMIZE_CONVERSIONS', '8 conversions: no target bidding');
+    assert.equal(draft.bidding_strategy, 'MAXIMIZE_CLICKS', '8 conversions: below the owner floor');
     assert.deepEqual(draft.network_settings, { search_partners: false, display_network: false });
     assert.equal(draft.status, 'PAUSED');
     assert.deepEqual(draft.forecast, { available: false, reason_ar: FORECAST_UNAVAILABLE_REASON_AR });

@@ -1,3 +1,6 @@
+import { structureProposalsEnabled } from '@/lib/structure/proposals';
+import { validateStructurePayload } from '@/lib/structure/validate';
+import { isStructureOperation } from '@/lib/structure/types';
 import type Anthropic from '@anthropic-ai/sdk';
 import { buildExecutableAction } from '@/lib/ai/executable-action';
 import { BUDGET_STEP_MAX_PCT, BUDGET_STEP_MIN_PCT } from '@/lib/ai/optimizer-gates';
@@ -110,12 +113,12 @@ export function prepareChangeToolFor(extended: boolean, adsStudio = false): Anth
   const studio = adsStudio ? [...ADS_STUDIO_PREPARE_OPERATIONS] : [];
   return {
     ...base,
-    description: base.description + EXTENDED_TOOL_NOTE + (adsStudio ? ADS_STUDIO_TOOL_NOTE : ''),
+    description: base.description + (structureProposalsEnabled() ? ' apply_structure_proposal: exactly one sp_ ref from get_structure_proposals; server derives all parameters.' : '') + EXTENDED_TOOL_NOTE + (adsStudio ? ADS_STUDIO_TOOL_NOTE : ''),
     input_schema: {
       ...base.input_schema,
       properties: {
         ...base.input_schema.properties,
-        operation: { type: 'string', enum: [...PREPARE_OPERATIONS, ...EXTENDED_PREPARE_OPERATIONS, ...studio] },
+        operation: { type: 'string', enum: [...PREPARE_OPERATIONS, ...EXTENDED_PREPARE_OPERATIONS, ...(structureProposalsEnabled() ? ['apply_structure_proposal'] : []), ...studio] },
         choices: {
           ...base.input_schema.properties.choices,
           properties: {
@@ -314,6 +317,14 @@ function resolveNegatives(ctx: PrepareContext, rows: EvidenceRow[], choices: Rec
 
 function resolve(ctx: PrepareContext, operation: PrepareOperation | string, rows: EvidenceRow[], choices: Record<string, unknown>): Resolved {
   const currency = ctx.currencyCode;
+  if (operation === 'apply_structure_proposal') {
+    if (!structureProposalsEnabled() || rows.length !== 1 || rows[0].kind !== 'structure_proposal') fail('wrong_refs', 'اختر اقتراح هيكلة واحد من قراءة الحساب');
+    const p = rows[0].data;
+    if (!isStructureOperation(p.operation)) return fail('unknown_operation', 'الاقتراح مو متاح');
+    const checked = validateStructurePayload(p.operation, String(p.target_id), p.params, ctx.customerId);
+    if (!checked.ok) return fail('invalid_payload', 'بيانات الاقتراح ما تصلح للتنفيذ');
+    return { payload: { operation: p.operation, target_id: checked.target_id, params: checked.params }, targetLabel: operationLabelAr(p.operation) ?? String(p.operation), changes: [String(p.reason_ar)], warnings: ['التغيير ينتظر موافقتك وقد يعيد مرحلة تعلّم المزايدة'], evidence: [{ label: 'المصدر', value: 'قراءة الحساب خلال المحادثة' }], monthlyAmount: 0, size: 'large', sameTargetKey: checked.target_id };
+  }
   if (isAdsStudioPrepareOperation(operation)) {
     if (!isAdsStudioActive()) fail('unknown_operation', 'العملية غير معروفة.');
     return resolveAdsStudio(operation, rows, choices, { fail, numberOf, text, customerId: ctx.customerId }) as Resolved;
@@ -530,6 +541,7 @@ export async function prepareChange(input: unknown, ctx: PrepareContext): Promis
     const args = input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
     const operation = String(args.operation ?? '') as PrepareOperation;
     const extendedOperation =
+      (structureProposalsEnabled() && String(operation) === 'apply_structure_proposal') ||
       (isExtendedActionsEnabled() && isExtendedPrepareOperation(operation)) ||
       (isAdsStudioActive() && isAdsStudioPrepareOperation(operation));
     if (!PREPARE_OPERATIONS.includes(operation) && !extendedOperation) fail('unknown_operation', 'العملية غير معروفة.');

@@ -62,10 +62,7 @@ export function validateStoredDemandGenPlan(value: unknown, customerId?: string 
   } else if (bidding.target_cpa_micros !== null) {
     return fail('plan_target_cpa_unexpected');
   }
-  if (strategy === 'MAXIMIZE_CLICKS') {
-    const c = bidding.cpc_ceiling_micros;
-    if (!Number.isInteger(c) || c < 10_000 || c > budget.daily_micros) return fail('plan_cpc_ceiling');
-  }
+  if (strategy === 'MAXIMIZE_CLICKS' && bidding.cpc_ceiling_micros !== null) return fail('plan_cpc_ceiling_unsupported');
 
   const geo = plan.geo;
   if (!isRec(geo) || geo.country_constant !== SAUDI_COUNTRY_CONSTANT || !isArr(geo.regions) || geo.regions.length > 10) return fail('plan_geo');

@@ -334,7 +334,7 @@ export function buildLaunchPlan(rawDraft: unknown, context: LaunchContext): Laun
       // Own brand is NOT excluded by default: a store with no brand search campaign would lose its cheapest sales.
       const brandNames = Array.isArray(draft.brand_names)
         ? draft.brand_names.map((b: unknown) => cleanKeywordText(String(b ?? ''))).filter(Boolean)
-        : [];
+        : process.env.PMAX_OWN_BRAND_EXCLUSION_ENABLED === 'true' && businessName ? [businessName] : [];
       const rawGroups = Array.isArray(draft.ad_groups) ? draft.ad_groups.map(asRecord).filter((g): g is Rec => g !== null) : [];
       const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
       const rsaPool = {

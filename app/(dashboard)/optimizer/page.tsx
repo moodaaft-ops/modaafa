@@ -1,3 +1,4 @@
+import { GrowthEntry } from './growth-entry';
 import { History, Link2, ShieldCheck, Zap } from 'lucide-react';
 import { redirect } from 'next/navigation';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
@@ -130,6 +131,7 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
               <MetricCard label="إجراءات مسجّلة" value={formatNumberAr((actions ?? []).length)} />
             </section>
 
+            {!locked && selectedAccount && <GrowthEntry userId={user.id} customerId={selectedAccount.customer_id} />}
             <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
               {locked ? (
                 lock ? (
