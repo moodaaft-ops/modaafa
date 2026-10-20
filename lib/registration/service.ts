@@ -22,7 +22,30 @@ export type FinalizeForRequestDeps = {
   sendServerEvent?: FinalizeDeps['sendServerEvent'];
   sendWelcome?: (userId: string) => void;
   attachReferral?: (req: NextRequest, userId: string) => Promise<unknown>;
+  ensureUserRow?: (user: FinalizeUser) => Promise<void>;
 };
+
+/**
+ * The profile row in public.users is created lazily (nothing creates it when the
+ * auth user is created). Someone who clicks the email link or comes back from
+ * Google goes straight to finalize_registration, which answers no_user without
+ * it. So make sure the row exists first. Never throws: if the insert fails,
+ * finalize reports the real failure.
+ */
+async function ensureUserRowDefault(user: FinalizeUser) {
+  if (!user.email) return;
+  try {
+    const { error } = await createAdminClient()
+      .from('users')
+      .upsert(
+        { id: user.id, email: user.email, last_login_at: new Date().toISOString() },
+        { onConflict: 'id', ignoreDuplicates: true },
+      );
+    if (error) console.warn('[registration] could not ensure the profile row', error.code, error.message?.slice(0, 120));
+  } catch {
+    console.warn('[registration] could not ensure the profile row');
+  }
+}
 
 export async function finalizeForRequest(
   req: NextRequest,
@@ -30,6 +53,9 @@ export async function finalizeForRequest(
   details?: { name?: string | null; phone?: string | null },
   deps: FinalizeForRequestDeps = {},
 ) {
+  if (deps.ensureUserRow) await deps.ensureUserRow(user);
+  else if (!deps.db) await ensureUserRowDefault(user);
+
   const outcome = await finalizeRegistration(
     { db: deps.db ?? (createAdminClient() as unknown as RegistrationDb), sendServerEvent: deps.sendServerEvent },
     user,
