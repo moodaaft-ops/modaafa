@@ -163,5 +163,6 @@ export type GuardSignals = {
   /** Which reads worked. A false source means "unknown", never "all clear". */
   ok: GuardOk;
   /** Merchant Center product status (SHOPPING_HEALTH_ENABLED). Absent or null = not read. */
+  shoppingPrevious?: import('../shopping/reader').ShoppingHealth | null;
   shopping?: import('../shopping/reader').ShoppingHealth | null;
 };

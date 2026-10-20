@@ -1,4 +1,4 @@
-import { CPC_CAP_BUDGET_DIVISOR } from '../ai/builder-gates';
+import { settingNumber } from '../growth/owner-settings';
 import { cleanKeywordText } from '../launch/arabic';
 import { cleanCopyList, COPY_ISSUE_AR, copyIssues } from '../launch/copy';
 import { resolveSiteUrl } from '../launch/assets';
@@ -21,13 +21,13 @@ import {
  *  - Google's best practice for Maximize strategies: 100 USD a day, about 375 SAR. Below it the plan still builds,
  *    with a warning that reading results will be slower.
  *  - With a target CPA the daily budget is at least 10 times the target (hard rule).
- *  - Bidding: Max Clicks (cold data gathering, capped CPC), Max Conversions, tCPA. tROAS and
+ *  - Bidding: Max Clicks (cold data gathering, daily-budget capped), Max Conversions, tCPA. tROAS and
  *    Max Conversion Value need the value rule (50 valued conversions in 35 days) and are not built here.
  *  - Text limits: headline 30, long headline and description 90, business name 25. Google's current Demand Gen
  *    headline limit may be 40; 30 is used because it is accepted everywhere.
  */
 
-export const DEMAND_GEN_MIN_DAILY_SAR = 20;
+export const DEMAND_GEN_MIN_DAILY_SAR = settingNumber('DEMAND_GEN_MIN_DAILY_SAR', 20, 20, 5000);
 export const DEMAND_GEN_RECOMMENDED_DAILY_SAR = 375;
 export const DEMAND_GEN_MAX_DAILY_SAR = 5000;
 export const TCPA_BUDGET_MULTIPLE = 10;
@@ -178,15 +178,10 @@ export function buildDemandGenPlan(input: DemandGenInput, context: DemandGenCont
   } else if (strategy === 'MAXIMIZE_CONVERSIONS') {
     note = 'قوقل تجيب أكبر عدد تحويلات بالميزانية بدون هدف تكلفة';
   } else {
-    // Uncapped Max Clicks can pay any price: a ceiling is always set.
-    const ceiling = finite(input.max_cpc_sar);
-    const fallback = budgetSar !== null && budgetSar > 0 ? budgetSar / CPC_CAP_BUDGET_DIVISOR : null;
-    const chosen = ceiling !== null && ceiling > 0 ? ceiling : fallback;
-    if (chosen !== null) {
-      cpcCeilingMicros = roundMicros(chosen);
-      if (dailyMicros > 0) cpcCeilingMicros = Math.min(Math.max(cpcCeilingMicros, 10_000), dailyMicros);
-    }
-    note = 'نقرات بسقف للنقرة، مناسبة لجمع بيانات أول أسبوعين أو ثلاثة بس';
+    // Demand Gen rejects CPC ceilings (validated against the live API).
+    // Daily budget is still explicit on the card; never promise a per-click cap.
+    cpcCeilingMicros = null;
+    note = 'تعظيم النقرات بدون سقف للنقرة، والميزانية اليومية هي الحد اللي توافق عليه';
     warnings.push('أكثر نقرات تجيب زيارات رخيصة وسطحية. استخدمها لجمع بيانات بس وبعدها حوّل لأكثر تحويلات');
   }
 

@@ -1,3 +1,5 @@
+import { getStructureProposalsTool } from './get-structure-proposals';
+import { structureProposalsEnabled } from '@/lib/structure/proposals';
 import type { JarvisReadTool, ToolContext, ToolResult } from './types';
 import {
   INVALID_INPUT_MESSAGE_AR,
@@ -47,6 +49,7 @@ const BASE_READ_TOOLS: readonly JarvisReadTool[] = [
   getAdsStatusTool,
   getChangeHistoryTool,
   getPmaxCategoriesTool,
+  ...(structureProposalsEnabled() ? [getStructureProposalsTool] : []),
   // Behind EXTENDED_ACTIONS_ENABLED (read at load): flag off keeps the tool list byte-identical.
   ...(isExtendedActionsEnabled() ? [getGoogleRecommendationsTool, getValueRulesTool] : []),
   // Behind ADS_STUDIO_ENABLED (read at load): read-only, so it does not need the extended flag.

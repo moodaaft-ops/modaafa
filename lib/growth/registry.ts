@@ -1,3 +1,4 @@
+import { validateMatchUpload } from '../audiences/match-action';
 import type { OptimizerAction } from '../ai/optimizer-agent';
 import { GROWTH_LABELS_AR, growthOperationEnabled, isGrowthOperation, type GrowthOperation } from './flags';
 import { validateStoredDemandGenPlan } from '../demand-gen/validate';
@@ -29,6 +30,11 @@ export function buildGrowthAction(payload: any, recommendation: any, accountCust
     case 'launch_demand_gen': {
       const checked = validateStoredDemandGenPlan(params?.plan, customerId);
       if (checked.ok) clean = { plan: checked.plan };
+      break;
+    }
+    case 'upload_customer_match': {
+      const checked = validateMatchUpload(params, customerId);
+      if (checked && typeof recommendation?.account_id === 'string') clean = { ...checked, account_id: recommendation.account_id };
       break;
     }
     case 'create_user_list': {

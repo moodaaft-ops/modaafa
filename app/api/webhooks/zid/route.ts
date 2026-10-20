@@ -1,3 +1,4 @@
+import { zidWebhookDetails } from '@/lib/stores/zid-webhooks';
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/server';
 import { isConfiguredEnv } from '@/lib/platform/env';

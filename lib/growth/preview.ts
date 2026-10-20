@@ -22,6 +22,7 @@ export function growthPreviewRows(operation: string, params: unknown): PreviewRo
       if (lists) rows.push({ label: 'قوائم الجمهور', value: String(lists) });
       return rows;
     }
+    case 'upload_customer_match': return [{ label: 'القائمة', value: String(p.user_list_resource ?? ''), ltr: true }, { label: 'عدد العملاء', value: String(p.members?.length ?? 0) }, { label: 'البيانات', value: 'بصمات مشفرة للبريد والجوال فقط' }];
     case 'create_user_list':
       return [
         { label: 'الاسم', value: String(p.name ?? '') },

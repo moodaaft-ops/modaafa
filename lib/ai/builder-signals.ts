@@ -6,7 +6,8 @@ import { UNKNOWN_BUILDER_SIGNALS, type BuilderAccountSignals } from './builder-g
  * What the campaign builder may know about the account, from data the platform
  * already keeps: the synced campaign cache (conversions over 30 days) and the
  * stored onboarding read (conversion actions, auto-tagging, Merchant Center).
- * No Google call and no write. Anything missing stays `null`, and the gates in
+ * PMax additionally reads the offline-upload prerequisite when its flag is on.
+ * No writes. Anything missing stays `null`, and the gates in
  * builder-gates.ts treat `null` as the conservative option.
  */
 
@@ -84,7 +85,21 @@ export async function loadBuilderSignals(args: {
         ? loadLatestSignals(args.admin, args.accountId, { maxAgeHours: BUILDER_SIGNALS_MAX_AGE_HOURS })
         : Promise.resolve(null),
     ]);
-    return deriveBuilderSignals({ cacheRows: cache, stored });
+    const signals = deriveBuilderSignals({ cacheRows: cache, stored });
+    if (process.env.CAMPAIGN_LAUNCH_PMAX_ENABLED === 'true' && args.admin) {
+      try {
+        const { data: account, error } = await args.admin.from('google_ads_accounts')
+          .select('customer_id, manager_id, refresh_token_encrypted').eq('id', args.accountId).maybeSingle();
+        if (error || !account?.refresh_token_encrypted) return { ...signals, offline_upload_in_place: null };
+        const [{ getCustomer }, { decrypt }, { readOfflineUploadInPlace }] = await Promise.all([
+          import('../google-ads/client'), import('../crypto'), import('../launch/pmax-inventory'),
+        ]);
+        return { ...signals, offline_upload_in_place: await readOfflineUploadInPlace(
+          getCustomer(account.customer_id, decrypt(account.refresh_token_encrypted), account.manager_id ?? undefined) as any
+        ) };
+      } catch { return { ...signals, offline_upload_in_place: null }; }
+    }
+    return signals;
   } catch {
     return { ...UNKNOWN_BUILDER_SIGNALS };
   }

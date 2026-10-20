@@ -1,21 +1,14 @@
+import { parseDataManagerError } from '../google-ads/data-manager';
 import { createHash } from 'node:crypto';
 import { toLatinDigits } from '../ads/validators';
 
 /**
  * Customer Match: normalising and hashing a merchant's customer list.
  *
- * What is built and what is not (read this before wiring an upload):
- *  - Built and tested: normalisation (email lowercase, Gmail dots and plus tags,
- *    Saudi phone to E.164), SHA-256, de-duplication, the 100 member minimum, a
- *    Data Manager request body builder, and a transport interface.
- *  - NOT wired: the HTTP call itself. Since 1 April 2026 the Google Ads API
- *    OfflineUserDataJobService and UserDataService refuse projects that had no
- *    Customer Match activity between October 2025 and March 2026, and send you
- *    to the Data Manager API. This repo has no Data Manager transport, and the
- *    OAuth scope that API needs on the merchant's token, the exact AudienceMember
- *    shape and the account type values are not confirmed from the documentation
- *    we could read. `NO_TRANSPORT` therefore refuses to upload. Plug a transport
- *    in once those are verified on a test account.
+ * Normalization, SHA-256 hashing and Data Manager request construction. The real
+ * transport is injected by the approval executor after it resolves the merchant's
+ * separate Data Manager OAuth grant. Generic callers default to NO_TRANSPORT.
+ * Raw email and phone values never enter a queued approval payload.
  *
  * Policy (Google's Customer Match policy, stated here, never decided here):
  * eligibility depends on the advertiser account's history and spend, and Google
@@ -185,6 +178,12 @@ export function buildIngestRequests(members: readonly HashedMember[], options: I
   const login = options.loginCustomerId?.replace(/\D/g, '') || null;
   if (!customerId || !/^\d+$/.test(options.userListId)) throw new CustomerMatchRefusedError('bad_ids');
 
+  for (const m of members) {
+    if (!m || Object.keys(m).some((k) => !['email_sha256', 'phone_sha256'].includes(k)) ||
+      (!m.email_sha256 && !m.phone_sha256) || [m.email_sha256, m.phone_sha256].some((v) => v !== undefined && !/^[0-9a-f]{64}$/.test(v))) {
+      throw new CustomerMatchRefusedError('bad_ids');
+    }
+  }
   const requests: IngestRequest[] = [];
   for (let i = 0; i < members.length; i += INGEST_CHUNK_SIZE) {
     requests.push({
@@ -214,6 +213,15 @@ export function buildIngestRequests(members: readonly HashedMember[], options: I
 
 export interface CustomerMatchTransport {
   ingest(request: IngestRequest): Promise<{ requestId?: string }>;
+  status?(requestId: string): Promise<string[]>;
+}
+
+/** Some chunks were accepted. A whole-card retry must stay locked for reconciliation. */
+export class PartialAudienceUploadError extends Error {
+  constructor(readonly acceptedRequestIds: string[], cause?: unknown) {
+    super(`Customer Match upload requires reconciliation before retry; accepted requests: ${acceptedRequestIds.join(',') || 'unknown'}`, { cause });
+    this.name = 'PartialAudienceUploadError';
+  }
 }
 
 /** The default: no transport, no upload. */
@@ -231,8 +239,34 @@ export async function uploadCustomerMatch(
   const requests = buildIngestRequests(members, options);
   const ids: string[] = [];
   for (const request of requests) {
-    const response = await transport.ingest(request);
-    if (response?.requestId) ids.push(response.requestId);
+    try {
+      const response = await transport.ingest(request);
+      if (response?.requestId) ids.push(response.requestId);
+      else if (!options.validateOnly) throw new PartialAudienceUploadError(ids);
+    } catch (error) {
+      if (!options.validateOnly && ids.length) throw new PartialAudienceUploadError(ids, error);
+      throw error;
+    }
   }
   return { requests: requests.length, request_ids: ids };
+}
+
+/** Official audienceMembers:ingest transport. No raw identifiers and no automatic retries. */
+export function customerMatchTransport(accessToken: string, fetchImpl: typeof fetch = fetch): CustomerMatchTransport {
+  return { async ingest(request) {
+    const response = await fetchImpl('https://datamanager.googleapis.com/v1/audienceMembers:ingest', {
+      method: 'POST', headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(request), signal: AbortSignal.timeout(20000),
+    });
+    const data = await response.json();
+    if (!response.ok) throw parseDataManagerError(response.status, data);
+    return { requestId: data.requestId };
+  }, async status(requestId) {
+    const url = new URL('https://datamanager.googleapis.com/v1/requestStatus:retrieve');
+    url.searchParams.set('requestId', requestId);
+    const response = await fetchImpl(url, { headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(10000) });
+    if (!response.ok) throw new Error('customer_match_status_unavailable');
+    const data = await response.json();
+    return (data.requestStatusPerDestination ?? []).map((row: any) => String(row.requestStatus ?? 'REQUEST_STATUS_UNKNOWN'));
+  } };
 }

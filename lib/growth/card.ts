@@ -6,6 +6,7 @@ import { GROWTH_LABELS_AR, type GrowthOperation } from './flags';
 const TITLES_AR: Record<GrowthOperation, string> = {
   launch_demand_gen: 'ابنِ حملة ديماند جن موقوفة',
   create_user_list: 'أنشئ قائمة جمهور',
+  upload_customer_match: 'ارفع قائمة العملاء',
   attach_audience: 'اربط الجمهور بالمجموعة',
   create_experiment: 'ابدأ التجربة',
   end_experiment: 'أوقف التجربة',

@@ -13,6 +13,8 @@
  * owner's approval, and `status` is forced to PAUSED (titan red rule 4).
  */
 
+import { settingNumber } from '../growth/owner-settings';
+export const MAXIMIZE_CONVERSIONS_MIN_30D = settingNumber('MAXIMIZE_CONVERSIONS_MIN_30D', 10, 10, 1000);
 /** Titan 3.5, 3.9, 5.2: target bidding starts at 30 conversions in 30 days. */
 export const TARGET_BIDDING_MIN_CONVERSIONS_30D = 30;
 /** Titan 8.1, 21: a store runs PMax only with a healthy feed and 30 conversions in 30 days. */
@@ -105,7 +107,7 @@ export function isCpaStable(cpaDeltaPct: unknown): boolean {
  * allowed only by `allowedStrategies` when volume exists.
  */
 export function defaultStrategy(signals: BuilderAccountSignals): BuilderBidStrategy {
-  return signals.tracking_healthy === true && (signals.conversions_30d ?? 0) >= 1
+  return signals.tracking_healthy === true && (signals.conversions_30d ?? 0) >= MAXIMIZE_CONVERSIONS_MIN_30D
     ? 'MAXIMIZE_CONVERSIONS'
     : 'MAXIMIZE_CLICKS';
 }

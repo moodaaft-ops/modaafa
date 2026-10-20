@@ -17,7 +17,7 @@ import { mapLimit } from '../platform/concurrency';
 // Keep the production fallback pinned to the version proven by the local
 // Google Ads transfer kit. Unsupported future defaults make metadata reads
 // silently fail in production and leave accounts without names.
-const GOOGLE_ADS_API_VERSION = process.env.GOOGLE_ADS_API_VERSION ?? 'v22';
+const GOOGLE_ADS_API_VERSION = process.env.GOOGLE_ADS_API_VERSION ?? 'v23';
 const GOOGLE_ADS_BASE_URL = `https://googleads.googleapis.com/${GOOGLE_ADS_API_VERSION}`;
 const DISCOVERY_MAX_DEPTH = 8;
 

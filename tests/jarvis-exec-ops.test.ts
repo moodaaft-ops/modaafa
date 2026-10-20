@@ -652,7 +652,7 @@ type RouteWorld = {
   plan?: string | null;
 };
 
-function routeHarness(world: RouteWorld, customer: ReturnType<typeof fakeCustomer>) {
+function routeHarness(world: RouteWorld, customer: ReturnType<typeof fakeCustomer>, overrides: Record<string, any> = {}) {
   const account = { id: 'acc', customer_id: CID, manager_id: null, currency_code: 'SAR', refresh_token_encrypted: 'enc' };
   const server = {
     auth: { getUser: async () => ({ data: { user: { id: 'user-1', email: 'u@example.com' } } }) },
@@ -709,6 +709,7 @@ function routeHarness(world: RouteWorld, customer: ReturnType<typeof fakeCustome
     }) as any,
     sendOpsAlert: (async () => ({ sent: true, id: 'ops' })) as any,
     randomUUID: () => 'exec-key-1' as `${string}-${string}-${string}-${string}-${string}`,
+    ...overrides,
   });
 
   return async (intent: string) => {
@@ -883,4 +884,14 @@ test('existing intents are unchanged: approve only approves, execute needs appro
 
   const unknown = await routeHarness(world('pending', {}), fakeCustomer())('approve_and_run');
   assert.match(unknown.location, /error=invalid_recommendation_action$/);
+});
+
+test('growth approval waits for the owned account scope then validates and executes instead of manual review', async () => {
+  const previous=process.env.AUDIENCES_ENABLED;process.env.AUDIENCES_ENABLED='true';
+  try {
+    const w=world('pending',{operation:'create_user_list',params:{kind:'website_visitors',name:'زوار النشاط',url_contains:'example.com',lookback_days:30}});
+    const calls: boolean[]=[];
+    const result=await routeHarness(w,fakeCustomer(),{prepareActionForExecution:async(action:any)=>{assert.equal(action.params.customer_id,CID);return {action,rollbackPayload:{reversible:false},measurement:null};},checkGuardrails:async(action:any)=>action,executeAction:async(_action:any,_customer:any,options:any)=>{calls.push(options?.validateOnly===true);return {};}})('approve_execute');
+    assert.match(result.location,/executed=1/);assert.equal(w.status,'applied');assert.deepEqual(calls,[true,false]);
+  } finally {if(previous===undefined)delete process.env.AUDIENCES_ENABLED;else process.env.AUDIENCES_ENABLED=previous;}
 });

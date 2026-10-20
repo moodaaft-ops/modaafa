@@ -239,7 +239,7 @@ test('placement exclusions: campaign level only for Display, Video and Demand Ge
 });
 
 test('shared budget: create applies the budget step, uses a temp id, one atomic batch, rollback restores budgets', async () => {
-  const campaigns = { [C1]: { budget: B1, amount: '50000000' }, [C2]: { budget: B2, amount: '50000000' } };
+  const campaigns = { [C1]: { bidding: 'TARGET_SPEND', budget: B1, amount: '50000000' }, [C2]: { bidding: 'TARGET_SPEND', budget: B2, amount: '50000000' } };
   const customer = fakeCustomer({ campaigns });
   const prepared = await prepare('create_shared_budget', { name: 'ميزانية المتجر', amount_micros: 110_000_000, campaign_resources: [C1, C2] }, customer);
   const ops = mut(prepared.action, customer);
@@ -272,11 +272,11 @@ test('shared budget: create applies the budget step, uses a temp id, one atomic 
   await refused('create_shared_budget', { name: 'ميزانية المتجر', amount_micros: 100_000_000, campaign_resources: [C1, C2] }, taken, 'name_taken');
   // Already on a shared budget, unsupported channel, same budget twice.
   await refused('create_shared_budget', { name: 'ميزانية المتجر', amount_micros: 100_000_000, campaign_resources: [C1, C2] },
-    fakeCustomer({ campaigns: { [C1]: { shared: true }, [C2]: { budget: B2 } } }), 'already_shared_budget');
+    fakeCustomer({ campaigns: { [C1]: { shared: true }, [C2]: { bidding: 'TARGET_SPEND', budget: B2 } } }), 'already_shared_budget');
   await refused('create_shared_budget', { name: 'ميزانية المتجر', amount_micros: 100_000_000, campaign_resources: [C1, C2] },
-    fakeCustomer({ campaigns: { [C1]: {}, [C2]: { budget: B2, channel: 'PERFORMANCE_MAX' } } }), 'channel_not_supported');
+    fakeCustomer({ campaigns: { [C1]: { bidding: 'TARGET_SPEND' }, [C2]: { bidding: 'TARGET_SPEND', budget: B2, channel: 'PERFORMANCE_MAX' } } }), 'channel_not_supported');
   await refused('create_shared_budget', { name: 'ميزانية المتجر', amount_micros: 100_000_000, campaign_resources: [C1, C2] },
-    fakeCustomer({ campaigns: { [C1]: { budget: B1 }, [C2]: { budget: B1 } } }), 'budget_not_exclusive');
+    fakeCustomer({ campaigns: { [C1]: { bidding: 'TARGET_SPEND', budget: B1 }, [C2]: { bidding: 'TARGET_SPEND', budget: B1 } } }), 'budget_not_exclusive');
 });
 
 test('shared budget: attach and detach', async () => {
@@ -284,7 +284,7 @@ test('shared budget: attach and detach', async () => {
     /FROM campaign_budget WHERE campaign_budget.resource_name/.test(gaql)
       ? [{ campaignBudget: { resourceName: BS, amountMicros: '100000000', explicitlyShared: true } }]
       : undefined;
-  const customer = fakeCustomer({ campaigns: { [C1]: { budget: B1, amount: '8000000' } }, extra: sharedRow });
+  const customer = fakeCustomer({ campaigns: { [C1]: { budget: B1, amount: '8000000', bidding: 'TARGET_SPEND' } }, extra: sharedRow });
   const prepared = await prepare('attach_shared_budget', { budget_resource: BS, campaign_resources: [C1] }, customer, BS);
   const ops = mut(prepared.action, customer);
   assert.deepEqual(ops, [{ campaign_operation: { update: { resource_name: C1, campaign_budget: BS }, update_mask: 'campaignBudget' } }]);
@@ -292,7 +292,7 @@ test('shared budget: attach and detach', async () => {
   assert.deepEqual(rb[0].campaign_operation.update, { resource_name: C1, campaign_budget: B1 });
 
   // Joining with a campaign that has a much larger own budget cuts capacity too far.
-  const big = fakeCustomer({ campaigns: { [C1]: { budget: B1, amount: '90000000' } }, extra: sharedRow });
+  const big = fakeCustomer({ campaigns: { [C1]: { budget: B1, amount: '90000000', bidding: 'TARGET_SPEND' } }, extra: sharedRow });
   await refused('attach_shared_budget', { budget_resource: BS, campaign_resources: [C1] }, big, 'budget_step_too_large', BS);
 
   const detachCustomer = fakeCustomer({ campaigns: { [C1]: { budget: BS, amount: '100000000', shared: true } } });

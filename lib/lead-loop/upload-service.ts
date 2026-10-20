@@ -130,7 +130,7 @@ export async function uploadLeadConversions({
     p_max_attempts: MAX_UPLOAD_ATTEMPTS,
   });
   if (claimError) throw claimError;
-  const claimed: Array<UploadableLead & { upload_attempts: number }> = (claimedRows ?? []).map((row: any) => ({
+  const claimed: Array<UploadableLead & { upload_attempts: number; upload_channel?: string }> = (claimedRows ?? []).map((row: any) => ({
     ...row,
     value_sar: row.value_sar === null || row.value_sar === undefined ? null : Number(row.value_sar),
   }));
@@ -183,7 +183,12 @@ export async function uploadLeadConversions({
     let lastError: unknown = null;
     const leadsToSend = sendable.filter((lead) => built.leadIds.includes(lead.id));
 
-    for (const channel of order) {
+    // A row whose Data Manager request was attempted never changes channel on retry.
+    const pinned = claimed.some((row) => row.upload_channel === 'data_manager');
+    if (pinned && (!channels || !channels.dataManagerAvailable)) {
+      lastError = new DataManagerError(401, 'UNAUTHENTICATED', 'Pinned rows require their Data Manager grant');
+    }
+    for (const channel of pinned ? order.filter((c) => c === 'data_manager') : order) {
       try {
         if (channel === 'legacy') {
           const response = await transport({
@@ -196,6 +201,9 @@ export async function uploadLeadConversions({
           }
           outcomes = interpretUploadResponse(response, built.leadIds);
         } else {
+          const { error: pinError } = await db.from('lead_clicks').update({ upload_channel: 'data_manager' })
+            .eq('account_id', account.id).in('id', built.leadIds);
+          if (pinError) throw pinError;
           const sent = await sendViaDataManager({
             channels: channels!,
             account,
@@ -215,7 +223,9 @@ export async function uploadLeadConversions({
           summary.legacyBlocked = true;
           continue;
         }
-        if (channel === 'data_manager' && isDataManagerAccessError(error)) continue;
+        // The channel was pinned before the request. Even an access failure must
+        // retry here: an earlier attempt may have accepted some rows.
+        if (channel === 'data_manager') break;
         break;
       }
     }
@@ -223,7 +233,7 @@ export async function uploadLeadConversions({
     if (!outcomes) {
       const reasonError = lastError ?? new Error('No upload channel is available');
       // Nothing can be sent until the merchant grants (or re-grants) the Data Manager scope.
-      const needsGrant = Boolean(channels) && (isLegacyBlockedError(reasonError) || isDataManagerAccessError(reasonError));
+      const needsGrant = isDataManagerAccessError(reasonError) || (Boolean(channels) && isLegacyBlockedError(reasonError));
       const message = needsGrant ? `${isLegacyBlockedError(reasonError) ? LEGACY_BLOCKED_CODE : 'DATA_MANAGER_ACCESS'}: grant the Data Manager scope` : describe(reasonError);
       summary.status = needsGrant ? 'needs_data_manager_grant' : 'request_failed';
       summary.error = message;
@@ -355,8 +365,9 @@ async function sendViaDataManager({
       throw error;
     }
     const outcomes: RowOutcome[] = [];
+    let stopped = false;
     for (const [index, leadId] of built.leadIds.entries()) {
-      if (index >= ISOLATE_LIMIT) {
+      if (stopped || index >= ISOLATE_LIMIT) {
         outcomes.push({ leadId, outcome: 'retry', code: 'BATCH_REFUSED', message: 'Waiting for the bad row in the batch to be isolated' });
         continue;
       }
@@ -366,13 +377,14 @@ async function sendViaDataManager({
         continue;
       }
       try {
-        await sender(one.request);
-        outcomes.push({ leadId, outcome: 'uploaded' });
+        const response = await sender(one.request);
+        outcomes.push(...interpretIngestResponse(response, one.leadIds));
       } catch (rowError) {
         if (isDataManagerInvalidRequest(rowError)) {
           outcomes.push({ leadId, outcome: 'failed', code: 'INVALID_ARGUMENT', message: describe(rowError).slice(0, 300) });
         } else if (isDataManagerAccessError(rowError)) {
-          throw rowError;
+          stopped = true;
+          outcomes.push({ leadId, outcome: 'retry', code: 'DATA_MANAGER_ACCESS', message: 'Retry unsent rows on Data Manager after reconnecting' });
         } else {
           outcomes.push({ leadId, outcome: 'retry', code: 'TRANSIENT_ERROR', message: describe(rowError).slice(0, 300) });
         }

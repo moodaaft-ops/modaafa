@@ -47,7 +47,7 @@ async function load(db: Db, id: string): Promise<TokenRow | null> {
 export async function getStoreAccessToken(
   db: Db,
   connectionId: string,
-  cfg: StoreOAuthConfig,
+  cfg: StoreOAuthConfig | { platform: 'shopify' },
   deps: RefreshDeps = {}
 ): Promise<string | null> {
   const now = deps.now ?? (() => new Date());
@@ -57,6 +57,10 @@ export async function getStoreAccessToken(
   for (let i = 0; i < attempts; i++) {
     const row = await load(db, connectionId);
     if (!row || row.status !== 'active' || !row.access_token_encrypted) return null;
+    if (cfg.platform === 'shopify') {
+      // Offline Shopify tokens have no expiry and never use the refresh lease.
+      return row.token_expires_at === null ? decrypt(row.access_token_encrypted) : null;
+    }
     if (!needsRefresh(row, now())) return decrypt(row.access_token_encrypted);
     if (!row.refresh_token_encrypted) return null;
 

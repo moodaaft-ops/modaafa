@@ -1,3 +1,4 @@
+import { shoppingHistoryEnabled, saveFeedSnapshot } from '../shopping/history';
 /**
  * Reads for the morning guard. The hourly sync stores only 30 day, 7 day and
  * today totals per campaign (campaigns_cache), which cannot tell yesterday from
@@ -408,6 +409,10 @@ export async function loadSignals(args: {
   if (shopping && shopping.ok) {
     ok.shopping = true;
     base.shopping = shopping.value;
+    if (shoppingHistoryEnabled()) {
+      try { base.shoppingPrevious = await saveFeedSnapshot(supabase, account.id, today, shopping.value); }
+      catch { base.shoppingPrevious = null; }
+    }
   }
   return base;
 }

@@ -1,3 +1,4 @@
+import { ZidWebhookSection } from './zid-webhook-section';
 import { createAdminClient, createServerClient } from '@/lib/supabase/server';
 import { grantStatuses } from '@/lib/google-auth/store';
 import { buildConnectionsView, connectionsReads, type StoreRow } from '@/lib/settings/connections';
@@ -102,6 +103,7 @@ export async function ConnectionsSection({
           </li>
         ))}
       </ul>
+      <ZidWebhookSection />
     </section>
   );
 }

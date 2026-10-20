@@ -47,6 +47,7 @@ export function isAmbiguousGoogleAdsMutationError(error: unknown): boolean {
       name === 'AbortError' ||
       name === 'FetchError' ||
       name === 'APIConnectionError' ||
+      name === 'PartialAudienceUploadError' ||
       AMBIGUOUS_NETWORK_CODES.has(code)
     ) {
       return true;
@@ -100,7 +101,8 @@ export async function prepareActionForExecution(action: OptimizerAction, custome
     const { from_budget_resource: from, to_budget_resource: to, shift_micros: shift } = read.value;
     const live = async (resource: string) => {
       const rows = await customer.query(`
-        SELECT campaign_budget.resource_name, campaign_budget.amount_micros
+        SELECT campaign_budget.resource_name, campaign_budget.amount_micros,
+          campaign_budget.reference_count, campaign_budget.explicitly_shared
         FROM campaign_budget
         WHERE campaign_budget.resource_name = '${escapeGaql(resource)}'
         LIMIT 1
@@ -108,6 +110,11 @@ export async function prepareActionForExecution(action: OptimizerAction, custome
       const budget = rows[0]?.campaignBudget ?? rows[0]?.campaign_budget;
       const amount = Number(budget?.amountMicros ?? budget?.amount_micros ?? 0);
       if (!Number.isSafeInteger(amount) || amount <= 0) throw new Error('Unable to read current campaign budget before execution');
+      const references = Number(budget?.referenceCount ?? budget?.reference_count);
+      const shared = budget?.explicitlyShared ?? budget?.explicitly_shared;
+      if (!Number.isSafeInteger(references) || references !== 1 || shared !== false) {
+        throw new Error('Budget shift requires two unshared single-campaign budgets');
+      }
       return amount;
     };
     const [fromAmount, toAmount] = [await live(from), await live(to)];

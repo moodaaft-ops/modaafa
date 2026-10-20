@@ -1,3 +1,4 @@
+import { assertShiftBudgetsUnchanged } from '@/lib/autopilot/shift-live';
 import { autonomyLevelsEnabled } from '@/lib/autopilot/autonomy';
 import { evaluatePairAmounts, evaluatePairGate, readShiftParams } from '@/lib/autopilot/budget-shift';
 import { isShadowAccount } from '@/lib/shadow/guard';
@@ -1119,8 +1120,10 @@ export async function executeAction(
 
     case 'shift_budget_pair': {
       if (!autonomyLevelsEnabled()) throw new Error('Budget shift is disabled');
-      // ONE mutate request carrying both budgets: Google applies both or neither.
+      // Re-read immediately before BOTH validateOnly and mutate: preflight can be minutes old.
       const p = action.params as any;
+      await assertShiftBudgetsUnchanged(client, p);
+      // ONE mutate request carrying both budgets: Google applies both or neither.
       const pair = evaluatePairAmounts({
         from: String(p.from_budget_resource),
         to: String(p.to_budget_resource),

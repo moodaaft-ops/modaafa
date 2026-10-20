@@ -1,3 +1,5 @@
+import { structureProposalsEnabled, readStructureProposals, queueStructureProposals } from '@/lib/structure/proposals';
+import { readExpansionGeo } from '@/lib/ai/expansion-geo';
 import { NextRequest, NextResponse } from 'next/server';
 import { buildExpansionRecommendation, detectExpansionIdeas, EXPANSION_OPERATION, expansionIdeasEnabled, objectiveFromGoal } from '@/lib/ai/expansion';
 import { loadBuilderSignals } from '@/lib/ai/builder-signals';
@@ -947,6 +949,7 @@ async function runOptimizerCron(req: NextRequest) {
         try {
           const queued = await maybeQueueExpansionIdea({
             supabase,
+            geo: await readExpansionGeo(customer),
             accountId: account.id,
             snapshot,
             terms: mapConvertingTermRows(snapshot.converting_search_terms ?? []),
@@ -958,6 +961,13 @@ async function runOptimizerCron(req: NextRequest) {
         } catch (expansionError) {
           console.warn(`Expansion idea detection failed for ${account.customer_id}`, expansionError);
         }
+      }
+
+      if (structureProposalsEnabled() && !budget.expired()) {
+        try {
+          const proposals = await readStructureProposals(customer, account.customer_id, snapshot.conversion_tracking?.status === 'healthy');
+          await queueStructureProposals(supabase, account.id, proposals);
+        } catch (error) { console.warn('Structure proposals unavailable', { account_id: account.id, error: error instanceof Error ? error.message : 'unknown' }); }
       }
 
       // ---- Ad copy cards: replace LOW assets, add missing assets. Queued for approval only.
@@ -1583,25 +1593,9 @@ async function buildOptimizerSnapshot(
 
 const OPPORTUNITY_COOLDOWN_MS = 14 * 24 * 60 * 60 * 1000;
 
-/**
- * Queue a "winning search terms" recommendation when the converting-terms pool
- * justifies one. What it suggests follows the opportunity's own mode (titan
- * 3.5 and 20.3): Exact keywords inside the ad group that already earns the
- * terms, and a separate campaign only from 30 conversions in 30 days. The
- * expected impact is the terms' measured cost and conversions, never a
- * percentage, and the conversion value is left out when the account never set
- * one (see buildOpportunityRecommendation).
- *
- * Deduped two ways: a stable fingerprint blocks a second ACTIVE opportunity, and
- * a 14-day cooldown (any status, including dismissed) stops the platform from
- * re-nagging an owner who said no. An opportunity still pending after the
- * cooldown is stale (hidden from the lists) and holds the fingerprint, so it is
- * renewed in place with the new numbers.
- *
- * Returns 'created', 'renewed', or false when nothing was queued.
- */
 async function maybeQueueExpansionIdea({
   supabase,
+  geo,
   accountId,
   snapshot,
   terms,
@@ -1614,12 +1608,10 @@ async function maybeQueueExpansionIdea({
   terms: ReturnType<typeof mapConvertingTermRows>;
   goal: string | null;
   currencyCode: string;
+  geo: Awaited<ReturnType<typeof readExpansionGeo>>;
 }): Promise<'created' | 'renewed' | false> {
-  // Geo rows are not read by the nightly snapshot yet: the geo idea needs the
-  // geo report plus the targeted-location list, so it stays off until that read
-  // is verified live (docs/mb-upgrade/uxgaps.md).
   const signals = await loadBuilderSignals({ supabase, admin: supabase, accountId });
-  const ideas = detectExpansionIdeas({ snapshot, geo: null, terms, signals, objective: objectiveFromGoal(goal) });
+  const ideas = detectExpansionIdeas({ snapshot, geo, terms, signals, objective: objectiveFromGoal(goal) });
   const idea = ideas[0];
   if (!idea) return false;
 
@@ -1652,6 +1644,23 @@ async function maybeQueueExpansionIdea({
   return 'created';
 }
 
+/**
+ * Queue a "winning search terms" recommendation when the converting-terms pool
+ * justifies one. What it suggests follows the opportunity's own mode (titan
+ * 3.5 and 20.3): Exact keywords inside the ad group that already earns the
+ * terms, and a separate campaign only from 30 conversions in 30 days. The
+ * expected impact is the terms' measured cost and conversions, never a
+ * percentage, and the conversion value is left out when the account never set
+ * one (see buildOpportunityRecommendation).
+ *
+ * Deduped two ways: a stable fingerprint blocks a second ACTIVE opportunity, and
+ * a 14-day cooldown (any status, including dismissed) stops the platform from
+ * re-nagging an owner who said no. An opportunity still pending after the
+ * cooldown is stale (hidden from the lists) and holds the fingerprint, so it is
+ * renewed in place with the new numbers.
+ *
+ * Returns 'created', 'renewed', or false when nothing was queued.
+ */
 async function maybeQueueCampaignOpportunity({
   supabase,
   accountId,

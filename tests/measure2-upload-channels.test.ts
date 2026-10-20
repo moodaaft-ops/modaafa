@@ -49,6 +49,10 @@ function fakeDb(claimed: any[]) {
     },
     from(table: string) {
       return {
+        select() {
+          const q: any = { eq() { return q; }, in() { return q; }, then(resolve: any) { resolve({ data: claimed, error: null }); } };
+          return q;
+        },
         update(patch: any) {
           const filters: Record<string, unknown> = {};
           const q: any = {
@@ -187,16 +191,17 @@ test('service: with channels the Data Manager goes first, legacy is not touched,
   assert.ok(db.updates.some((u) => u.table === 'lead_loop_settings' && u.patch.last_upload_channel === 'data_manager'));
 });
 
-test('service: Data Manager access error falls back to legacy, which still works for this token', async () => {
+test('service: an attempted Data Manager batch stays pinned after an access error', async () => {
   const db = fakeDb([{ ...lead({ id: 'a' }), upload_attempts: 0 }]);
   const summary = await uploadLeadConversions({
     db, account, settings: { conversion_action_resource: RES }, findConversionAction: async () => null, now: NOW,
     transport: async () => ({ results: [{ gclid: 'x' }] }),
     channels: dmChannels(async () => { throw new DataManagerError(403, 'PERMISSION_DENIED', 'insufficient scopes'); }),
   });
-  assert.equal(summary.status, 'ok');
-  assert.equal(summary.channel, 'legacy');
-  assert.equal(summary.uploaded, 1);
+  assert.equal(summary.status, 'needs_data_manager_grant');
+  assert.equal(summary.channel, undefined);
+  assert.equal(summary.uploaded, 0);
+  assert.ok(db.updates.some((u) => u.patch.upload_channel === 'data_manager'));
 });
 
 test('service: with a grant the blocked legacy API is never reached, and a legacy block seen mid-run falls through to Data Manager when it is second', async () => {
@@ -208,8 +213,8 @@ test('service: with a grant the blocked legacy API is never reached, and a legac
     channels: dmChannels(async () => { throw new DataManagerError(401, 'UNAUTHENTICATED', 'expired'); }),
   });
   assert.equal(summary.status, 'needs_data_manager_grant');
-  assert.equal(summary.legacyBlocked, true);
-  assert.ok(db.updates.some((u) => u.table === 'lead_loop_settings' && u.patch.legacy_blocked_at === NOW.toISOString()));
+  assert.equal(summary.legacyBlocked, undefined);
+  assert.equal(db.updates.some((u) => u.patch.legacy_blocked_at), false);
 });
 
 test('service: no grant and legacy refuses with the allowlist error asks for the grant, leads stay waiting, block is recorded', async () => {
@@ -305,4 +310,19 @@ test('flag off parity: without channels the summary has no channel keys and the 
     transport: async () => { throw legacyBlocked(); },
   });
   assert.equal(blocked.status, 'request_failed');
+});
+
+test('partial isolation preserves sent rows, retries only unsent rows and never falls through to legacy', async () => {
+  const db = fakeDb(['a','b','c'].map((id) => ({...lead({id}),upload_attempts:0})));
+  let legacy = 0; let dm=0;
+  const summary = await uploadLeadConversions({ db, account, settings:{conversion_action_resource:RES}, findConversionAction:async()=>null, now:NOW,
+    transport:async()=>{legacy++;return {};}, channels:dmChannels(async(request)=>{dm++;if(request.events.length>1)throw new DataManagerError(400,'INVALID_ARGUMENT','isolate');if(request.events[0].transactionId==='b')throw new DataManagerError(403,'PERMISSION_DENIED','revoked');return {requestId:'accepted-a'};}) });
+  assert.equal(summary.uploaded,1);assert.equal(summary.retried,2);assert.equal(legacy,0);assert.equal(dm,3);
+  const uploaded=db.updates.find((u)=>u.patch.upload_status==='uploaded');assert.deepEqual(uploaded?.filters.id,['a']);
+  const pending=db.updates.filter((u)=>u.patch.upload_status==='pending');assert.deepEqual(pending.map((u)=>u.filters.id),['b','c']);
+});
+test('a previously pinned row cannot retry through legacy when the Data Manager grant is absent',async()=>{
+  const db=fakeDb([{...lead({id:'pinned'}),upload_attempts:1,upload_channel:'data_manager'}]);let legacy=0;
+  const summary=await uploadLeadConversions({db,account,settings:{conversion_action_resource:RES},findConversionAction:async()=>null,now:NOW,transport:async()=>{legacy++;return {};},channels:dmChannels(async()=>({}),{dataManagerAvailable:false})});
+  assert.equal(legacy,0);assert.equal(summary.status,'needs_data_manager_grant');
 });

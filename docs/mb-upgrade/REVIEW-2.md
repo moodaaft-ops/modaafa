@@ -66,6 +66,10 @@ Fix: a separate switch `AUTONOMY_BUDGET_SHIFT_AUTO_ENABLED` (default off, in `.e
 1. Turning on `AUTONOMY_BUDGET_SHIFT_AUTO_ENABLED` needs new level copy and consent from the merchants already on the small level (and REVIEW.md L1 still applies).
 2. Zid: create each webhook with the per-store `s=` value, and accept that Zid deliveries have no body integrity.
 
+## Production completion follow-up
+
+The previously open Low findings L2 through L7 are resolved in [PRODUCTION-COMPLETION.md](./PRODUCTION-COMPLETION.md). Findings above preserve the original review evidence. Customer Match now has an approval-only Data Manager transport, gated by separate scope consent and feature flags.
+
 ## Files changed in this review
 `lib/autopilot/autonomy.ts`, `lib/stores/signature.ts`, `app/api/webhooks/zid/route.ts`, `app/(dashboard)/settings/connections-section.tsx`, `lib/settings/connections.ts`, `lib/ai/rollback-scope.ts`, `db/migrations/20261020_store_orders.sql`, `db/migrations/20261020_store_token_lease.sql` (comment), `db/migrations/20261020_google_scope_grants_and_channels.sql`, `.env.example`, `docs/mb-upgrade/measure2.md`, `tests/uxgaps-budget-shift.test.ts`, `tests/measure2-stores-google.test.ts`, `tests/measure2-stores-wired.test.ts`.
 

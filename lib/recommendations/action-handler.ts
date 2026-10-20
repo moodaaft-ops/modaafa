@@ -1,3 +1,4 @@
+import { isGrowthOperation, growthOperationEnabled } from '@/lib/growth/flags';
 import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'node:crypto';
 import { createAdminClient, createServerClient } from '@/lib/supabase/server';
@@ -237,7 +238,13 @@ async function executeApprovedRecommendation(
     return NextResponse.redirect(new URL(`${next}?error=approve_before_execution`, req.url), 303);
   }
 
-  const action = buildExecutableAction(recommendation.action_payload, recommendation);
+  // Growth payloads require the selected customer ID, which is established by
+  // the owned account read below. This preliminary value is used ONLY for expiry;
+  // every execution still passes buildExecutableAction with that trusted ID.
+  const operation = recommendation.action_payload?.operation;
+  const action = isGrowthOperation(operation) && growthOperationEnabled(operation)
+    ? { type: operation } as OptimizerAction
+    : buildExecutableAction(recommendation.action_payload, recommendation);
   if (!action) {
     await admin.from('ai_actions').insert({
       account_id: recommendation.account_id,

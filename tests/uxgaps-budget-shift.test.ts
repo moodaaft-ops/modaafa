@@ -321,7 +321,7 @@ function budgetCustomer(amounts: Record<string, number>) {
     mutations,
     async query(gaql: string) {
       for (const [resource, amount] of Object.entries(amounts)) {
-        if (gaql.includes(resource)) return [{ campaign_budget: { resource_name: resource, amount_micros: String(amount) } }];
+        if (gaql.includes(resource)) return [{ campaign_budget: { resource_name: resource, amount_micros: String(amount), reference_count: '1', explicitly_shared: false } }];
       }
       return [];
     },
@@ -396,7 +396,7 @@ test('execute and rollback refuse malformed input and the flag being off', async
     await assert.rejects(executeAction(pairAction(), budgetCustomer({})), /disabled/);
   });
   await withFlagAsync('true', async () => {
-    await assert.rejects(executeAction(pairAction({ shift_micros: 90_000_000 }), budgetCustomer({})), /refused/);
+    await assert.rejects(executeAction(pairAction({ shift_micros: 90_000_000 }), budgetCustomer({})), /refused|changed or became shared/);
     await assert.rejects(executeRollback({ action_type: BUDGET_SHIFT_OPERATION, changes: [] }, budgetCustomer({})), /unavailable/);
   });
 });

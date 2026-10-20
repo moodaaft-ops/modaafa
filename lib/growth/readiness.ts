@@ -1,3 +1,4 @@
+import { settingNumber } from './owner-settings';
 import { pickNum, pickStr, safeQuery, type GrowthCustomer } from './types';
 
 /**
@@ -18,7 +19,7 @@ export type BiddingChoice = 'MAXIMIZE_CLICKS' | 'MAXIMIZE_CONVERSIONS' | 'TARGET
  */
 export const STRATEGY_MIN_CONVERSIONS_30D: Readonly<Record<BiddingChoice, number>> = {
   MAXIMIZE_CLICKS: 0,
-  MAXIMIZE_CONVERSIONS: 10,
+  MAXIMIZE_CONVERSIONS: settingNumber('MAXIMIZE_CONVERSIONS_MIN_30D', 10, 10, 1000),
   TARGET_CPA: 50,
 };
 
