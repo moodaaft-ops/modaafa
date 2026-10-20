@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerClient } from '@/lib/supabase/server';
-import { createCheckoutSession, ensureStripeCustomer } from '@/lib/billing/stripe';
+import { createAdminClient, createServerClient } from '@/lib/supabase/server';
+import { arabicCheckoutStripe, createCheckoutSession, ensureStripeCustomer } from '@/lib/billing/stripe';
+import { refereeGiftPromotion } from '@/lib/partners/gift';
+
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 import {
   checkoutTrialDecision,
@@ -82,6 +84,12 @@ export async function POST(req: NextRequest) {
       email: user.email!,
       existingCustomerId: billing.stripeCustomerId,
     });
+    // A customer who came through a partner link gets the welcome discount when one
+    // is configured (null in every other case, and it never blocks the checkout).
+    const gift = await refereeGiftPromotion(
+      { getDb: createAdminClient, stripe: arabicCheckoutStripe },
+      { userId: user.id, customerId },
+    );
     const session = await createCheckoutSession({
       userId: user.id,
       email: user.email!,
@@ -93,7 +101,8 @@ export async function POST(req: NextRequest) {
       cancelUrl: fromOnboarding ? `${baseUrl}/onboarding/trial?canceled=1` : `${baseUrl}/billing?canceled=1`,
       trialDays: trialDecision.trialDays,
       customerId,
-      idempotencyKey: checkoutIdempotencyKey(user.id, plan, period),
+      promotionCodeId: gift?.id ?? null,
+      idempotencyKey: checkoutIdempotencyKey(user.id, plan, period, gift?.id ?? null),
     });
 
     if (!session.url) throw new Error('Stripe checkout session did not return a URL');
@@ -104,11 +113,11 @@ export async function POST(req: NextRequest) {
   }
 }
 
-function checkoutIdempotencyKey(userId: string, plan: string, period: string) {
+function checkoutIdempotencyKey(userId: string, plan: string, period: string, promotionCodeId: string | null = null) {
   // Same 15-minute bucket as /api/billing/checkout so the two entry points
   // cannot produce two sessions for the same intent.
   const bucket = Math.floor(Date.now() / (15 * 60 * 1000));
   return createHash('sha256')
-    .update(`modaafa-checkout:${userId}:${plan}:${period}:${bucket}`)
+    .update(`modaafa-checkout:${userId}:${plan}:${period}:${bucket}${promotionCodeId ? `:${promotionCodeId}` : ''}`)
     .digest('hex');
 }

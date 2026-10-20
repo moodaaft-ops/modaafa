@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerClient } from '@/lib/supabase/server';
-import { createCheckoutSession, ensureStripeCustomer } from '@/lib/billing/stripe';
+import { createAdminClient, createServerClient } from '@/lib/supabase/server';
+import { arabicCheckoutStripe, createCheckoutSession, ensureStripeCustomer } from '@/lib/billing/stripe';
+import { refereeGiftPromotion } from '@/lib/partners/gift';
+
 import { requireAppUrl } from '@/lib/platform/env';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 import { checkoutTrialDecision, getBillingCheckoutContext } from '@/lib/billing/checkout-policy';
@@ -106,6 +108,12 @@ export async function POST(req: NextRequest) {
       existingCustomerId: billing.stripeCustomerId,
     });
 
+    // A customer who came through a partner link gets the welcome discount when one
+    // is configured (null in every other case, and it never blocks the checkout).
+    const gift = await refereeGiftPromotion(
+      { getDb: createAdminClient, stripe: arabicCheckoutStripe },
+      { userId: user.id, customerId },
+    );
     const session = await createCheckoutSession({
       userId: user.id,
       email: user.email!,
@@ -115,7 +123,8 @@ export async function POST(req: NextRequest) {
       cancelUrl: `${baseUrl}/billing?canceled=1`,
       trialDays: trialDecision.trialDays,
       customerId,
-      idempotencyKey: checkoutIdempotencyKey(user.id, plan, period),
+      promotionCodeId: gift?.id ?? null,
+      idempotencyKey: checkoutIdempotencyKey(user.id, plan, period, gift?.id ?? null),
     });
 
     if (isForm && session.url) {
@@ -132,13 +141,13 @@ export async function POST(req: NextRequest) {
   }
 }
 
-function checkoutIdempotencyKey(userId: string, plan: string, period: string) {
+function checkoutIdempotencyKey(userId: string, plan: string, period: string, promotionCodeId: string | null = null) {
   // Bucketed by 15 minutes rather than by wall-clock hour: the old
   // `Math.floor(Date.now() / 3600000)` rolled over at :00, so two identical
   // requests one second apart across the boundary were not idempotent at all.
   // A floating window still collapses the realistic double-submit case.
   const bucket = Math.floor(Date.now() / (15 * 60 * 1000));
   return createHash('sha256')
-    .update(`modaafa-checkout:${userId}:${plan}:${period}:${bucket}`)
+    .update(`modaafa-checkout:${userId}:${plan}:${period}:${bucket}${promotionCodeId ? `:${promotionCodeId}` : ''}`)
     .digest('hex');
 }

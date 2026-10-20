@@ -5,6 +5,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import {
   Activity,
+  Handshake,
   BarChart3,
   CreditCard,
   Megaphone,
@@ -55,6 +56,7 @@ export function SimpleChrome({
   selectedCustomerId,
   isOperator = false,
   showLeads = false,
+  partnersOn = false,
   recentChats = [],
   children,
 }: {
@@ -67,6 +69,8 @@ export function SimpleChrome({
   isOperator?: boolean;
   /** LEAD_LOOP_ENABLED: adds the leads entry; off keeps the list exactly as it was. */
   showLeads?: boolean;
+  /** PARTNERS_ENABLED: adds the partner programme link. */
+  partnersOn?: boolean;
   recentChats?: RecentChat[];
   children: React.ReactNode;
 }) {
@@ -120,8 +124,9 @@ export function SimpleChrome({
       revokedAccounts={revokedAccounts}
       selectedCustomerId={selectedCustomerId}
       items={[
-        ...(showLeads ? [ITEMS[0], { href: '/leads', label: 'ليدز هالأسبوع', icon: MessageCircle }, ...ITEMS.slice(1)] : ITEMS),
-        ...(isOperator ? [{ href: '/operations', label: 'مركز التشغيل', icon: Activity }] : []),
+        ...(showLeads ? [ITEMS[0], { href: '/leads', label: 'ليدز هالأسبوع', icon: MessageCircle } as Item, ...ITEMS.slice(1)] : ITEMS),
+        ...(partnersOn ? [{ href: '/partners', label: 'برنامج الشركاء', icon: Handshake } as Item] : []),
+        ...(isOperator ? [{ href: '/operations', label: 'مركز التشغيل', icon: Activity } as Item] : []),
       ]}
       pathname={pathname}
       activeChat={activeChat}

@@ -9,6 +9,7 @@ import {
   BarChart3,
   Bot,
   CreditCard,
+  Handshake,
   HelpCircle,
   LayoutDashboard,
   Megaphone,
@@ -76,6 +77,7 @@ export function DashboardChrome({
   isOperator = false,
   chatFirst = false,
   showLeads = false,
+  partnersOn = false,
   children,
 }: {
   brandName: string;
@@ -89,6 +91,8 @@ export function DashboardChrome({
   chatFirst?: boolean;
   /** LEAD_LOOP_ENABLED: adds the «ليدز هالأسبوع» entry; off keeps the shell exactly as it was. */
   showLeads?: boolean;
+  /** PARTNERS_ENABLED: adds the partner programme link under the account group. */
+  partnersOn?: boolean;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -108,13 +112,20 @@ export function DashboardChrome({
           : group
       )
     : withStart;
-  const visibleNavGroups = isOperator
+  const withPartners = partnersOn
     ? withLeads.map((group) =>
+        group.label === 'الحساب' && !group.items.some((item) => item.href === '/partners')
+          ? { ...group, items: [...group.items, { href: '/partners', label: 'برنامج الشركاء', icon: Handshake } as NavItem] }
+          : group
+      )
+    : withLeads;
+  const visibleNavGroups = isOperator
+    ? withPartners.map((group) =>
         group.label === 'الحساب'
           ? { ...group, items: [...group.items, { href: '/operations', label: 'مركز التشغيل', icon: Activity } as NavItem] }
           : group
       )
-    : withLeads;
+    : withPartners;
   const [mobileOpen, setMobileOpen] = useState(false);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);

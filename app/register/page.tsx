@@ -8,6 +8,7 @@ import {
   hasMarketingSignal,
   parseAttributionCookie,
 } from '@/lib/registration/attribution';
+import { normalizePartnerCode, partnersEnabled, REF_COOKIE } from '@/lib/partners/config';
 import {
   IN_APP_LABEL_AR,
   buildOpenInBrowserHref,
@@ -51,7 +52,10 @@ async function inAppOffer(searchParams: SearchParams): Promise<InAppOffer | null
     ? fromQuery
     : parseAttributionCookie((await cookies()).get(ATTRIBUTION_COOKIE)?.value);
 
-  const target = buildReopenUrl(appUrl, '/register', attribution);
+  const refCode = partnersEnabled()
+    ? normalizePartnerCode(sp.ref) ?? normalizePartnerCode((await cookies()).get(REF_COOKIE)?.value)
+    : null;
+  const target = buildReopenUrl(appUrl, '/register', attribution, refCode);
   return {
     appLabel: IN_APP_LABEL_AR[inApp.app],
     href: buildOpenInBrowserHref(target, inApp.os),

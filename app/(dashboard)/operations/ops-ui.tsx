@@ -15,7 +15,7 @@ export function OpsTabs({
   active,
   updatedAt,
 }: {
-  active: 'overview' | 'customers' | 'costs' | 'signals' | 'provisioning' | 'handoff' | 'shadow';
+  active: 'overview' | 'customers' | 'costs' | 'signals' | 'provisioning' | 'partners' | 'handoff' | 'shadow';
   updatedAt: string;
 }) {
   const tabs = [
@@ -24,6 +24,7 @@ export function OpsTabs({
     { key: 'costs', href: '/operations/costs', label: 'التكلفة' },
     { key: 'signals', href: '/operations/onboarding-signals', label: 'قراءة الحساب' },
     { key: 'provisioning', href: '/operations/provisioning', label: 'فتح الحسابات' },
+    { key: 'partners', href: '/operations/partners', label: 'الشركاء' },
     // Both tabs exist only while their flag is on.
     ...(agencyHandoffEnabled() ? [{ key: 'handoff', href: '/operations/handoff', label: 'يبون فريق' }] : []),
     ...(shadowModeEnabled() ? [{ key: 'shadow', href: '/operations/shadow', label: 'وضع الظل' }] : []),

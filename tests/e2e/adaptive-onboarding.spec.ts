@@ -434,6 +434,66 @@ test('no ads account: «كمّل بدون حساب» runs the questions, and the
 // «عدّل شي» without an account: the questions again with the current answers marked, and back to «فهمت عليك»
 // ---------------------------------------------------------------------------
 
+test('no website: the tile is worded for the store, opens the offer, and the green button goes to WhatsApp and the chat carries on', async ({ page, baseURL, context }) => {
+  await scenario('adaptive_no_account');
+  await signIn(page, baseURL);
+  const seen = watchRequests(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/onboarding');
+  await expect(page.getByRole('link', { name: 'اربط حساب إعلانات قوقل' })).toBeVisible({ timeout: 20_000 });
+  await pick(page, 'ما عندي حساب إعلانات');
+  await pick(page, 'كمّل بدون حساب، وأجهز لك خطة أول حملة');
+  await expect(page.getByText('وش نوع نشاطك؟')).toBeVisible({ timeout: 20_000 });
+  await pick(page, 'متجر إلكتروني');
+  await expect(page.getByText('وش تبيع بالضبط؟')).toBeVisible({ timeout: 15_000 });
+  await pick(page, 'عطور');
+  await pick(page, 'مدن معيّنة');
+  await pick(page, 'الرياض');
+  await pick(page, /^تم،/);
+  await expect(page.getByText('متى تقول إن الإعلان نجح؟')).toBeVisible({ timeout: 15_000 });
+  await pick(page, 'طلبات شراء من المتجر');
+  await expect(page.getByText('كم تبي تصرف على إعلانات قوقل بالشهر؟')).toBeVisible({ timeout: 15_000 });
+  await pick(page, 'من 3,000 إلى 10,000 ريال');
+
+  // The website step: the tile says «متجر» because they said they run a store.
+  await expect(page.getByText('عندك موقع أو متجر على النت؟')).toBeVisible({ timeout: 15_000 });
+  await noSidewaysOverflow(page);
+  await shot(page, 'no-site-1-tile');
+  await pick(page, 'ما عندي متجر');
+
+  // The offer, in the store's words, and the way on.
+  await expect(page.getByText('تبيع بدون متجر؟ نجهزه لك')).toBeVisible();
+  await expect(page.getByText('الحملة ما تنزل لين المتجر يجهز.')).toBeVisible();
+  const whatsapp = page.getByRole('link', { name: 'كلمنا واتساب عن متجري' });
+  await expect(whatsapp).toHaveAttribute('href', /^https:\/\/wa\.me\/966541004029\?text=/);
+  const href = (await whatsapp.getAttribute('href')) ?? '';
+  const text = new URL(href).searchParams.get('text') ?? '';
+  expect(text).toContain('ما عندي متجر الكتروني');
+  expect(text).toContain('ايميلي في المنصة: qa-tester@example.com');
+  await expect(page.getByRole('button', { name: 'كمّل بدون موقع' })).toBeVisible();
+  await noSidewaysOverflow(page);
+  await shot(page, 'no-site-2-offer');
+
+  // Back to the link box and forward again: nothing was answered by looking.
+  await pick(page, 'عندي رابط، بكتبه');
+  await expect(page.getByPlaceholder('mystore.com')).toBeVisible();
+  await pick(page, 'ما عندي متجر');
+
+  // The click opens WhatsApp in a new tab and the chat moves on.
+  const popup = context.waitForEvent('page');
+  await whatsapp.click();
+  const opened = await popup;
+  expect(opened.url()).toMatch(/wa\.me|whatsapp/);
+  await opened.close();
+  await expect(page.getByText('ما عندي متجر، ابي مضاعف يسوي لي')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText('تمام، أرسل الرسالة وبيردون عليك، وأنا أكمل معك الباقي هنا.')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText('خلصنا. هذا اللي فهمته عنك:')).toBeVisible({ timeout: 20_000 });
+  await shot(page, 'no-site-3-after');
+
+  expect(seen.auditRuns).toEqual([]);
+  expect(seen.errors).toEqual([]);
+});
+
 test('no ads account: «عدّل شي» reopens the questions with the current answers marked, and the edit ends on «فهمت عليك» and the plan', async ({ page, baseURL }) => {
   await scenario('adaptive_no_account');
   await signIn(page, baseURL);

@@ -27,6 +27,8 @@ import {
   subscriptionEventWasApplied,
 } from '@/lib/billing/subscription-events';
 import { recordPaidInvoice } from '@/lib/billing/invoices';
+import { partnersEnabled } from '@/lib/partners/config';
+import { accrueInvoiceCommission, voidInvoiceCommission } from '@/lib/partners/store';
 import {
   arabicWelcomeIdempotencyKey,
   isArabicWelcomeMoment,
@@ -58,6 +60,8 @@ const defaultDependencies = {
   applySubscriptionEvent,
   subscriptionEventWasApplied,
   recordPaidInvoice,
+  accrueInvoiceCommission,
+  voidInvoiceCommission,
   recordUserEvent,
   claimStripeWebhookEvent,
   completeStripeWebhookEvent,
@@ -116,6 +120,9 @@ export function createStripeWebhookHandler(
       }
 
       const eventCreatedAt = new Date(event.created * 1000).toISOString();
+      // A partner-programme failure on a dispute must not delay the cancellation, so
+      // it is raised after the event has been handled and Stripe retries the event.
+      let deferredPartnerError: unknown = null;
 
       switch (event.type) {
         case 'checkout.session.completed': {
@@ -356,6 +363,17 @@ export function createStripeWebhookHandler(
             break;
           }
 
+          // A real dispute takes the money back, so the commission on it goes too.
+          if (partnersEnabled()) {
+            try {
+              const key = await chargeInvoiceKey(dependencies, dispute?.charge);
+              if (key) await dependencies.voidInvoiceCommission(supabase, key, 'dispute', 1);
+            } catch (error) {
+              console.error('[partners] void disputed commission failed', error instanceof Error ? error.message : 'unknown');
+              deferredPartnerError = error;
+            }
+          }
+
           const subscriptionId = await resolveDisputedSubscriptionId(dependencies, dispute);
           if (!subscriptionId) {
             // No subscription on the invoice (or no invoice): a one-off charge
@@ -451,8 +469,34 @@ export function createStripeWebhookHandler(
                 admin: supabase,
                 metadata: { stripe_invoice_id: invoice.id ?? null },
               });
+              // The partner's commission for this payment. Never fails the event:
+              // billing must not depend on the affiliate programme, and the
+              // /api/cron/partner-reconcile sweep earns anything missed here.
+              if (partnersEnabled()) {
+                await partnerStep('accrue commission', () =>
+                  dependencies.accrueInvoiceCommission(supabase, { userId: localSubscription.user_id, invoice }),
+                );
+              }
             }
           }
+          break;
+        }
+
+        // A refund. Only listed when the endpoint sends it: without it, a refunded
+        // invoice keeps its commission until someone voids it by hand from ops
+        // (the dispute path below is unaffected).
+        case 'charge.refunded': {
+          if (!partnersEnabled()) break;
+          const charge = event.data.object as any;
+          const total = Number(charge?.amount ?? 0);
+          const refunded = Number(charge?.amount_refunded ?? 0);
+          // The share of the invoice that was refunded. Nothing known and not marked refunded: nothing to do.
+          const fraction = charge?.refunded === true ? 1 : total > 0 ? Math.min(refunded / total, 1) : 0;
+          if (fraction <= 0) break;
+          // Not swallowed: a refund that fails to void is retried by Stripe, and
+          // nothing else in billing depends on this event.
+          const key = await chargeInvoiceKey(dependencies, charge);
+          if (key) await dependencies.voidInvoiceCommission(supabase, key, 'refund', fraction);
           break;
         }
 
@@ -484,6 +528,7 @@ export function createStripeWebhookHandler(
         }
       }
 
+      if (deferredPartnerError) throw deferredPartnerError;
       await dependencies.completeStripeWebhookEvent(supabase, event.id);
     } catch (error) {
       console.error('Stripe webhook processing failed', {
@@ -593,6 +638,30 @@ async function resolveDisputedSubscriptionId(
       ? charge.invoice
       : await dependencies.retrieveStripeInvoice(invoiceId);
   return invoiceSubscriptionId(invoice);
+}
+
+/** A partner-programme step that must never fail the billing event around it. */
+async function partnerStep(label: string, step: () => Promise<unknown>) {
+  try {
+    await step();
+  } catch (error) {
+    console.error(`[partners] ${label} failed`, error instanceof Error ? error.message : 'unknown');
+  }
+}
+
+/** The key a commission is stored under for the invoice a charge paid: `number ?? id`, as recordPaidInvoice stores it. */
+async function chargeInvoiceKey(dependencies: StripeWebhookDependencies, chargeOrId: unknown) {
+  const chargeId = stripeObjectId(chargeOrId);
+  if (!chargeId) return null;
+  const charge =
+    chargeOrId && typeof chargeOrId === 'object' && 'invoice' in (chargeOrId as object)
+      ? (chargeOrId as any)
+      : await dependencies.retrieveStripeCharge(chargeId);
+  const invoiceId = stripeObjectId(charge?.invoice);
+  if (!invoiceId) return null;
+  const invoice =
+    charge.invoice && typeof charge.invoice === 'object' ? charge.invoice : await dependencies.retrieveStripeInvoice(invoiceId);
+  return (invoice?.number ?? invoice?.id ?? invoiceId) as string;
 }
 
 async function safeOpsAlert(

@@ -38,13 +38,15 @@ test('brand shell: RTL, 600px, paper outside, white card, navy, grey, one yellow
     assert.match(html, /<td height="4" bgcolor="#FBBC04" style="height:4px;/);
   }));
 
-test('brand shell: no forbidden fonts, gradients, shadows, images or flex/grid', () =>
+test('brand shell: no forbidden fonts, gradients, shadows, extra images or flex/grid', () =>
   withEnv(env, () => {
     const { html } = render();
     assert.doesNotMatch(html, /Inter|Reem|Kufi/i);
     assert.doesNotMatch(html, /gradient/i);
     assert.doesNotMatch(html, /box-shadow|text-shadow/i);
-    assert.doesNotMatch(html, /<img|url\(|@import|@font-face/i);
+    assert.doesNotMatch(html, /url\(|@import|@font-face/i);
+    // The lockup is the only image in the whole mail.
+    assert.equal((html.match(/<img/gi) ?? []).length, 1);
     assert.doesNotMatch(html, /display:\s*(flex|grid)/i);
     // Every corner radius is 2px.
     const radii = [...html.matchAll(/border-radius:\s*([^;"]+)/g)].map((m) => m[1].trim());
@@ -61,10 +63,12 @@ test('layout is tables with presentation roles so Gmail and Outlook draw it', ()
     assert.match(html, /<meta charset="utf-8">/);
   }));
 
-test('text wordmark at the top, no remote images', () =>
+test('lockup logo at the top with alt text, hosted PNG, sized for retina', () =>
   withEnv(env, () => {
     const { html } = render();
-    assert.ok(html.indexOf('مُضاعِف') < html.indexOf('هلا سارة،'));
+    assert.ok(html.indexOf('<img') < html.indexOf('هلا سارة،'));
+    assert.match(html, /<img src="[^"]+\/brand\/email\/modaafa-lockup-email\.png" width="150" height="35" alt="مُضاعِف"/);
+    assert.doesNotMatch(html, /\.svg/i);
   }));
 
 test('greeting uses the first name, or a bare greeting when there is none', () =>

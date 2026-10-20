@@ -3,6 +3,8 @@ import { arabicCheckoutStripe, ensureStripeCustomer } from '@/lib/billing/stripe
 import { resolvePromotionCode, startArabicSubscription } from '@/lib/billing/arabic-checkout/flow';
 import { checkoutFailure, describeFailure, fullGate } from '@/lib/billing/arabic-checkout/gate';
 import { finishArabicActivation } from '@/lib/billing/arabic-checkout/finish';
+import { refereeGiftPromotion } from '@/lib/partners/gift';
+import { createAdminClient } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
 
@@ -34,17 +36,38 @@ export async function POST(req: NextRequest) {
       email: gate.user.email,
       existingCustomerId: gate.stripeCustomerId,
     });
+    // A code the customer typed wins. With none, a customer who came through a
+    // partner link gets the welcome discount (null whenever it cannot apply).
     const promotion = promoCode
       ? await resolvePromotionCode(arabicCheckoutStripe, promoCode, { customerId })
-      : null;
+      : await refereeGiftPromotion(
+          { getDb: createAdminClient, stripe: arabicCheckoutStripe },
+          { userId: gate.user.id, customerId },
+        );
 
-    const outcome = await startArabicSubscription(arabicCheckoutStripe, {
-      userId: gate.user.id,
-      customerId,
-      setupIntentId,
-      trialDays: gate.trialDays,
-      promotionCodeId: promotion?.id ?? null,
-    });
+    const start = (promotionCodeId: string | null, idempotencySuffix = '') =>
+      startArabicSubscription(arabicCheckoutStripe, {
+        userId: gate.user.id,
+        customerId,
+        setupIntentId,
+        trialDays: gate.trialDays,
+        promotionCodeId,
+        idempotencySuffix,
+      });
+    let outcome;
+    try {
+      outcome = await start(promotion?.id ?? null);
+    } catch (error) {
+      // Stripe can refuse a code for reasons the lookup cannot see (a minimum
+      // amount, first-purchase only). The welcome gift is a bonus the customer
+      // never asked for, so it must not stop them subscribing: retry once
+      // without it, under its own idempotency key. A code the customer typed
+      // keeps failing loudly, as before.
+      const rejected = (error as { type?: string } | null)?.type === 'StripeInvalidRequestError';
+      if (promoCode || !promotion || !rejected) throw error;
+      console.error('[partners] referee gift rejected by Stripe, retrying without it');
+      outcome = await start(null, ':nogift');
+    }
 
     if (outcome.kind === 'requires_action') {
       // Only the pay-now path gets here: the bank wants a 3D Secure check on the

@@ -20,6 +20,7 @@ const PROTECTED_PATHS = [
   '/onboarding',
   '/autopilot',
   '/operations',
+  '/partners',
   '/welcome',
   '/guide',
   '/leads',

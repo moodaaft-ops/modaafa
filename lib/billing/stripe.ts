@@ -103,9 +103,26 @@ export interface CheckoutParams {
   trialDays?: number;
   customerId?: string | null;
   idempotencyKey?: string;
+  /** A Stripe promotion code id applied up front (the partner welcome discount). */
+  promotionCodeId?: string | null;
 }
 
-export async function createCheckoutSession(params: CheckoutParams) {
+/**
+ * Stripe's hosted Checkout has no Arabic (34 languages, none of them Arabic), so
+ * the labels and the pay button stay English. `custom_text` is the one place we
+ * can put our own Arabic on that page: it sits right under the pay button, so it
+ * says in plain words what pressing it does. Kept short and exact, because a
+ * wrong promise here is a billing dispute.
+ */
+export function hostedCheckoutSubmitMessage(trialDays?: number) {
+  if (trialDays && trialDays > 0) {
+    return `تجربتك المجانية ${trialDays} يوم، وما ينخصم منك شي قبل نهايتها. بعدها يتجدد اشتراكك تلقائياً، وتقدر تلغيه قبل نهاية التجربة من داخل مُضاعِف.`;
+  }
+  return 'بالضغط على الزر يبدأ اشتراكك وينخصم المبلغ مباشرة. يتجدد تلقائياً، وتقدر تلغيه في أي وقت من داخل مُضاعِف.';
+}
+
+/** The Checkout Session parameters for a plan. Pure, so the discount rules can be tested without Stripe. */
+export function buildCheckoutSessionParams(params: CheckoutParams): Stripe.Checkout.SessionCreateParams {
   const priceId = PLAN_PRICE_IDS[params.plan]?.[params.period];
   if (!isConfiguredEnv(priceId)) {
     throw new Error(`Missing Stripe price for plan/period: ${params.plan}/${params.period}`);
@@ -143,7 +160,12 @@ export async function createCheckoutSession(params: CheckoutParams) {
     // Stripe's canonical user-linkage field; makes the Dashboard and every
     // reporting export able to answer "who is this?" without metadata.
     client_reference_id: params.userId,
-    allow_promotion_codes: true,
+    // Stripe refuses `discounts` together with `allow_promotion_codes`: a customer
+    // who arrives with the partner welcome discount cannot also type another code.
+    ...(params.promotionCodeId
+      ? { discounts: [{ promotion_code: params.promotionCodeId }] }
+      : { allow_promotion_codes: true }),
+    custom_text: { submit: { message: hostedCheckoutSubmitMessage(params.trialDays) } },
   };
 
   // Always pass an explicit customer id when we have one. `customer_email` in
@@ -153,6 +175,11 @@ export async function createCheckoutSession(params: CheckoutParams) {
   if (params.customerId) session.customer = params.customerId;
   else session.customer_email = params.email;
 
+  return session;
+}
+
+export async function createCheckoutSession(params: CheckoutParams) {
+  const session = buildCheckoutSessionParams(params);
   return getStripe().checkout.sessions.create(
     session,
     params.idempotencyKey ? { idempotencyKey: params.idempotencyKey } : undefined
@@ -318,8 +345,11 @@ export const REQUIRED_WEBHOOK_EVENTS = [
  * `charge.dispute.created` cancels the subscription of a customer who disputes a
  * payment (stripe-webhook-handler.ts). If the endpoint does not send it,
  * disputes go unhandled silently, so enable it in the Stripe dashboard.
+ *
+ * `charge.refunded` voids the partner commission on a refunded invoice (only used
+ * once PARTNERS_ENABLED=true; harmless to enable before).
  */
-export const RECOMMENDED_WEBHOOK_EVENTS = ['charge.dispute.created'] as const;
+export const RECOMMENDED_WEBHOOK_EVENTS = ['charge.dispute.created', 'charge.refunded'] as const;
 
 /** The events in `wanted` that an endpoint with `enabledEvents` does not send. `*` sends everything. */
 export function missingWebhookEvents<T extends string>(
