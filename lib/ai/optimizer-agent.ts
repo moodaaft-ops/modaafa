@@ -1,4 +1,5 @@
 import { assertShiftBudgetsUnchanged } from '@/lib/autopilot/shift-live';
+import { parseOptimizerResponse } from './optimizer-response';
 import { autonomyLevelsEnabled } from '@/lib/autopilot/autonomy';
 import { evaluatePairAmounts, evaluatePairGate, readShiftParams } from '@/lib/autopilot/budget-shift';
 import { isShadowAccount } from '@/lib/shadow/guard';
@@ -350,9 +351,8 @@ export async function decideOptimizations(
   const textBlock = response.content.find((b: any) => b.type === 'text');
   if (!textBlock || textBlock.type !== 'text') return [];
 
-  const json = textBlock.text.match(/```(?:json)?\s*([\s\S]*?)\s*```/)?.[1] ?? textBlock.text.trim();
   try {
-    const parsed = JSON.parse(json);
+    const parsed = parseOptimizerResponse(textBlock.text) as { actions?: unknown };
     // Validate shape before returning. A single action missing `reason_ar`
     // used to throw at the call site (`.slice` of undefined) and abort every
     // remaining action for that account.

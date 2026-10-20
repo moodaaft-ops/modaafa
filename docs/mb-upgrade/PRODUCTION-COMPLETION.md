@@ -47,9 +47,11 @@ Live SQL verification: all 17 tables exist with RLS enabled. Owner policies are 
 
 scripts/verify-live.ts refuses any Google Ads POST mutation without validateOnly=true. It runs real builders against agency-owned SAR account 3378391742 under manager 7561141000. Report: verify-live-2026-10-20.json.
 
-Coverage: Demand Gen campaign/image/video ads, PMax campaign/asset group, listing-group subdivision, experiment creation, shared budgets, portfolios, exclusions, AI Max, sitelinks, calls, the paired-budget executor, visitor list and image creation. Reads: policy topics, shopping_product fields, asset_automation_settings, expansion geo, structure proposals.
+Coverage: Demand Gen campaign/image/video ads, PMax campaign/asset group, listing-group subdivision, experiment creation and both arms, bidding/landing treatments, shared budgets, portfolios, exclusions, AI Max, sitelinks, calls, the paired-budget executor, visitor list and image creation. All 21 live checks pass. Reads: policy topics, shopping_product fields, asset_automation_settings, expansion geo, structure proposals.
 
-Experiment arms and treatments require an actual live experiment resource. This verification covers experiment creation only; it does not create a serving experiment to manufacture those resources. Image verification supplies controlled PNG bytes to the storage adapter and uses the real Google validateOnly builder; it does not upload merchant files.
+Experiment setup and both arms are validated atomically using a temporary experiment ID. Both treatment builders are validated against existing Search resources without applying changes. The live check found and fixed FIELD_HAS_SUBFIELDS: Maximize Conversions updates require the leaf mask maximize_conversions.target_cpa_micros. Production now validates setup and arms before creating anything. Scheduling, ending and promotion still require a real experiment state; no serving experiment was created solely for this check. Image verification supplies controlled PNG bytes to the storage adapter and uses the real Google validateOnly builder; it does not upload merchant files.
+
+The stage-one guard run considered 73 accounts, checked one and skipped 72 recently checked accounts, with zero failures and no email sent. A separate existing optimizer log showed an explicit empty decision followed by explanatory prose. The parser now accepts that empty decision without generating a parse error; malformed nonempty actions still fail closed.
 
 ## Rollout
 

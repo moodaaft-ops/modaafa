@@ -122,6 +122,25 @@ async function main() {
   await check('visitor_user_list',()=>mutate([buildUserListOperation({kind:'website_visitors',name:`MB validate visitors ${stamp}`,url_contains:'modaafa.com',lookback_days:30})]));
   const tomorrow=new Date(Date.now()+864e5).toISOString().slice(0,10),end=new Date(Date.now()+60*864e5).toISOString().slice(0,10);
   await check('experiment_create',()=>customer.experiments.mutate([experimentCreate({suffix:' | تحقق',start_date:tomorrow,end_date:end} as any,`MB validate experiment ${stamp}`)],{validateOnly:true}));
+  await check('experiment_arms',async()=>{
+    const { experimentSetupOperations }=await import('../lib/experiments/execute');
+    const search=await customer.query("SELECT campaign.resource_name FROM campaign WHERE campaign.advertising_channel_type = 'SEARCH' AND campaign.status != 'REMOVED' LIMIT 1");
+    if(!search[0])throw new Error('BLOCKED: no Search campaign for experiment arms');
+    return mutate(experimentSetupOperations({suffix:' | تحقق',start_date:tomorrow,end_date:end,campaign_resource:pickStr(search[0],'campaign.resource_name'),treatment_split:50} as any,`MB validate arms ${stamp}`,customerId));
+  });
+  await check('experiment_bidding_treatment',async()=>{
+    const { treatmentChangeOperations }=await import('../lib/experiments/execute');
+    const search=await customer.query("SELECT campaign.resource_name FROM campaign WHERE campaign.advertising_channel_type = 'SEARCH' AND campaign.status != 'REMOVED' LIMIT 1");
+    if(!search[0])throw new Error('BLOCKED: no Search campaign for treatment operation shape');
+    return mutate(treatmentChangeOperations({change:{type:'bidding',strategy:'MAXIMIZE_CONVERSIONS'}} as any,pickStr(search[0],'campaign.resource_name'),[]));
+  });
+  await check('experiment_landing_treatment',async()=>{
+    const { treatmentChangeOperations }=await import('../lib/experiments/execute');
+    const ads=await customer.query("SELECT ad_group_ad.ad.resource_name, ad_group_ad.ad.final_urls FROM ad_group_ad WHERE campaign.advertising_channel_type = 'SEARCH' AND ad_group_ad.status != 'REMOVED' AND ad_group_ad.ad.type = 'RESPONSIVE_SEARCH_AD' LIMIT 1");
+    const url=ads[0]?.adGroupAd?.ad?.finalUrls?.[0];
+    if(!url)throw new Error('BLOCKED: no Search ad final URL for treatment operation shape');
+    return mutate(treatmentChangeOperations({change:{type:'landing_page',final_url:url}} as any,'',[pickStr(ads[0],'ad_group_ad.ad.resource_name')]));
+  });
   await check('pmax_listing_groups',async()=>{
     const groups=await customer.query('SELECT asset_group.resource_name FROM asset_group WHERE campaign.advertising_channel_type = \'PERFORMANCE_MAX\' LIMIT 30');
     for(const g of groups){const resource=pickStr(g,'asset_group.resource_name');const roots=await customer.query(`SELECT asset_group_listing_group_filter.resource_name FROM asset_group_listing_group_filter WHERE asset_group_listing_group_filter.asset_group = '${resource}' AND asset_group_listing_group_filter.type = 'UNIT_INCLUDED' LIMIT 1`);if(roots[0]) return mutate(planStructure('subdivide_pmax_listing_group',{asset_group_resource:resource,dimension:'brand',values:['مُضاعفة'],level:1,custom_label_index:null,others:'include'},{customer_id:customerId,asset_group_id:resource.split('/').pop(),root:{resource_name:pickStr(roots[0],'asset_group_listing_group_filter.resource_name')}}).operations);}
