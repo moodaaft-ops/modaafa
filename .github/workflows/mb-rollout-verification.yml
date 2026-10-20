@@ -1,0 +1,55 @@
+name: Media buyer rollout verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      job:
+        description: Run only this production check, without the other scheduled jobs
+        required: true
+        type: choice
+        options:
+          - guard
+          - measurement
+          - monthly-review
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mb-rollout-${{ inputs.job }}
+  cancel-in-progress: false
+
+jobs:
+  verify-production:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Run the selected check with the existing cron credential
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          ROLLOUT_JOB: ${{ inputs.job }}
+        run: |
+          set -eu
+          test -n "$CRON_SECRET"
+          case "$ROLLOUT_JOB" in
+            guard|measurement|monthly-review) ;;
+            *) exit 1 ;;
+          esac
+          # One request, no automatic retry after an ambiguous timeout.
+          code=$(curl --silent --show-error --max-time 310 -o body.json -w '%{http_code}' \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "https://ai.modaafa.com/api/cron/$ROLLOUT_JOB")
+          export RESPONSE_STATUS="$code"
+          node <<'NODE'
+          const fs = require('node:fs');
+          const body = JSON.parse(fs.readFileSync('body.json', 'utf8'));
+          const summary = { http_status: process.env.RESPONSE_STATUS };
+          for (const key of ['status','skipped','reason','checked','processed','scanned','uploaded','reported','failed']) {
+            if (['string','number','boolean'].includes(typeof body[key])) summary[key] = body[key];
+          }
+          if (body.accounts) summary.accounts = body.accounts;
+          if (body.mail) summary.mail = body.mail;
+          if (typeof body.errors === 'number') summary.errors = body.errors;
+          console.log(JSON.stringify(summary));
+          if (!['200','409'].includes(process.env.RESPONSE_STATUS) || Number(body.failed ?? 0) > 0 || Number(body.accounts?.failed ?? 0) > 0 || Number(body.mail?.failed ?? 0) > 0 || (typeof body.errors === 'number' ? body.errors > 0 : Array.isArray(body.errors) && body.errors.length > 0)) process.exitCode = 1;
+          NODE
