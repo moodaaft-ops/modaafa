@@ -79,6 +79,7 @@ export const TRACKING_GATED_ACTIONS: ReadonlySet<string> = new Set([
   'adjust_bid',
   'pause_keyword',
   'pause_ad',
+  'shift_budget_pair',
 ]);
 
 // ---------------------------------------------------------------------------

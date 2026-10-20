@@ -126,7 +126,13 @@ export async function executeAutopilotAction({
       },
       customerId
     );
-    if (!executable || executable.type !== 'add_negative_keyword') {
+    // Only the older conservative gate (negatives) or the autonomy gate (negatives
+    // and keyword pauses, behind AUTONOMY_LEVELS_ENABLED) may reach this point.
+    const allowedType =
+      executable?.type === 'add_negative_keyword' ||
+      ((executable?.type === 'pause_keyword' || (executable?.type as string) === 'shift_budget_pair') &&
+        verdict.code === 'autonomy_approved');
+    if (!executable || !allowedType) {
       throw new Error('Autopilot action failed the account-scoped executable-action boundary');
     }
     const prepared = await prepareActionForExecution(
@@ -313,7 +319,7 @@ async function markFailed(
 
 function categoryForAction(type: string) {
   if (['pause_keyword', 'add_negative_keyword', 'add_keyword'].includes(type)) return 'keywords';
-  if (type === 'adjust_budget') return 'budget';
+  if (type === 'adjust_budget' || type === 'shift_budget_pair') return 'budget';
   if (type === 'adjust_bid') return 'bidding';
   if (type === 'pause_ad') return 'ads';
   return 'structure';

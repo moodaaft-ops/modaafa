@@ -9,11 +9,15 @@ import {
   type OptimizerAction,
 } from '@/lib/ai/optimizer-agent';
 import { buildExecutableAction } from '@/lib/ai/executable-action';
+import { createEnableCard } from '@/lib/launch/recommendation';
 import {
   isAmbiguousGoogleAdsMutationError,
   prepareActionForExecution,
   type MeasurementDescriptor,
 } from '@/lib/ai/execution-preflight';
+import { isExtendedActionsEnabled } from '@/lib/ai/extended-actions/flag';
+import { isExtendedOperation } from '@/lib/ai/extended-actions/types';
+import { readbackExtendedAction } from '@/lib/ai/extended-actions/readback';
 import { finalizeMeasurement, finalizeRollbackPayload } from '@/lib/ai/execution-result';
 import {
   consumeFeatureUsage,
@@ -415,11 +419,15 @@ async function executeApprovedRecommendation(
     }
     mutationApplied = true;
     const appliedAt = new Date().toISOString();
-    const appliedResult = {
+    const appliedResult: Record<string, unknown> = {
       status: 'applied',
       validate_only: 'passed',
       google_ads_result: result,
     };
+    if (isExtendedActionsEnabled() && isExtendedOperation(safe.type)) {
+      // The mutate is already live. The readback only reports whether Google shows it; it never throws.
+      appliedResult.readback = await readbackExtendedAction(safe, customer);
+    }
 
     const { data: actionLog, error: actionLogError } = await admin.from('ai_actions').insert({
       account_id: recommendation.account_id,
@@ -459,6 +467,8 @@ async function executeApprovedRecommendation(
     if (appliedError || !appliedRecommendation) {
       throw new Error(`Unable to mark executed recommendation as applied: ${appliedError?.message ?? 'no row returned'}`);
     }
+
+    if (safe.type === 'launch_campaign') await createEnableCard(admin, recommendation, result);
 
     return NextResponse.redirect(new URL(`${next}?executed=1`, req.url), 303);
   } catch (error) {

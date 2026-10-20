@@ -22,7 +22,8 @@ import { readActivityHint, type ActivityHint } from './adaptive/activity-hint';
 import { isAdaptiveOnboarding } from './adaptive/flag';
 import { emptyLedger, readLedgerEntries } from './ledger';
 import { classifyScenario } from './adaptive/scenario';
-import { sigValue } from './adaptive/shared';
+import { loadGbpHoursEvidence } from '@/lib/google-read/gbp-evidence';
+import { answeredChoice, sigValue } from './adaptive/shared';
 import { LATEST_SIGNALS_MAX_AGE_HOURS, isInsideSignalsTtl, loadLatestSignals } from './adaptive/signals-store';
 import type { AccountSignals, AdaptiveView } from './adaptive/types';
 import { adaptiveAnswered, answeredOnRecord, buildAdaptiveView, isTrackingState } from './adaptive/view';
@@ -272,7 +273,13 @@ export async function loadSetupState(
       });
     }
 
+    // Business Profile hours as evidence next to the call-hours decision (GBP_READ_ENABLED; null otherwise).
+    const gbpEvidence = admin
+      ? await loadGbpHoursEvidence({ db: admin, userId: user.id, callHoursChoice: answeredChoice(adaptiveAnswers, 'call_hours') })
+      : null;
+
     const built = buildAdaptiveView({
+      gbpEvidence,
       signals: storedSignals,
       linkedAccounts: accounts.length,
       accountChosen: Boolean(selectedAccount && !needsChoice),

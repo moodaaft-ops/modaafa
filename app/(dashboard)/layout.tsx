@@ -2,12 +2,15 @@ import { redirect } from 'next/navigation';
 import { createAdminClient, getRequestAuthContext } from '@/lib/supabase/server';
 import { isRegistrationComplete, REGISTRATION_COMPLETE_PATH } from '@/lib/registration/gate';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
+import { isLeadLoopEnabled } from '@/lib/lead-loop/flag';
 import { DashboardChrome } from './dashboard-chrome';
 import { isModaafaOperator } from '@/lib/platform/operators';
 import { isChatFirstEnabled } from '@/lib/chat-first/flag';
 import { partnersEnabled } from '@/lib/partners/config';
 import { readAccessOverrides } from '@/lib/billing/access-overrides';
 import { SuspendedBanner } from './suspended-banner';
+import { AgencyHandoffCard } from './agency-handoff-card';
+import { agencyHandoffEnabled } from '@/lib/handoff/flag';
 import { InstallPrompt } from './install-prompt';
 import { SimpleChrome } from './simple-chrome';
 import { isSimpleExperience } from '@/lib/setup/mode';
@@ -43,6 +46,15 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // business for them.
   if (!business) redirect('/onboarding');
 
+  // AGENCY_HANDOFF_ENABLED off: null, and nothing below changes.
+  const handoffCard = agencyHandoffEnabled() ? (
+    <AgencyHandoffCard
+      supabase={supabase}
+      account={accounts.find((account) => account.customer_id === selectedCustomerId) ?? null}
+      suspended={overrides.suspended}
+    />
+  ) : null;
+
   // The simple experience: a ChatGPT-style sidebar and «مُضاعِف» as the home screen.
   if (isSimpleExperience(process.env, user.email)) {
     const selectedAccount = accounts.find((account) => account.customer_id === selectedCustomerId) ?? null;
@@ -56,10 +68,12 @@ export default async function DashboardLayout({ children }: { children: React.Re
         pausedAccounts={pausedAccounts}
         selectedCustomerId={selectedCustomerId}
         isOperator={isModaafaOperator(user.email)}
+        showLeads={isLeadLoopEnabled(process.env, user.email)}
         partnersOn={partnersEnabled()}
         recentChats={recentChats}
       >
         {overrides.suspended && <SuspendedBanner />}
+        {handoffCard}
         <InstallPrompt />
         {children}
       </SimpleChrome>
@@ -77,8 +91,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
       isOperator={isModaafaOperator(user.email)}
       partnersOn={partnersEnabled()}
       chatFirst={isChatFirstEnabled(process.env, user.email)}
+      showLeads={isLeadLoopEnabled(process.env, user.email)}
     >
       {overrides.suspended && <SuspendedBanner />}
+      {handoffCard}
       <InstallPrompt />
       {children}
     </DashboardChrome>

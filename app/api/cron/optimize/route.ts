@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { buildExpansionRecommendation, detectExpansionIdeas, EXPANSION_OPERATION, expansionIdeasEnabled, objectiveFromGoal } from '@/lib/ai/expansion';
+import { loadBuilderSignals } from '@/lib/ai/builder-signals';
 import { createHash } from 'node:crypto';
+import { isAdsStudioActive, isAdsStudioEnabled } from '@/lib/ads/flag';
+import { isShoppingHealthEnabled } from '@/lib/shopping/flag';
+import { readShoppingHealth } from '@/lib/shopping/reader';
+import { shoppingHealthBlock } from '@/lib/shopping/snapshot';
+import { runAdsStudioProposals } from '@/lib/ads/cron';
 import { actionFingerprint, categoryForAction, severityForAction } from '@/lib/ai/action-fingerprint';
 import { createAdminClient } from '@/lib/supabase/server';
 import { describeError } from '@/lib/supabase/query-errors';
@@ -9,6 +16,7 @@ import { decrypt } from '@/lib/crypto';
 import {
   decideOptimizations,
   checkGuardrails,
+  type OptimizerAction,
   type OptimizerSnapshot,
 } from '@/lib/ai/optimizer-agent';
 import {
@@ -20,7 +28,18 @@ import { loadEconomics } from '@/lib/economics/load';
 import { isStalePendingRecommendation } from '@/lib/recommendations/staleness';
 import type { BreakEven } from '@/lib/economics/break-even';
 import { consumeFeatureUsage } from '@/lib/billing/entitlements';
+import { applyAutonomyLevel, autonomyLevelsEnabled } from '@/lib/autopilot/autonomy';
+import { proposeBudgetShift } from '@/lib/autopilot/budget-shift';
+import { validGoogleAdsResource } from '@/lib/ai/executable-action';
+import { notifyAutoAction } from '@/lib/autopilot/autonomy-notify';
+import { loadAutonomyLevels } from '@/lib/autopilot/autonomy-store';
 import { executeAutopilotAction } from '@/lib/autopilot/executor';
+import { agencyHandoffEnabled } from '@/lib/handoff/flag';
+import { refreshHandoff } from '@/lib/handoff/store';
+import { loadHandoffSignals } from '@/lib/handoff/signals';
+import { loadShadowAccountIds } from '@/lib/shadow/guard';
+import { shadowModeEnabled } from '@/lib/shadow/flag';
+import { recordShadowDecisions } from '@/lib/shadow/store';
 import {
   findBlockingAutopilotRecommendation,
   findPendingDuplicate,
@@ -97,6 +116,9 @@ import {
   OPTIMIZE_ACCOUNT_LIMIT,
 } from '@/lib/platform/job-capacity';
 import { isSnapshotIdle, optimizerCooldownCutoffIso, optimizerCursorStampIso } from '@/lib/ai/optimizer-cost-guards';
+import { applyLoopFilters, EMPTY_LOOPS_CONTEXT } from '@/lib/loops/filter';
+import { isOutcomeMemoryEnabled } from '@/lib/loops/flags';
+import { prepareOptimizerLoops } from '@/lib/loops/snapshot';
 
 /**
  * Cron endpoint - runs hourly via Vercel Cron.
@@ -329,6 +351,12 @@ async function runOptimizerCron(req: NextRequest) {
 
   const accountIds = accounts.map((account) => account.id);
   const settingsByAccount = await loadAutopilotSettings(supabase, accountIds);
+  // AUTONOMY_LEVELS_ENABLED off: null, and the policy verdict below is untouched.
+  // SHADOW_MODE_ENABLED off: null, and no account is treated differently.
+  const shadowAccountIds = shadowModeEnabled() ? await loadShadowAccountIds(supabase, accountIds) : null;
+  const autonomyByAccount = autonomyLevelsEnabled()
+    ? await loadAutonomyLevels(supabase, accountIds)
+    : null;
   const decisionHistoryState = await loadAutopilotDecisionHistory(supabase, accountIds);
   const decisionHistory = decisionHistoryState.byAccount;
 
@@ -435,18 +463,78 @@ async function runOptimizerCron(req: NextRequest) {
         economics
       );
       tallyTrackingVerdict(results.tracking_verdicts, snapshot.conversion_tracking?.status);
+      // Ad copy state for the optimizer, only with the studio flag on (byte-identical otherwise).
+      const adsStudioRead = isAdsStudioEnabled()
+        ? await runAdsStudioProposals.read(customer).catch(() => null)
+        : null;
+      if (adsStudioRead) snapshot.ad_assets = adsStudioRead.block;
+      // Feed health for the optimizer, only with SHOPPING_HEALTH_ENABLED on (byte-identical otherwise).
+      if (isShoppingHealthEnabled()) {
+        const feed = await readShoppingHealth(customer as any);
+        const block = feed ? shoppingHealthBlock(feed) : null;
+        if (block) snapshot.shopping_health = block;
+      }
 
       // Get AI decisions. An account with no spend and no evidence rows gives
       // the model nothing to act on, so we skip the paid call and record a
       // plain no-action instead.
       const idle = isSnapshotIdle(snapshot);
-      const actions = idle
+      // Weekly and monthly loop blocks (n-grams, past outcomes, season calendar,
+      // merchant facts). Every one is behind its own switch; with all of them
+      // off this does no I/O and the snapshot is untouched.
+      const loopsContext = idle
+        ? EMPTY_LOOPS_CONTEXT
+        : await prepareOptimizerLoops({
+            snapshot,
+            customer,
+            supabase,
+            accountId: account.id,
+            businessId: account.business_id,
+            protectedTexts: [account.customer_name, businessContext?.sector],
+          });
+      const proposedActions: OptimizerAction[] = idle
         ? []
         : await decideOptimizations(snapshot, {
             userId: businessContext?.user_id ?? null,
           });
       if (idle) results.skipped_idle++;
       else results.model_calls++;
+
+      // Paired budget shift (small level only, AUTONOMY_LEVELS_ENABLED): rules over the snapshot, no model.
+      // It rides the same guardrails, dedupe, policy and queue as every other proposal.
+      if (!idle && autonomyByAccount?.get(account.id) === 'small_and_notify' && proposedActions.length < 8) {
+        const shift = proposeBudgetShift(
+          snapshot,
+          (value) => validGoogleAdsResource(value, 'campaignBudgets', account.customer_id),
+          account.currency_code ?? 'SAR'
+        );
+        if (shift) proposedActions.push(shift);
+      }
+
+      // Agency shadow account: the proposals are kept for the operator's review
+      // and stop here. They never reach the policy gate, the approval queue or
+      // an executor (checkGuardrails also refuses a shadow account).
+      if (shadowAccountIds?.has(account.id)) {
+        await recordShadowDecisions({
+          admin: supabase,
+          accountId: account.id,
+          jobRunId: job.id,
+          cards: proposedActions.slice(0, 8) as any[],
+        });
+        results.processed++;
+        return;
+      }
+
+      // Bigger-than-the-platform check (AGENCY_HANDOFF_ENABLED). Best effort.
+      if (agencyHandoffEnabled()) {
+        const handoffInput = await loadHandoffSignals({
+          customer: customer as any,
+          snapshot,
+          currencyCode: account.currency_code,
+          suspended: false,
+        });
+        await refreshHandoff({ admin: supabase, accountId: account.id, input: handoffInput });
+      }
 
       const settings =
         settingsByAccount.get(account.id) ?? normalizeAutopilotSettings(account.id);
@@ -457,6 +545,23 @@ async function runOptimizerCron(req: NextRequest) {
       const executedBeforeRun = accountHistory.filter(
         (item) => item.decision === 'executed' && item.created_at >= startOfToday
       ).length;
+
+      // Proposals that repeat a change that measured negative, or that a season
+      // or a fact the owner told us holds back. No-op when the loop switches are off.
+      const loopFilter = applyLoopFilters(proposedActions, loopsContext);
+      for (const dropped of loopFilter.dropped) {
+        tallyReason(results.gate_rejections, { code: dropped.code, action_type: dropped.action.type });
+        await safeRecordAutopilotDecision(results, {
+          supabase,
+          accountId: account.id,
+          jobRunId: job.id,
+          mode: settings.mode,
+          action: dropped.action as AutopilotCandidate,
+          decision: 'blocked',
+          verdict: blockedVerdict(dropped.code, dropped.reason_ar),
+        });
+      }
+      const actions = loopFilter.kept;
 
       if (actions.length === 0) {
         await safeRecordAutopilotDecision(results, {
@@ -580,7 +685,7 @@ async function runOptimizerCron(req: NextRequest) {
         );
         const executedToday =
           executedBeforeRun + (executedThisRun.get(account.id) ?? 0);
-        const verdict = evaluateAutopilotPolicy({
+        const policyContext = {
           settings,
           action,
           trackingStatus: snapshot.conversion_tracking?.status ?? 'unknown',
@@ -590,7 +695,15 @@ async function runOptimizerCron(req: NextRequest) {
           globalExecutionEnabled: allowLiveExecution && decisionHistoryState.available,
           executedToday,
           sameTargetExecutedWithinCooldown,
-        });
+        };
+        const baseVerdict = evaluateAutopilotPolicy({ ...policyContext });
+        const verdict = autonomyByAccount
+          ? applyAutonomyLevel(baseVerdict, {
+              ...policyContext,
+              level: autonomyByAccount.get(account.id) ?? 'ask_all',
+              snapshot,
+            })
+          : baseVerdict;
         const fingerprint = actionFingerprint(account.id, action);
 
         if (verdict.outcome === 'block') {
@@ -728,6 +841,18 @@ async function runOptimizerCron(req: NextRequest) {
             target_id: targetKey,
             created_at: new Date().toISOString(),
           });
+          if (autonomyByAccount && verdict.code === 'autonomy_approved') {
+            await notifyAutoAction(ownerEmail, {
+              actionType: action.type,
+              subject:
+                (action.type as string) === 'shift_budget_pair'
+                  ? 'بين حملتين والإجمالي ما تغير'
+                  : String(action.params.keyword_text ?? action.params.keyword ?? 'كلمة مفتاحية'),
+              campaignName: String(action.params.campaign_name ?? '') || null,
+              reasonAr: action.reason_ar,
+              appUrl: process.env.NEXT_PUBLIC_APP_URL ?? 'https://ai.modaafa.com',
+            });
+          }
           await safeRecordAutopilotDecision(results, {
             supabase,
             accountId: account.id,
@@ -816,10 +941,56 @@ async function runOptimizerCron(req: NextRequest) {
         }
       }
 
+      // ---- Horizontal expansion ideas (EXPANSION_IDEAS_ENABLED, default off).
+      // Recommendation only: the CTA opens the assistant with a brief.
+      if (expansionIdeasEnabled() && !budget.expired()) {
+        try {
+          const queued = await maybeQueueExpansionIdea({
+            supabase,
+            accountId: account.id,
+            snapshot,
+            terms: mapConvertingTermRows(snapshot.converting_search_terms ?? []),
+            goal: businessContext?.primary_goal ?? null,
+            currencyCode: account.currency_code ?? 'SAR',
+          });
+          if (queued) results.opportunities_queued++;
+          if (queued === 'renewed') results.recommendations_renewed++;
+        } catch (expansionError) {
+          console.warn(`Expansion idea detection failed for ${account.customer_id}`, expansionError);
+        }
+      }
+
+      // ---- Ad copy cards: replace LOW assets, add missing assets. Queued for approval only.
+      if (adsStudioRead && isAdsStudioActive() && !budget.expired()) {
+        try {
+          await runAdsStudioProposals.queue({
+            supabase,
+            read: adsStudioRead,
+            customer,
+            accountId: account.id,
+            customerId: account.customer_id,
+            businessId: account.business_id ?? null,
+            customerName: account.customer_name ?? null,
+            sector: businessContext?.sector ?? null,
+            convertingTermRows: snapshot.converting_search_terms ?? [],
+            trackingStatus: snapshot.conversion_tracking?.status ?? null,
+            economics,
+          });
+        } catch (adsError) {
+          console.warn(`Ad assets proposals failed for ${account.customer_id}`, adsError);
+        }
+      }
+
       // ---- Learning loop: measure the real effect of past executed actions.
       if (!budget.expired()) {
         try {
-          const impact = await measureObservedImpacts({ supabase, customer, accountId: account.id, limit: 5 });
+          const impact = await measureObservedImpacts({
+            supabase,
+            customer,
+            accountId: account.id,
+            limit: 5,
+            withBaseline: isOutcomeMemoryEnabled(),
+          });
           results.impacts_measured += impact.measured;
         } catch (impactError) {
           console.warn(`Observed-impact measurement failed for ${account.customer_id}`, impactError);
@@ -1429,6 +1600,58 @@ const OPPORTUNITY_COOLDOWN_MS = 14 * 24 * 60 * 60 * 1000;
  *
  * Returns 'created', 'renewed', or false when nothing was queued.
  */
+async function maybeQueueExpansionIdea({
+  supabase,
+  accountId,
+  snapshot,
+  terms,
+  goal,
+  currencyCode,
+}: {
+  supabase: any;
+  accountId: string;
+  snapshot: any;
+  terms: ReturnType<typeof mapConvertingTermRows>;
+  goal: string | null;
+  currencyCode: string;
+}): Promise<'created' | 'renewed' | false> {
+  // Geo rows are not read by the nightly snapshot yet: the geo idea needs the
+  // geo report plus the targeted-location list, so it stays off until that read
+  // is verified live (docs/mb-upgrade/uxgaps.md).
+  const signals = await loadBuilderSignals({ supabase, admin: supabase, accountId });
+  const ideas = detectExpansionIdeas({ snapshot, geo: null, terms, signals, objective: objectiveFromGoal(goal) });
+  const idea = ideas[0];
+  if (!idea) return false;
+
+  const { data: recent } = await supabase
+    .from('recommendations')
+    .select('id')
+    .eq('account_id', accountId)
+    .gte('created_at', new Date(Date.now() - OPPORTUNITY_COOLDOWN_MS).toISOString())
+    .contains('action_payload', { operation: EXPANSION_OPERATION })
+    .limit(1)
+    .maybeSingle();
+  if (recent) return false;
+
+  const fingerprint = createHash('sha256').update(`${accountId}:${EXPANSION_OPERATION}:${idea.kind}:${idea.key}`).digest('hex');
+  const row = buildExpansionRecommendation(idea, currencyCode);
+  const { error } = await supabase.from('recommendations').insert({ account_id: accountId, fingerprint, ...row, status: 'pending' });
+  if (error) {
+    if (error.code !== '23505') throw error;
+    const { data: held } = await supabase
+      .from('recommendations')
+      .select('id')
+      .eq('account_id', accountId)
+      .eq('fingerprint', fingerprint)
+      .eq('status', 'pending')
+      .limit(1)
+      .maybeSingle();
+    if (!held?.id) return false;
+    return (await renewStalePendingRecommendation(supabase, held.id, row)) ? 'renewed' : false;
+  }
+  return 'created';
+}
+
 async function maybeQueueCampaignOpportunity({
   supabase,
   accountId,

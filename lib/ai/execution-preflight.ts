@@ -1,5 +1,19 @@
+import { BUDGET_SHIFT_OPERATION, evaluatePairAmounts, readShiftParams } from '@/lib/autopilot/budget-shift';
 import type { OptimizerAction } from './optimizer-agent';
+import { isExtendedActionsEnabled } from './extended-actions/flag';
+import { isExtendedOperation } from './extended-actions/types';
+import { prepareExtendedAction } from './extended-actions/preflight';
+import { isGrowthOperation, growthOperationEnabled } from '../growth/flags';
+import { prepareGrowthAction } from '../growth/registry';
 import { cleanNegativeKeywordBatch, NEGATIVE_BATCH_MATCH_TYPES } from './executable-action';
+import { validateDataExclusionParams } from '../measurement/data-exclusion';
+import {
+  findLeadActionQuery,
+  parseFoundLeadAction,
+  validateCreateLeadActionParams,
+  validateSetPrimaryParams,
+} from '../measurement/conversion-actions';
+import { isWhatsappClickAction, LEAD_ACTION_PRIMARY_MIN_30D, LEAD_CONVERSION_ACTION_NAME } from '../measurement/goals';
 
 /** Where and how the nightly measurement pass evaluates an applied action. */
 export type MeasurementDescriptor = {
@@ -62,12 +76,63 @@ function* errorChain(error: unknown) {
 }
 
 export async function prepareActionForExecution(action: OptimizerAction, customer: any) {
+  if (isExtendedOperation(action.type)) {
+    // Flag off: the action never reaches here (buildExecutableAction refuses it); fail closed anyway.
+    if (!isExtendedActionsEnabled()) throw new Error('Extended actions are disabled');
+    return prepareExtendedAction(action, customer, {
+      filterNegativeKeywordBatch,
+      readSevenDayMetrics,
+      normalizeKeywordText,
+    });
+  }
+  if (isGrowthOperation(action.type)) {
+    if (!growthOperationEnabled(action.type)) throw new Error('This growth operation is disabled.');
+    return prepareGrowthAction(action);
+  }
   const params = { ...action.params };
   let rollbackPayload: Record<string, unknown> = { reversible: true };
   const capturedAt = new Date().toISOString();
   let measurement: MeasurementDescriptor | null = null;
 
-  if (action.type === 'adjust_budget') {
+  if ((action.type as string) === BUDGET_SHIFT_OPERATION) {
+    const read = readShiftParams(params, (value) => /^customers\/\d+\/campaignBudgets\/[^/]+$/.test(value));
+    if (!read.ok) throw new Error(`Budget shift is malformed: ${read.code}`);
+    const { from_budget_resource: from, to_budget_resource: to, shift_micros: shift } = read.value;
+    const live = async (resource: string) => {
+      const rows = await customer.query(`
+        SELECT campaign_budget.resource_name, campaign_budget.amount_micros
+        FROM campaign_budget
+        WHERE campaign_budget.resource_name = '${escapeGaql(resource)}'
+        LIMIT 1
+      `);
+      const budget = rows[0]?.campaignBudget ?? rows[0]?.campaign_budget;
+      const amount = Number(budget?.amountMicros ?? budget?.amount_micros ?? 0);
+      if (!Number.isSafeInteger(amount) || amount <= 0) throw new Error('Unable to read current campaign budget before execution');
+      return amount;
+    };
+    const [fromAmount, toAmount] = [await live(from), await live(to)];
+    // The card was made for these numbers. If either budget moved since, the card is stale.
+    if (
+      (read.value.from_current_micros !== undefined && read.value.from_current_micros !== fromAmount) ||
+      (read.value.to_current_micros !== undefined && read.value.to_current_micros !== toAmount)
+    ) {
+      throw new Error('Campaign budgets changed since this shift was proposed');
+    }
+    const pair = evaluatePairAmounts({ from, to, fromAmount, toAmount, shiftMicros: shift });
+    if (!pair.ok) throw new Error(`Budget shift refused on live numbers: ${pair.code}`);
+    params.changes = pair.changes;
+    params.from_current_micros = fromAmount;
+    params.to_current_micros = toAmount;
+    rollbackPayload = {
+      reversible: true,
+      action_type: BUDGET_SHIFT_OPERATION,
+      resource_names: [from, to],
+      changes: [
+        { budget_resource: from, amount_micros: fromAmount },
+        { budget_resource: to, amount_micros: toAmount },
+      ],
+    };
+  } else if (action.type === 'adjust_budget') {
     const resourceName = String(params.budget_resource);
     const rows = await customer.query(`
       SELECT campaign_budget.resource_name, campaign_budget.amount_micros
@@ -204,6 +269,9 @@ export async function prepareActionForExecution(action: OptimizerAction, custome
       action_type: 'remove_created_negative_keyword',
       resource_name_from_result: true,
     };
+  } else if (action.type === 'launch_campaign') {
+    // The created resources only exist after the mutate; the rollback is filled from its result.
+    rollbackPayload = { reversible: true, action_type: 'remove_launched_campaign', launch_result_rollback: true };
   } else if (action.type === 'pause_campaign' || action.type === 'enable_campaign') {
     const campaignResource = action.target_id;
     const rows = await customer.query(`
@@ -272,6 +340,115 @@ export async function prepareActionForExecution(action: OptimizerAction, custome
       before: await readSevenDayMetrics(customer, 'campaign', 'campaign.resource_name', campaignResource),
       captured_at: capturedAt,
     };
+  } else if (action.type === 'add_data_exclusion') {
+    const accountRows = await customer.query(`SELECT customer.time_zone FROM customer LIMIT 1`);
+    const timeZone = accountRows[0]?.customer?.timeZone ?? accountRows[0]?.customer?.time_zone ?? null;
+    const checked = validateDataExclusionParams(params, { now: new Date(), timeZone });
+    if (!checked.ok) throw new Error(`Data exclusion window is not valid now (${checked.code})`);
+    const existing = await customer.query(`
+      SELECT bidding_data_exclusion.resource_name, bidding_data_exclusion.name, bidding_data_exclusion.status
+      FROM bidding_data_exclusion
+    `);
+    let active = 0;
+    for (const row of existing ?? []) {
+      const entry = row?.biddingDataExclusion ?? row?.bidding_data_exclusion;
+      if (String(entry?.status ?? '') === 'REMOVED') continue;
+      active += 1;
+      if (entry?.name === checked.value.name) {
+        throw new Error('A data exclusion with this name already exists; nothing to create.');
+      }
+    }
+    if (active >= 480) throw new Error('The account is close to the 500 data exclusion limit.');
+    rollbackPayload = {
+      reversible: true,
+      action_type: 'remove_created_data_exclusion',
+      resource_name_from_result: true,
+    };
+  } else if (action.type === 'create_lead_conversion_action') {
+    const parsed = validateCreateLeadActionParams(params);
+    if (!parsed.ok) throw new Error('Lead conversion action is malformed');
+    const accountRows = await customer.query(`SELECT customer.currency_code FROM customer LIMIT 1`);
+    const currency = accountRows[0]?.customer?.currencyCode ?? accountRows[0]?.customer?.currency_code ?? null;
+    if (currency && String(currency).toUpperCase() !== parsed.currency_code) {
+      throw new Error(`Account currency is ${currency}, not ${parsed.currency_code}; refusing to create the action.`);
+    }
+    if (parseFoundLeadAction(await customer.query(findLeadActionQuery()))) {
+      throw new Error('The lead conversion action already exists; nothing to create.');
+    }
+    rollbackPayload = {
+      reversible: true,
+      action_type: 'remove_created_conversion_action',
+      resource_name_from_result: true,
+    };
+  } else if (action.type === 'set_conversion_primary') {
+    const parsed = validateSetPrimaryParams(params);
+    if (!parsed.ok) throw new Error('Conversion primary change is malformed');
+    const wanted = [parsed.value.conversion_action_resource, ...parsed.value.demote_resources];
+    const rows = await customer.query(`
+      SELECT conversion_action.resource_name, conversion_action.name, conversion_action.type,
+        conversion_action.status, conversion_action.primary_for_goal
+      FROM conversion_action
+      WHERE conversion_action.resource_name IN (${wanted.map((name) => `'${escapeGaql(name)}'`).join(', ')})
+    `);
+    const byResource = new Map<string, any>();
+    for (const row of rows ?? []) {
+      const entry = row?.conversionAction ?? row?.conversion_action;
+      const resource = String(entry?.resourceName ?? entry?.resource_name ?? '');
+      if (resource) byResource.set(resource, entry);
+    }
+    const flag = (entry: any) => entry?.primaryForGoal ?? entry?.primary_for_goal;
+
+    const target = byResource.get(parsed.value.conversion_action_resource);
+    if (!target || target.name !== LEAD_CONVERSION_ACTION_NAME || target.type !== 'UPLOAD_CLICKS') {
+      throw new Error('Only the lead conversion action can be promoted to primary.');
+    }
+    if (target.status !== 'ENABLED') throw new Error('The lead conversion action is not enabled.');
+    if (flag(target) === true) throw new Error('The lead conversion action is already primary; nothing to change.');
+
+    const volumeRows = await customer.query(`
+      SELECT segments.conversion_action_name, metrics.all_conversions
+      FROM campaign
+      WHERE segments.date DURING LAST_30_DAYS
+    `);
+    let volume = 0;
+    for (const row of volumeRows ?? []) {
+      const name = row?.segments?.conversionActionName ?? row?.segments?.conversion_action_name;
+      if (name === LEAD_CONVERSION_ACTION_NAME) {
+        volume += Number(row?.metrics?.allConversions ?? row?.metrics?.all_conversions ?? 0);
+      }
+    }
+    if (volume < LEAD_ACTION_PRIMARY_MIN_30D) {
+      throw new Error(
+        `The lead conversion action has ${Math.round(volume)} conversions in 30 days; ${LEAD_ACTION_PRIMARY_MIN_30D} are needed first.`
+      );
+    }
+
+    const items: Array<{ resource_name: string; primary_for_goal: boolean }> = [
+      { resource_name: parsed.value.conversion_action_resource, primary_for_goal: false },
+    ];
+    for (const resource of parsed.value.demote_resources) {
+      const entry = byResource.get(resource);
+      const candidate = {
+        name: String(entry?.name ?? ''),
+        type: String(entry?.type ?? ''),
+        status: String(entry?.status ?? ''),
+        primaryForGoal: flag(entry) === true,
+        includeInConversionsMetric: null,
+        category: '',
+        conversions30d: null,
+      };
+      if (!entry || candidate.status !== 'ENABLED' || !candidate.primaryForGoal || !isWhatsappClickAction(candidate)) {
+        throw new Error('Only enabled primary WhatsApp click actions can be demoted together with the promotion.');
+      }
+      items.push({ resource_name: resource, primary_for_goal: true });
+    }
+    rollbackPayload = {
+      reversible: true,
+      action_type: 'restore_conversion_primary',
+      items,
+      resource_names: items.map((item) => item.resource_name),
+    };
+    params.lead_conversions_30d = Math.round(volume * 100) / 100;
   } else if (action.type === 'add_keyword') {
     const keywordText = String(params.keyword_text ?? '').trim();
     const matchType = String(params.match_type ?? '').trim();

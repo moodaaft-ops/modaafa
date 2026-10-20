@@ -1,4 +1,6 @@
 import { ASSISTANT } from '@/lib/assistant/persona';
+import { isBusinessMemoryEnabled } from '@/lib/loops/flags';
+import { SAVE_MERCHANT_CONTEXT_TOOL, saveMerchantContext } from '@/lib/loops/merchant-context';
 import type Anthropic from '@anthropic-ai/sdk';
 import type { AgentRole, LlmCallMeta } from '@/lib/ai/client';
 import { sanitizePromptText } from '@/lib/ai/optimizer-agent';
@@ -14,7 +16,9 @@ import {
   type MemoryFact,
 } from './db-tools';
 import { JARVIS_CORE_RULES_AR, READ_PLAYBOOK_TOOL, type PlaybookIndex } from './playbook';
-import { PREPARE_CHANGE_TOOL, prepareChange, type PrepareContext } from './prepare-change';
+import { PREPARE_CHANGE_TOOL, prepareChange, prepareChangeToolFor, type PrepareContext } from './prepare-change';
+import { isExtendedActionsEnabled } from '@/lib/ai/extended-actions/flag';
+import { isAdsStudioActive } from '@/lib/ads/flag';
 import { JARVIS_READ_TOOLS, runReadTool, type ToolContext } from './tools';
 
 /**
@@ -65,6 +69,8 @@ export type JarvisTurnInput = {
   account: JarvisAccount | null;
   business: JarvisBusiness | null;
   memory: MemoryFact[];
+  /** Open morning-guard findings as account-card lines (lib/guard/read.ts). Empty or absent when the guard is off. */
+  guard?: string[];
   playbook: PlaybookIndex;
   /** 'degraded' = the plan's LLM budget passed 70%: fast model, one tool round. */
   budgetLevel: 'ok' | 'degraded';
@@ -200,6 +206,7 @@ function accountCard(input: JarvisTurnInput) {
     lines.push('اقتراحات مفتوحة تنتظر العميل:');
     for (const r of open) lines.push(`  - ${sanitizePromptText(r.title, 100)} (${r.status === 'approved' ? 'معتمدة' : 'تنتظر'})`);
   }
+  if (input.guard?.length) lines.push(...input.guard);
   if (memory.length) {
     lines.push('اللي قاله العميل عن نشاطه (حقائق محفوظة):');
     for (const fact of memory.slice(0, 20)) {
@@ -219,8 +226,9 @@ function toolsFor(input: JarvisTurnInput): Anthropic.Tool[] {
   }
   if (input.account) tools.push(GET_PLATFORM_HISTORY_TOOL);
   if (input.business) tools.push(RECALL_MEMORY_TOOL, SAVE_BUSINESS_FACT_TOOL);
+  if (input.business && isBusinessMemoryEnabled()) tools.push(SAVE_MERCHANT_CONTEXT_TOOL as Anthropic.Tool);
   if (input.playbook.lines) tools.push(READ_PLAYBOOK_TOOL);
-  if (input.account) tools.push(PREPARE_CHANGE_TOOL);
+  if (input.account) tools.push(isExtendedActionsEnabled() ? prepareChangeToolFor(true, isAdsStudioActive()) : PREPARE_CHANGE_TOOL);
   if (tools.length) {
     // Cache breakpoint on the last tool: system prefix + tools are identical for every customer.
     const last = tools.length - 1;
@@ -395,6 +403,25 @@ export async function runJarvisTurn(input: JarvisTurnInput): Promise<JarvisTurnR
       });
       trace.push({ name, ok: saved.ok });
       if (saved.ok) cards.push(saved.card);
+      return { content: saved.modelText, isError: !saved.ok };
+    }
+    if (name === 'save_merchant_context' && isBusinessMemoryEnabled()) {
+      // Same rule as save_business_fact: nothing is saved once tool data is in the turn.
+      if (dataSeen) {
+        trace.push({ name, ok: false, code: 'after_tool_data' });
+        return { content: 'الحفظ يصير قبل قراءة أي بيانات في الدور، فما انحفظ شي. احفظ في الرسالة الجاية لو العميل أكدها.', isError: true };
+      }
+      const saved = await saveMerchantContext({
+        admin: deps.admin,
+        businessId: input.business?.id ?? null,
+        accountId: input.account?.id ?? null,
+        userMessage: input.message,
+        channel,
+        sessionId: input.sessionId,
+        input: block.input,
+        now: input.now,
+      });
+      trace.push({ name, ok: saved.ok });
       return { content: saved.modelText, isError: !saved.ok };
     }
     if (name === 'prepare_change' && input.account) {

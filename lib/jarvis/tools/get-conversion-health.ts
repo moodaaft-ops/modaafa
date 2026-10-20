@@ -1,4 +1,11 @@
 import type { EvidenceRow, JarvisReadTool } from './types';
+import { landingSupportForVerdict } from '@/lib/landing-check/evidence';
+import { supabaseLandingCheckStore } from '@/lib/landing-check/store';
+import { createAdminClient } from '@/lib/supabase/server';
+import { isLeadLoopEnabled } from '@/lib/lead-loop/flag';
+import { reviewConversionGoals } from '@/lib/measurement/goals';
+import { loadMeasurementInputs } from '@/lib/measurement/review-inputs';
+import { findTrackingGaps, totalsByDay } from '@/lib/measurement/tracking-gaps';
 import {
   addDays,
   bool,
@@ -305,6 +312,62 @@ export const getConversionHealthTool: JarvisReadTool = {
     if (!customerRows) unavailable.push('auto_tagging');
     if (!clickRows) unavailable.push('clicks_7d');
 
+    // Measurement review (conversion goals, enhanced conversions, tracking gaps). Flag off: not read, not returned.
+    let measurement: Record<string, unknown> | null = null;
+    if (isLeadLoopEnabled(process.env, ctx.ownerEmail ?? null)) {
+      const extra = await loadMeasurementInputs((gaql) => runQuery(ctx, gaql));
+      const findings = extra.actions
+        ? reviewConversionGoals({ actions: extra.actions, goals: extra.goals, tracking: extra.tracking, leadLoopOn: true })
+        : [];
+      const gapResult = extra.dailyTotals
+        ? findTrackingGaps(
+            totalsByDay(
+              extra.dailyTotals.map((d) => ({ date: d.date, conversions: d.conversions })),
+              extra.dailyTotals.map((d) => ({ date: d.date, clicks: d.clicks })),
+              today
+            )
+          )
+        : null;
+      measurement = {
+        goals_review: findings.map((finding) => ({
+          code: finding.code,
+          severity: finding.severity,
+          title_ar: finding.title_ar,
+          reason_ar: finding.reason_ar,
+          steps_ar: finding.steps_ar,
+          ...(finding.actions ? { actions: finding.actions.map(cleanText) } : {}),
+        })),
+        enhanced_conversions: {
+          leads: extra.tracking?.enhancedConversionsForLeads ?? 'unknown',
+          customer_data_terms_accepted: extra.tracking?.acceptedCustomerDataTerms ?? 'unknown',
+          web: 'not_readable_via_api',
+        },
+        tracking_gaps: gapResult
+          ? { resolved_windows: gapResult.gaps, ongoing_silence: gapResult.ongoing }
+          : 'unavailable',
+        unavailable_checks: [
+          ...(extra.actions ? [] : ['goal_actions']),
+          ...(extra.goals ? [] : ['customer_goals']),
+          ...(extra.tracking ? [] : ['conversion_tracking_setting']),
+          ...(extra.dailyTotals ? [] : ['daily_totals']),
+        ],
+      };
+    }
+
+    // Landing page tag evidence (LANDING_CHECK_ENABLED): supporting only, the verdict above is untouched.
+    const landingSupport = await landingSupportForVerdict({
+      store: () => {
+        try {
+          return supabaseLandingCheckStore(createAdminClient());
+        } catch {
+          return null;
+        }
+      },
+      accountId: ctx.accountId,
+      verdict: result.verdict,
+      now: ctx.now,
+    });
+
     return okResult(
       {
         verdict: result.verdict,
@@ -322,6 +385,8 @@ export const getConversionHealthTool: JarvisReadTool = {
         },
         actions: shownActions,
         unavailable_checks: unavailable,
+        ...(measurement ? { measurement } : {}),
+        ...(landingSupport ? { landing_page_evidence: landingSupport } : {}),
       },
       evidence
     );

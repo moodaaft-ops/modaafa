@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils';
 import { getPlatformReadiness, readinessSummary } from '@/lib/platform/readiness';
 import { isModaafaOperator } from '@/lib/platform/operators';
 import { PendingSubmitButton } from '@/lib/ui/pending-submit-button';
+import { ConnectionsSection } from './connections-section';
 import { CARD, CalmHeading, CalmNote, CalmPage, CalmTitle, FIELD, StatusWord, pill } from '../calm-page';
 
 const deleteErrors: Record<string, string> = {
@@ -41,7 +42,7 @@ export const metadata = {
 export default async function SettingsPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ delete_error?: string; rename_error?: string; renamed?: string }>;
+  searchParams?: Promise<{ delete_error?: string; rename_error?: string; renamed?: string; extra?: string; feature?: string; store?: string; platform?: string }>;
 }) {
   const params = await searchParams;
   const { user } = await getRequestAuthContext();
@@ -152,6 +153,8 @@ export default async function SettingsPage({
       </section>
 
       {/* Business profile */}
+      <ConnectionsSection userId={user.id} params={params} />
+
       <section className="mt-10" aria-labelledby="business-title">
         <CalmHeading
           id="business-title"

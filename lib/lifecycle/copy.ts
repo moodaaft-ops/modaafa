@@ -585,6 +585,39 @@ const weekly_report: EmailCopy = {
 };
 
 // ---------------------------------------------------------------------------
+// Recurring: monthly money report (the monthly review cron; waits for Ayman)
+// ---------------------------------------------------------------------------
+
+const monthly_report: EmailCopy = {
+  key: 'monthly_report',
+  category: 'weekly_report',
+  approved: false,
+  build: (facts) => {
+    const month = facts.monthly;
+    if (!month || month.moneyLines.length === 0) return null;
+    const blocks: Block[] = month.moneyLines.map((text) => ({ type: 'p', text: clean(text) }) as Block);
+    const plan = month.planLines.map(clean).filter(Boolean).slice(0, 4);
+    if (plan.length > 0) {
+      blocks.push({ type: 'p', text: 'وش أقترح الشهر الجاي:' });
+      blocks.push({ type: 'list', items: plan });
+    }
+    const coaching = (month.coachingLines ?? []).map(clean).filter(Boolean).slice(0, 3);
+    if (coaching.length > 0) {
+      blocks.push({ type: 'p', text: 'ملاحظات على العرض والرد:' });
+      blocks.push({ type: 'list', items: coaching });
+    }
+    blocks.push({ type: 'note', text: 'الأرقام من حساب إعلانات قوقل حقك. الوفر والهدر تقدير، مو رقم محاسبي.' });
+    return {
+      subject: `تقرير ${month.monthNameAr} لإعلاناتك في قوقل`,
+      preheader: 'كم صرفت، كم رجع، وكم راح هدر',
+      blocks,
+      cta: { label: 'افتح مُضاعِف', path: '/home' },
+      signer: 'team',
+    };
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Transactional (sent from the Stripe webhook; already live, not gated)
 // ---------------------------------------------------------------------------
 
@@ -679,6 +712,51 @@ const tx_payment_failed: EmailCopy = {
 };
 
 // ---------------------------------------------------------------------------
+// Morning guard (lib/guard). Sent by the guard cron, never by a journey.
+// Unapproved until Ayman reads it: the cron then sends nothing.
+// ---------------------------------------------------------------------------
+
+const GUARD_MAX_ITEMS = 5;
+const stripEnd = (line: string) => line.replace(/[.،:\s]+$/u, '');
+
+const guard_alert: EmailCopy = {
+  key: 'guard_alert',
+  category: 'lifecycle',
+  approved: false,
+  build: (facts) => {
+    const guard = facts.guard;
+    if (!guard || guard.items.length === 0) return null;
+    const shown = guard.items.slice(0, GUARD_MAX_ITEMS);
+    const rest = guard.items.length - shown.length;
+    const blocks: Block[] = [
+      { type: 'p', text: 'راجعت حسابك الإعلاني هالصباح ولقيت:' },
+      {
+        type: 'list',
+        items: shown.map((item) => {
+          const account = item.accountName ? `${clean(item.accountName)}: ` : '';
+          const cause = item.causeAr ? ` السبب المحتمل: ${stripEnd(clean(item.causeAr))}.` : '';
+          return `${account}${stripEnd(clean(item.whatAr))}.${cause} الخطوة: ${stripEnd(clean(item.stepAr))}.`;
+        }),
+      },
+    ];
+    if (rest > 0) blocks.push({ type: 'p', text: `وفيه ${rest === 1 ? 'تنبيه ثاني' : `${rest} تنبيهات ثانية`} تلقاها في الرئيسية.` });
+    if (guard.escalate) {
+      blocks.push({
+        type: 'note',
+        text: 'اللي يخص التعليق أو الفوترة أو سياسات قوقل ما نتصرف فيه بدون ما نكلمك، ونمشي معك فيه خطوة خطوة.',
+      });
+    }
+    return {
+      subject: guard.hasCritical ? 'تنبيه عاجل على حسابك الإعلاني' : 'وش صار في حسابك الإعلاني أمس',
+      preheader: guard.hasCritical ? 'فيه شي يحتاج تتحرك عليه اليوم' : 'مراجعة الصباح لحسابك وفيها نقاط تستاهل نظرة',
+      blocks,
+      cta: { label: 'افتح الرئيسية', path: '/home' },
+      signer: 'team',
+    };
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Broadcasts (config/email-broadcasts.ts)
 // ---------------------------------------------------------------------------
 
@@ -722,9 +800,11 @@ export const EMAIL_COPY: Record<CopyKey, EmailCopy> = {
   canceled_30d,
   past_due_3d,
   weekly_report,
+  monthly_report,
   tx_subscription_welcome,
   tx_trial_ending,
   tx_payment_failed,
+  guard_alert,
   broadcast_chat_relaunch,
 };
 

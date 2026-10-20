@@ -14,10 +14,37 @@ export function rollbackResourcesScoped(rollback: Record<string, any>, customerI
   if (!cid) return false;
   const prefix = `customers/${cid}/`;
 
+  // Extended (ext_*) payloads carry more than one resource list. Every one is
+  // checked and a malformed list fails closed. Without the flag these never exist.
+  if (typeof rollback.action_type === 'string' && rollback.action_type.startsWith('ext_')) {
+    return extendedRollbackScoped(rollback, prefix);
+  }
+
   const resources: string[] = [];
-  for (const key of ['budget_resource', 'resource_name', 'ad_group_resource', 'campaign_resource']) {
+  // The growth executors (experiments, audiences) name their resource under their own key.
+  for (const key of [
+    'budget_resource',
+    'resource_name',
+    'ad_group_resource',
+    'campaign_resource',
+    'experiment_resource',
+    'user_list_resource',
+    'criterion_resource',
+  ]) {
     const value = rollback[key];
-    if (typeof value === 'string' && value.length > 0) resources.push(value);
+    if (value === undefined || value === null) continue;
+    if (typeof value !== 'string' || value.length === 0) return false;
+    resources.push(value);
+  }
+  // A paired budget shift restores from `changes`: every budget named there is executed, so every one is checked.
+  if (rollback.changes !== undefined) {
+    const list = rollback.changes;
+    if (!Array.isArray(list) || list.length === 0) return false;
+    for (const entry of list) {
+      const value = entry?.budget_resource;
+      if (typeof value !== 'string' || value.length === 0) return false;
+      resources.push(value);
+    }
   }
   if (rollback.resource_names !== undefined) {
     const list = rollback.resource_names;
@@ -30,4 +57,46 @@ export function rollbackResourcesScoped(rollback: Record<string, any>, customerI
 
   if (resources.length === 0) return false;
   return resources.every((value) => value.startsWith(prefix));
+}
+
+const EXTENDED_NAME_LISTS = [
+  'touched_resources',
+  'remove_criteria',
+  'remove_shared_sets',
+  'remove_shared_criteria',
+  'remove_campaign_shared_sets',
+  // Ad copy and assets (ADS_STUDIO_ENABLED)
+  'pause_ads',
+  'reenable_ads',
+  'remove_campaign_assets',
+  // Conversion value rules
+  'pause_rules',
+  // Account structure (steps' resource names)
+  'struct_names',
+];
+
+function extendedRollbackScoped(rollback: Record<string, any>, prefix: string): boolean {
+  const names: unknown[] = [];
+  const touched = rollback.touched_resources;
+  if (!Array.isArray(touched) || touched.length === 0) return false;
+
+  for (const key of EXTENDED_NAME_LISTS) {
+    if (rollback[key] === undefined) continue;
+    if (!Array.isArray(rollback[key])) return false;
+    names.push(...rollback[key]);
+  }
+  for (const key of ['budget_resource', 'resource_name', 'campaign_resource']) {
+    if (rollback[key] !== undefined) names.push(rollback[key]);
+  }
+  for (const key of ['restore_modifiers', 'subscriptions']) {
+    if (rollback[key] === undefined) continue;
+    if (!Array.isArray(rollback[key])) return false;
+    for (const entry of rollback[key]) names.push(entry?.resource_name);
+  }
+  if (rollback.recreate !== undefined) {
+    if (!Array.isArray(rollback.recreate)) return false;
+    for (const entry of rollback.recreate) names.push(entry?.campaign);
+  }
+
+  return names.every((value) => typeof value === 'string' && value.startsWith(prefix));
 }

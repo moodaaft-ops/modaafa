@@ -160,9 +160,11 @@ export const TEMPLATE_LABEL_AR: Record<string, string> = {
   canceled_30d: 'ألغى الاشتراك، بعد 30 يوم',
   past_due_3d: 'الدفعة ما مرت، بعد 3 أيام',
   weekly_report: 'التقرير الأسبوعي',
+  monthly_report: 'التقرير الشهري',
   tx_subscription_welcome: 'تأكيد الاشتراك',
   tx_trial_ending: 'التجربة قربت تخلص',
   tx_payment_failed: 'الدفعة ما مرت (تنبيه فوري)',
+  guard_alert: 'الحارس الصباحي (تنبيه الحساب)',
   broadcast_chat_relaunch: 'إعلان: رجوع المحادثة',
 };
 

@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 import { getAccountWorkspace } from '@/lib/accounts/selection';
 import { googleAdsAccountDisplayName } from '@/lib/accounts/display';
 import { autopilotDecisionDisplayDetails } from '@/lib/autopilot/display';
+import { autonomyLevelsEnabled, normalizeAutonomyLevel } from '@/lib/autopilot/autonomy';
 import { normalizeAutopilotSettings } from '@/lib/autopilot/settings';
 import { autopilotExecutionGloballyEnabled, type AutopilotDecision } from '@/lib/autopilot/types';
 import { getSubscriptionAccess } from '@/lib/billing/entitlements';
@@ -15,6 +16,7 @@ import { EmptyState } from '@/lib/ui/empty-state';
 import { PageHeader } from '@/lib/ui/page-header';
 import { StatusBadge, type StatusTone } from '@/lib/ui/status-badge';
 import { timeAgoAr } from '@/lib/utils';
+import { EXTENDED_OPERATION_LABELS_AR } from '@/lib/ai/operation-labels';
 import { AutopilotSettingsForm } from './autopilot-settings-form';
 
 export const metadata = { title: 'الطيار الآلي' };
@@ -66,6 +68,15 @@ export default async function AutopilotPage() {
   assertSupabaseRead(decisionsResult.error, 'load autopilot decision ledger');
 
   const settings = normalizeAutopilotSettings(account.id, settingsResult.data);
+  let autonomy: { level: ReturnType<typeof normalizeAutonomyLevel> } | undefined;
+  if (autonomyLevelsEnabled()) {
+    const levelResult = await supabase
+      .from('autopilot_autonomy')
+      .select('level')
+      .eq('account_id', account.id)
+      .maybeSingle();
+    autonomy = { level: normalizeAutonomyLevel(levelResult.data?.level) };
+  }
   const accountName = googleAdsAccountDisplayName(account);
   const decisions = (decisionsResult.data ?? []) as DecisionRow[];
   const globalExecutionEnabled = autopilotExecutionGloballyEnabled();
@@ -99,6 +110,7 @@ export default async function AutopilotPage() {
             initialSettings={settings}
             subscriptionActive={subscription.active}
             globalExecutionEnabled={globalExecutionEnabled}
+            autonomy={autonomy}
           />
         </section>
 
@@ -208,6 +220,7 @@ function actionLabel(actionType: string) {
   if (actionType === 'pause_campaign') return 'إيقاف حملة';
   if (actionType === 'enable_campaign') return 'تشغيل حملة';
   if (actionType === 'add_negative_keywords_batch') return 'منع عبارات بحث (دفعة)';
+  if (EXTENDED_OPERATION_LABELS_AR[actionType]) return EXTENDED_OPERATION_LABELS_AR[actionType];
   if (actionType === 'budget') return 'تعديل ميزانية';
   if (actionType === 'status') return 'تغيير حالة';
   if (actionType === 'bidding') return 'تعديل مزايدة';

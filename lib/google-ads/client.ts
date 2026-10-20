@@ -535,6 +535,32 @@ async function mutateResource(
 }
 
 /**
+ * An ExperimentService method addressed by the experiment's resource name
+ * (schedule, end, promote). Sent once: none of them is safe to repeat.
+ */
+async function experimentMethod(
+  refreshToken: string,
+  customerId: string,
+  resourceName: string,
+  method: 'scheduleExperiment' | 'endExperiment' | 'promoteExperiment',
+  loginCustomerId?: string | null,
+  options?: { validateOnly?: boolean }
+) {
+  const cid = customerId.replace(/-/g, '');
+  if (!new RegExp(`^customers/${cid}/experiments/\\d+$`).test(resourceName)) {
+    throw new Error('Experiment resource name does not belong to this account.');
+  }
+  return googleAdsRest({
+    refreshToken,
+    path: `/${resourceName}:${method}`,
+    method: 'POST',
+    loginCustomerId,
+    body: options?.validateOnly ? { validateOnly: true } : {},
+    maxAttempts: 1,
+  });
+}
+
+/**
  * Create a Customer client for a specific advertiser account.
  * - customerId: the end-customer's account (the one we're querying / managing)
  * - refreshToken: the customer's OAuth refresh token (decrypted from DB)
@@ -644,6 +670,79 @@ export function getCustomer(
           options
         ),
     },
+    // Extended actions (EXTENDED_ACTIONS_ENABLED). One atomic googleAds:mutate
+    // call that can mix resource types and use temporary resource names (-1),
+    // which is what a shared negative list with its keywords and campaign
+    // links needs. Mutations are never retried (the path carries ':mutate').
+    // `results` mirrors the per-service shape (one {resourceName} per
+    // operation, in order) so result handling is shared with the other mutates.
+    mutateOperations: async (operations: unknown[], options?: { validateOnly?: boolean }) => {
+      const data = await googleAdsRest<{ mutateOperationResponses?: Array<Record<string, any>> }>({
+        refreshToken,
+        path: `/customers/${normalizedCustomerId}/googleAds:mutate`,
+        method: 'POST',
+        loginCustomerId: normalizedLoginCustomerId,
+        body: {
+          mutateOperations: camelizeKeys(operations),
+          ...(options?.validateOnly ? { validateOnly: true } : {}),
+        },
+      });
+      const results = (data.mutateOperationResponses ?? []).map((entry) => {
+        const first = Object.values(entry ?? {})[0] as { resourceName?: string } | undefined;
+        return { resourceName: first?.resourceName };
+      });
+      return { ...data, results };
+    },
+    // Google experiments (EXPERIMENTS_ENABLED). ExperimentService and ExperimentArmService.
+    // Never retried: a create or a schedule is not idempotent. The method paths follow the
+    // REST convention «{resourceName=customers/*/experiments/*}:<method>» and have not been
+    // exercised live yet (see docs/mb-upgrade/video.md).
+    experiments: {
+      mutate: (operations: unknown[], options?: { validateOnly?: boolean }) =>
+        mutateResource(refreshToken, normalizedCustomerId, 'experiments', operations, normalizedLoginCustomerId, options),
+      schedule: (resourceName: string, options?: { validateOnly?: boolean }) =>
+        experimentMethod(refreshToken, normalizedCustomerId, resourceName, 'scheduleExperiment', normalizedLoginCustomerId, options),
+      end: (resourceName: string, options?: { validateOnly?: boolean }) =>
+        experimentMethod(refreshToken, normalizedCustomerId, resourceName, 'endExperiment', normalizedLoginCustomerId, options),
+      promote: (resourceName: string, options?: { validateOnly?: boolean }) =>
+        experimentMethod(refreshToken, normalizedCustomerId, resourceName, 'promoteExperiment', normalizedLoginCustomerId, options),
+    },
+    experimentArms: {
+      mutate: (operations: unknown[], options?: { validateOnly?: boolean; responseContentType?: string }) =>
+        googleAdsRest({
+          refreshToken,
+          path: `/customers/${normalizedCustomerId}/experimentArms:mutate`,
+          method: 'POST',
+          loginCustomerId: normalizedLoginCustomerId,
+          body: {
+            operations: camelizeKeys(operations),
+            ...(options?.responseContentType ? { responseContentType: options.responseContentType } : {}),
+            ...(options?.validateOnly ? { validateOnly: true } : {}),
+          },
+        }),
+    },
+    // RecommendationService. There is no validateOnly on these two calls and
+    // apply is not idempotent, so they are sent once (maxAttempts 1).
+    recommendations: {
+      apply: (operations: unknown[]) =>
+        googleAdsRest({
+          refreshToken,
+          path: `/customers/${normalizedCustomerId}/recommendations:apply`,
+          method: 'POST',
+          loginCustomerId: normalizedLoginCustomerId,
+          body: { operations: camelizeKeys(operations) },
+          maxAttempts: 1,
+        }),
+      dismiss: (operations: unknown[]) =>
+        googleAdsRest({
+          refreshToken,
+          path: `/customers/${normalizedCustomerId}/recommendations:dismiss`,
+          method: 'POST',
+          loginCustomerId: normalizedLoginCustomerId,
+          body: { operations: camelizeKeys(operations) },
+          maxAttempts: 1,
+        }),
+    },
     // Campaign status only (pause / enable). The field mask is fixed to
     // `status` so no other campaign field can ride along on this path.
     campaigns: {
@@ -653,6 +752,58 @@ export function getCustomer(
           normalizedCustomerId,
           'campaigns',
           toUpdateOperations(items, ['status']),
+          normalizedLoginCustomerId,
+          options
+        ),
+    },
+    // Measurement layer (LEAD_LOOP_ENABLED). Reached only through approved
+    // recommendations: a lead conversion action, its primary flag, and bidding
+    // data exclusions. The update mask is fixed to `primary_for_goal`.
+    conversionActions: {
+      create: (items: unknown[], options?: { validateOnly?: boolean }) =>
+        mutateResource(
+          refreshToken,
+          normalizedCustomerId,
+          'conversionActions',
+          toCreateOperations(items),
+          normalizedLoginCustomerId,
+          options
+        ),
+      update: (items: unknown[], options?: { validateOnly?: boolean }) =>
+        mutateResource(
+          refreshToken,
+          normalizedCustomerId,
+          'conversionActions',
+          toUpdateOperations(items, ['primary_for_goal']),
+          normalizedLoginCustomerId,
+          options
+        ),
+      remove: (resourceNames: string[], options?: { validateOnly?: boolean }) =>
+        mutateResource(
+          refreshToken,
+          normalizedCustomerId,
+          'conversionActions',
+          resourceNames.map((resourceName) => ({ remove: resourceName })),
+          normalizedLoginCustomerId,
+          options
+        ),
+    },
+    biddingDataExclusions: {
+      create: (items: unknown[], options?: { validateOnly?: boolean }) =>
+        mutateResource(
+          refreshToken,
+          normalizedCustomerId,
+          'biddingDataExclusions',
+          toCreateOperations(items),
+          normalizedLoginCustomerId,
+          options
+        ),
+      remove: (resourceNames: string[], options?: { validateOnly?: boolean }) =>
+        mutateResource(
+          refreshToken,
+          normalizedCustomerId,
+          'biddingDataExclusions',
+          resourceNames.map((resourceName) => ({ remove: resourceName })),
           normalizedLoginCustomerId,
           options
         ),

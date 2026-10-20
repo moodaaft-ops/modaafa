@@ -22,6 +22,10 @@ export type ToolContext = {
   currencyCode: string; // e.g. 'SAR'
   business: { name: string | null; sector: string | null; keywords?: string[] } | null;
   connectedEmail?: string | null;
+  /** The signed-in owner's email, for per-user feature flags (never sent to Google). */
+  ownerEmail?: string | null;
+  /** The owner's break-even, when the caller loaded it. The n-gram tool uses it for the waste limit. */
+  economics?: import('@/lib/economics/break-even').BreakEven | null;
   now: Date;
 };
 
@@ -36,7 +40,15 @@ export type EvidenceKind =
   | 'change'
   | 'schedule_slot'
   | 'device'
-  | 'pmax_category';
+  | 'pmax_category'
+  | 'google_recommendation'
+  | 'auto_apply'
+  | 'value_rule_set'
+  | 'rsa_ad'
+  | 'ad_test'
+  | 'shopping_issue'
+  | 'site_page'
+  | 'verified_phone';
 
 export type EvidenceRow = { ref: string; kind: EvidenceKind; data: Record<string, unknown> };
 

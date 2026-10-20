@@ -23,6 +23,7 @@ const PROTECTED_PATHS = [
   '/partners',
   '/welcome',
   '/guide',
+  '/leads',
 ];
 
 // One `*` group on purpose. A crawler that matches a more specific user-agent

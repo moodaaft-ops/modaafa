@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Eye, LockKeyhole, OctagonX, Save, ShieldCheck } from 'lucide-react';
+import { AUTONOMY_LEVEL_LABELS_AR, AUTONOMY_LEVELS, type AutonomyLevel } from '@/lib/autopilot/autonomy-levels';
 import type { AutopilotMode, AutopilotSettings } from '@/lib/autopilot/types';
 import { Alert } from '@/lib/ui/alert';
 import { Button } from '@/lib/ui/button';
@@ -40,11 +41,14 @@ export function AutopilotSettingsForm({
   initialSettings,
   subscriptionActive,
   globalExecutionEnabled,
+  autonomy,
 }: {
   account: { customerId: string; name: string };
   initialSettings: AutopilotSettings;
   subscriptionActive: boolean;
   globalExecutionEnabled: boolean;
+  /** Present only when AUTONOMY_LEVELS_ENABLED is on. */
+  autonomy?: { level: AutonomyLevel };
 }) {
   const router = useRouter();
   const [mode, setMode] = useState<AutopilotMode>(initialSettings.mode);
@@ -52,6 +56,7 @@ export function AutopilotSettingsForm({
   const [confidence, setConfidence] = useState(Math.round(initialSettings.min_confidence * 100));
   const [cooldown, setCooldown] = useState(initialSettings.cooldown_hours);
   const [confirmed, setConfirmed] = useState(false);
+  const [autonomyLevel, setAutonomyLevel] = useState<AutonomyLevel>(autonomy?.level ?? 'ask_all');
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ tone: 'success' | 'danger'; text: string } | null>(null);
 
@@ -71,6 +76,7 @@ export function AutopilotSettingsForm({
           require_healthy_tracking: true,
           anomaly_pause_enabled: true,
           confirm_conservative: nextMode === 'conservative' ? confirmed : true,
+          ...(autonomy ? { autonomy_level: nextMode === 'conservative' ? autonomyLevel : 'ask_all' } : {}),
         }),
       });
       const result = (await response.json().catch(() => ({}))) as { message?: string };
@@ -138,6 +144,36 @@ export function AutopilotSettingsForm({
           );
         })}
       </div>
+
+      {autonomy && mode === 'conservative' && (
+        <div className="space-y-2">
+          <p className="text-xs font-semibold text-foreground">قد إيش تبي يمشي بروحه؟</p>
+          <div className="grid gap-3 sm:grid-cols-2" role="radiogroup" aria-label="مستوى الاستقلالية">
+            {AUTONOMY_LEVELS.map((level) => {
+              const active = autonomyLevel === level;
+              return (
+                <button
+                  key={level}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  onClick={() => setAutonomyLevel(level)}
+                  className={cn(
+                    'rounded-lg border p-4 text-start transition-colors',
+                    active ? 'border-primary bg-primary/[0.08] ring-1 ring-primary/25' : 'border-border bg-card hover:bg-muted/50'
+                  )}
+                >
+                  <span className="block text-sm font-semibold text-foreground">{AUTONOMY_LEVEL_LABELS_AR[level].title}</span>
+                  <span className="mt-2 block text-xs leading-6 text-muted-foreground">{AUTONOMY_LEVEL_LABELS_AR[level].body}</span>
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-[11px] leading-5 text-muted-foreground">
+            في كل الحالات: ما نرفع إجمالي صرفك، ولا نغير أهدافك، ولا نشغل حملات، ولا نقرب من الفوترة أو السياسات.
+          </p>
+        </div>
+      )}
 
       <div className="grid gap-4 rounded-lg border border-border bg-muted/25 p-4 sm:grid-cols-3">
         <label className="block">

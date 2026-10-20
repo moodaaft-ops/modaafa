@@ -1,4 +1,7 @@
 import type { MeasurementDescriptor } from './execution-preflight';
+import { GROWTH_RESULT_ROLLBACK, finalizeGrowthRollback } from '../growth/registry';
+import { isExtendedActionsEnabled } from './extended-actions/flag';
+import { finalizeExtendedRollback, isExtendedRollback } from './extended-actions/execute';
 
 /**
  * Turn a live Google Ads mutate result into the stored rollback and
@@ -23,9 +26,21 @@ export function firstResultResourceName(result: any): string | null {
 }
 
 export function finalizeRollbackPayload(payload: Record<string, unknown>, result: any) {
+  if (isExtendedActionsEnabled() && isExtendedRollback(payload)) {
+    return finalizeExtendedRollback(payload, result);
+  }
+  if (payload.action_type === GROWTH_RESULT_ROLLBACK) return finalizeGrowthRollback(payload, result);
+  if (payload.action_type === 'remove_launched_campaign') {
+    const built = result?.rollback_payload;
+    return built && typeof built === 'object'
+      ? built
+      : { reversible: false, resource_names: [], note: 'created_resources_unavailable' };
+  }
   if (
     payload.action_type === 'remove_created_negative_keyword' ||
-    payload.action_type === 'remove_created_keyword'
+    payload.action_type === 'remove_created_keyword' ||
+    payload.action_type === 'remove_created_data_exclusion' ||
+    payload.action_type === 'remove_created_conversion_action'
   ) {
     return { ...payload, resource_name: firstResultResourceName(result) };
   }

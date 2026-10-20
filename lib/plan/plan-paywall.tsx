@@ -137,6 +137,7 @@ export function PlanCard({
           <p className="mt-1 text-[16px] font-semibold leading-8">{lead.title}</p>
           {lead.reason && <p className="mt-1 text-[14px] leading-7 text-muted-foreground">{lead.reason}</p>}
           {lead.why && <WhyLine why={lead.why} />}
+          {lead.evidence && <p className="mt-2 text-[13px] leading-7 text-muted-foreground">{lead.evidence}</p>}
           {lead.steps.length > 0 && (
             <details className="mt-3">
               <summary className="inline-flex min-h-9 cursor-pointer list-none items-center rounded-full px-3 text-[13.5px] font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground [&::-webkit-details-marker]:hidden">

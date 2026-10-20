@@ -6,6 +6,11 @@ on:
     - cron: '47 * * * *'
     - cron: '7,27 * * * *'
     - cron: '9 * * * *'
+    # Morning guard: 05:30 Riyadh, plus a safety slot an hour later (GitHub drops scheduled triggers).
+    - cron: '30 2 * * *'
+    - cron: '40 3 * * *'
+    # Monthly deep session: first three days of the month, 05:31 UTC (08:31 Riyadh).
+    - cron: '31 5 1-3 * *'
   workflow_dispatch:
 
 permissions:
@@ -45,6 +50,18 @@ jobs:
             --retry 2 --retry-all-errors --max-time 290 \
             -H "Authorization: Bearer $CRON_SECRET" \
             https://ai.modaafa.com/api/cron/optimize
+      - name: Lead loop (offline conversion upload and tracking scan)
+        # Harmless while LEAD_LOOP_ENABLED is off: the route answers 200 {"skipped":"disabled"} and does nothing.
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          test -n "$CRON_SECRET"
+          code=$(curl --silent --show-error --max-time 150 -o body.json -w '%{http_code}' \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            https://ai.modaafa.com/api/cron/measurement)
+          cat body.json; echo
+          if [ "$code" = "200" ] || [ "$code" = "404" ] || [ "$code" = "409" ]; then exit 0; fi
+          exit 1
 
   email-lifecycle:
     # Lifecycle emails (docs/email-lifecycle/CONTRACT.md). Harmless while the
@@ -92,3 +109,42 @@ jobs:
             --max-time 290 \
             -H "Authorization: Bearer $CRON_SECRET" \
             https://ai.modaafa.com/api/cron/provisioning
+
+  guard:
+    # الحارس الصباحي (lib/guard): rules-only daily check of every connected account.
+    # Harmless while the feature is off: the route answers 200 {"skipped":"disabled"}.
+    # The second slot only picks up accounts the first one missed (18 h recheck guard).
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '30 2 * * *' || github.event.schedule == '40 3 * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Run morning guard
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          test -n "$CRON_SECRET"
+          code=$(curl --silent --show-error --retry 2 --retry-all-errors --max-time 290 -o body.json -w '%{http_code}' \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            https://ai.modaafa.com/api/cron/guard)
+          cat body.json; echo
+          if [ "$code" = "200" ] || [ "$code" = "409" ]; then exit 0; fi
+          exit 1
+
+  monthly-review:
+    # Monthly deep session (MONTHLY_REVIEW_ENABLED). Scheduled only: the first three
+    # days of the month at 05:31 UTC (08:31 Riyadh). Each account gets one report per
+    # month, so the second and third slots only pick up what a missed slot left.
+    # While the flag is off the route answers {"skipped":"disabled"} and does nothing.
+    if: github.event.schedule == '31 5 1-3 * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Run monthly review
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          test -n "$CRON_SECRET"
+          curl --fail-with-body --silent --show-error \
+            --retry 1 --retry-all-errors --max-time 290 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            https://ai.modaafa.com/api/cron/monthly-review

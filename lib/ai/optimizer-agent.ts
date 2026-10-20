@@ -1,6 +1,13 @@
+import { autonomyLevelsEnabled } from '@/lib/autopilot/autonomy';
+import { evaluatePairAmounts, evaluatePairGate, readShiftParams } from '@/lib/autopilot/budget-shift';
+import { isShadowAccount } from '@/lib/shadow/guard';
 import { cachedSystemBlock, createMessageForAgent, hasAIBackend } from './client';
 import type { Customer } from 'google-ads-api';
 import { createAdminClient } from '../supabase/server';
+import { isExtendedActionsEnabled } from './extended-actions/flag';
+import { isExtendedOperation, type ExtendedOperation } from './extended-actions/types';
+import { executeExtendedAction, executeExtendedRollback, isExtendedRollback } from './extended-actions/execute';
+import { checkExtendedGuardrails } from './extended-actions/guardrails';
 import { JARVIS_CORE_RULES_AR } from '../jarvis/playbook/core-rules';
 import type { AllowableCpa, BreakEven } from '../economics/break-even';
 import { holdsTargetLock } from '../recommendations/staleness';
@@ -20,6 +27,26 @@ import {
   type LockRow,
 } from './optimizer-gates';
 import { evaluateProposalEvidence } from './optimizer-proposal-gates';
+import {
+  buildDataExclusionCreate,
+  MAX_EXCLUSIONS_PER_30_DAYS,
+  validateDataExclusionParams,
+} from '../measurement/data-exclusion';
+import {
+  buildLeadConversionActionCreate,
+  buildSetPrimaryItems,
+  validateCreateLeadActionParams,
+  validateSetPrimaryParams,
+} from '../measurement/conversion-actions';
+import { executeLaunchRollback } from '../launch/execute';
+import { runLaunchAction } from '../launch/action';
+import { runGrowthAction, executeGrowthRollback } from '../growth/action';
+import { isGrowthOperation, isGrowthRollback, type GrowthOperation } from '../growth/flags';
+import { loopsPromptAddendum } from '../loops/prompt';
+import type { NgramPromptBlock } from '../loops/ngram-source';
+import type { WhatWorkedBlock } from '../loops/outcome-memory';
+import type { MerchantContextBlock } from '../loops/merchant-context';
+import type { SeasonContext } from '../loops/seasons';
 
 /**
  * Optimizer Agent - the heart of the platform.
@@ -194,6 +221,10 @@ export interface OptimizerSnapshot {
   wasted_search_terms: any[];
   /** Converting search terms not yet promoted to keywords — the expansion pool. */
   converting_search_terms?: any[];
+  /** Ad copy state (counts only, no ad text). Present only when ADS_STUDIO_ENABLED is on. */
+  ad_assets?: import('@/lib/ads/assets-reader').AdAssetsSnapshot;
+  /** Merchant Center product status (counts and top issue codes only). Present only when SHOPPING_HEALTH_ENABLED is on. */
+  shopping_health?: import('@/lib/shopping/snapshot').ShoppingHealthBlock;
   /**
    * Enabled ad groups that carry an explicit target CPA / target ROAS, with
    * their current values. adjust_bid proposals are only valid against rows in
@@ -213,6 +244,17 @@ export interface OptimizerSnapshot {
   target_roas: number | null;
   /** The client's break-even CPA (null when unknown). See target_roas. */
   target_cpa: number | null;
+  /**
+   * Weekly and monthly loop blocks (lib/loops). Each exists only when its
+   * switch is on (NGRAM_ENABLED, OUTCOME_MEMORY_ENABLED, SEASONS_ENABLED,
+   * BUSINESS_MEMORY_ENABLED) and the read produced something.
+   */
+  ngram_analysis?: NgramPromptBlock;
+  outcome_memory?: WhatWorkedBlock;
+  season_context?: SeasonContext;
+  merchant_context?: MerchantContextBlock;
+  /** Real store revenue vs Google-reported value (STORE_SYNC_ENABLED). Compact; absent until enough orders. */
+  store_revenue?: import('../stores/revenue').StoreRevenueBlock;
 }
 
 export interface OptimizerAction {
@@ -231,7 +273,19 @@ export interface OptimizerAction {
     | 'pause_ad'
     | 'pause_campaign'
     | 'enable_campaign'
-    | 'add_negative_keywords_batch';
+    | 'add_negative_keywords_batch'
+    /** Behind AUTONOMY_LEVELS_ENABLED; made by rules in lib/autopilot/budget-shift.ts, never by the model. */
+    | 'shift_budget_pair'
+    /** Behind EXTENDED_ACTIONS_ENABLED; never proposed by the nightly optimizer. */
+    | ExtendedOperation
+    // Measurement layer (LEAD_LOOP_ENABLED), approval-only like the three above.
+    | 'add_data_exclusion'
+    | 'create_lead_conversion_action'
+    | 'set_conversion_primary'
+    // Campaign launcher (CAMPAIGN_LAUNCH_ENABLED), approval-only.
+    | 'launch_campaign'
+    // Growth operations (DEMAND_GEN_ENABLED, AUDIENCES_ENABLED, EXPERIMENTS_ENABLED, IMAGE_ASSETS_ENABLED), approval-only.
+    | GrowthOperation;
   target_id: string;
   params: Record<string, unknown>;
   reason_ar: string;
@@ -282,7 +336,7 @@ export async function decideOptimizations(
         // that triggers the advertiser's broad keywords writes text straight
         // into this prompt — and the model's `reason_ar` output becomes the
         // approval label the account owner reads.
-        content: `Account ${snapshot.customer_id} snapshot.\n<account_data>\n${sanitizeSnapshotForPrompt(snapshot)}\n</account_data>`,
+        content: `Account ${snapshot.customer_id} snapshot.\n<account_data>\n${sanitizeSnapshotForPrompt(snapshot)}\n</account_data>${loopsPromptAddendum(snapshot)}`,
       },
     ],
   }, undefined, {
@@ -535,10 +589,86 @@ export async function checkGuardrails(
   const appliesExecutedLocks = Boolean(context || execution);
   const excludeOwnRows = execution?.recommendationId ?? null;
 
+  // Agency shadow accounts are never executable (SHADOW_MODE_ENABLED; a no-op when off).
+  if (await isShadowAccount(accountId, { admin: () => createAdminClient() })) return reject('shadow_account');
+
+  // Extended targeting/recommendation actions have their own gate. Flag off: they never get here.
+  if (isExtendedOperation(action.type)) {
+    if (!isExtendedActionsEnabled()) return reject('extended_actions_disabled');
+    const verdict = await checkExtendedGuardrails(action, accountId, supabase, {
+      applyLocks: appliesExecutedLocks,
+      nowMs,
+    });
+    return verdict.ok ? action : reject(verdict.code);
+  }
+
   // Tracking gate (queue time): every action that reads conversion numbers.
   if (context) {
     const trackingVerdict = evaluateTrackingGate(action, context);
     if (!trackingVerdict.ok) return reject(trackingVerdict.code);
+  }
+
+  // A paired budget shift (AUTONOMY_LEVELS_ENABLED): the total never rises, each leg is an ordinary
+  // 5 to 20% step, both budgets pass the same cut/scale gates a single budget change passes, and
+  // neither budget changed in the last 7 days (executed or waiting), by either kind of change.
+  if ((action.type as string) === 'shift_budget_pair') {
+    if (!autonomyLevelsEnabled()) return reject('budget_shift_disabled');
+    const valid = (value: string) => /^customers\/\d+\/campaignBudgets\/[^/]+$/.test(value);
+    const read = readShiftParams(action.params, valid);
+    if (!read.ok) return reject(read.code);
+    const { from_budget_resource: from, to_budget_resource: to } = read.value;
+    if (context) {
+      const gate = evaluatePairGate(action.params, context.snapshot, valid);
+      if (!gate.ok) return reject(gate.code);
+    } else if (read.value.from_current_micros && read.value.to_current_micros) {
+      const pair = evaluatePairAmounts({
+        from,
+        to,
+        fromAmount: read.value.from_current_micros,
+        toAmount: read.value.to_current_micros,
+        shiftMicros: read.value.shift_micros,
+      });
+      if (!pair.ok) return reject(pair.code);
+    }
+    const sinceMs = nowMs - BUDGET_LOCK_DAYS * DAY_MS;
+    const budgets = [from, to];
+    for (const operation of ['adjust_budget', 'shift_budget_pair']) {
+      const { data: rows, error: rowsError } = await recentExecutedRows(supabase, accountId, operation, sinceMs);
+      if (rowsError) return reject('budget_history_unreadable');
+      if (appliesExecutedLocks) {
+        const executed =
+          operation === 'adjust_budget'
+            ? executedLockRows(rows, operation, 'budget_resource', excludeOwnRows)
+            : [
+                ...executedLockRows(rows, operation, 'from_budget_resource', excludeOwnRows),
+                ...executedLockRows(rows, operation, 'to_budget_resource', excludeOwnRows),
+              ];
+        if (budgets.some((budget) => lockedByRecentChange(executed, operation, budget, BUDGET_LOCK_DAYS, nowMs))) {
+          return reject('budget_locked_recent_change');
+        }
+      }
+      if (context) {
+        const keys = operation === 'adjust_budget' ? ['budget_resource'] : ['from_budget_resource', 'to_budget_resource'];
+        for (const key of keys) {
+          const pending = await pendingLockRows(supabase, accountId, operation, key, sinceMs, nowMs);
+          if (!pending) return reject('pending_unreadable');
+          if (budgets.some((budget) => lockedByRecentChange(pending, operation, budget, BUDGET_LOCK_DAYS, nowMs))) {
+            return reject('budget_locked_pending');
+          }
+        }
+      }
+    }
+    if (context) {
+      const { data: recentBids, error: recentBidsError } = await recentExecutedRows(supabase, accountId, 'adjust_bid', nowMs - CROSS_LOCK_DAYS * DAY_MS);
+      if (recentBidsError) return reject('bid_history_unreadable');
+      const pendingBids = await pendingLockRows(supabase, accountId, 'adjust_bid', 'ad_group_resource', nowMs - CROSS_LOCK_DAYS * DAY_MS, nowMs);
+      if (!pendingBids) return reject('pending_unreadable');
+      const bidRows = [...executedLockRows(recentBids, 'adjust_bid', 'ad_group_resource'), ...pendingBids];
+      if (budgets.some((budget) => budgetChangeCollidesWithBid(context.snapshot, budget, bidRows, nowMs))) {
+        return reject('budget_locked_by_bid_change');
+      }
+    }
+    return action;
   }
 
   // Guardrail 1: budget changes. The step is 5 to 20% either way (titan 5.2,
@@ -550,6 +680,24 @@ export async function checkGuardrails(
     const boundsVerdict = evaluateBudgetBounds(action.params);
     if (!boundsVerdict.ok) return reject(boundsVerdict.code);
     const newPct = Number((action.params as any).delta_pct ?? 0);
+
+    // A budget that took part in a paired shift this week is as locked as one that was adjusted.
+    if (autonomyLevelsEnabled() && appliesExecutedLocks) {
+      const { data: shifted, error: shiftedError } = await recentExecutedRows(
+        supabase,
+        accountId,
+        'shift_budget_pair',
+        nowMs - BUDGET_LOCK_DAYS * DAY_MS
+      );
+      if (shiftedError) return reject('budget_history_unreadable');
+      const shiftedRows = [
+        ...executedLockRows(shifted, 'shift_budget_pair', 'from_budget_resource', excludeOwnRows),
+        ...executedLockRows(shifted, 'shift_budget_pair', 'to_budget_resource', excludeOwnRows),
+      ];
+      if (lockedByRecentChange(shiftedRows, 'shift_budget_pair', budgetResource, BUDGET_LOCK_DAYS, nowMs)) {
+        return reject('budget_locked_recent_change');
+      }
+    }
 
     // Queue time: economics known, tracking healthy, scale or cut gate, impression share.
     if (context) {
@@ -851,6 +999,29 @@ export async function checkGuardrails(
     }
   }
 
+  // Guardrail 8 (measurement layer): a data exclusion names a bounded, past
+  // window; campaigns belong to this account; and exclusions stay rare because
+  // frequent use hurts Smart Bidding (Google's own guide).
+  if (action.type === 'add_data_exclusion') {
+    // The start-in-the-past check needs the account's clock and runs in the preflight.
+    const exclusion = validateDataExclusionParams(action.params);
+    if (!exclusion.ok) return reject(`data_exclusion_${exclusion.code}`);
+    for (const campaign of exclusion.value.campaigns ?? []) {
+      if (!(await campaignResourceInAccount(supabase, accountId, campaign))) return reject('campaign_not_in_account');
+    }
+    const { data: recentExclusions, error: recentExclusionsError } = await recentExecutedRows(
+      supabase,
+      accountId,
+      'add_data_exclusion',
+      nowMs - 30 * DAY_MS
+    );
+    if (recentExclusionsError) return reject('data_exclusion_history_unreadable');
+    const applied = (recentExclusions ?? []).filter(
+      (row: any) => !excludeOwnRows || row?.recommendation_id !== excludeOwnRows
+    );
+    if (applied.length >= MAX_EXCLUSIONS_PER_30_DAYS) return reject('data_exclusion_too_frequent');
+  }
+
   // Evidence gate (queue time): the pause, promotion and negative rules the
   // prompt states, re-derived from the snapshot row the proposal names. After
   // the structural checks above, so a malformed proposal is refused for what
@@ -900,6 +1071,13 @@ export async function executeAction(
 ) {
   const client = customer as any;
 
+  if (isExtendedOperation(action.type)) {
+    if (!isExtendedActionsEnabled()) throw new Error('Extended actions are disabled');
+    return executeExtendedAction(action, customer, options);
+  }
+
+  if (isGrowthOperation(action.type)) return runGrowthAction(action.type, action.params, client, options);
+
   switch (action.type) {
     case 'pause_keyword': {
       return client.adGroupCriteria.update([
@@ -939,6 +1117,24 @@ export async function executeAction(
       ], options);
     }
 
+    case 'shift_budget_pair': {
+      if (!autonomyLevelsEnabled()) throw new Error('Budget shift is disabled');
+      // ONE mutate request carrying both budgets: Google applies both or neither.
+      const p = action.params as any;
+      const pair = evaluatePairAmounts({
+        from: String(p.from_budget_resource),
+        to: String(p.to_budget_resource),
+        fromAmount: Number(p.from_current_micros),
+        toAmount: Number(p.to_current_micros),
+        shiftMicros: Number(p.shift_micros),
+      });
+      if (!pair.ok) throw new Error(`Budget shift refused: ${pair.code}`);
+      return client.campaignBudgets.update(
+        pair.changes.map((c) => ({ resource_name: c.budget_resource, amount_micros: c.new_amount_micros })),
+        options
+      );
+    }
+
     case 'adjust_bid': {
       const { ad_group_resource, target_cpa_micros, target_roas } = action.params as any;
       return client.adGroups.update([
@@ -962,10 +1158,32 @@ export async function executeAction(
       ], options);
     }
 
+    case 'launch_campaign': {
+      return runLaunchAction(action.params, client, options);
+    }
+
     case 'enable_campaign': {
       return client.campaigns.update([
         { resource_name: action.target_id, status: 'ENABLED' },
       ], options);
+    }
+
+    case 'add_data_exclusion': {
+      const exclusion = validateDataExclusionParams(action.params);
+      if (!exclusion.ok) throw new Error(`Data exclusion is malformed (${exclusion.code})`);
+      return client.biddingDataExclusions.create([buildDataExclusionCreate(exclusion.value)], options);
+    }
+
+    case 'create_lead_conversion_action': {
+      const parsed = validateCreateLeadActionParams(action.params);
+      if (!parsed.ok) throw new Error('Lead conversion action is malformed');
+      return client.conversionActions.create([buildLeadConversionActionCreate(parsed.currency_code)], options);
+    }
+
+    case 'set_conversion_primary': {
+      const parsed = validateSetPrimaryParams(action.params);
+      if (!parsed.ok) throw new Error('Conversion primary change is malformed');
+      return client.conversionActions.update(buildSetPrimaryItems(parsed.value), options);
     }
 
     case 'add_negative_keywords_batch': {
@@ -991,12 +1209,29 @@ export async function executeRollback(
 ) {
   const client = customer as any;
 
+  // Undo stays available after the flag is turned off: a rollback only reverses
+  // a change that was already approved and applied (same rule as the rollback
+  // route, which never gates a compensating operation).
+  if (isExtendedRollback(rollback)) {
+    return executeExtendedRollback(rollback, customer, options);
+  }
+
   switch (rollback.action_type) {
     case 'adjust_budget':
       return client.campaignBudgets.update(
         [{ resource_name: rollback.budget_resource, amount_micros: rollback.amount_micros }],
         options
       );
+    case 'shift_budget_pair': {
+      const changes = Array.isArray(rollback.changes) ? rollback.changes : [];
+      if (changes.length !== 2 || changes.some((c: any) => !c?.budget_resource || !(Number(c?.amount_micros) > 0))) {
+        throw new Error('Previous budget amounts are unavailable');
+      }
+      return client.campaignBudgets.update(
+        changes.map((c: any) => ({ resource_name: c.budget_resource, amount_micros: Number(c.amount_micros) })),
+        options
+      );
+    }
     case 'pause_keyword':
       return client.adGroupCriteria.update(
         [{ resource_name: rollback.resource_name, status: rollback.status }],
@@ -1030,6 +1265,24 @@ export async function executeRollback(
         [{ resource_name: rollback.campaign_resource, status: rollback.status }],
         options
       );
+    case 'remove_created_data_exclusion':
+      if (!rollback.resource_name) throw new Error('Created data exclusion resource is unavailable');
+      return client.biddingDataExclusions.remove([rollback.resource_name], options);
+    case 'remove_created_conversion_action':
+      if (!rollback.resource_name) throw new Error('Created conversion action resource is unavailable');
+      return client.conversionActions.remove([rollback.resource_name], options);
+    case 'restore_conversion_primary': {
+      const items: Array<{ resource_name: unknown; primary_for_goal: unknown }> = Array.isArray(rollback.items)
+        ? rollback.items
+        : [];
+      if (
+        items.length === 0 ||
+        items.some((item) => typeof item?.resource_name !== 'string' || typeof item?.primary_for_goal !== 'boolean')
+      ) {
+        throw new Error('Previous conversion primary flags are unavailable');
+      }
+      return client.conversionActions.update(items, options);
+    }
     case 'remove_created_negative_keywords': {
       const names = Array.isArray(rollback.resource_names)
         ? rollback.resource_names.filter((name: unknown) => typeof name === 'string' && name.length > 0)
@@ -1039,7 +1292,11 @@ export async function executeRollback(
       }
       return client.campaignCriteria.remove(names, options);
     }
+    case 'remove_launched_campaign':
+      // Undo of the campaign launcher (lib/launch). Refuses while the campaign is enabled.
+      return executeLaunchRollback(rollback, client, options);
     default:
+      if (isGrowthRollback(rollback)) return executeGrowthRollback(rollback, client, options);
       throw new Error('This action does not have a supported rollback operation');
   }
 }

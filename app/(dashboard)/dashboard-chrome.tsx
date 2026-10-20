@@ -76,6 +76,7 @@ export function DashboardChrome({
   selectedCustomerId,
   isOperator = false,
   chatFirst = false,
+  showLeads = false,
   partnersOn = false,
   children,
 }: {
@@ -88,6 +89,8 @@ export function DashboardChrome({
   isOperator?: boolean;
   /** CHAT_FIRST_ENTRY: adds the single /start entry; off keeps the shell exactly as it was. */
   chatFirst?: boolean;
+  /** LEAD_LOOP_ENABLED: adds the «ليدز هالأسبوع» entry; off keeps the shell exactly as it was. */
+  showLeads?: boolean;
   /** PARTNERS_ENABLED: adds the partner programme link under the account group. */
   partnersOn?: boolean;
   children: React.ReactNode;
@@ -102,13 +105,20 @@ export function DashboardChrome({
           : group
       )
     : navGroups;
-  const withPartners = partnersOn
+  const withLeads = showLeads
     ? withStart.map((group) =>
+        group.label === 'البيانات' && !group.items.some((item) => item.href === '/leads')
+          ? { ...group, items: [...group.items, { href: '/leads', label: 'ليدز هالأسبوع', icon: MessageCircle } as NavItem] }
+          : group
+      )
+    : withStart;
+  const withPartners = partnersOn
+    ? withLeads.map((group) =>
         group.label === 'الحساب' && !group.items.some((item) => item.href === '/partners')
           ? { ...group, items: [...group.items, { href: '/partners', label: 'برنامج الشركاء', icon: Handshake } as NavItem] }
           : group
       )
-    : withStart;
+    : withLeads;
   const visibleNavGroups = isOperator
     ? withPartners.map((group) =>
         group.label === 'الحساب'

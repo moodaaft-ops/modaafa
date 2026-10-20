@@ -302,6 +302,8 @@ export type ScenarioDecision = {
   steps: string[];
   amount: number | null;
   currency: string;
+  /** Extra fact from outside the account (Business Profile hours). Shown as a line, never changes the decision. */
+  evidence?: string;
 };
 
 export type FirstCampaignPlan = {

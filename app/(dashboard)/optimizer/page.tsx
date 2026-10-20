@@ -18,6 +18,12 @@ import { loadPlanLock, type PlanLockData } from '@/lib/plan/load';
 import { PlanLock } from '@/lib/plan/plan-lock';
 import { dropStalePending } from '@/lib/recommendations/staleness';
 import { Alert } from '@/lib/ui/alert';
+import { extendedPreviewRows } from '@/lib/ai/extended-actions/preview';
+import { isExtendedOperation } from '@/lib/ai/extended-actions/types';
+import { EXTENDED_OPERATION_LABELS_AR } from '@/lib/ai/operation-labels';
+import { LaunchPlanPreview } from '@/lib/launch/launch-plan-preview';
+import { GROWTH_LABELS_AR, isGrowthOperation } from '@/lib/growth/flags';
+import { growthPreviewRows } from '@/lib/growth/preview';
 
 export const metadata = {
   title: 'مركز الموافقات',
@@ -229,6 +235,19 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
                           payload={item.action_payload}
                           currencyCode={selectedAccount?.currency_code}
                         />
+                        {typeof item.action_payload?.appeal_text_ar === 'string' && item.action_payload.appeal_text_ar ? (
+                          <details className="mt-3 rounded-md border border-border bg-muted/50 p-3">
+                            <summary className="cursor-pointer text-xs font-semibold text-foreground">نص طلب المراجعة (انسخه وقدّمه بنفسك في قوقل)</summary>
+                            <textarea
+                              readOnly
+                              dir="rtl"
+                              rows={7}
+                              defaultValue={String(item.action_payload.appeal_text_ar)}
+                              className="mt-2 w-full rounded-md border border-border bg-background p-2 text-xs leading-6"
+                            />
+                            <p className="mt-1 text-[11px] leading-5 text-muted-foreground">ما نقدّم الطلب عنك. تقدّمه من حسابك في قوقل بعد تنفيذ التعديل.</p>
+                          </details>
+                        ) : null}
                       </div>
                     ))}
                   </div>
@@ -370,20 +389,29 @@ function ChangePreview({
 
   const operation = String(payload.operation ?? '');
   const params = payload.params ?? {};
+  if (operation === 'launch_campaign') return <LaunchPlanPreview plan={params.plan} />;
   const rows: Array<{ label: string; value: string; ltr?: boolean }> = [];
 
   const operationLabels: Record<string, string> = {
     adjust_budget: 'تعديل ميزانية حملة',
     adjust_bid: 'تعديل هدف المزايدة لمجموعة إعلانية',
+    shift_budget_pair: 'نقل جزء من ميزانية حملة إلى حملة ثانية (الإجمالي ما يتغير)',
     pause_keyword: 'إيقاف كلمة مفتاحية',
     pause_ad: 'إيقاف إعلان',
     add_negative_keyword: 'إضافة كلمة سلبية',
     add_keyword: 'إضافة كلمة رابحة من عبارات البحث',
     pause_campaign: 'إيقاف حملة',
     enable_campaign: 'تشغيل حملة',
+    launch_campaign: 'بناء حملة موقوفة',
     add_negative_keywords_batch: 'منع عبارات بحث (دفعة)',
+    add_data_exclusion: 'استبعاد أيام التتبع المكسور من تعلم المزايدة',
+    create_lead_conversion_action: 'إنشاء تحويل "زبون فعلي" لرفع الزبائن لقوقل',
+    set_conversion_primary: 'اجعل الزبون الفعلي تحويلاً أساسياً',
     build_campaign_opportunity: 'عبارات بحث رابحة (تُراجع في المساعد)',
+    expansion_idea: 'فرصة توسع (تُراجع في المساعد)',
     manual_campaign_draft: 'مسودة حملة جديدة (تحتاج مراجعة يدوية)',
+    ...(isExtendedOperation(operation) ? { [operation]: EXTENDED_OPERATION_LABELS_AR[operation] } : {}),
+    ...GROWTH_LABELS_AR,
   };
 
   if (operation === 'build_campaign_opportunity') {
@@ -400,6 +428,8 @@ function ChangePreview({
         value: `${formatNumberAr(payload.totals.conversions)} تحويل · ${formatCurrency(payload.totals.cost ?? 0, currencyCode)}`,
       });
     }
+  } else if (isGrowthOperation(operation)) {
+    rows.push(...growthPreviewRows(operation, params));
   } else if (operation === 'add_keyword') {
     if (params.keyword_text) rows.push({ label: 'الكلمة الجديدة', value: String(params.keyword_text) });
     if (params.match_type) rows.push({ label: 'نوع المطابقة', value: String(params.match_type), ltr: true });
@@ -424,6 +454,18 @@ function ChangePreview({
     if (params.budget_resource) {
       rows.push({ label: 'المورد المستهدف', value: String(params.budget_resource), ltr: true });
     }
+  } else if (operation === 'shift_budget_pair') {
+    const shift = Number(params.shift_micros ?? 0) / 1_000_000;
+    const fromNow = Number(params.from_current_micros ?? 0) / 1_000_000;
+    const toNow = Number(params.to_current_micros ?? 0) / 1_000_000;
+    if (shift > 0) rows.push({ label: 'المبلغ المنقول (يومياً)', value: formatCurrency(shift, currencyCode) });
+    if (fromNow > 0 && shift > 0) {
+      rows.push({ label: 'الميزانية اللي تنقص', value: `${formatCurrency(fromNow, currencyCode)} إلى ${formatCurrency(fromNow - shift, currencyCode)}` });
+    }
+    if (toNow > 0 && shift > 0) {
+      rows.push({ label: 'الميزانية اللي تزيد', value: `${formatCurrency(toNow, currencyCode)} إلى ${formatCurrency(toNow + shift, currencyCode)}` });
+    }
+    rows.push({ label: 'الإجمالي اليومي', value: 'ما يتغير. التعديلان ينفذان مع بعض أو ما ينفذ شي' });
   } else if (operation === 'adjust_bid') {
     if (params.target_cpa_micros !== undefined) {
       rows.push({
@@ -462,6 +504,29 @@ function ChangePreview({
           ? 'تُوقف فقط إذا كانت الحملة شغالة وقت التنفيذ'
           : 'تُشغّل فقط إذا كانت الحملة موقوفة ولها ميزانية يومية',
     });
+  } else if (isExtendedOperation(operation)) {
+    rows.push(...extendedPreviewRows(operation, params, payload.target_id ? String(payload.target_id) : undefined));
+  } else if (operation === 'add_data_exclusion') {
+    if (params.start_date_time && params.end_date_time) {
+      rows.push({ label: 'الفترة المستبعدة', value: `${params.start_date_time} إلى ${params.end_date_time}`, ltr: true });
+    }
+    rows.push({
+      label: 'وش يصير',
+      value: 'المزايدة الذكية تتجاهل أرقام هالأيام وما تتعلم منها. ما يتغير شي ثاني في الحملات',
+    });
+  } else if (operation === 'create_lead_conversion_action') {
+    rows.push({
+      label: 'وش يصير',
+      value: 'ينشأ تحويل ثانوي لرفع الزبائن الفعليين. ما يغيّر شي في المزايدة لين تجعله أساسي',
+    });
+  } else if (operation === 'set_conversion_primary') {
+    if (params.lead_conversions_30d) {
+      rows.push({ label: 'تحويلات الزبون الفعلي (30 يوم)', value: formatNumberAr(Number(params.lead_conversions_30d)) });
+    }
+    const demote: unknown[] = Array.isArray(params.demote_resources) ? params.demote_resources : [];
+    if (demote.length > 0) {
+      rows.push({ label: 'نقرات الواتساب تتحول إلى ثانوية', value: formatNumberAr(demote.length) });
+    }
   } else if (payload.target_id) {
     rows.push({ label: 'المورد المستهدف', value: String(payload.target_id), ltr: true });
   }
@@ -493,7 +558,8 @@ function ChangePreview({
 }
 
 function isCampaignOpportunity(item: any) {
-  return String(item?.action_payload?.operation ?? '') === 'build_campaign_opportunity';
+  const operation = String(item?.action_payload?.operation ?? '');
+  return operation === 'build_campaign_opportunity' || operation === 'expansion_idea';
 }
 
 /**
@@ -555,7 +621,18 @@ function actionTypeLabel(value?: string | null) {
     add_keyword: 'إضافة كلمة رابحة',
     pause_campaign: 'إيقاف حملة',
     enable_campaign: 'تشغيل حملة',
+    launch_campaign: 'بناء حملة موقوفة',
+    remove_launched_campaign: 'التراجع عن بناء حملة',
+    ...GROWTH_LABELS_AR,
+    growth_remove_demand_gen: 'التراجع عن بناء حملة ديماند جن',
+    growth_close_user_list: 'إغلاق قائمة الجمهور',
+    growth_remove_audience_criterion: 'فك ربط الجمهور',
+    growth_end_experiment: 'إيقاف التجربة',
     add_negative_keywords_batch: 'منع عبارات بحث (دفعة)',
+    ...EXTENDED_OPERATION_LABELS_AR,
+    add_data_exclusion: 'استبعاد أيام تتبع مكسور',
+    create_lead_conversion_action: 'إنشاء تحويل الزبون الفعلي',
+    set_conversion_primary: 'تحويل الزبون الفعلي إلى أساسي',
     approval_queued: 'اعتماد توصية',
     execution_blocked: 'محجوب: يحتاج مراجعة',
     blocked_by_guardrails: 'محجوب بحواجز الأمان',
