@@ -151,6 +151,21 @@ test('reader: the per-asset view wins over inline labels, and a failed view fall
   assert.equal(dead.readable, false);
 });
 
+test('reader: whole policy summary preserves per-text approval without rejected subfields', async () => {
+  const report = await readRsaAssets({ query: async (gaql) => {
+    if (!gaql.includes('FROM ad_group_ad_asset_view')) return [rsaRow()];
+    if (/ad_group_ad_asset_view\.policy_summary\./.test(gaql)) throw new Error('UNRECOGNIZED_FIELD');
+    return [{ ad_group_ad_asset_view: { ad_group_ad: AD, field_type: 'HEADLINE', performance_label: 'LOW',
+      enabled: true, policy_summary: { approval_status: 'DISAPPROVED', review_status: 'REVIEWED' } },
+    asset: { text_asset: { text: 'صالون الورد الرياض' } } }];
+  } });
+  assert.equal(report.readable, true);
+  assert.equal(report.rsas[0].labels_from_view, true);
+  assert.equal(report.rsas[0].headlines[0].label, 'LOW');
+  assert.equal(report.rsas[0].headlines[0].approval, 'DISAPPROVED');
+  assert.equal(report.rsas[0].headlines[0].review, 'REVIEWED');
+});
+
 test('snapshot block has counts only, no ad text, and coverage lists missing extensions', () => {
   const [rsa] = normalizeRsaRows([rsaRow()]);
   const coverage = computeCoverage(

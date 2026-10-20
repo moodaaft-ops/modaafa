@@ -8,8 +8,9 @@ import { isPinField, type PinField } from './validators';
  *   ad_group_ad_asset_view.policy_summary     approval and review status per text
  *   ad_group_ad.ad_strength                   POOR | AVERAGE | GOOD | EXCELLENT
  *
- * Field names checked against the v22 protos (google-ads python wheel 29 to 31),
- * not against a live account. In v22 `asset_group_asset` has NO performance_label
+ * The per-text policy summary must be selected as a whole in v23; selecting
+ * its approval_status/review_status subfields fails with UNRECOGNIZED_FIELD.
+ * In v23 `asset_group_asset` has NO performance_label
  * (only the ad view has it), so Performance Max asset groups are read for
  * status, policy and ad strength only; see readAssetGroups.
  *
@@ -83,8 +84,7 @@ const VIEW_QUERY = `
   SELECT ad_group_ad_asset_view.ad_group_ad, ad_group_ad_asset_view.field_type,
     ad_group_ad_asset_view.performance_label, ad_group_ad_asset_view.pinned_field,
     ad_group_ad_asset_view.enabled,
-    ad_group_ad_asset_view.policy_summary.approval_status,
-    ad_group_ad_asset_view.policy_summary.review_status,
+    ad_group_ad_asset_view.policy_summary,
     asset.text_asset.text
   FROM ad_group_ad_asset_view
   WHERE ad_group_ad_asset_view.field_type IN ('HEADLINE', 'DESCRIPTION')
