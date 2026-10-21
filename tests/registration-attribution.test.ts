@@ -56,3 +56,11 @@ test('metadata from the form beats the cookie only when it carries a signal', ()
   assert.equal(pickAttribution({}, cookie).utm_source, 'cookie');
   assert.equal(pickAttribution('junk', cookie).utm_source, 'cookie');
 });
+
+test('gbraid and wbraid alone count as a campaign signal and survive the cookie round trip', () => {
+  const a = extractAttribution(new URLSearchParams('gbraid=0AAAAAo_abc-123XYZ&wbraid=CjkKCAjw_def456'), '/', NOW);
+  assert.equal(a.gbraid, '0AAAAAo_abc-123XYZ');
+  assert.equal(a.wbraid, 'CjkKCAjw_def456');
+  assert.deepEqual(parseAttributionCookie(serializeAttribution(a)), a);
+  assert.deepEqual(extractAttribution(new URLSearchParams('gbraid=ab'), '/', NOW), {});
+});

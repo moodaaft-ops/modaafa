@@ -14,7 +14,9 @@ export const ATTRIBUTION_COOKIE = 'mz_attr';
 export const ATTRIBUTION_COOKIE_MAX_AGE = 60 * 60 * 24 * 30;
 
 export const UTM_KEYS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'] as const;
-export const CLICK_ID_KEYS = ['ttclid', 'gclid'] as const;
+// gbraid and wbraid are what Google sends instead of gclid for iOS web-to-app and
+// privacy-limited clicks; without them those signups would look like direct traffic.
+export const CLICK_ID_KEYS = ['ttclid', 'gclid', 'gbraid', 'wbraid'] as const;
 
 export type Attribution = Partial<Record<(typeof UTM_KEYS)[number] | (typeof CLICK_ID_KEYS)[number], string>> & {
   landing_path?: string;
@@ -52,7 +54,7 @@ export function sanitizeAttribution(input: unknown): Attribution {
 
 /** True when the object carries a campaign signal (not just a landing path). */
 export function hasMarketingSignal(a: Attribution) {
-  return Boolean(a.utm_source || a.utm_campaign || a.ttclid || a.gclid);
+  return Boolean(a.utm_source || a.utm_campaign || a.ttclid || a.gclid || a.gbraid || a.wbraid);
 }
 
 export function extractAttribution(params: URLSearchParams, pathname: string, now: Date = new Date()): Attribution {
