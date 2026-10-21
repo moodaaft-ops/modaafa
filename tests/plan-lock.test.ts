@@ -20,7 +20,7 @@ const recommendations = [
     status: 'pending',
     expected_impact: { metric: 'cost', delta_sar_per_month: 910 },
     action_payload: { operation: 'pause_keyword', evidence_ar: ['دليل الأول'] },
-    created_at: '2026-10-14T09:00:00Z',
+    created_at: new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString(),
   },
   {
     id: 'r2',
@@ -30,7 +30,7 @@ const recommendations = [
     status: 'pending',
     expected_impact: { metric: 'cost', delta_sar_per_month: 777 },
     action_payload: { operation: 'adjust_budget', evidence_ar: ['دليل سري ثاني'] },
-    created_at: '2026-10-14T08:00:00Z',
+    created_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
   },
   {
     id: 'r3',
@@ -40,7 +40,7 @@ const recommendations = [
     status: 'pending',
     expected_impact: { metric: 'cost', delta_sar_per_month: 555 },
     action_payload: { operation: 'add_negative_keyword', evidence_ar: ['دليل سري ثالث'] },
-    created_at: '2026-10-14T07:00:00Z',
+    created_at: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
   },
 ];
 
@@ -53,7 +53,7 @@ function fakeSupabase(opts: { subscription?: { status: string; stripe_subscripti
       for (const name of ['select', 'eq', 'in', 'is', 'not', 'gte', 'lte', 'neq', 'order', 'limit', 'contains', 'or']) chain[name] = () => chain;
       const data =
         table === 'audits'
-          ? { health_score: 55, estimated_monthly_waste: 1840, ran_at: '2026-10-14T06:00:00Z' }
+          ? { health_score: 55, estimated_monthly_waste: 1840, ran_at: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString() }
           : table === 'recommendations'
             ? recommendations
             : table === 'subscriptions'
