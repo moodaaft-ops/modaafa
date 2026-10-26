@@ -111,7 +111,14 @@ test('journey steps match the contract table exactly', () => {
     registered: [['registered_1d', 1440, null], ['registered_3d', 4320, null], ['registered_7d', 10080, null]],
     connected: [['connected_3h', 180, null], ['connected_1d', 1440, null]],
     plan_ready: [['plan_ready_1d', 1440, null], ['plan_ready_3d', 4320, null], ['plan_ready_7d', 10080, null]],
-    trial: [['trial_d1', 1440, null], ['trial_d4', 5760, null], ['trial_d9', 12960, null]],
+    trial: [
+      ['trial_d1', 1440, null],
+      ['trial_d4', 5760, null],
+      ['trial_d7', 10080, null],
+      ['trial_d9', 12960, null],
+      // day 12 of 14, a billing notice for the first charge: sendable for one day only
+      ['trial_card_ready', 17280, 1440],
+    ],
     trial_lapsed: [['trial_lapsed_2d', 2880, null], ['trial_lapsed_14d', 20160, 7 * 1440]],
     canceled: [['canceled_1d', 1440, null], ['canceled_30d', 43200, 7 * 1440]],
     past_due: [['past_due_3d', 11520, null]],
@@ -126,7 +133,7 @@ test('past_due_3d is due the day after the access grace ends (copy key kept, the
   assert.equal(step!.afterMinutes, 8 * 24 * 60);
 });
 
-test('limits and switches match the contract, and only the four approved texts can go out', () => {
+test('limits and switches match the contract, and only the texts Ayman approved can go out', () => {
   assert.equal(EMAIL_LIFECYCLE_ACTIVATED_AT, '2026-10-15T09:00:00+03:00');
   assert.equal(HOLDOUT_PERCENT, 10);
   assert.deepEqual(SEND_WINDOW, { tz: 'Asia/Riyadh', startHour: 9, endHour: 22 });
@@ -137,18 +144,28 @@ test('limits and switches match the contract, and only the four approved texts c
   assert.deepEqual(WEEKLY_REPORT, { weekday: 0, hour: 9, windowHours: 60 });
   for (const copy of Object.values(EMAIL_COPY)) {
     if (copy.category === 'transactional') continue;
-    const approvedByAyman = ['welcome_ads_connect', 'registered_1d', 'plan_ready_1d', 'weekly_report'].includes(copy.key);
+    const approvedByAyman = [
+      'welcome_ads_connect',
+      'registered_1d',
+      'plan_ready_1d',
+      'weekly_report',
+      // 26 Oct 2026: the trial journey (trial_card_ready is transactional and skipped above)
+      'trial_d1',
+      'trial_d4',
+      'trial_d7',
+      'trial_d9',
+    ].includes(copy.key);
     assert.equal(copy.approved, approvedByAyman, `${copy.key} approval must match what Ayman approved`);
   }
   for (const broadcast of BROADCASTS) assert.equal(broadcast.approved, false);
 });
 
-test('every journey step points at a real copy with the lifecycle category', () => {
+test('every journey step points at a real copy with the lifecycle category (the day 12 card notice is the one transactional step)', () => {
   for (const [journey, steps] of Object.entries(JOURNEY_STEPS)) {
     const seen = new Set<string>();
     for (const step of steps) {
       assert.ok(COPY_KEYS.includes(step.copyKey), `${journey}: ${step.copyKey} is not a copy key`);
-      assert.equal(EMAIL_COPY[step.copyKey].category, 'lifecycle', step.copyKey);
+      assert.equal(EMAIL_COPY[step.copyKey].category, step.copyKey === 'trial_card_ready' ? 'transactional' : 'lifecycle', step.copyKey);
       assert.ok(!seen.has(step.copyKey), `${step.copyKey} appears twice`);
       seen.add(step.copyKey);
     }
@@ -175,5 +192,6 @@ test('the one defined broadcast is valid and unapproved', () => {
 test('journey horizon helpers', () => {
   assert.equal(journeyHorizonMinutes(JOURNEY_STEPS.registered), 10080 + 2880);
   assert.equal(journeyHorizonMinutes(JOURNEY_STEPS.canceled), 43200 + 7 * 1440);
-  assert.equal(journeyLastStepMinutes(JOURNEY_STEPS.trial), 12960);
+  assert.equal(journeyLastStepMinutes(JOURNEY_STEPS.trial), 17280);
+  assert.equal(journeyHorizonMinutes(JOURNEY_STEPS.trial), 17280 + 1440);
 });

@@ -275,7 +275,7 @@ test('30 days: every mail leaves between 09:00 and 22:00 Riyadh time', async () 
       total += 1;
     }
   }
-  assert.equal(total, 40, 'the scenario sends exactly the mails its stories describe');
+  assert.equal(total, 42, 'the scenario sends exactly the mails its stories describe');
 });
 
 test('30 days: nobody gets the same mail twice and every sent row is complete', async () => {
@@ -354,8 +354,12 @@ test('30 days, trial started on a Friday: the weekly report and a trial mail due
     'trial_d1 d5 09:00',
     'weekly_report_2026-W42 d6 09:00', // exactly 24 hours later is allowed
     'trial_d4 d8 09:00',
+    // Due d11 09:00, but d5, d6 and d8 already fill the 3 mails per 7 days: it waits until d5 09:00 is a week old.
+    'trial_d7 d12 09:00',
     'trial_d9 d13 09:00', // due at the same minute as the weekly report; the trial mail goes first
-    'weekly_report_2026-W43 d14 09:00', // still inside the weekly report's 60 hour window
+    'weekly_report_2026-W43 d15 09:00', // still inside the weekly report's 60 hour window, once d8 is a week old
+    // Day 12 of the trial, a billing notice: on time, whatever the optional mails around it did.
+    'trial_card_ready d16 09:00',
     'weekly_report_2026-W44 d20 09:00',
     'weekly_report_2026-W45 d27 09:00',
   ]);

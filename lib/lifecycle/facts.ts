@@ -1,4 +1,5 @@
-import { type AdsAccountSummary } from '@/lib/accounts/selection';
+import { partitionGoogleAdsAccounts, type AdsAccountSummary } from '@/lib/accounts/selection';
+import { retrieveStripeSubscription } from '@/lib/billing/stripe';
 import { getBillingCheckoutContext } from '@/lib/billing/checkout-policy';
 import { googleAdsAccountNameMissing } from '@/lib/accounts/display';
 import { OPEN_DECISION_STATUSES, PLAN_DECISION_LIMIT, toPlanRecommendations } from '@/lib/plan/load';
@@ -13,9 +14,11 @@ import {
   type FactNeed,
   type PlanFacts,
   type TrialFacts,
+  type TrialTrack,
   type WeeklyFacts,
 } from './types';
 import { LIFECYCLE_ACCOUNT_STATUSES, pickLifecycleAccount } from './facts/account';
+import { trialSpendFrom, type CachedCostRow } from './facts/spend';
 import { firstNameOf, highlightsFrom } from './facts/text';
 import { riyadhDay, saudiWeekStart } from './riyadh';
 
@@ -45,6 +48,10 @@ import { riyadhDay, saudiWeekStart } from './riyadh';
  *   recommendations       status in OPEN_DECISION_STATUSES          -> pendingCount (pending + approved-not-executed,
  *                                                                          the rows /home lists as waiting)
  *   ai_actions            action_type = 'approval_queued'           -> approvedCount
+ *   ai_actions            rollback_status = 'reverted'              -> rolledBackCount (since the trial started)
+ *   campaigns_cache       metrics_30d cost of the linked accounts   -> adsSpend30 and the trial track (spend.ts)
+ *   Stripe (live)         cancel_at_period_end / cancel_at          -> trial.cancelScheduled, only for a copy that lists
+ *                                                                          'cancel_state' (our table does not store it)
  *   reports               metrics.kind = 'weekly_performance'       -> weekly (only one generated in the current Saudi
  *                                                                          week, see saudiWeekStart)
  *   users                 email (only when the adaptive onboarding may be on)
@@ -56,6 +63,8 @@ export type LoadFactsOptions = {
   now?: Date;
   /** For tests: where the adaptive-onboarding flags are read from. */
   env?: Record<string, string | undefined>;
+  /** For tests: reads the live Stripe subscription (default: lib/billing/stripe retrieveStripeSubscription). */
+  retrieveSubscription?: (id: string) => Promise<{ cancel_at_period_end?: boolean | null; cancel_at?: number | null }>;
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -64,7 +73,7 @@ const LIST_LIMIT = 1000;
 
 const BUSINESS_COLUMNS =
   'id, name, sector, website, monthly_budget, primary_goal, target_regions, selected_google_ads_customer_id';
-const ACCOUNT_COLUMNS = 'id, customer_id, customer_name, manager_id, status, is_manager, currency_code';
+const ACCOUNT_COLUMNS = 'id, customer_id, customer_name, manager_id, status, is_manager, currency_code, last_synced_at';
 
 type BusinessRow = {
   id: string;
@@ -84,6 +93,7 @@ type SubscriptionRow = {
   status?: string | null;
   trial_ends_at?: string | null;
   created_at?: string | null;
+  stripe_subscription_id?: string | null;
 };
 
 type IdRow = { id?: string | null; recommendation_id?: string | null };
@@ -178,6 +188,7 @@ async function load(
   const wantTrial = want.has('trial');
   const wantWeekly = want.has('weekly');
   const wantBilling = want.has('billing');
+  const wantCancelState = want.has('cancel_state');
   const adaptiveMayBeOn = wantPlan && (env.ADAPTIVE_ONBOARDING === 'true' || env.ADAPTIVE_ONBOARDING === 'operators');
 
   // ---- Round 1: reads that need nothing but the user id.
@@ -195,7 +206,7 @@ async function load(
       ? read<SubscriptionRow[]>('subscriptions', () =>
           admin
             .from('subscriptions')
-            .select('plan, status, trial_ends_at, created_at')
+            .select('plan, status, trial_ends_at, created_at, stripe_subscription_id')
             .eq('user_id', user.id)
             .order('created_at', { ascending: false })
             .limit(10)
@@ -354,10 +365,17 @@ async function load(
 
     let approvedCount = 0;
     let pending = 0;
+    let rolledBackCount: number | null = null;
+    let adsSpend30: number | null = null;
+    let track: TrialTrack | null = null;
     if (account) {
       const accountId = account.id;
-      const [approvedRead, pendingRead] = await Promise.all([
-        read<IdRow[]>('ai_actions_approved', () =>
+      // The linked accounts the spend is summed over: every active client account of the business, not only the
+      // selected one (a person can run ads from several).
+      const linked = partitionGoogleAdsAccounts((accountsRead?.ok ? accountsRead.data ?? [] : []) as AccountRow[]).accounts;
+      const linkedIds = linked.map((row) => row.id);
+      const [approvedRead, pendingRead, revertedRead, cacheRead] = await Promise.all([
+        read<IdRow[]>('ai_actions', () =>
           admin
             .from('ai_actions')
             .select('id, recommendation_id')
@@ -367,18 +385,60 @@ async function load(
             .limit(LIST_LIMIT)
         ),
         pendingCount(),
+        read<IdRow[]>('ai_actions', () =>
+          admin
+            .from('ai_actions')
+            .select('id, recommendation_id')
+            .eq('account_id', accountId)
+            .eq('rollback_status', 'reverted')
+            .gte('created_at', startedAt)
+            .limit(LIST_LIMIT)
+        ),
+        linkedIds.length > 0
+          ? read<CachedCostRow[]>('campaigns_cache', () =>
+              admin.from('campaigns_cache').select('metrics_30d').in('account_id', linkedIds).limit(LIST_LIMIT)
+            )
+          : Promise.resolve<Read<CachedCostRow[]>>({ ok: true, data: [] }),
       ]);
       if (!approvedRead.ok || !pendingRead.ok) return null;
       // One approval is one recommendation, even if it was approved again after a failed execution.
       approvedCount = new Set((approvedRead.data ?? []).map((row) => row?.recommendation_id ?? row?.id)).size;
       pending = pendingRead.data;
+      // The two reads below only enrich the mail: when one fails the sentence or the track that needs it is left out.
+      if (revertedRead.ok) {
+        rolledBackCount = new Set((revertedRead.data ?? []).map((row) => row?.recommendation_id ?? row?.id)).size;
+      }
+      ({ spend30: adsSpend30, track } = trialSpendFrom({
+        rows: cacheRead.ok ? cacheRead.data ?? [] : null,
+        syncedAt: linked.map((row) => row.last_synced_at),
+        now,
+      }));
     }
 
     const endsAt = validIso(trialRow.trial_ends_at);
     // Whole days remaining, rounded UP: 9 days 22 hours left is "10 days", the last partial day still counts, and
     // an ended trial is 0 (never negative). Riyadh is a fixed UTC+3 with no daylight saving, so elapsed time is exact.
     const daysLeft = endsAt ? Math.max(0, Math.ceil((Date.parse(endsAt) - now.getTime()) / DAY_MS)) : null;
-    return { startedAt, endsAt, daysLeft, approvedCount, pendingCount: pending };
+    const facts: TrialFacts = { startedAt, endsAt, daysLeft, approvedCount, pendingCount: pending, rolledBackCount, adsSpend30, track };
+    if (wantCancelState) facts.cancelScheduled = await cancelScheduled(trialRow.stripe_subscription_id);
+    return facts;
+  };
+
+  /**
+   * Is a cancellation scheduled in Stripe? Our table does not store cancel_at_period_end, so this reads the live
+   * subscription, the way the billing page and the trial_will_end handler do. null = cannot be told (no Stripe id,
+   * Stripe unreachable): the runner then holds the mail and tries again, it never guesses.
+   */
+  const cancelScheduled = async (stripeSubscriptionId: string | null | undefined): Promise<boolean | null> => {
+    const id = text(stripeSubscriptionId);
+    if (!id) return null;
+    try {
+      const live = await (options.retrieveSubscription ?? retrieveStripeSubscription)(id);
+      return Boolean(live?.cancel_at_period_end || live?.cancel_at);
+    } catch (error) {
+      note('stripe_subscription', error);
+      return null;
+    }
   };
 
   const weeklyTask = async (): Promise<WeeklyFacts | null> => {

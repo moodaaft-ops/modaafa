@@ -141,6 +141,12 @@ export const JOURNEY_RULES: Partial<Record<JourneyId, JourneyRule>> = {
 /** Templates everyone gets (holdout included), so they have a next stage but no holdout to compare with. */
 const NO_BASELINE_GROUPS: Record<string, JourneyId> = { welcome_ads_connect: 'registered' };
 
+/**
+ * Journey steps that are billing notices (category transactional): the holdout gets them too (lib/lifecycle/plan.ts),
+ * so comparing recipients with holdout users would measure nothing. They keep their next-stage numbers, no holdout.
+ */
+const NO_BASELINE_STEPS = new Set<string>(['trial_card_ready']);
+
 export const TEMPLATE_LABEL_AR: Record<string, string> = {
   welcome_ads_connect: 'الترحيب بعد التسجيل',
   registered_1d: 'سجّل وما ربط، بعد يوم',
@@ -153,7 +159,9 @@ export const TEMPLATE_LABEL_AR: Record<string, string> = {
   plan_ready_7d: 'شاف الخطة وما بدأ التجربة، بعد 7 أيام',
   trial_d1: 'التجربة، اليوم 1',
   trial_d4: 'التجربة، اليوم 4',
+  trial_d7: 'التجربة، اليوم 7',
   trial_d9: 'التجربة، اليوم 9',
+  trial_card_ready: 'التجربة، اليوم 12 (جهّز بطاقتك)',
   trial_lapsed_2d: 'خلصت التجربة بدون دفع، بعد يومين',
   trial_lapsed_14d: 'خلصت التجربة بدون دفع، بعد 14 يوم',
   canceled_1d: 'ألغى الاشتراك، بعد يوم',
@@ -279,7 +287,7 @@ export function computeEmailReport(input: EmailReportInput): EmailReport {
     const step = stepByGroup.get(group);
     if (step) {
       const rule = JOURNEY_RULES[step.journey];
-      return rule ? { rule, journey: step.journey, baseline: true } : null;
+      return rule ? { rule, journey: step.journey, baseline: !NO_BASELINE_STEPS.has(group) } : null;
     }
     const journey = NO_BASELINE_GROUPS[group];
     const rule = journey ? JOURNEY_RULES[journey] : undefined;

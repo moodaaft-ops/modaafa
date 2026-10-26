@@ -23,8 +23,9 @@
  * Latin digits, no "ليس مجرد" style constructions, no invented numbers.
  */
 import { PLAN_CHECKOUT_PATH } from '@/lib/plan/plan';
+import { whatsappHelpUrl } from '@/lib/support/contact';
 import { formatDateAr, formatMoney, formatNumber } from './format';
-import type { Block, BuiltEmail, CopyKey, EmailCopy, EmailFacts } from './types';
+import type { Block, BuiltEmail, CopyKey, EmailCopy, EmailFacts, TrialFacts } from './types';
 
 export const SUPPORT_WHATSAPP_DISPLAY = '0541004029';
 const TRUST_LINE = 'ولا شي يتغير في حسابك إلا باعتمادك، وتقدر ترجّع أي تعديل خلال 30 يوم.';
@@ -294,43 +295,86 @@ const plan_ready_7d: EmailCopy = {
 // Journey: trialing
 // ---------------------------------------------------------------------------
 
+/** The one-off price of the team launching a first campaign (track B). Latin digits, see the house style. */
+export const FIRST_CAMPAIGN_LAUNCH_PRICE_SAR = 750;
+const LAUNCH_PRICE = `${FIRST_CAMPAIGN_LAUNCH_PRICE_SAR} ريال`;
+
+/** "اعتمدت قرارين، ورجّعت قرار واحد": the rolled back part only when there is one. */
+function approvedLine(trial: TrialFacts): string | null {
+  if (trial.approvedCount <= 0) return null;
+  const rolledBack = trial.rolledBackCount ?? 0;
+  return rolledBack > 0
+    ? `اعتمدت ${decisions(trial.approvedCount)}، ورجّعت ${decisions(rolledBack)}.`
+    : `اعتمدت ${decisions(trial.approvedCount)}.`;
+}
+
+/** The track B button: the support WhatsApp chat with the person's own email in the first message. */
+function launchRequest(facts: EmailFacts): NonNullable<BuiltEmail['externalCta']> {
+  return { label: 'اطلب الإطلاق', url: whatsappHelpUrl('first_campaign_launch', facts.email) };
+}
+
 const trial_d1: EmailCopy = {
   key: 'trial_d1',
   category: 'lifecycle',
-  approved: false,
+  approved: true,
   requires: ['trial'],
   build: (facts) => {
     const trial = facts.trial;
     if (!trial) return null;
-    if (trial.approvedCount > 0) {
+
+    // Track B: the linked accounts spent under 300 SAR in 30 days, so there is nothing for مُضاعِف to read.
+    if (trial.track === 'b') {
       return {
-        subject: 'اعتمدت أول قرار، هذا اللي بعده',
-        preheader: 'شوفة كل صبح تكفي',
+        subject: 'حسابك للحين ما يصرف، وهذا اللي نقدر نسويه',
+        preheader: 'خيارين لأول حملة: تطلقها بنفسك أو فريق مُضاعفة يطلقها لك',
         blocks: [
-          { type: 'p', text: `في أول يوم من تجربتك اعتمدت ${decisions(trial.approvedCount)}.` },
           {
             type: 'p',
-            text: 'اللي يفرق في الأيام الجاية إنك تفتح مُضاعِف كل صبح. قراءة اليوم قصيرة، والقرار اللي يحتاجك يكون فوق.',
+            text: 'بدأت تجربتك في مُضاعِف، بس حسابك الإعلاني للحين ما فيه حملات تصرف، فمُضاعِف ما عنده شي يقراه ويطلّع لك منه قرارات.',
           },
+          {
+            type: 'p',
+            text: `عندك خيارين: تطلق أول حملة بنفسك من «خطة أول حملة» داخل المنصة، أو فريق مُضاعفة يطلقها لك بـ${LAUNCH_PRICE} مرة وحدة.`,
+          },
+          {
+            type: 'p',
+            text: `الـ${FIRST_CAMPAIGN_LAUNCH_PRICE_SAR} تشمل اختيار الكلمات اللي يبحث فيها عميلك، وكتابة الإعلانات، وضبط المدينة وأوقات الظهور، وتركيب تتبع الاتصال والواتساب، ومراجعة الحملة أول أسبوع.`,
+          },
+          {
+            type: 'p',
+            text: 'الميزانية الإعلانية تدفعها لقوقل من بطاقتك مباشرة، وننصح من 100 إلى 150 ريال باليوم لنشاط محلي.',
+          },
+          { type: 'note', text: 'ما نضمن عدد عملاء، نضمن إن الحملة مبنية صح.' },
         ],
-        cta: { label: 'افتح قراءة اليوم', path: '/home' },
+        externalCta: launchRequest(facts),
         signer: 'team',
       };
     }
-    const blocks: Block[] = [{ type: 'p', text: 'بدأت تجربتك في مُضاعِف، وللحين ما اعتمدت شي.' }];
-    blocks.push({
-      type: 'p',
-      text:
-        trial.pendingCount > 0
-          ? `فيه ${decisions(trial.pendingCount)} ينتظرك الحين، وكل واحد مكتوب معه سببه من أرقام حسابك.`
-          : 'مُضاعِف يقرأ حسابك وأول قرار يطلع لك في قراءة اليوم، مكتوب معه سببه من أرقام حسابك.',
-    });
-    blocks.push({ type: 'p', text: 'اعتمد اللي تقتنع فيه وارفض الباقي بدون حرج.' });
+
+    // Track A (and unknown): search terms, the first thing مُضاعِف reads in a spending account.
+    const blocks: Block[] = [
+      {
+        type: 'p',
+        text: 'تختار في حملتك كلمة مثل «مكيفات»، وقوقل يعرض إعلانك لمن يبحث «تصليح مكيف ببلاش». هذي اسمها مصطلحات البحث، وهي اللي تدفع عليها فعلاً.',
+      },
+    ];
+    if (trial.pendingCount > 0) {
+      blocks.push({
+        type: 'p',
+        text: `مُضاعِف قرأ مصطلحات حسابك، وعندك ${decisions(trial.pendingCount)} ينتظرك، كل واحد معه سببه من أرقامك.`,
+      });
+      blocks.push({ type: 'p', text: 'اعتمد اللي تقتنع فيه واترك الباقي.' });
+    } else {
+      blocks.push({
+        type: 'p',
+        text: 'ما طلع قرار اليوم، وهذا يصير لما الحساب ما فيه شي يستاهل يتغير. بكرة نقرأه من جديد.',
+      });
+    }
     return {
-      subject: 'أول قرار في تجربتك ينتظرك',
-      preheader: 'ولا شي يتغير إلا بضغطتك',
+      subject: 'الكلمة اللي اخترتها غير اللي تدفع عليها',
+      preheader: 'مُضاعِف يقرأ العبارات اللي تصرف عليها فعلاً',
       blocks,
-      cta: { label: 'افتح مُضاعِف', path: '/home' },
+      cta: { label: 'شوف قرار اليوم', path: '/home' },
       signer: 'team',
     };
   },
@@ -339,34 +383,83 @@ const trial_d1: EmailCopy = {
 const trial_d4: EmailCopy = {
   key: 'trial_d4',
   category: 'lifecycle',
-  approved: false,
+  approved: true,
+  requires: ['trial'],
+  build: (facts) => {
+    const trial = facts.trial;
+    if (!trial) return null;
+    const daysLeftLine =
+      trial.daysLeft !== null && trial.daysLeft > 0 ? `باقي على تجربتك ${days(trial.daysLeft)}.` : null;
+
+    // Track B: start small and clear, and the same launch offer in one line.
+    if (trial.track === 'b') {
+      const blocks: Block[] = [
+        {
+          type: 'p',
+          text: 'لنشاط محلي، البداية الصح ميزانية من 100 إلى 150 ريال باليوم، وحملة بحث وحدة على الخدمة اللي الناس يبحثون عنها فعلاً.',
+        },
+        {
+          type: 'p',
+          text: `ولو تبي فريق مُضاعفة يطلقها لك: ${LAUNCH_PRICE} مرة وحدة، والميزانية تدفعها لقوقل من بطاقتك مباشرة.`,
+        },
+      ];
+      if (daysLeftLine) blocks.push({ type: 'note', text: daysLeftLine });
+      return {
+        subject: 'أول حملة: ابدأ صغير وواضح',
+        preheader: 'من 100 إلى 150 ريال باليوم وحملة بحث وحدة',
+        blocks,
+        externalCta: launchRequest(facts),
+        signer: 'team',
+      };
+    }
+
+    const blocks: Block[] = [
+      {
+        type: 'p',
+        text: 'لو حاط 100 ريال باليوم، قوقل يحق له يصرف لين 200 في يوم واحد، بشرط إن الشهر ما يتعدى قرابة 30 ضعف اليومي. كثير يكتشفونها من الفاتورة.',
+      },
+      {
+        type: 'p',
+        text: 'مُضاعِف ما يحرك ميزانيتك أكثر من 20% بالمرة، ولا يرجع يلمسها قبل 7 أيام، وأي تعديل ترجّعه خلال 30 يوم.',
+      },
+    ];
+    const tail = [
+      trial.approvedCount > 0 ? `اعتمدت لين الحين ${decisions(trial.approvedCount)}.` : null,
+      daysLeftLine,
+    ].filter((line): line is string => line !== null);
+    if (tail.length > 0) blocks.push({ type: 'p', text: tail.join(' ') });
+    return {
+      subject: 'ميزانيتك اليومية مو سقف',
+      preheader: 'ووش يسوي مُضاعِف بميزانيتك وما يسويه',
+      blocks,
+      cta: { label: 'افتح قرارات اليوم', path: '/home' },
+      signer: 'team',
+    };
+  },
+};
+
+const trial_d7: EmailCopy = {
+  key: 'trial_d7',
+  category: 'lifecycle',
+  approved: true,
   requires: ['trial'],
   build: (facts) => {
     const trial = facts.trial;
     if (!trial) return null;
     const blocks: Block[] = [
-      { type: 'stat', label: 'قرارات اعتمدتها', value: formatNumber(trial.approvedCount) },
-      { type: 'stat', label: 'مفتوحة في خطتك', value: formatNumber(trial.pendingCount) },
+      {
+        type: 'p',
+        text: 'أكثر شي يخرّب حملة قوقل اللمس اليومي. كل تعديل كبير يرجّع المزايدة تتعلم من جديد، وفي هالفترة النتائج تتذبذب.',
+      },
+      { type: 'p', text: 'عشان كذا فيه أيام ما يطلع لك فيها قرار. مو كسل، هذا قرار.' },
     ];
-    blocks.push({
-      type: 'p',
-      text:
-        trial.approvedCount === 0
-          ? 'للحين ما اعتمدت شي. مُضاعِف ما يحرك ولا ريال في حسابك بدون ضغطتك، فلو ما فتحته تخلص التجربة وأنت ما جربت.'
-          : 'أي قرار اعتمدته ترجّعه من الرئيسية خلال 30 يوم لو ما عجبك أثره.',
-    });
-    if (trial.daysLeft !== null && trial.daysLeft > 0) {
-      blocks.push({ type: 'note', text: `باقي على تجربتك ${days(trial.daysLeft)}.` });
-    }
+    const done = approvedLine(trial);
+    if (done) blocks.push({ type: 'p', text: `نص التجربة راح، وهذا اللي صار في حسابك: ${done}` });
     return {
-      subject:
-        trial.approvedCount === 0
-          ? 'تجربتك ماشية وما اعتمدت ولا قرار'
-          : `اعتمدت ${decisions(trial.approvedCount)} في تجربتك`,
-      preheader:
-        trial.pendingCount > 0 ? `و${decisions(trial.pendingCount)} ينتظرك الحين` : 'وهذي وين وصلت',
+      subject: 'ليش مُضاعِف ما يغيّر شي كل يوم',
+      preheader: 'قلة التعديل قرار مدروس مو تقصير',
       blocks,
-      cta: { label: 'افتح قرارات اليوم', path: '/home' },
+      cta: { label: 'شوف حسابك', path: '/home' },
       signer: 'team',
     };
   },
@@ -375,33 +468,80 @@ const trial_d4: EmailCopy = {
 const trial_d9: EmailCopy = {
   key: 'trial_d9',
   category: 'lifecycle',
-  approved: false,
+  approved: true,
   requires: ['trial'],
   build: (facts) => {
     const trial = facts.trial;
     if (!trial) return null;
     const left = trial.daysLeft !== null && trial.daysLeft > 0 ? days(trial.daysLeft) : null;
-    const blocks: Block[] = [
-      {
+    const blocks: Block[] = [];
+    if (left) blocks.push({ type: 'p', text: `باقي ${left} وبعدها يبدأ الاشتراك.` });
+    // The biggest wasted spend caught ("وأكبر صرف بدون نتيجة انمسك كان ...") needs a figure the platform does not
+    // store per trial yet, so that clause is left out rather than guessed.
+    if (trial.approvedCount > 0) {
+      blocks.push({ type: 'p', text: `في تجربتك اعتمدت ${decisions(trial.approvedCount)}.` });
+    } else if (trial.track !== 'b') {
+      blocks.push({
         type: 'p',
-        text: left
-          ? `باقي على تجربتك ${left}، وبعدها يبدأ الاشتراك تلقائياً لو ما ألغيت.`
-          : 'تجربتك قربت تخلص، وبعدها يبدأ الاشتراك تلقائياً لو ما ألغيت.',
-      },
-      {
-        type: 'p',
-        text:
-          trial.approvedCount > 0
-            ? `خلال التجربة اعتمدت ${decisions(trial.approvedCount)}، وأثرها يبان في ملخصك الأسبوعي.`
-            : 'ما اعتمدت أي قرار للحين، يعني التجربة ما أعطتك شي تحكم عليه. جرّب قرار واحد على الأقل قبل ما تقرر.',
-      },
-      { type: 'note', text: 'ولو قررت ما تكمل، الإلغاء بضغطة من صفحة الاشتراك، وقبل نهاية التجربة ما ينخصم شي.' },
-    ];
+        text: 'ما اعتمدت أي قرار للحين، يعني التجربة ما أعطتك شي تحكم عليه. جرّب قرار واحد على الأقل قبل ما تقرر.',
+      });
+    }
+    blocks.push({
+      type: 'p',
+      text: 'نصيحة تنفعك حتى لو ما كملت معنا: شيك إن التحويل في حسابك يحسب طلب أو اتصال حقيقي مو زيارة صفحة. لو التحويل غلط، كل قرار يطلع غلط.',
+    });
+    blocks.push({
+      type: 'p',
+      text: 'ولو قررت توقف، الإلغاء بضغطة من صفحة الاشتراك، وقبل نهاية التجربة ما ينخصم شي.',
+    });
+    const askToTry = trial.approvedCount === 0 && trial.track !== 'b';
     return {
-      subject: 'قبل ما تقرر تكمل أو توقف',
-      preheader: left ? `باقي ${left}، وهذي حصيلة تجربتك` : 'هذي حصيلة تجربتك',
+      subject: 'قبل ما تقرر',
+      preheader: left ? `باقي ${left}، وهذي نصيحة تنفعك في الحالتين` : 'نصيحة تنفعك سواء كملت أو وقفت',
       blocks,
-      cta: trial.approvedCount > 0 ? { label: 'افتح مُضاعِف', path: '/home' } : { label: 'جرّب قرار واحد', path: '/home' },
+      cta: askToTry ? { label: 'جرّب قرار واحد', path: '/home' } : { label: 'افتح مُضاعِف', path: '/home' },
+      signer: 'team',
+    };
+  },
+};
+
+/**
+ * Day 12 of the trial: the first charge is two days away. Category transactional on purpose: it is a notice
+ * about a charge that is coming, like tx_trial_ending, so an optional-mail switch or the holdout does not
+ * hold it back, and it does not count toward the 24 h gap or the 3 in 7 days cap (lib/lifecycle/plan.ts).
+ * It is not sent to someone whose cancellation is already scheduled in Stripe (`cancel_state`, read live).
+ */
+const trial_card_ready: EmailCopy = {
+  key: 'trial_card_ready',
+  category: 'transactional',
+  approved: true,
+  requires: ['trial', 'billing', 'cancel_state'],
+  build: (facts) => {
+    const trial = facts.trial;
+    if (!trial) return null;
+    // A cancelled trial is not charged: the mail would only confuse. (Unknown is held by the runner, never built.)
+    if (trial.cancelScheduled === true) return null;
+    const endsAt = trial.endsAt ?? facts.billing?.trialEndsAt ?? null;
+    const date = endsAt ? formatDateAr(endsAt) : null;
+    const blocks: Block[] = [];
+    if (date) blocks.push({ type: 'p', text: `أول دفعة يوم ${date}.` });
+    blocks.push({
+      type: 'p',
+      text: 'بعض البنوك ترفض العملية أول مرة لأنها دولية، وتنحل قبل لا تصير.',
+    });
+    blocks.push({
+      type: 'p',
+      text: 'لو بتكمل: فعّل الشراء الدولي من تطبيق بنكك، أو حدّث البطاقة من صفحة الاشتراك.',
+    });
+    blocks.push({
+      type: 'p',
+      text: `ولو ما تبي تكمل، ألغِ قبل ${date ? 'التاريخ' : 'نهاية التجربة'} وما ينخصم شي.`,
+    });
+    return {
+      subject: 'خطوة صغيرة قبل أول دفعة',
+      preheader: 'فعّل الشراء الدولي عشان البنك ما يرفض الدفعة',
+      blocks,
+      cta: { label: 'صفحة الاشتراك', path: '/billing' },
       signer: 'team',
     };
   },
@@ -793,7 +933,9 @@ export const EMAIL_COPY: Record<CopyKey, EmailCopy> = {
   plan_ready_7d,
   trial_d1,
   trial_d4,
+  trial_d7,
   trial_d9,
+  trial_card_ready,
   trial_lapsed_2d,
   trial_lapsed_14d,
   canceled_1d,

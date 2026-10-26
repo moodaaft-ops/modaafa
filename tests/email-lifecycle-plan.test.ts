@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { JOURNEY_STEPS } from '../config/email-journeys';
 import { EMAIL_COPY } from '../lib/lifecycle/copy';
 import { planEmails, type PlanConfig, type PlanContext, type PlanLogRow } from '../lib/lifecycle/plan';
 import { ACTIVATED_AT, approvedCopy, makeCtx, riyadh, sentLog } from './support/lifecycle';
@@ -599,4 +600,124 @@ test('ignored counts are one per user and track under the reason it stopped', ()
   assert.deepEqual(keys(result), ['ok:registered_1d']);
   assert.equal(result.ignored.holdout, 1);
   assert.equal(result.ignored.no_journey, 2);
+});
+
+// ---------------------------------------------------------------------------
+// Day 12 of the trial: trial_card_ready, a billing notice (category transactional)
+// ---------------------------------------------------------------------------
+
+// Trial since Wed 14 Oct 10:00: the notice is due Mon 26 Oct 10:00 (12 days) and sendable for one day.
+const CARD_DUE = riyadh('2026-10-26T10:00');
+const cardCtx = (extra: Parameters<typeof makeCtx>[0] = {}) =>
+  trialing({
+    // No weekly report written yet, so the weekly slot (open that Sunday and Monday) stays out of the way.
+    hasWeeklyReport: false,
+    // trial_d7 (21 Oct) and trial_d9 (23 Oct) already went out, so the notice is the only step left.
+    logs: [sentLog('trial_d7', riyadh('2026-10-21T10:00')), sentLog('trial_d9', riyadh('2026-10-23T10:00'))],
+    ...extra,
+  });
+
+test('trial_card_ready: due on day 12, planned as a transactional journey mail', () => {
+  assert.deepEqual(keys(plan([cardCtx()], new Date(CARD_DUE.getTime() - 60_000))), []);
+  const result = plan([cardCtx()], CARD_DUE);
+  assert.deepEqual(keys(result), ['u1:trial_card_ready']);
+  const [send] = result.sends;
+  assert.equal(send!.kind, 'journey');
+  assert.equal(send!.journey, 'trial');
+  assert.equal(send!.category, 'transactional');
+  assert.equal(send!.dueAt, CARD_DUE.toISOString());
+});
+
+test('trial_card_ready: the 24 hour gap and the 3 in 7 days cap do not hold it back', () => {
+  // A lifecycle mail an hour ago and two more this week: an optional mail would be blocked twice over.
+  const crowded = cardCtx({
+    logs: [
+      sentLog('trial_d9', riyadh('2026-10-23T10:00')),
+      sentLog('weekly_report_2026-W43', riyadh('2026-10-25T09:00'), 'weekly_report'),
+      sentLog('registered_1d', riyadh('2026-10-26T09:00')),
+    ],
+  });
+  assert.deepEqual(keys(plan([crowded], CARD_DUE)), ['u1:trial_card_ready']);
+  // The same crowded inbox does hold back an optional step, so the exemption is the category and nothing else.
+  const optional = trialing({
+    subscription: { status: 'trialing', createdAt: riyadh('2026-10-25T10:00').toISOString() },
+    logs: crowded.logs.filter((row) => row.templateKey !== 'trial_d9'),
+  });
+  const held = plan([optional], riyadh('2026-10-26T10:00'));
+  assert.deepEqual(keys(held), []);
+  assert.equal(held.ignored.min_gap, 1);
+});
+
+test('trial_card_ready: it still waits for the send window', () => {
+  const night = plan([cardCtx()], riyadh('2026-10-26T23:00'));
+  assert.deepEqual(keys(night), []);
+  assert.equal(night.ignored.outside_window, 1);
+  assert.deepEqual(keys(plan([cardCtx()], riyadh('2026-10-27T09:00'))), ['u1:trial_card_ready']);
+});
+
+test('trial_card_ready: it expires after one day instead of arriving after the charge', () => {
+  const late = plan([cardCtx()], riyadh('2026-10-27T10:01'));
+  assert.deepEqual(keys(late), []);
+  assert.deepEqual(late.skips.filter((s) => s.copyKey === 'trial_card_ready').map((s) => s.reason), ['expired']);
+  assert.deepEqual(keys(plan([cardCtx()], riyadh('2026-10-27T10:00'))), ['u1:trial_card_ready'], 'exactly 24 h is still sendable');
+});
+
+test('trial_card_ready: it goes before a weekly report that has waited longer', () => {
+  // Sunday 25 Oct 09:00 opened the weekly slot (60 h); the notice is due the next morning. Without the notice's
+  // priority the report would go first and the notice would wait a day behind the gap.
+  const ctx = cardCtx({ hasWeeklyReport: true, logs: [sentLog('trial_d9', riyadh('2026-10-23T10:00'))] });
+  assert.deepEqual(keys(plan([ctx], CARD_DUE)), ['u1:trial_card_ready']);
+  // Once the notice is out, the report follows on the next run's turn (the gap does not apply to the notice's row).
+  const after = cardCtx({ hasWeeklyReport: true, logs: [sentLog('trial_d9', riyadh('2026-10-23T10:00')), sentLog('trial_card_ready', CARD_DUE, 'transactional')] });
+  assert.deepEqual(keys(plan([after], riyadh('2026-10-26T11:00'))), ['u1:weekly_report_2026-W43']);
+});
+
+test('trial_card_ready: it supersedes an older trial step that is still pending', () => {
+  // With the shipped expiries d9 is long gone by day 12. Give it a long life to put both in play at once:
+  // the notice is the later step, so it is the one that goes and d9 is recorded as superseded.
+  const steps = {
+    ...JOURNEY_STEPS,
+    trial: [
+      { copyKey: 'trial_d9' as const, afterMinutes: 12960, expiresAfterMinutes: 10 * 1440 },
+      { copyKey: 'trial_card_ready' as const, afterMinutes: 17280, expiresAfterMinutes: 1440 },
+    ],
+  };
+  const result = plan([trialing({ hasWeeklyReport: false })], CARD_DUE, { steps });
+  assert.deepEqual(keys(result), ['u1:trial_card_ready']);
+  assert.ok(result.skips.some((s) => s.copyKey === 'trial_d9' && s.reason === 'superseded'));
+});
+
+test('trial_card_ready: held out users get it, and nothing else of the trial journey', () => {
+  const heldOut = { isHeldOut: () => true };
+  // Day 4: the optional step is held back and nothing is written down for the person.
+  const early = plan([trialing({ hasWeeklyReport: false })], riyadh('2026-10-18T12:00'), heldOut);
+  assert.deepEqual(keys(early), []);
+  assert.deepEqual(early.skips, []);
+  assert.equal(early.ignored.holdout, 1);
+  // Day 12: the billing notice still reaches them, and the steps they skipped are not recorded as superseded.
+  const late = plan([trialing({ hasWeeklyReport: false })], CARD_DUE, heldOut);
+  assert.deepEqual(keys(late), ['u1:trial_card_ready']);
+  assert.deepEqual(late.skips, []);
+  // A held out person with a notice already sent has nothing left, and is reported as held out.
+  const done = plan([trialing({ hasWeeklyReport: false, logs: [sentLog('trial_card_ready', CARD_DUE, 'transactional')] })], riyadh('2026-10-26T12:00'), heldOut);
+  assert.deepEqual(keys(done), []);
+  assert.equal(done.ignored.holdout, 1);
+});
+
+test('trial_card_ready: nobody outside a trial gets it, and a suppressed address gets nothing', () => {
+  const canceled = makeCtx({
+    user: { stage: 'analysis_viewed' },
+    subscription: { status: 'canceled', createdAt: riyadh('2026-10-14T10:00').toISOString(), trialEndsAt: riyadh('2026-10-28T10:00').toISOString(), lastEventAt: riyadh('2026-10-20T10:00').toISOString() },
+  });
+  assert.ok(!keys(plan([canceled], CARD_DUE)).some((k) => k.endsWith('trial_card_ready')));
+  assert.deepEqual(keys(plan([active()], CARD_DUE)).filter((k) => k.endsWith('trial_card_ready')), []);
+  const suppressed = cardCtx({ user: { emailSuppressedAt: '2026-10-20T00:00:00Z' } });
+  assert.deepEqual(keys(plan([suppressed], CARD_DUE)), []);
+});
+
+test('trial_card_ready: a switched-off optional category does not hold it back, but the other trial mails stay off', () => {
+  const off = cardCtx({ user: { messagesOptOut: true } });
+  assert.deepEqual(keys(plan([off], CARD_DUE)), ['u1:trial_card_ready']);
+  const early = trialing({ user: { messagesOptOut: true } });
+  assert.deepEqual(keys(plan([early], riyadh('2026-10-18T12:00'))), []);
 });

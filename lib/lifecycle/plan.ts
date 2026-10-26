@@ -216,7 +216,7 @@ export type DeliveryGuard = 'outside_window' | 'min_gap' | 'max_per_7_days';
 
 /**
  * The three limits that apply to every optional mail: the send window, the
- * 24 hour gap and the 3 in 7 days cap. Only `sent` rows of a category other
+ * 24 hour gap and the 3 in 7 days cap (a transactional mail answers to the window only). Only `sent` rows of a category other
  * than transactional count (the welcome counts; legacy rows without a category
  * count too, they were all optional). Window first, so the reason a dry run
  * reports is the one that clears soonest.
@@ -225,9 +225,16 @@ export function deliveryGuard(args: {
   now: Date;
   logs: PlanLogRow[];
   config: Pick<PlanConfig, 'sendWindow' | 'minGapMs' | 'maxPer7Days'>;
+  /**
+   * A transactional mail (a billing notice that rides a journey, like the day 12 card notice) is held back only by
+   * the send window. The gap and the 7 day cap are for optional mail, and it never counts toward them (rows of
+   * category transactional are skipped below), so it cannot push another mail out either.
+   */
+  transactional?: boolean;
 }): DeliveryGuard | null {
   const { now, logs, config } = args;
   if (!isInSendWindow(now, config.sendWindow)) return 'outside_window';
+  if (args.transactional) return null;
 
   const nowMs = now.getTime();
   let last = Number.NEGATIVE_INFINITY;
@@ -288,11 +295,21 @@ export function planEmails(input: PlanInput): EmailPlan {
       continue;
     }
 
-    // The mail that has waited longest goes first; a journey step wins a tie.
-    candidates.sort((a, b) => a.dueMs - b.dueMs || (a.kind === 'journey' ? -1 : 1));
+    // A billing notice (transactional category) goes before everything else. Otherwise the mail that has waited
+    // longest goes first; a journey step wins a tie.
+    const transactionalFirst = (candidate: Candidate) => (candidate.category === 'transactional' ? 0 : 1);
+    candidates.sort(
+      (a, b) =>
+        transactionalFirst(a) - transactionalFirst(b) || a.dueMs - b.dueMs || (a.kind === 'journey' ? -1 : 1)
+    );
     const pick = candidates[0]!;
 
-    const blocked = deliveryGuard({ now: input.now, logs: ctx.logs, config });
+    const blocked = deliveryGuard({
+      now: input.now,
+      logs: ctx.logs,
+      config,
+      transactional: pick.category === 'transactional',
+    });
     if (blocked) {
       ignored[blocked] += 1;
       continue;
@@ -319,13 +336,17 @@ function evaluateJourney(args: {
 
   const entered = currentJourney({ stage: ctx.user.stage, subscription: ctx.subscription, events: ctx.events });
   if (!entered) return none('no_journey');
-  // The holdout is how we learn whether the emails work. Payment trouble is
-  // the one journey nobody should miss, so past_due is exempt.
-  if (entered.journey !== 'past_due' && config.isHeldOut(ctx.user.id)) return none('holdout');
-
   const enteredMs = Date.parse(entered.enteredAt);
   const nowMs = now.getTime();
   const steps = [...config.steps[entered.journey]].sort((a, b) => a.afterMinutes - b.afterMinutes);
+
+  // The holdout is how we learn whether the emails work. Payment trouble is
+  // the one journey nobody should miss, so past_due is exempt. A held out
+  // person still gets the steps whose copy is transactional (the day 12 card
+  // notice is about a charge that is coming, not a nudge); every other step
+  // is skipped for them without a trace in the log.
+  const heldOut = entered.journey !== 'past_due' && config.isHeldOut(ctx.user.id);
+  if (heldOut && !steps.some((step) => copy[step.copyKey].category === 'transactional')) return none('holdout');
 
   // A later step that already went out makes every earlier one obsolete.
   let sentAfterMinutes = Number.NEGATIVE_INFINITY;
@@ -344,6 +365,10 @@ function evaluateJourney(args: {
     if (isHandled(logs.get(step.copyKey), config.maxAttempts)) continue;
 
     const stepCopy = copy[step.copyKey];
+    if (heldOut && stepCopy.category !== 'transactional') {
+      blocker = 'holdout';
+      continue;
+    }
     if (dueMs < activatedMs) {
       blocker = 'before_activation';
       continue;
@@ -374,6 +399,7 @@ function evaluateJourney(args: {
   }
 
   if (!candidateItem) {
+    if (heldOut) return { candidate: null, skips, reason: 'holdout' };
     return { candidate: null, skips, reason: pending.length > 0 ? 'nothing_due' : blocker ?? 'nothing_due' };
   }
 
