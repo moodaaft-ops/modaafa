@@ -3,6 +3,8 @@ import test from 'node:test';
 import { FAQ_CATEGORIES, FAQ_ITEMS, faqAnswerText } from '../lib/faq/data';
 import { itemMatches, normalizeArabic } from '../lib/faq/search';
 import { PLAN_PRICES_SAR } from '../lib/seo/site';
+import { PLAN_LIMITS } from '../lib/billing/entitlements';
+import { FIRST_CAMPAIGN_LAUNCH_PRICE_SAR } from '../lib/lifecycle/copy';
 
 const everyText = FAQ_ITEMS.flatMap((item) => [item.q, ...item.a, ...(item.alsoCalled ?? [])]);
 
@@ -88,4 +90,29 @@ test('the questions people type most are all findable', () => {
   assert.ok(find('الغاء').includes('cancel-refund'));
   assert.ok(find('هوتميل').includes('which-email'));
   assert.ok(find('تيك توك').includes('other-platforms'));
+});
+
+test('plan limits and launch numbers in the answers match the code', () => {
+  const limits = FAQ_ITEMS.find((item) => item.id === 'plan-limits-meaning');
+  assert.ok(limits);
+  const text = faqAnswerText(limits);
+  const { starter, growth, pro } = PLAN_LIMITS;
+  assert.ok(text.includes(`البداية ${starter.assistant.limit} محادثة و${starter.manual_sync.limit} مزامنات و${starter.execute_action.limit} تنفيذات`));
+  assert.ok(text.includes(`النمو ${growth.assistant.limit} و${growth.manual_sync.limit} و${growth.execute_action.limit}`));
+  assert.ok(text.includes(`الاحتراف ${pro.assistant.limit} و${pro.manual_sync.limit} و${pro.execute_action.limit}`));
+  const launch = FAQ_ITEMS.find((item) => item.id === 'no-spend-account');
+  assert.ok(launch);
+  const launchText = faqAnswerText(launch);
+  assert.ok(launchText.includes(`${FIRST_CAMPAIGN_LAUNCH_PRICE_SAR} ريال`));
+});
+
+test('the problems customers wrote about in October are findable', () => {
+  const find = (word: string) => FAQ_ITEMS.filter((item) => itemMatches(item, word)).map((item) => item.id);
+  assert.ok(find('ما عندي موقع').includes('website-or-store'));
+  assert.ok(find('الدعوة ما وصلت').includes('invitation-not-received'));
+  assert.ok(find('لا يوجد حساب اعلاني').includes('connect-no-ads-account'));
+  assert.ok(find('نشاط دفع مريب').includes('google-account-suspended'));
+  assert.ok(find('وين زر التراجع').includes('undo-change'));
+  assert.ok(find('20 محادثة').includes('plan-limits-meaning'));
+  assert.ok(find('مو الحين').includes('after-approve'));
 });
