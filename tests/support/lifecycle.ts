@@ -130,7 +130,7 @@ export const richFacts = async (_admin: unknown, user: { id: string; name: strin
   firstName: user.name?.split(' ')[0] ?? null,
   businessName: 'شركة',
   plan: { decisionsTotal: 9, lockedCount: 8, firstDecisionTitle: 'x', wasteEstimate: 1000, currency: 'SAR', trialEligible: true },
-  trial: { startedAt: '2026-10-01T00:00:00Z', endsAt: null, daysLeft: 5, approvedCount: 1, pendingCount: 2 },
+  trial: { startedAt: '2026-10-01T00:00:00Z', endsAt: null, daysLeft: 5, approvedCount: 1, pendingCount: 2, rolledBackCount: 0, adsSpend30: 1000, track: 'a' as const, cancelScheduled: false },
   weekly: {
     periodStart: '2026-10-04',
     periodEnd: '2026-10-10',

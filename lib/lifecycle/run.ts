@@ -418,12 +418,14 @@ async function deliver(args: {
   const needs = copy.requires ?? [];
   let facts: EmailFacts;
   try {
-    facts = await args.loadFacts(admin, { id: user.id, name: user.name }, needs);
+    // The address is not a fact the loader reads: the runner already has it and a copy may prefill a support message.
+    facts = { ...(await args.loadFacts(admin, { id: user.id, name: user.name }, needs)), email: user.email };
   } catch (error) {
     return `failed:facts:${errorText(error)}`;
   }
 
-  const missing = needs.filter((need) => facts[need] == null);
+  // 'cancel_state' is not a field of the facts: it fills trial.cancelScheduled and is judged separately below.
+  const missing = needs.filter((need) => need !== 'cancel_state' && facts[need] == null);
   // The planner only offers the weekly report once this week's report exists (plan.ts, `hasWeeklyReport`), so this
   // is the safety net for the race: the report went away, or its read failed, between planning and sending.
   // The weekly report is written by a different job (the hourly optimize cron, once per account per Saudi week),
@@ -432,6 +434,10 @@ async function deliver(args: {
   // the planner stops offering it when the slot's window closes.
   if (planned.kind === 'weekly' && missing.includes('weekly') && args.weeklyWindowOpen) return 'skipped:weekly_pending';
   if (missing.length > 0) return recordSkip(admin, planned, copy, `missing_facts:${missing.join(',')}`, now);
+  // A copy that must not reach someone who cancelled (the day 12 card notice) needs Stripe's live answer. When
+  // Stripe could not be asked, hold the mail without writing anything: the planner offers it again on the next run
+  // until the step expires, instead of settling it for good on a failed read.
+  if (needs.includes('cancel_state') && facts.trial?.cancelScheduled == null) return 'skipped:cancel_state_unknown';
 
   // The copy may decide the facts make the message pointless; that is final too.
   let built: BuiltEmail | null;

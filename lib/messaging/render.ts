@@ -3,6 +3,7 @@ import { firstName } from '@/lib/lifecycle/format';
 import { isSafeInternalPath, trackedUrl, withUtm } from './links';
 import { appBaseUrl, buildOptOutUrl } from './opt-out';
 import { buildPreferencesUrl } from './prefs';
+import { SUPPORT_WHATSAPP_NUMBER } from '@/lib/support/contact';
 
 /**
  * The brand shell every lifecycle and transactional email goes through.
@@ -196,6 +197,28 @@ function ctaHref(input: RenderInput, path: string, transactional: boolean): stri
 }
 
 /**
+ * The only address outside the app a button may point at: the support WhatsApp chat
+ * (https://wa.me/<SUPPORT_WHATSAPP_NUMBER>, optionally with ?text=). Everything else is refused, so a copy
+ * can never turn a button into an open redirect or a phishing link.
+ */
+export function isSupportWhatsAppUrl(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length > 2000) return false;
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === 'https:' &&
+      url.host === 'wa.me' &&
+      url.username === '' &&
+      url.password === '' &&
+      url.pathname === `/${SUPPORT_WHATSAPP_NUMBER}` &&
+      url.hash === ''
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Turns a copy plus the user's facts into a finished email.
  *
  * Returns null when there is nothing to send: the copy chose to skip this user,
@@ -217,7 +240,13 @@ export function renderTemplate(input: RenderInput): RenderedMessage | null {
   if (!transactional && (!preferencesUrl || !stopUrl)) return null;
 
   let cta: { label: string; href: string } | null = null;
-  if (built.cta) {
+  if (built.externalCta) {
+    if (!isSupportWhatsAppUrl(built.externalCta.url)) {
+      console.error('email external cta rejected: not the support WhatsApp chat', { template: input.templateKey });
+      return null;
+    }
+    cta = { label: built.externalCta.label, href: built.externalCta.url };
+  } else if (built.cta) {
     const href = ctaHref(input, built.cta.path, transactional);
     if (!href) return null;
     cta = { label: built.cta.label, href };

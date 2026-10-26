@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test, { mock } from 'node:test';
 import { legacyTrialEmailKey } from '../lib/billing/trial-identity';
-import { loadEmailFacts } from '../lib/lifecycle/facts';
+import { loadEmailFacts, type LoadFactsOptions } from '../lib/lifecycle/facts';
 import { cleanHighlightLine, firstNameOf, highlightsFrom, toLatinDigits } from '../lib/lifecycle/facts/text';
 import { EMPTY_FACTS, type FactNeed } from '../lib/lifecycle/types';
 import { signalsJobName } from '../lib/setup/adaptive/signals-store';
@@ -92,7 +92,7 @@ function quietly<T>(run: (errors: unknown[][]) => Promise<T>): Promise<T> {
   return run(errors).finally(() => spy.mock.restore());
 }
 
-const load = (client: unknown, needs: FactNeed[], extra: { env?: Record<string, string | undefined> } = {}) =>
+const load = (client: unknown, needs: FactNeed[], extra: Pick<LoadFactsOptions, 'env' | 'retrieveSubscription'> = {}) =>
   loadEmailFacts(client, USER, needs, { now: NOW, env: NO_ADAPTIVE, ...extra });
 
 // ---------------------------------------------------------------------------
@@ -221,7 +221,10 @@ test('trial reads approvals and open decisions only when a trial subscription ex
   tables.subscriptions = [{ user_id: 'u1', plan: 'starter', status: 'trialing', created_at: '2026-10-10T08:00:00Z', trial_ends_at: '2026-10-24T08:00:00Z' }];
   const { client, queried } = watched(admin(tables));
   await load(client, ['trial']);
-  assert.deepEqual([...new Set(queried)].sort(), ['ai_actions', 'businesses', 'google_ads_accounts', 'recommendations', 'subscriptions']);
+  assert.deepEqual(
+    [...new Set(queried)].sort(),
+    ['ai_actions', 'businesses', 'campaigns_cache', 'google_ads_accounts', 'recommendations', 'subscriptions']
+  );
 });
 
 test('the open-decisions count is read once when trial and weekly both need it', async () => {
@@ -495,6 +498,20 @@ function trialTables(): Rows {
     { id: 'aa4', account_id: 'acc1', action_type: 'approval_queued', recommendation_id: 'r3', created_at: '2026-10-09T09:00:00Z' },
     { id: 'aa5', account_id: 'acc9', action_type: 'approval_queued', recommendation_id: 'rZ', created_at: '2026-10-12T09:00:00Z' },
     { id: 'aa6', account_id: 'acc1', action_type: 'add_negative_keyword', recommendation_id: 'r3', created_at: '2026-10-12T09:00:00Z' },
+    // Rolled back: one during this trial, one before it started, one on another account.
+    { id: 'aa7', account_id: 'acc1', action_type: 'add_negative_keyword', recommendation_id: 'r2', created_at: '2026-10-12T10:00:00Z', rollback_status: 'reverted' },
+    { id: 'aa8', account_id: 'acc1', action_type: 'add_negative_keyword', recommendation_id: 'r3', created_at: '2026-10-09T10:00:00Z', rollback_status: 'reverted' },
+    { id: 'aa9', account_id: 'acc9', action_type: 'add_negative_keyword', recommendation_id: 'rZ', created_at: '2026-10-12T10:00:00Z', rollback_status: 'reverted' },
+  ];
+  // acc1 was synced this morning; its campaigns spent 210 in 30 days. The revoked account's and another
+  // account's campaigns are not part of the spend.
+  (tables.google_ads_accounts[0] as any).last_synced_at = '2026-10-14T06:00:00Z';
+  tables.campaigns_cache = [
+    { account_id: 'acc1', metrics_30d: { cost: 120.5 } },
+    { account_id: 'acc1', metrics_30d: { cost_sar: 89.5 } },
+    { account_id: 'acc1', metrics_30d: null },
+    { account_id: 'acc2', metrics_30d: { cost: 5000 } },
+    { account_id: 'acc9', metrics_30d: { cost: 7000 } },
   ];
   return tables;
 }
@@ -511,6 +528,11 @@ test('trial: dates, whole days left, approvals since the trial started and decis
     daysLeft: 10,
     approvedCount: 2,
     pendingCount: 3,
+    // Rolled back since 10 Oct 08:00 on acc1: r2 once (aa7). aa8 is before the trial, aa9 is another account.
+    rolledBackCount: 1,
+    // 120.5 + 89.5 on the linked account (the revoked account and another account's rows do not count).
+    adsSpend30: 210,
+    track: 'b',
   });
 });
 
@@ -578,6 +600,84 @@ test('trial: a trialing user with no linked account has nothing to approve, whic
   assert.equal(facts.trial?.approvedCount, 0);
   assert.equal(facts.trial?.pendingCount, 0);
   assert.equal(facts.trial?.daysLeft, 10);
+});
+
+test('trial track: under 300 in 30 days is B, 300 and over is A, summed over every linked client account', async () => {
+  const trackOf = async (edit: (tables: Rows) => void) => {
+    const tables = trialTables();
+    edit(tables);
+    const trial = (await load(admin(tables), ['trial'])).trial;
+    return { track: trial?.track, spend: trial?.adsSpend30 };
+  };
+  assert.deepEqual(await trackOf(() => {}), { track: 'b', spend: 210 });
+  // 299.99 is still B, exactly 300 is A.
+  assert.deepEqual(await trackOf((t) => ((t.campaigns_cache[0] as any).metrics_30d.cost = 210.49)), { track: 'b', spend: 299.99 });
+  assert.deepEqual(await trackOf((t) => ((t.campaigns_cache[0] as any).metrics_30d.cost = 210.5)), { track: 'a', spend: 300 });
+  // A second active account counts too: 210 + 150 = 360.
+  assert.deepEqual(
+    await trackOf((t) => {
+      t.google_ads_accounts.push({ id: 'acc3', business_id: 'b1', customer_id: '4444444444', customer_name: 'حساب ثاني', status: 'active', is_manager: false, currency_code: 'SAR', linked_at: '2026-09-05T00:00:00Z' });
+      t.campaigns_cache.push({ account_id: 'acc3', metrics_30d: { cost: 150 } });
+    }),
+    { track: 'a', spend: 360 }
+  );
+  // An account with no campaigns at all, synced this morning, spent nothing: B.
+  assert.deepEqual(await trackOf((t) => (t.campaigns_cache = [])), { track: 'b', spend: 0 });
+});
+
+test('trial track: a low number is only believed from a recent sync; otherwise the track is unknown', async () => {
+  for (const syncedAt of [null, '2026-10-01T06:00:00Z']) {
+    const tables = trialTables();
+    (tables.google_ads_accounts[0] as any).last_synced_at = syncedAt;
+    const trial = (await load(admin(tables), ['trial'])).trial;
+    assert.equal(trial?.track, null, `synced ${syncedAt}`);
+    assert.equal(trial?.adsSpend30, 210);
+  }
+  // A high number needs no fresh sync: spend that was ever read is spend.
+  const tables = trialTables();
+  (tables.google_ads_accounts[0] as any).last_synced_at = null;
+  (tables.campaigns_cache[0] as any).metrics_30d.cost = 400;
+  assert.equal((await load(admin(tables), ['trial'])).trial?.track, 'a');
+});
+
+test('trial track: an unreadable campaigns_cache only leaves the track out, the trial stays', async () => {
+  await quietly(async (errors) => {
+    const { client } = watched(admin(trialTables()), { campaigns_cache: 'error' });
+    const trial = (await load(client, ['trial'])).trial;
+    assert.equal(trial?.approvedCount, 2);
+    assert.equal(trial?.track, null);
+    assert.equal(trial?.adsSpend30, null);
+    assert.equal(errors.length, 1);
+  });
+});
+
+test('trial.cancelScheduled is read live from Stripe, only when asked for', async () => {
+  const tables = trialTables();
+  (tables.subscriptions[0] as any).stripe_subscription_id = 'sub_live';
+  const asked: string[] = [];
+  const stripe = (answer: { cancel_at_period_end?: boolean | null; cancel_at?: number | null } | Error) => async (id: string) => {
+    asked.push(id);
+    if (answer instanceof Error) throw answer;
+    return answer;
+  };
+  const cancelState = async (retrieveSubscription: (id: string) => Promise<any>, needs: FactNeed[] = ['trial', 'cancel_state']) =>
+    (await load(admin(tables), needs, { retrieveSubscription })).trial?.cancelScheduled;
+
+  assert.equal(await cancelState(stripe({ cancel_at_period_end: false, cancel_at: null })), false);
+  assert.equal(await cancelState(stripe({ cancel_at_period_end: true })), true);
+  assert.equal(await cancelState(stripe({ cancel_at_period_end: false, cancel_at: 1792000000 })), true, 'a cancel date counts too');
+  assert.deepEqual(new Set(asked), new Set(['sub_live']));
+
+  await quietly(async () => {
+    assert.equal(await cancelState(stripe(new Error('stripe is down'))), null, 'cannot be told: null, never a guess');
+  });
+
+  asked.length = 0;
+  assert.equal(await cancelState(stripe({ cancel_at_period_end: true }), ['trial']), undefined, 'not asked for, not read');
+  assert.deepEqual(asked, []);
+
+  delete (tables.subscriptions[0] as any).stripe_subscription_id;
+  assert.equal(await cancelState(stripe({ cancel_at_period_end: false })), null, 'no Stripe id on the row');
 });
 
 test('trial: any failed read makes the trial null and is logged once', async () => {

@@ -17,7 +17,12 @@ export const SUPPORT_WHATSAPP_NUMBER = '966541004029';
 /** Same number, written the way Saudi users read it. */
 export const SUPPORT_WHATSAPP_DISPLAY = '054 100 4029';
 
-export type WhatsAppHelpReason = 'no_ads_account' | 'manager_only' | 'connect_failed' | 'full_management';
+export type WhatsAppHelpReason =
+  | 'no_ads_account'
+  | 'manager_only'
+  | 'connect_failed'
+  | 'full_management'
+  | 'first_campaign_launch';
 
 const OPENERS: Record<WhatsAppHelpReason, string> = {
   no_ads_account: 'سجلت في مضاعف وما عندي حساب اعلانات قوقل، ابي مساعدة افتحه',
@@ -25,6 +30,8 @@ const OPENERS: Record<WhatsAppHelpReason, string> = {
   connect_failed: 'سجلت في مضاعف وما قدرت اربط حساب اعلانات قوقل، ابي مساعدة',
   // The agency ending of the adaptive onboarding: someone already has an account and wants Modaafa's team to run it.
   full_management: 'سجلت في مضاعف وابي فريق مضاعفة يدير حساب اعلاناتي',
+  // The track B trial mails (lib/lifecycle/copy.ts): the account spends nothing, the team launches the first campaign.
+  first_campaign_launch: 'سجلت في مضاعف وابي فريق مضاعفة يطلق لي اول حملة بـ750 ريال',
 };
 
 /**

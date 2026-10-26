@@ -53,7 +53,15 @@ export const JOURNEY_STEPS: Record<JourneyId, Step[]> = {
   trial: [
     { copyKey: 'trial_d1', afterMinutes: 1440 },
     { copyKey: 'trial_d4', afterMinutes: 5760 },
+    { copyKey: 'trial_d7', afterMinutes: 10080 },
     { copyKey: 'trial_d9', afterMinutes: 12960 },
+    /**
+     * Day 12 of 14, two days before the first charge: "get your card ready". A billing notice, so its copy is
+     * `transactional` (lib/lifecycle/plan.ts: no holdout, no 24 h gap, no 3-in-7-days cap, goes first when it
+     * collides with another mail). It may still wait for the 9:00 to 22:00 Riyadh window, and it stops being
+     * useful once the charge has happened, so it expires after one day.
+     */
+    { copyKey: 'trial_card_ready', afterMinutes: 17280, expiresAfterMinutes: day(1) },
   ],
   trial_lapsed: [
     { copyKey: 'trial_lapsed_2d', afterMinutes: 2880 },

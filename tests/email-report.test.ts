@@ -190,7 +190,7 @@ test('rows come in the order of the copy keys, one per configured step plus the 
     'registered_1d', 'registered_3d', 'registered_7d',
     'connected_3h', 'connected_1d',
     'plan_ready_1d', 'plan_ready_3d', 'plan_ready_7d',
-    'trial_d1', 'trial_d4', 'trial_d9',
+    'trial_d1', 'trial_d4', 'trial_d7', 'trial_d9', 'trial_card_ready',
     'trial_lapsed_2d', 'trial_lapsed_14d',
     'canceled_1d', 'canceled_30d',
     'past_due_3d',
@@ -348,7 +348,7 @@ test('no go-live date means no comparison at all, but recipients are still count
 
 test('when trials could not be read the trial and plan_ready numbers are left out, the rest stay', () => {
   const report = computeEmailReport(input({ trials: null }));
-  for (const group of ['trial_d1', 'trial_d4', 'trial_d9', 'plan_ready_1d', 'plan_ready_3d', 'plan_ready_7d']) {
+  for (const group of ['trial_d1', 'trial_d4', 'trial_d7', 'trial_d9', 'trial_card_ready', 'plan_ready_1d', 'plan_ready_3d', 'plan_ready_7d']) {
     assert.equal(rowOf(report, group).next, null, group);
   }
   assert.deepEqual(rowOf(report, 'registered_1d').next?.recipients, { eligible: 3, reached: 1 });
@@ -359,7 +359,7 @@ test('with nothing at all there are zero rows of numbers and no NaN, Infinity or
   const report = computeEmailReport(
     input({ logs: [], userIds: [], optOuts: [], events: [], trials: [], isHoldout: () => false })
   );
-  assert.equal(report.rows.length, 18); // 16 configured steps, the welcome mail and the weekly report
+  assert.equal(report.rows.length, 20); // 18 configured steps, the welcome mail and the weekly report
   assert.deepEqual(report.totals, { sent: 0, delivered: 0, opened: 0, clicked: 0, optOuts: 0, bounced: 0, complained: 0 });
   assert.deepEqual(report.holdout, { users: 0, total: 0, percent: 10 });
   const text = [...report.rows.flatMap((row) => emailReportRowCells(row)), ...emailReportTotalCells(report)].join('|');

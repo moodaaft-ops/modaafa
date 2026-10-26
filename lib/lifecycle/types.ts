@@ -44,7 +44,10 @@ export const COPY_KEYS = [
   // journey: trialing
   'trial_d1',
   'trial_d4',
+  'trial_d7',
   'trial_d9',
+  // day 12: "get your card ready", billing notice for the first charge (transactional)
+  'trial_card_ready',
   // journey: trial ended without a payment
   'trial_lapsed_2d',
   'trial_lapsed_14d',
@@ -96,7 +99,27 @@ export type TrialFacts = {
   approvedCount: number;
   /** Recommendations waiting for the user's decision right now. */
   pendingCount: number;
+  /**
+   * Approved recommendations the user rolled back since the trial started (ai_actions with rollback_status
+   * 'reverted'). null = could not be read; the sentence that needs it is dropped.
+   */
+  rolledBackCount?: number | null;
+  /** Google Ads spend of the last 30 days over the linked accounts (campaigns_cache.metrics_30d cost). null = unknown. */
+  adsSpend30?: number | null;
+  /**
+   * 'b' = the linked accounts spent under TRIAL_TRACK_B_SPEND_BELOW (300 SAR) in 30 days: there is nothing for
+   * مُضاعِف to read yet, so the trial mails help launch a first campaign. 'a' = the account spends. null = unknown,
+   * and the copy then uses the track A texts.
+   */
+  track?: TrialTrack | null;
+  /**
+   * Cancellation scheduled in Stripe (cancel_at_period_end or cancel_at), read live because our table does not
+   * store it. Only loaded for a copy that lists 'cancel_state' in `requires`. null = could not be read.
+   */
+  cancelScheduled?: boolean | null;
 };
+
+export type TrialTrack = 'a' | 'b';
 
 export type WeeklyFacts = {
   periodStart: string;
@@ -151,6 +174,11 @@ export type GuardFacts = {
 
 export type EmailFacts = {
   firstName: string | null;
+  /**
+   * The address the mail goes to. Set by the runner (lib/lifecycle/run.ts) from the users row, never read by the
+   * fact loader on its own. Only a copy that prefills a support message with it uses it.
+   */
+  email?: string | null;
   /** Business name from the onboarding answers or the Google Ads account name. */
   businessName: string | null;
   plan: PlanFacts | null;
@@ -163,7 +191,11 @@ export type EmailFacts = {
   monthly?: MonthlyFacts | null;
 };
 
-export type FactNeed = 'plan' | 'trial' | 'weekly' | 'billing';
+/**
+ * `cancel_state` is not a field of EmailFacts: it asks the loader to fill `trial.cancelScheduled` from Stripe
+ * (a live call), and it is always listed together with 'trial'.
+ */
+export type FactNeed = 'plan' | 'trial' | 'weekly' | 'billing' | 'cancel_state';
 
 export const EMPTY_FACTS: EmailFacts = {
   firstName: null,
@@ -189,6 +221,12 @@ export type BuiltEmail = {
   blocks: Block[];
   /** Internal app path only (starts with "/"). The renderer turns it into a tracked link. */
   cta?: { label: string; path: string };
+  /**
+   * A button that leaves the app, for the one place a mail needs it: the support WhatsApp chat
+   * (https://wa.me/<SUPPORT_WHATSAPP_NUMBER>, see lib/support/contact.ts). The renderer refuses any other address.
+   * It replaces `cta` when both are set, and it is not click-tracked (/m/c only redirects inside the app).
+   */
+  externalCta?: { label: string; url: string };
   /** Line under the signature. */
   ps?: string;
   signer: 'team' | 'ayman';

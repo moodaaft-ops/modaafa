@@ -512,7 +512,9 @@ test('the weekly report goes to trialing and active subscribers once per week', 
   assert.equal(again.summary.sent, 0);
 
   const monday = await go(admin, { now: riyadh('2026-10-19T10:00') });
-  assert.equal(monday.summary.sent, 0, 'same ISO week, same key');
+  // Same ISO week, same key: no second weekly report. The trial that began on 11 Oct reached day 7 on Sunday 18 Oct
+  // at 10:00, and that is the only mail left to go out.
+  assert.deepEqual(monday.calls.map((c) => `${c.user.id}:${c.templateKey}`), ['tri:trial_d7']);
 });
 
 test('the weekly report is only looked for while its slot is open', async () => {
