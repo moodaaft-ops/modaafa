@@ -31,6 +31,7 @@ import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
 import { sendOpsAlert } from '@/lib/notifications/email';
 import { isSameOriginRequest } from '@/lib/security/origin';
 import { isExpiredOptimizerMoneyMove, isOptimizerRecommendation } from '@/lib/recommendations/staleness';
+import { isRecommendationExecutable } from '@/lib/recommendations/executability';
 
 const defaultDependencies = {
   createServerClient,
@@ -153,6 +154,14 @@ export function createRecommendationActionHandler(
 
     if (intent === 'execute') {
       return executeApprovedRecommendation(ctx, recommendation);
+    }
+
+    // Advice that cannot become a Google Ads change is never approved: the row
+    // stays as it is (no stuck `approved`), and the owner is told it is a step
+    // to do by hand. An already approved descriptive row reaches the execute
+    // path above and keeps its `execution_blocked` record.
+    if (!isRecommendationExecutable(recommendation)) {
+      return NextResponse.redirect(new URL(`${next}?error=manual_review_required`, req.url), 303);
     }
 
     // approve and approve_execute share the approval step verbatim.

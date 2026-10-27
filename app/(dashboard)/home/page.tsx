@@ -10,7 +10,7 @@ import { getBillingCheckoutContext } from '@/lib/billing/checkout-policy';
 import { readFreeAuditView } from '@/lib/chat-first/free-audit-view';
 import { toPlanRecommendations } from '@/lib/plan/load';
 import { buildPlan, paywallCtaFromCheckout } from '@/lib/plan/plan';
-import { buildExecutableAction } from '@/lib/ai/executable-action';
+import { isRecommendationExecutable } from '@/lib/recommendations/executability';
 import { readVoiceConfig } from '@/lib/ai/voice-session';
 import { TikTokPixel } from '@/lib/analytics/tiktok-pixel';
 import { impactLabel, monthlyImpact } from '@/lib/onboarding/first-opportunities';
@@ -216,7 +216,7 @@ export default async function HomePage({
       status: row.status,
       created_at: row.created_at ?? null,
       expected_impact: row.expected_impact ?? null,
-      executable: Boolean(buildExecutableAction(row.action_payload, row)),
+      executable: isRecommendationExecutable(row),
       change: operationLabelAr(row.action_payload?.operation ?? null),
     }))
   );
@@ -390,7 +390,9 @@ function DecisionCard({ decision, currency }: { decision: Decision; currency: st
   const label = impactLabel(decision);
   const tone =
     decision.severity === 'critical' ? 'bg-danger' : decision.severity === 'medium' ? 'bg-signal' : 'bg-muted-foreground';
-  const approved = decision.status === 'approved';
+  // Only a change that can still run reads «وافقت عليه، باقي التنفيذ». Descriptive advice approved before the
+  // approve route refused it is shown as what it is: a step to do by hand, which the owner can still clear.
+  const approved = decision.status === 'approved' && decision.executable;
   return (
     <li className="rounded-[18px] border border-border/80 bg-card">
       <div className="px-4 pb-2 pt-4">
