@@ -18,6 +18,7 @@ import { hasProductAccess } from '@/lib/billing/access-gate';
 import { loadPlanLock, type PlanLockData } from '@/lib/plan/load';
 import { PlanLock } from '@/lib/plan/plan-lock';
 import { dropStalePending } from '@/lib/recommendations/staleness';
+import { isRecommendationExecutable } from '@/lib/recommendations/executability';
 import { Alert } from '@/lib/ui/alert';
 import { extendedPreviewRows } from '@/lib/ai/extended-actions/preview';
 import { isExtendedOperation } from '@/lib/ai/extended-actions/types';
@@ -85,7 +86,7 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
   // more (lib/recommendations/staleness.ts), so it is neither listed nor counted.
   const recs = dropStalePending<any>((recommendations ?? []) as any[]);
   const pending = recs.filter((item: any) => item.status === 'pending');
-  const approved = recs.filter((item: any) => item.status === 'approved');
+  const approved = recs.filter((item: any) => item.status === 'approved' && isRecommendationExecutable(item));
   // A locked screen reads only id and status, so it cannot tell a stale card
   // apart; the plan lock beside it is built from the filtered rows, so its
   // count is the one to show.
@@ -213,13 +214,23 @@ export default async function OptimizerPage({ searchParams }: { searchParams?: P
                             )
                           ) : (
                             <>
-                              {item.status === 'pending' && (
+                              {['pending', 'approved'].includes(item.status) && !isRecommendationExecutable(item) && (
+                                // Advice with no executable change: approving it changed nothing on the account and
+                                // left the card stuck at «معتمدة». It is a step the owner does by hand.
+                                <div className="flex flex-shrink-0 gap-2">
+                                  <a href="/home" className={buttonClasses({ variant: 'outline', size: 'sm' })}>
+                                    اسأل مُضاعِف كيف تسويه
+                                  </a>
+                                  <RecommendationAction id={item.id} intent="dismiss" label="سويته، أخفها" secondary />
+                                </div>
+                              )}
+                              {item.status === 'pending' && isRecommendationExecutable(item) && (
                                 <div className="flex flex-shrink-0 gap-2">
                                   <RecommendationAction id={item.id} intent="approve" label="اعتماد" />
                                   <RecommendationAction id={item.id} intent="dismiss" label="تجاهل" secondary />
                                 </div>
                               )}
-                              {item.status === 'approved' && (
+                              {item.status === 'approved' && isRecommendationExecutable(item) && (
                                 <div className="flex flex-shrink-0 gap-2">
                                   {subscription.active ? (
                                     <RecommendationAction id={item.id} intent="execute" label="تنفيذ" />
