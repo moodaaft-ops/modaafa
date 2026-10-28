@@ -25,7 +25,7 @@ export const ACCESS_LOSS_COPY = {
   subscriptionRequired: 'اشتراكك واقف. فعّله أو حدّث بطاقتك عشان تكمل المحادثة.',
   subscriptionCta: 'فعّل اشتراكك',
   /** Same text as ACCOUNT_SUSPENDED_MESSAGE (pinned by a test); the route's own message wins when it sends one. */
-  suspended: 'حسابك موقوف مؤقتاً، ولن تُنفذ أي عملية عليه حتى يُعاد تفعيله. تواصل معنا على واتساب 0541004029.',
+  suspended: 'حسابك موقوف مؤقتاً، ولن تُنفذ أي عملية عليه حتى يُعاد تفعيله. تواصل معنا على واتساب 0554235720.',
 } as const;
 
 export function chatAccessLoss(status: number, body: unknown): ChatAccessLoss | null {

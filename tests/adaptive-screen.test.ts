@@ -271,7 +271,7 @@ test('the cards show what the tree gave them', () => {
   assert.ok(agency.includes('أسئلة تسألها وكالتك') && agency.includes('ليش الصرف بالليل؟') && agency.includes('وين يروح الاتصال؟'));
 
   const full = html(React.createElement(FullManagementCard, { email: 'a@b.com' }));
-  assert.ok(full.includes('خل فريق مُضاعفة يديرها عنك') && full.includes('https://wa.me/966541004029') && full.includes('target="_blank"'));
+  assert.ok(full.includes('خل فريق مُضاعفة يديرها عنك') && full.includes('https://wa.me/966554235720') && full.includes('target="_blank"'));
 });
 
 // ------------------------------------------------------------------ the docks

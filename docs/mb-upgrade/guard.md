@@ -37,7 +37,7 @@ Run only on spend zero, spend spike, CPA spike and conversions zero. Order: trac
 
 ### Delivery (item 3)
 - One mail per owner per Riyadh day (`guard_alert_<date>` claim in `message_log`), via `sendTemplate`, `enforceGap:false`.
-- Escalation: suspension, billing, policy findings carry `escalation: 'human'`; the text says to message the agency on WhatsApp (0541004029, the existing support number from `lib/lifecycle/copy.ts`). Nothing is proposed or executed automatically. No Google Ads write exists anywhere in `lib/guard`.
+- Escalation: suspension, billing, policy findings carry `escalation: 'human'`; the text says to message the agency on WhatsApp (0554235720, the existing support number from `lib/lifecycle/copy.ts`). Nothing is proposed or executed automatically. No Google Ads write exists anywhere in `lib/guard`.
 - Home: a small "الحارس الصباحي" list (max 3 open findings) at the top of `/home` for owners the flag allows. Jarvis: open findings added to the account card (`input.guard`, loaded in `turn.ts`), empty array when off.
 
 ## Flags and migration
@@ -59,7 +59,7 @@ Run only on spend zero, spend spike, CPA spike and conversions zero. Order: trac
 2. Category: it is `lifecycle`, so an owner who switched lifecycle mail off gets no alert and the 24h gap is bypassed on purpose. Suspension and billing alerts arguably belong to `transactional` (cannot be switched off, no approval gate); left as lifecycle on purpose until you decide.
 3. Thresholds (2x, 20 currency units, 14 days, 10 of 14 converting days) are constants at the top of `lib/guard/detectors.ts`.
 4. Should a merchant be able to dismiss a finding from /home? The table supports `dismissed`; no UI was added.
-5. WhatsApp escalation to the AGENCY (not only the merchant) is not automated; the mail tells the merchant to write to 0541004029. An internal ops alert for criticals (`sendOpsAlert`) is a one-line follow-up if wanted.
+5. WhatsApp escalation to the AGENCY (not only the merchant) is not automated; the mail tells the merchant to write to 0554235720. An internal ops alert for criticals (`sendOpsAlert`) is a one-line follow-up if wanted.
 6. `scheduled-jobs.yml` at the repo root is an old divergent copy; only `.github/workflows/scheduled-jobs.yml` was edited.
 
 ## Files touched

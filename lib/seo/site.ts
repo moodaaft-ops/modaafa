@@ -32,8 +32,8 @@ export const BRAND = {
   founderEn: 'Ayman Amin',
   founderTitle: 'مؤسس وكالة مُضاعفة ومنصة مُضاعِف',
   email: 'moodaaft@gmail.com',
-  whatsappLocal: '0541004029',
-  whatsappIntl: '+966541004029',
+  whatsappLocal: '0554235720',
+  whatsappIntl: '+966554235720',
   // Only profiles opened and confirmed live on 14 Oct 2026. The old agency
   // Instagram handle (moodaafa.sa) returned "profile not available", so the
   // owner pointed the agency at aiman.google.ads and added the YouTube channel.

@@ -399,7 +399,7 @@ export async function refundFeatureUsage({
 }
 
 export const ACCOUNT_SUSPENDED_MESSAGE =
-  'حسابك موقوف مؤقتاً، ولن تُنفذ أي عملية عليه حتى يُعاد تفعيله. تواصل معنا على واتساب 0541004029.';
+  'حسابك موقوف مؤقتاً، ولن تُنفذ أي عملية عليه حتى يُعاد تفعيله. تواصل معنا على واتساب 0554235720.';
 
 export function featureAccessMessage(reason?: string) {
   if (reason === 'account_suspended') return ACCOUNT_SUSPENDED_MESSAGE;
