@@ -310,7 +310,7 @@ test('an agency-managed account: the plan comes with questions for the agency an
   await expect(questions.getByText('كيف تراجعون الكلمات اللي تصرف بلا نتيجة', { exact: false })).toBeVisible();
   const management = page.getByRole('region', { name: 'خل فريق مُضاعفة يديرها عنك' });
   await expect(management).toBeVisible();
-  await expect(management.getByRole('link', { name: 'كلمنا على الواتساب' })).toHaveAttribute('href', /^https:\/\/wa\.me\/966541004029\?text=/);
+  await expect(management.getByRole('link', { name: 'كلمنا على الواتساب' })).toHaveAttribute('href', /^https:\/\/wa\.me\/966554235720\?text=/);
   // Nothing to execute: the lead has manual steps only, there is no approve button, and the trust line about
   // what «مُضاعِف» changes in the account is not on this ending.
   await expect(page.getByRole('button', { name: 'اعتمد' })).toHaveCount(0);
@@ -417,7 +417,7 @@ test('no ads account: «كمّل بدون حساب» runs the questions, and the
   expect(dock[0]).toContain('افتحه معي على الواتساب');
   expect(dock[1]).toContain('أفتحه بنفسي بالخطوات');
   expect(dock[2]).toContain('فتحته، خلني أربطه');
-  await expect(page.getByRole('link', { name: /افتحه معي على الواتساب/ })).toHaveAttribute('href', /^https:\/\/wa\.me\/966541004029\?text=/);
+  await expect(page.getByRole('link', { name: /افتحه معي على الواتساب/ })).toHaveAttribute('href', /^https:\/\/wa\.me\/966554235720\?text=/);
   await expect(page.getByRole('link', { name: 'أفتحه بنفسي بالخطوات' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'ابدأ 14 يوم مجاناً' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /كمّل بدون حساب/ })).toHaveCount(0);
@@ -465,7 +465,7 @@ test('no website: the tile is worded for the store, opens the offer, and the gre
   await expect(page.getByText('تبيع بدون متجر؟ نجهزه لك')).toBeVisible();
   await expect(page.getByText('الحملة ما تنزل لين المتجر يجهز.')).toBeVisible();
   const whatsapp = page.getByRole('link', { name: 'كلمنا واتساب عن متجري' });
-  await expect(whatsapp).toHaveAttribute('href', /^https:\/\/wa\.me\/966541004029\?text=/);
+  await expect(whatsapp).toHaveAttribute('href', /^https:\/\/wa\.me\/966554235720\?text=/);
   const href = (await whatsapp.getAttribute('href')) ?? '';
   const text = new URL(href).searchParams.get('text') ?? '';
   expect(text).toContain('ما عندي متجر الكتروني');

@@ -727,7 +727,7 @@ test('when the chat route answers 402 the thread says the plan stopped, with the
 test('when the chat route answers 403 account_suspended the thread shows the suspension and no button', async ({ page, baseURL }) => {
   await scenario('home');
   await signIn(page, baseURL);
-  const message = 'حسابك موقوف مؤقتاً، ولن تُنفذ أي عملية عليه حتى يُعاد تفعيله. تواصل معنا على واتساب 0541004029.';
+  const message = 'حسابك موقوف مؤقتاً، ولن تُنفذ أي عملية عليه حتى يُعاد تفعيله. تواصل معنا على واتساب 0554235720.';
   await page.route('**/api/chat/start', (route) =>
     route.request().method() === 'POST'
       ? route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ error: 'account_suspended', message }) })

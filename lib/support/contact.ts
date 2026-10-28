@@ -12,10 +12,10 @@
  * The prefilled message carries the user's Modaafa email so the first
  * message already says who is asking.
  */
-export const SUPPORT_WHATSAPP_NUMBER = '966541004029';
+export const SUPPORT_WHATSAPP_NUMBER = '966554235720';
 
 /** Same number, written the way Saudi users read it. */
-export const SUPPORT_WHATSAPP_DISPLAY = '054 100 4029';
+export const SUPPORT_WHATSAPP_DISPLAY = '055 423 5720';
 
 export type WhatsAppHelpReason =
   | 'no_ads_account'

@@ -17,7 +17,7 @@
  *   - the trial is 14 days with a card and cancels with one tap in the app
  *     (TRIAL_DAYS in lib/billing/checkout-policy.ts)
  *   - مُضاعِف works on Google Ads only
- *   - free help opening a Google Ads account is on WhatsApp 0541004029
+ *   - free help opening a Google Ads account is on WhatsApp 0554235720
  *
  * House style: Saudi neutral dialect, no em dash or en dash, Arabic comma,
  * Latin digits, no "ليس مجرد" style constructions, no invented numbers.
@@ -27,7 +27,7 @@ import { whatsappHelpUrl } from '@/lib/support/contact';
 import { formatDateAr, formatMoney, formatNumber } from './format';
 import type { Block, BuiltEmail, CopyKey, EmailCopy, EmailFacts, TrialFacts } from './types';
 
-export const SUPPORT_WHATSAPP_DISPLAY = '0541004029';
+export const SUPPORT_WHATSAPP_DISPLAY = '0554235720';
 const TRUST_LINE = 'ولا شي يتغير في حسابك إلا باعتمادك، وتقدر ترجّع أي تعديل خلال 30 يوم.';
 
 // ---------------------------------------------------------------------------
