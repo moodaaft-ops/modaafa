@@ -228,6 +228,108 @@ export async function setStripeCancelAtPeriodEnd(subscriptionId: string, cancel:
 }
 
 /**
+ * Statuses where the subscription already owes an unpaid invoice. Scheduling a
+ * cancel "at period end" on these is the bug customers reported: the period
+ * is not over, so Stripe keeps retrying the open invoice (Smart Retries, up to
+ * eight attempts) and the bank texts a declined charge after every attempt,
+ * long after the customer pressed «إلغاء الاشتراك». They end now instead.
+ */
+export const UNPAID_STRIPE_STATUSES = new Set(['past_due', 'unpaid', 'incomplete']);
+
+export type CustomerCancelResult = 'scheduled' | 'ended';
+
+/** The Stripe calls the cancellation rules need, injectable for tests. */
+export type CancelStripeOps = {
+  retrieveSubscription: (id: string) => Promise<{ id: string; status: string }>;
+  scheduleCancel: (id: string, cancel: boolean) => Promise<unknown>;
+  cancelNow: (id: string) => Promise<unknown>;
+  listOpenInvoiceIds: (subscriptionId: string) => Promise<string[]>;
+  voidInvoice: (id: string) => Promise<unknown>;
+};
+
+/**
+ * Voids every open invoice of one subscription so nothing keeps retrying it.
+ * Cancelling already pauses automatic collection on open invoices, but a
+ * voided invoice also disappears from "amount due" and can never be retried
+ * by a dashboard click or a later setting change. Errors on one invoice are
+ * logged and skipped: the cancellation itself has already happened.
+ */
+export async function voidOpenInvoicesForSubscription(ops: CancelStripeOps, subscriptionId: string) {
+  const voided: string[] = [];
+  let ids: string[] = [];
+  try {
+    ids = await ops.listOpenInvoiceIds(subscriptionId);
+  } catch (error) {
+    console.error('Could not list open invoices after cancellation', { subscriptionId, error });
+    return voided;
+  }
+  for (const id of ids) {
+    try {
+      await ops.voidInvoice(id);
+      voided.push(id);
+    } catch (error) {
+      console.error('Could not void open invoice after cancellation', { subscriptionId, invoiceId: id, error });
+    }
+  }
+  return voided;
+}
+
+/**
+ * What the customer's «إلغاء الاشتراك» button does. Reads the LIVE status
+ * (our table can lag the webhook): a healthy trial or paid period is
+ * scheduled to end at period end as before; a subscription that already owes
+ * money ends now and its open invoices are voided, so the retries stop today.
+ * "Resume" only ever undoes a schedule.
+ */
+export async function applyCustomerCancellation(
+  ops: CancelStripeOps,
+  subscriptionId: string,
+  cancel: boolean
+): Promise<CustomerCancelResult> {
+  if (!cancel) {
+    await ops.scheduleCancel(subscriptionId, false);
+    return 'scheduled';
+  }
+  const live = await ops.retrieveSubscription(subscriptionId);
+  if (UNPAID_STRIPE_STATUSES.has(live.status)) {
+    await ops.cancelNow(subscriptionId);
+    await voidOpenInvoicesForSubscription(ops, subscriptionId);
+    return 'ended';
+  }
+  await ops.scheduleCancel(subscriptionId, true);
+  return 'scheduled';
+}
+
+/**
+ * Webhook safety net for cancellations that did not go through our button
+ * (Stripe's customer portal, the dashboard, an old scheduled cancel that the
+ * card later failed under). A subscription that owes money AND is set to end
+ * would otherwise retry the card until the period runs out. Ends it now and
+ * voids its open invoices. Returns true when it acted.
+ */
+export async function endUnpaidScheduledCancellation(
+  subscription: { id: string; status: string; cancel_at_period_end?: boolean | null; cancel_at?: number | null },
+  ops: CancelStripeOps = cancelStripeOps
+) {
+  const scheduled = Boolean(subscription.cancel_at_period_end || subscription.cancel_at);
+  if (!scheduled || !UNPAID_STRIPE_STATUSES.has(subscription.status)) return false;
+  await ops.cancelNow(subscription.id);
+  await voidOpenInvoicesForSubscription(ops, subscription.id);
+  return true;
+}
+
+export const cancelStripeOps: CancelStripeOps = {
+  retrieveSubscription: (id) => getStripe().subscriptions.retrieve(id),
+  scheduleCancel: (id, cancel) => setStripeCancelAtPeriodEnd(id, cancel),
+  cancelNow: (id) => cancelStripeSubscriptionImmediately(id),
+  listOpenInvoiceIds: async (subscriptionId) => {
+    const invoices = await getStripe().invoices.list({ subscription: subscriptionId, status: 'open', limit: 100 });
+    return invoices.data.map((invoice) => invoice.id).filter((id): id is string => Boolean(id));
+  },
+  voidInvoice: (id) => getStripe().invoices.voidInvoice(id),
+};
+
+/**
  * Operator "extend trial". Reads the LIVE subscription first and refuses
  * anything that is not trialing in Stripe right now: Stripe would accept a
  * trial_end on an active subscription too, which would hand a paying customer
@@ -291,9 +393,14 @@ export async function cancelAllLiveStripeSubscriptionsForUser(params: {
   for (const customerId of customerIds) {
     const subscriptions = await stripe.subscriptions.list({ customer: customerId, status: 'all', limit: 100 });
     for (const subscription of subscriptions.data) {
-      if (!CANCELLABLE_STRIPE_STATUSES.has(subscription.status)) continue;
-      await stripe.subscriptions.cancel(subscription.id);
-      cancelled.push(subscription.id);
+      if (CANCELLABLE_STRIPE_STATUSES.has(subscription.status)) {
+        await stripe.subscriptions.cancel(subscription.id);
+        cancelled.push(subscription.id);
+      }
+      // Also already-cancelled ones: a subscription that ended earlier can
+      // still carry an open invoice, and a deleted customer must never get
+      // another charge attempt or "payment failed" message from us.
+      await voidOpenInvoicesForSubscription(cancelStripeOps, subscription.id);
     }
   }
   return cancelled;

@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient, createServerClient } from '@/lib/supabase/server';
-import { cancelAllLiveStripeSubscriptionsForUser, cancelStripeSubscription } from '@/lib/billing/stripe';
+import {
+  cancelAllLiveStripeSubscriptionsForUser,
+  cancelStripeOps,
+  cancelStripeSubscription,
+  voidOpenInvoicesForSubscription,
+} from '@/lib/billing/stripe';
 import { decrypt } from '@/lib/crypto';
 import { revokeRefreshToken } from '@/lib/google-ads/oauth';
 import { checkRateLimit, rateLimitHeaders } from '@/lib/security/rate-limit';
@@ -85,6 +90,10 @@ export async function POST(req: NextRequest) {
         return deleteError(req, 'billing_cancellation_failed');
       }
     }
+
+    // Cancelling pauses collection on open invoices; voiding them makes sure
+    // no retry or dunning email ever reaches a customer who deleted the account.
+    await voidOpenInvoicesForSubscription(cancelStripeOps, subscriptionId);
 
     // Mark it locally straight away so a retry skips it entirely.
     await admin

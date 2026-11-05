@@ -2,7 +2,7 @@ import { createServerClient } from '@/lib/supabase/server';
 import { checkRateLimit } from '@/lib/security/rate-limit';
 import { isSameOriginRequest } from '@/lib/security/origin';
 import { getBillingCheckoutContext } from '@/lib/billing/checkout-policy';
-import { setStripeCancelAtPeriodEnd } from '@/lib/billing/stripe';
+import { applyCustomerCancellation, cancelStripeOps } from '@/lib/billing/stripe';
 import { createCancelSubscriptionHandler } from '@/lib/billing/cancel-handler';
 
 export const POST = createCancelSubscriptionHandler({
@@ -29,5 +29,5 @@ export const POST = createCancelSubscriptionHandler({
     const context = await getBillingCheckoutContext(supabase, userId);
     return context.activeSubscriptionId;
   },
-  setCancelAtPeriodEnd: setStripeCancelAtPeriodEnd,
+  setCancelAtPeriodEnd: (subscriptionId, cancel) => applyCustomerCancellation(cancelStripeOps, subscriptionId, cancel),
 });

@@ -218,7 +218,7 @@ export default async function BillingPage({
     <CalmPage wide>
       <CalmTitle title="الفوترة والاشتراك" description="إدارة الخطة والتجربة والفواتير." />
 
-      {(params?.error || params?.canceled || params?.cancel === 'resumed' || noTrialNotice) && (
+      {(params?.error || params?.canceled || params?.cancel === 'resumed' || params?.cancel === 'ended' || noTrialNotice) && (
         <div className="mt-6 space-y-3">
           {params?.error && (
             <CalmNote tone="danger">
@@ -227,6 +227,9 @@ export default async function BillingPage({
           )}
           {params?.canceled && <CalmNote tone="warning">تم إلغاء عملية الدفع ولم يتغيّر اشتراكك.</CalmNote>}
           {params?.cancel === 'resumed' && <CalmNote tone="success">رجع اشتراكك كما كان، ويتجدد في موعده.</CalmNote>}
+          {params?.cancel === 'ended' && (
+            <CalmNote tone="success">انلغى اشتراكك الحين، والدفعة المتعثرة انشطبت فما راح نحاول نسحب من بطاقتك مرة ثانية.</CalmNote>
+          )}
           {noTrialNotice && <CalmNote tone="info">{noTrialNotice}</CalmNote>}
         </div>
       )}
