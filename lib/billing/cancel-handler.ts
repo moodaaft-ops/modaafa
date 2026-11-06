@@ -7,6 +7,11 @@ export type CancelHandlerDependencies = {
   getUserId: () => Promise<string | null>;
   checkRateLimit: (userId: string, req: NextRequest) => Promise<boolean>;
   getActiveSubscriptionId: (userId: string) => Promise<string | null>;
+  /**
+   * Returns 'ended' when the subscription owed an unpaid invoice and was
+   * cancelled immediately (so Stripe stops retrying the card), otherwise the
+   * cancellation is scheduled for period end as before.
+   */
   setCancelAtPeriodEnd: (subscriptionId: string, cancel: boolean) => Promise<unknown>;
 };
 
@@ -50,13 +55,15 @@ export function createCancelSubscriptionHandler(deps: CancelHandlerDependencies)
     }
     if (!subscriptionId) return back(req, 'error=no_live_subscription');
 
+    let result: unknown;
     try {
-      await deps.setCancelAtPeriodEnd(subscriptionId, action === 'cancel');
+      result = await deps.setCancelAtPeriodEnd(subscriptionId, action === 'cancel');
     } catch (error) {
       console.error('Failed to update Stripe cancel_at_period_end', error);
       return back(req, 'error=cancel_failed');
     }
 
-    return back(req, `cancel=${action === 'cancel' ? 'scheduled' : 'resumed'}`);
+    if (action === 'resume') return back(req, 'cancel=resumed');
+    return back(req, `cancel=${result === 'ended' ? 'ended' : 'scheduled'}`);
   };
 }

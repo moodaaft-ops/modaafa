@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server';
 import {
   cancelStripeSubscriptionImmediately,
   constructWebhookEvent,
+  endUnpaidScheduledCancellation,
   planFromSubscription,
   retrieveStripeCharge,
   retrieveStripeInvoice,
@@ -49,6 +50,7 @@ const defaultDependencies = {
   retrieveStripeCharge,
   retrieveStripeInvoice,
   cancelStripeSubscriptionImmediately,
+  endUnpaidScheduledCancellation,
   paymentFailedEmail,
   sendEmail,
   sendOpsAlert,
@@ -213,9 +215,25 @@ export function createStripeWebhookHandler(
           const eventSubscription = event.data.object as any;
           // A live read prevents a delayed update from reviving a subscription
           // that Stripe has already cancelled.
-          const subscription = await dependencies.retrieveStripeSubscription(
+          let subscription = await dependencies.retrieveStripeSubscription(
             eventSubscription.id,
           );
+          // A cancel scheduled on a subscription that already owes money keeps
+          // Stripe retrying the card until period end (customers got declined
+          // charge texts after cancelling). End it now; the row below then
+          // records the cancellation from the fresh live read.
+          if (event.type !== 'customer.subscription.deleted') {
+            try {
+              if (await dependencies.endUnpaidScheduledCancellation(subscription)) {
+                subscription = await dependencies.retrieveStripeSubscription(subscription.id);
+              }
+            } catch (error) {
+              console.error('Could not end an unpaid subscription scheduled to cancel', {
+                subscriptionId: subscription.id,
+                error,
+              });
+            }
+          }
           // A subscription from the Arabic checkout whose first payment is still
           // with the bank is not a customer yet. `incomplete` would be written as
           // past_due, which this table counts as live. The row is written when the
